@@ -1,0 +1,12 @@
+# Host build tools that the distribution does not provide, installed into a
+# private virtualenv by scripts/setup_tools.py.
+#
+# Pinned by version *and* wheel hash: pip is invoked with --require-hashes, so
+# a substituted or tampered wheel fails the install. Only the linux-x86_64
+# wheels are pinned; other hosts are not supported yet.
+#
+# cmake is deliberately held at 3.31.x rather than 4.x: cmake 4 removed
+# compatibility with projects requiring a CMake older than 3.5, and the seL4
+# tree is developed against CMake 3.x (Debian trixie ships 3.31).
+cmake==3.31.10 --hash=sha256:2f766bb46367e5e0559fa33184653754bce044583a06014dcaebf8e6dff8a1f1
+ninja==1.13.2 --hash=sha256:65a24341b5ac09fcadcc37082660be40a94174e51a937fabf6e2cae26225fa2c

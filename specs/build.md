@@ -26,10 +26,14 @@ One toolchain builds everything — kernel, `libsel4`, the seL4 libraries and
 Aegir's own userland — because a single CMake build is configured from the
 kernel's toolchain file and user targets inherit its flags:
 
-- Compiler: GCC for `riscv64-unknown-elf` (from the pinned container image),
-  with `CROSS_COMPILER_PREFIX=riscv64-unknown-elf-` **pinned explicitly** in
-  `configs/` so that `kernel/gcc.cmake`'s prefix probe can never silently pick
-  up a different (e.g. `riscv64-unknown-linux-gnu-`) toolchain from `PATH`.
+- Compiler: the pinned xPack `riscv-none-elf-gcc` 15.2.0-1 toolchain
+  (`manifests/toolchain.toml`), addressed through
+  `CROSS_COMPILER_PREFIX=riscv-none-elf-`, which is **always set explicitly** in
+  `configs/`. This is required, not merely tidy: seL4's `gcc.cmake` probes a
+  list of known prefixes that does not include `riscv-none-elf-`, so an unset
+  prefix is a hard configure error, and setting it also means the probe can
+  never silently pick up a different (e.g. `riscv64-unknown-linux-gnu-`)
+  toolchain from `PATH`.
   Mixing a Linux multilib toolchain with seL4's explicit `mabi` flags is a known
   link failure ("can't link double-float modules with soft-float modules"), so
   no second toolchain is ever added to `PATH`.
@@ -65,30 +69,57 @@ deferred decision is cheap:
 - Our `lp64d` ABI already matches the container's existing clang `libgcc.a`
   wiring (`rv64imafdc/lp64d`), so the clang path would need no extra plumbing.
 
-## Container (the supported build environment)
+## Build environment
 
-The host is not assumed to have cmake, ninja, dtc or a cross compiler. Builds
-run in a podman image derived from
-`seL4-CAmkES-L4v-dockerfiles`, pinned to:
+The environment is **workspace-local and pinned**; nothing is installed
+system-wide and no root is required.
 
-- a fixed commit of that repository, and
-- a fixed Debian snapshot (`USE_DEBIAN_SNAPSHOT=yes`, `SNAPSHOT_DATE=…`), so the
-  package set cannot drift under us.
+| Input | Pin | Where it lands |
+| --- | --- | --- |
+| RISC-V cross GCC | `manifests/toolchain.toml` (xPack `riscv-none-elf-gcc` 15.2.0-1, sha256) | `third_party/toolchain/` |
+| `cmake`, `ninja` | `manifests/requirements-tools.txt` (version + wheel sha256, installed with `pip --require-hashes`) | `third_party/tools/venv/` |
 
-The image digest is recorded here when M1 lands. `scripts/container` wraps
-`podman run` so `make` targets behave the same inside and outside the container
-(workspace mounted, `--userns=keep-id` so files stay owned by the invoking
-user).
+`make tools` fetches both; `make tools-check` re-verifies them against their
+pins (including that the toolchain really carries the `rv64imafdc/lp64d`
+multilib our ABI needs). `. scripts/env.sh` puts them on `PATH`.
 
-The image also carries `repo` (pinned) so dependency sync can run there, and
-`reuse`, which makes an SPDX bill of materials cheap if we ever want one.
+### Containers: preferred, but not in the development sandbox
+
+The recommended environment for CI and release builds is a container derived
+from `seL4-CAmkES-L4v-dockerfiles` (pinned commit + `USE_DEBIAN_SNAPSHOT=yes`
+with a fixed `SNAPSHOT_DATE`, and a pinned `repo` instead of the unverified
+`wget` that the upstream image uses for it). That is also what reproduces the
+toolchain upstream tests against.
+
+It cannot be used in this development sandbox, for a reason worth recording so
+nobody re-litigates it:
+
+- rootless podman needs the setuid helper `newuidmap` to write `uid_map`, and
+- the sandbox runs with `NoNewPrivs: 1` and **all capability sets empty**
+  (`CapEff`/`CapPrm`/`CapBnd` = 0), so setuid helpers cannot elevate and `sudo`
+  cannot run at all.
+
+Namespace support itself is fine (`unshare -Urm` works); it is the setuid step
+that is impossible. A container definition will be committed once it can be
+built and tested somewhere real — not before, since untested build
+configuration is worse than none.
+
+Consequence: the *toolchain revision* is pinned by us rather than inherited
+from the upstream image, and the compiler is GCC 15.2 rather than the image's
+GCC 14.2. That is a wider gap from what upstream CI exercises, which is exactly
+what the `sel4test` acceptance run in M3 is there to catch.
 
 ## Host prerequisites
 
-`podman`, `git`, `make` — that is all, for the containerised path. For the
-on-host path (development convenience only, not supported for releases):
-`cmake` ≥ 3.16, `ninja`, `device-tree-compiler`, `u-boot-tools`, `xxd`,
-`libxml2-utils`, `cpio`, and the `riscv64-unknown-elf` GCC 14 toolchain.
+`git`, `make`, `python3`, `curl` or `wget`, plus a C toolchain for anything
+built from source. Everything else is fetched on demand:
+
+- Provided by the host and used directly: `cpio`, `xxd`, `xmllint`, `flex`,
+  `bison`, `python3`, `make`, `git`, `repo`, `qemu-system-riscv64`.
+- Fetched and pinned by `make tools`: `cmake`, `ninja`, the RISC-V cross GCC.
+- Known gaps, to be resolved only if a build actually needs them:
+  `device-tree-compiler` (`dtc`), `patch`, `gperf`. Our own patch application
+  uses `git apply`, so `patch` is not required for that.
 
 ## Commands
 

@@ -17,6 +17,12 @@
 /griddle
 /easy-settings.cmake
 
+# --- Workspace-local pinned tools ------------------------------------------
+# Fetched by `make tools`; see specs/build.md and manifests/toolchain.toml.
+/third_party/download/
+/third_party/toolchain/
+/third_party/tools/
+
 # --- repo tool state --------------------------------------------------------
 # Contains the repo tool itself plus a copy of every vendored git repo.
 /.repo/
@@ -31,3 +37,10 @@
 *~
 .DS_Store
 *.swp
+
+# --- Agent/tool session state ----------------------------------------------
+/.reasonix/
+
+# --- Python bytecode -------------------------------------------------------
+__pycache__/
+*.pyc
