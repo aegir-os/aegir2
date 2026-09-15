@@ -1,0 +1,33 @@
+# --- Vendored third-party sources ------------------------------------------
+# Extracted on demand by `make deps` from the revisions pinned in
+# manifests/aegir.xml. Never committed; see specs/third_party.md.
+/kernel/
+/projects/musllibc/
+/projects/util_libs/
+/projects/seL4_libs/
+/projects/sel4runtime/
+/projects/sel4_projects_libs/
+/projects/sel4test/
+/tools/seL4/
+/tools/opensbi/
+/tools/nanopb/
+
+# Linkfiles created by the repo manifest at the project root.
+/init-build.sh
+/griddle
+/easy-settings.cmake
+
+# --- repo tool state --------------------------------------------------------
+# Contains the repo tool itself plus a copy of every vendored git repo.
+/.repo/
+
+# --- Build output ----------------------------------------------------------
+/build/
+/out/
+/.sel4_cache/
+/manifest.xml
+
+# --- Editor / OS noise -----------------------------------------------------
+*~
+.DS_Store
+*.swp
