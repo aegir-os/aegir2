@@ -26,7 +26,18 @@ upstream release manifest (`manifests/upstream-16.0.0.xml`, from
 generated from `kernel/` into the build directory; that is what makes an
 MIT-licensed OS on a GPL-2.0 kernel legitimate (see `specs/third_party.md`).
 
-The `SPDX license` column records the upstream repository's declared license.
-`scripts/check-pins` asserts that each vendored tree still carries its upstream
-license file, and the license texts shipped in a release image come from the
-`LICENSES/` directories inside those trees.
+The `SPDX license` column records the license the upstream repositories declare
+for their code. `scripts/check_pins.py` asserts each vendored tree still carries
+a license file at its root, and the license texts shipped in a release image
+come from the `LICENSES/` directories inside those trees.
+
+Two precisions, verified against the pinned trees (2026-09-15):
+
+- **seL4's own `LICENSE.md` files are `CC-BY-SA-4.0`** (they are documentation).
+  The authoritative statement for each file is its SPDX header; `kernel/`
+  declares "generally, kernel-level code is licensed under GPLv2 and user-level
+  code under the 2-clause BSD license". Both statements are true at once, and
+  that split is precisely what makes an MIT Aegir possible.
+- **musllibc is MIT** (musl's `COPYRIGHT`: "musl as a whole is licensed under
+  the following standard MIT license"), and the tree is seL4's `sel4` branch,
+  pinned to the commit on that branch.

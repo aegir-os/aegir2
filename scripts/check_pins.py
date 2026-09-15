@@ -56,7 +56,7 @@ def check_project(path: str, revision: str, failures: list[str]) -> None:
         failures.append(path)
         return
 
-    license_files = [name for name in pins.LICENSE_NAMES if (repository / name).exists()]
+    license_files = pins.license_files(repository)
     if not license_files:
         pins.report(False, f"{path} has no license file", "cannot be redistributed safely")
         failures.append(path)

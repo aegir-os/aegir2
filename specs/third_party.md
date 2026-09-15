@@ -49,20 +49,24 @@ mitigated, and must stay mitigated:
 
 | Trade-off | Mitigation |
 | --- | --- |
-| `repo` fetches and may update *itself* at runtime (unpinned third-party code inside our tree) | `scripts/sync-deps` pins `REPO_REV`; the container image pins the launcher itself |
-| No native patching support | `third_party/patches/<component>/*.patch`, applied idempotently by `scripts/apply-patches`; `make deps-check` fails if a patch is missing |
-| `repo sync` may reset or discard changes in vendored trees | Vendored trees are **read-only**. We never commit, branch or edit inside them; every change of ours lives in `patches/` |
+| `repo` fetches and may update *itself* at runtime (unpinned third-party code running inside our tree) | `scripts/sync_deps.py` passes a pinned commit to `repo init --repo-rev` from the `[repo_tool]` section of `manifests/toolchain.toml`, instead of the default moving `stable` branch |
+| No native patching support | `third_party/patches/<project path>/*.patch`, applied idempotently by `scripts/apply_patches.py`; `make deps-check` fails if a patch is missing or unapplied |
+| `repo sync` may reset or discard changes in vendored trees | Vendored trees are **read-only**. We never commit, branch or edit inside them; every change of ours lives in `patches/`. `make deps` never passes `--force-sync`; `make deps-force` exists for recovery and says so |
 | Pins are git SHAs, not content hashes | Acceptable: git's object hashing is the upstream trust anchor. `repo manifest -r` + `make deps-check` bind the SHAs we build |
 | `.repo/` holds the tool plus a bare copy of every vendored repo | Gitignored, never committed. It is not part of the repository |
-| Full clones are large and slow; upstream defaults to a Google-hosted clone bundle | `scripts/sync-deps` uses `--no-clone-bundle --depth=1 --current-branch`; deepen only when bisecting upstream |
+| Full clones are large and slow; upstream defaults to a Google-hosted clone bundle | `scripts/sync_deps.py` uses `--no-clone-bundle` and **does not** use `--depth`: our pinned revisions are release-point commits that are not necessarily branch tips, and a shallow fetch would not reliably contain them. Disk is cheap; a silently wrong checkout is not. Deepen/bisect tuning can come later, measured |
 
 ## Patches
 
-- Location: `third_party/patches/<component>/<n>-<slug>.patch`.
+- Location: `third_party/patches/<project path>/<nnnn>-<slug>.patch`, where the
+  directory mirrors the vendored layout (`kernel/`, `projects/musllibc/`, …).
+  A patch directory that is not a project path from `manifests/aegir.xml` is
+  rejected.
 - Format: plain `git apply`-able patches generated with `git format-patch` or
   `git diff` from the pinned revision.
-- Applied automatically during `make deps`; `scripts/apply-patches` is
-  idempotent (it detects an already-applied patch and skips it).
+- Applied automatically during `make deps`; `scripts/apply_patches.py` is
+  idempotent (it detects an already-applied patch and skips it) and
+  `make deps-check` reports any patch that is not applied.
 - **Kernel patches are different in kind.** Any change to `kernel/` is
   GPL-2.0-only, must be published, invalidates the seL4 proofs for that
   configuration, and per seL4's trademark policy means the result may no longer

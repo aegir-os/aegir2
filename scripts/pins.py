@@ -28,17 +28,11 @@ REQUIREMENTS_FILE = MANIFESTS / "requirements-tools.txt"
 MANIFEST_AEGIR = MANIFESTS / "aegir.xml"
 MANIFEST_PINNED = MANIFESTS / "aegir-pinned.xml"
 
-# License files we expect to find at a vendored project's root. Used only to
-# confirm a tree is intact enough to redistribute; the authoritative texts are
-# the LICENSES/ directories inside each tree.
-LICENSE_NAMES = (
-    "LICENSE",
-    "LICENSE.md",
-    "LICENSE.txt",
-    "LICENSES",
-    "COPYING",
-    "COPYRIGHT",
-)
+# Root-level license files of a vendored tree, matched by name prefix because
+# naming varies: seL4 uses LICENSE.md, musllibc uses COPYRIGHT, OpenSBI uses
+# COPYING.BSD. The authoritative texts are the LICENSES/ directories inside
+# each tree; this only establishes that a tree is intact.
+LICENSE_PREFIXES = ("licen", "copying", "copyright")
 
 CHUNK = 1 << 20
 
@@ -134,6 +128,17 @@ def patches() -> list[tuple[str, Path]]:
             )
         found.append((component, patch))
     return found
+
+
+def license_files(repository: Path) -> list[str]:
+    """Root-level license files of a vendored tree (see LICENSE_PREFIXES)."""
+    if not repository.is_dir():
+        return []
+    return sorted(
+        entry.name
+        for entry in repository.iterdir()
+        if entry.name.lower().startswith(LICENSE_PREFIXES)
+    )
 
 
 def git(repository: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
