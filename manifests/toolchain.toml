@@ -2,37 +2,115 @@
 #
 # This file is the single source of truth for the revisions of the tools we
 # fetch to build Aegir; see specs/build.md. Nothing here is committed to the
-# repository as source — everything is downloaded and verified on demand.
+# repository as source — everything is downloaded and verified on demand, and
+# no root is required.
+
+# --- Cross toolchain -------------------------------------------------------
 #
-# The RISC-V toolchain is a user-level tarball install: no root, no package
-# manager, no mutation of the host.
+# Debian's bare-metal RISC-V toolchain, unpacked from its packages into the
+# workspace. Chosen over a vendor tarball for one hard reason: it is built with
+# --enable-tls.
+#
+# xPack's riscv-none-elf-gcc is configured --disable-tls, so GCC emits emulated
+# TLS (__emutls_v.*) even with -ftls-model=local-exec, and there is no switch to
+# turn that off. seL4's userland is built around native tp-relative TLS (musl's
+# thread pointer, sel4runtime's static_tls), and the resulting root task dies
+# immediately: "vm fault on code at address 0" in the TLS/IPC-buffer path.
+# `make tools-check` compiles a __thread probe and fails if a toolchain ever
+# regresses to emulated TLS.
+#
+# Debian's own signed Packages index is the source of the hashes below.
 
 [toolchain]
-name = "riscv-none-elf-gcc"
-vendor = "xPack"
-version = "15.2.0-1"
-# The cross compiler is addressed through this prefix. seL4's gcc.cmake probes
-# a list of known prefixes that does not include riscv-none-elf-, so
-# CROSS_COMPILER_PREFIX must always be set explicitly in configs/.
-prefix = "riscv-none-elf-"
-platform = "linux-x64"
-url = "https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v15.2.0-1/xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz"
-sha256 = "aaaa8060c914851a3e5ee1ba82cc3d6f80972f90638a05c6e823a37557a33758"
-archive = "xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz"
-# The arch/abi our target uses. The toolchain must resolve these to an
-# installed multilib. Checked by asking the compiler (`-print-multi-directory`,
-# `-print-libgcc-file-name`) rather than by looking for a directory name,
-# because vendors name multilibs differently: for these flags xPack's GCC 15
-# reports `rv64imafdc_zicsr_zaamo_zalrsc/lp64d` (the A extension is split into
-# zaamo/zalrsc), not `rv64imafdc/lp64d`.
+name = "riscv64-unknown-elf-gcc"
+vendor = "Debian"
+version = "14.2.0+19"
+# The cross compiler is addressed through this prefix. It is in seL4's
+# gcc.cmake probe list, but we still set CROSS_COMPILER_PREFIX explicitly in
+# configs/ so the build can never pick up a different toolchain from PATH.
+prefix = "riscv64-unknown-elf-"
+# The arch/abi our target uses. Checked by asking the compiler
+# (-dM -E for the float ABI, -print-libgcc-file-name for the runtime library)
+# rather than by matching multilib directory names, which vendors name
+# differently: for these flags Debian's default multilib *is* the one we want,
+# so `-print-multi-directory` legitimately reports ".".
 require_march = "rv64imafdc_zicsr_zifencei"
 require_mabi = "lp64d"
+require_float_abi = "__riscv_float_abi_double"
+require_word_size = "__riscv_xlen 64"
 
-[repo_tool]
+# Compiler and assembler/linker. sha256 values are from
+# https://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz
+# (2026-09-15); a changed artifact fails the fetch instead of building
+# something else.
+[[toolchain.artifacts]]
+name = "binutils"
+url = "https://deb.debian.org/debian/pool/main/b/binutils-riscv64-unknown-elf/binutils-riscv64-unknown-elf_2.44-3+7+b1_amd64.deb"
+sha256 = "5e2d6b9fd803b475be267917ce543e79d3894026132aba91488736e6b17144a3"
+archive = "binutils-riscv64-unknown-elf_2.44-3+7+b1_amd64.deb"
+
+[[toolchain.artifacts]]
+name = "gcc"
+url = "https://deb.debian.org/debian/pool/main/g/gcc-riscv64-unknown-elf/gcc-riscv64-unknown-elf_14.2.0+19_amd64.deb"
+sha256 = "c5637d336d9bb18dcba60c6cdee40a61a55eb45f7a5637bce00ecdc47b8295dc"
+archive = "gcc-riscv64-unknown-elf_14.2.0+19_amd64.deb"
+
+# The compiler's own runtime libraries. Debian's cc1 links libisl, libgmp,
+# libmpfr and libmpc shared, and a Fedora host does not have libisl.so.23 at
+# all, so gcc runs but cc1 cannot load. These are extracted next to the
+# toolchain and put on LD_LIBRARY_PATH by scripts/env.sh; the compiler is then
+# self-contained and does not depend on the host's idea of these libraries.
+[[toolchain.artifacts]]
+name = "libisl23"
+url = "https://deb.debian.org/debian/pool/main/i/isl/libisl23_0.27-1_amd64.deb"
+sha256 = "ac8518042e81c00de1effb72bba7e88ac4ecd488f7ea8b9e3ebc63159cb53b35"
+archive = "libisl23_0.27-1_amd64.deb"
+
+[[toolchain.artifacts]]
+name = "libgmp10"
+url = "https://deb.debian.org/debian/pool/main/g/gmp/libgmp10_6.3.0+dfsg-3_amd64.deb"
+sha256 = "d0d0265eb01770f17afd0f7c8c0622f80479dcfbbe13653a0debeec61464e622"
+archive = "libgmp10_6.3.0+dfsg-3_amd64.deb"
+
+[[toolchain.artifacts]]
+name = "libmpfr6"
+url = "https://deb.debian.org/debian/pool/main/m/mpfr4/libmpfr6_4.2.2-1_amd64.deb"
+sha256 = "75dddce11dabc7fc543712c33dc27b7f2ee66a111763eb5eac654d010b42cd92"
+archive = "libmpfr6_4.2.2-1_amd64.deb"
+
+[[toolchain.artifacts]]
+name = "libmpc3"
+url = "https://deb.debian.org/debian/pool/main/m/mpclib3/libmpc3_1.3.1-1+b3_amd64.deb"
+sha256 = "2af0a5c128e03694a41c0b011bd8a958b7297436cdb3a15ddad7866dae8c300b"
+archive = "libmpc3_1.3.1-1+b3_amd64.deb"
+
+# --- repo ------------------------------------------------------------------
+#
 # The `repo` tool downloads and can update itself at runtime, which would make
 # `make deps` non-reproducible: it is third-party code that runs inside our
 # tree (.repo/repo). Pin the revision the launcher fetches. `rev` may be a
 # branch, tag or commit; a commit is used here for exactness, and it is
 # reachable from refs/heads/stable.
+
+[repo_tool]
 url = "https://gerrit.googlesource.com/git-repo"
 rev = "d27d6829a84f488b7253ea693dcc429076c33914"
+
+# --- dtc -------------------------------------------------------------------
+#
+# The seL4 qemu-riscv-virt platform does not merely consume a device tree, it
+# generates one at configure time: it dumps a DTB from QEMU, converts it to DTS
+# (kernel/src/plat/qemu-riscv-virt/config.cmake), and later compiles the DTS
+# back to a DTB for the ELF loader (cmake-tool/helpers/dts.cmake). Both
+# directions need `dtc`, which is not installed here and cannot be installed
+# (no root), so it is built from source into the workspace.
+
+[dtc]
+name = "dtc"
+version = "1.8.1"
+url = "https://mirrors.edge.kernel.org/pub/software/utils/dtc/dtc-1.8.1.tar.xz"
+# Digest copied from the project's signed checksum file at the same URL
+# (sha256sums.asc), retrieved 2026-09-15, then frozen here: any change to the
+# artifact fails the fetch instead of silently building something else.
+sha256 = "23526015a6f1550e0541a53fe7acea1b5a11e3697cdf3a3bdc076abc38f6045d"
+archive = "dtc-1.8.1.tar.xz"

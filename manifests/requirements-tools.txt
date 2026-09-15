@@ -1,12 +1,29 @@
-# Host build tools that the distribution does not provide, installed into a
-# private virtualenv by scripts/setup_tools.py.
+# GENERATED FILE — do not edit.
 #
-# Pinned by version *and* wheel hash: pip is invoked with --require-hashes, so
-# a substituted or tampered wheel fails the install. Only the linux-x86_64
-# wheels are pinned; other hosts are not supported yet.
+# Written by scripts/lock_tools.py from manifests/tools-declared.txt.
+# Regenerate with `make lock-tools` after changing the declared pins.
 #
-# cmake is deliberately held at 3.31.x rather than 4.x: cmake 4 removed
-# compatibility with projects requiring a CMake older than 3.5, and the seL4
-# tree is developed against CMake 3.x (Debian trixie ships 3.31).
+# Every artifact is pinned by version and sha256 and installed with
+# pip --require-hashes. Hashes are for wheels resolved on linux-x86_64
+# with CPython 3.14; other hosts are not supported yet.
+
+attrs==26.1.0 --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
 cmake==3.31.10 --hash=sha256:2f766bb46367e5e0559fa33184653754bce044583a06014dcaebf8e6dff8a1f1
+grpcio==1.84.0 --hash=sha256:57dc36a5ab0e676f5f6e171de2917fd0aef73f32a9aaf23956bfe19997a30bd1
+grpcio-tools==1.84.0 --hash=sha256:38b2819f6a04cb98158815f7d12cc14fd62659ce65c30b5c8c9f0efcf898cb6e
+jinja2==3.1.6 --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+jsonschema==4.26.0 --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
+jsonschema-specifications==2025.9.1 --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe
+libarchive-c==5.3 --hash=sha256:651550a6ec39266b78f81414140a1e04776c935e72dfc70f1d7c8e0a3672ffba
+lxml==6.1.3 --hash=sha256:a7eb78ba28b187e1e9203a55c60fcf70df2d22cb205fe6d51b9383d6097419f0
+markupsafe==3.0.3 --hash=sha256:457a69a9577064c05a97c41f4e65148652db078a3a509039e64d3467b9e7ef97
 ninja==1.13.2 --hash=sha256:65a24341b5ac09fcadcc37082660be40a94174e51a937fabf6e2cae26225fa2c
+ply==3.11 --hash=sha256:096f9b8350b65ebd2fd1346b12452efe5b9607f7482813ffca50c22722a807ce
+protobuf==7.36.1 --hash=sha256:97198b77e369a0abd8e262b8f6c7266c55ddb796a3a12c76d7b8881188ed83aa
+pyelftools==0.33 --hash=sha256:f215ad5f47d3f1373a21496a6c9e0707c622840d0622f23ff7ce08678b020036
+pyfdt==0.3 --hash=sha256:61601c2005ff394a25a6c84c6da2088bbf888328038400d27e4eeb1b04b9f4f0
+pyyaml==6.0.3 --hash=sha256:c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5
+referencing==0.37.0 --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231
+rpds-py==2026.6.3 --hash=sha256:dc319e5a1de4b6913aac94bf6a2f9e847371e0a140a43dd4991db1a09bc2d504
+setuptools==84.0.0 --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
+typing-extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

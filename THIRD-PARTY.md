@@ -41,3 +41,20 @@ Two precisions, verified against the pinned trees (2026-09-15):
 - **musllibc is MIT** (musl's `COPYRIGHT`: "musl as a whole is licensed under
   the following standard MIT license"), and the tree is seL4's `sel4` branch,
   pinned to the commit on that branch.
+
+## Build-time tools (not distributed)
+
+Fetched and pinned by `make tools`, but only used to *produce* an image; none of
+it is linked into or shipped with Aegir:
+
+| Tool | Pin | License |
+| --- | --- | --- |
+| `riscv64-unknown-elf-gcc` + binutils | `manifests/toolchain.toml` (Debian packages, sha256 from Debian's signed index) | GPL-3.0-or-later (compiler), GPL-2.0-or-later (binutils) |
+| its runtime libs (libisl, libgmp, libmpfr, libmpc) | same file | LGPL/MIT-style per package |
+| `dtc` | `manifests/toolchain.toml` (kernel.org release, sha256 from the project's signed sums) | GPL-2.0-or-later OR BSD-2-Clause |
+| `cmake`, `ninja`, seL4's Python dependencies | `manifests/tools-declared.txt` → `manifests/requirements-tools.txt`, installed with `pip --require-hashes` | Apache-2.0 / Apache-2.0 / per package |
+| `repo` | `manifests/toolchain.toml` `[repo_tool]` (commit pin) | Apache-2.0 |
+
+Using GCC to compile Aegir's own code has no effect on Aegir's license: the GCC
+Runtime Library Exception covers `libgcc`, and the compiler is a tool, not a
+combined work.

@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# `protoc` for the seL4 build.
+#
+# seL4's cmake-tool nanopb helper (cmake-tool/helpers/nanopb.cmake) invokes
+# `protoc` by name to generate libsel4rpc's stubs. There is no protoc on this
+# host and no way to install one (no root, no package manager), so this shim
+# dispatches to the protoc embedded in grpcio-tools, which is pinned by version
+# and sha256 in manifests/requirements-tools.txt like every other build tool.
+#
+# Verified against the real file: driving this at
+# projects/sel4_projects_libs/libsel4rpc/rpc.proto with
+# `--plugin=protoc-gen-nanopb=tools/nanopb/generator/protoc-gen-nanopb`
+# produces rpc.pb.c and rpc.pb.h.
+#
+# It resolves its own location rather than assuming it is invoked from here,
+# because scripts/setup_tools.py installs it as third_party/tools/bin/protoc.
+
+set -eu
+
+self=$(readlink -f "$0")
+root=$(dirname "$(dirname "$self")")
+
+if [ ! -x "$root/third_party/tools/venv/bin/python" ]; then
+    echo "protoc: the pinned tool environment is missing; run 'make tools'" >&2
+    exit 1
+fi
+
+exec "$root/third_party/tools/venv/bin/python" -m grpc_tools.protoc "$@"

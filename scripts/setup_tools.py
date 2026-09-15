@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import venv
@@ -23,8 +24,49 @@ from pathlib import Path
 import pins
 
 VENV = pins.TOOLS_ROOT / "venv"
+BIN_ROOT = pins.TOOLS_ROOT / "bin"
 STAMP_NAME = "host-tools"
 REQUIRED_BINARIES = ("cmake", "ninja")
+# Tools we shim onto the pinned environment. Kept as tracked scripts and linked
+# into third_party/tools/bin so they are on PATH alongside cmake and ninja.
+SHIMMED_TOOLS = ("protoc",)
+
+
+def install_shims() -> None:
+    """Link our shim scripts (see SHIMMED_TOOLS) into third_party/tools/bin."""
+    BIN_ROOT.mkdir(parents=True, exist_ok=True)
+    for tool in SHIMMED_TOOLS:
+        source = pins.ROOT / "scripts" / tool
+        if not source.is_file():
+            raise pins.PinError(f"missing shim script {source.relative_to(pins.ROOT)}")
+        source.chmod(source.stat().st_mode | 0o111)
+        link = BIN_ROOT / tool
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(os.path.relpath(source, BIN_ROOT))
+
+
+def check_shims() -> int:
+    """Verify a shim really runs: an installed package with a broken entry
+    point looks fine on disk and fails deep inside a build."""
+    for tool in SHIMMED_TOOLS:
+        path = BIN_ROOT / tool
+        if not path.exists():
+            pins.report(False, f"missing {path.relative_to(pins.ROOT)}", "run: make tools")
+            return 1
+        try:
+            output = subprocess.run(
+                [str(path), "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            pins.report(False, f"{tool} does not run", str(exc))
+            return 1
+        pins.report(True, f"{tool} present", output.splitlines()[0] if output else "")
+    return 0
 
 
 def pip_install(requirements: Path) -> None:
@@ -59,6 +101,8 @@ def check() -> int:
         if not path.is_file():
             pins.report(False, f"missing {path.relative_to(pins.ROOT)}")
             return 1
+    if check_shims() != 0:
+        return 1
     pins.report(
         True,
         "host build tools present",
@@ -98,6 +142,7 @@ def main(argv: list[str]) -> int:
             VENV.parent.mkdir(parents=True, exist_ok=True)
             venv.EnvBuilder(with_pip=True, clear=False).create(VENV)
         pip_install(pins.REQUIREMENTS_FILE)
+        install_shims()
         pins.write_stamp(
             STAMP_NAME,
             {

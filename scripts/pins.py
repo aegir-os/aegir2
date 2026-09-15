@@ -8,9 +8,14 @@ on a bare host with nothing but python3.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import shutil
 import subprocess
+import tarfile
 import tomllib
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import Any
@@ -35,10 +40,115 @@ MANIFEST_PINNED = MANIFESTS / "aegir-pinned.xml"
 LICENSE_PREFIXES = ("licen", "copying", "copyright")
 
 CHUNK = 1 << 20
+NETWORK_TIMEOUT = 60
+DOWNLOAD_ATTEMPTS = 3
 
 
 class PinError(RuntimeError):
     """A pinned input is missing, unverified or in an unexpected state."""
+
+
+def fetch(url: str, sha256: str, filename: str, *, user_agent: str = "aegir2") -> Path:
+    """Return a verified local copy of `url`, downloading it if not cached.
+
+    The cache is third_party/download/, which is gitignored. A cached file that
+    does not match the pin is discarded rather than trusted.
+    """
+    DOWNLOAD.mkdir(parents=True, exist_ok=True)
+    archive = DOWNLOAD / filename
+    if archive.is_file() and sha256_file(archive) == sha256:
+        print(f"INFO  cached {archive.name}", flush=True)
+        return archive
+    if archive.is_file():
+        print(f"INFO  discarding {archive.name}: does not match the pin", flush=True)
+        archive.unlink()
+
+    last_error: Exception | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            print(f"INFO  downloading {url} (attempt {attempt})", flush=True)
+            request = urllib.request.Request(url, headers={"User-Agent": user_agent})
+            with urllib.request.urlopen(request, timeout=NETWORK_TIMEOUT) as response:
+                with archive.open("wb") as handle:
+                    shutil.copyfileobj(response, handle, CHUNK)
+            last_error = None
+            break
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+            print(f"INFO  download failed: {exc}", flush=True)
+    if last_error is not None:
+        raise PinError(f"download failed after {DOWNLOAD_ATTEMPTS} attempts: {last_error}")
+
+    actual = sha256_file(archive)
+    if actual != sha256:
+        archive.unlink()
+        raise PinError(f"sha256 mismatch for {filename}: expected {sha256}, got {actual}")
+    return archive
+
+
+def extract(archive: Path, target_root: Path) -> Path:
+    """Extract an archive under `target_root`, keeping its top-level directory.
+
+    Vendor tarballs rely on their internal layout, so nothing is renamed or
+    relocated; the single top-level directory that appeared is returned.
+    """
+    target_root.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as tar:
+        names = [member.name for member in tar.getmembers() if member.name]
+        roots = {name.split("/", 1)[0] for name in names}
+        if len(roots) != 1:
+            raise PinError(
+                f"expected one top-level directory in {archive.name}, found {sorted(roots)}"
+            )
+        root = roots.pop()
+        target = target_root / root
+        if target.exists():
+            shutil.rmtree(target)
+        tar.extractall(path=target_root, filter="data")
+    return target
+
+
+AR_MAGIC = b"!<arch>\n"
+AR_HEADER_SIZE = 60
+
+
+def deb_payload(archive: Path) -> bytes:
+    """Return the `data.tar.*` member of a Debian package.
+
+    A .deb is an `ar` archive containing `debian-binary`, `control.tar.*` and
+    `data.tar.*`. The format is simple enough to read here, which keeps the
+    extraction free of external tools (`ar`, `dpkg-deb`) that a host may lack.
+    """
+    blob = archive.read_bytes()
+    if not blob.startswith(AR_MAGIC):
+        raise PinError(f"{archive.name} is not an ar archive, so not a .deb")
+    offset = len(AR_MAGIC)
+    while offset + AR_HEADER_SIZE <= len(blob):
+        header = blob[offset : offset + AR_HEADER_SIZE]
+        offset += AR_HEADER_SIZE
+        name = header[:16].decode("ascii", "replace").strip()
+        try:
+            size = int(header[48:58].decode("ascii").strip())
+        except ValueError as exc:
+            raise PinError(f"{archive.name}: unreadable ar header for {name!r}") from exc
+        member = blob[offset : offset + size]
+        offset += size + (size % 2)
+        if name.startswith("data.tar."):
+            return member
+    raise PinError(f"{archive.name}: no data.tar.* member")
+
+
+def extract_deb(archive: Path, target: Path) -> None:
+    """Extract a .deb's payload into `target`.
+
+    Multiple packages are extracted into the same tree on purpose: Debian ships
+    the compiler and its runtime libraries (libisl, libgmp, libmpfr, libmpc)
+    separately, and they merge into one usable prefix.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    payload = io.BytesIO(deb_payload(archive))
+    with tarfile.open(fileobj=payload, mode="r:*") as tar:
+        tar.extractall(path=target, filter="data")
 
 
 def load_pins() -> dict[str, Any]:

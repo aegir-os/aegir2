@@ -10,12 +10,24 @@ Status: decided (2026-09).
 | `aarch64-qemu-virt` | aarch64 | `qemu-virt-aarch64` | — | planned, not started |
 | `x86_64` | x86-64 | — | — | possible later |
 
-Hard-float `lp64d` is a deliberate departure from seL4's default (soft-float
-`lp64`): it enables `KernelRiscvExtD`, so both the kernel's FPU context
-switching and every user binary use the D extension. This matches the ABI the
-RISC-V image flow and OpenSBI already default to, and it is a whole-system
-decision that is painful to change once Aegir binaries and ABIs exist — hence
-decided up front and recorded here.
+The ABI is hard-float `lp64d`: `KernelRiscvExtD` is enabled, so the kernel's FPU
+context switching and every user binary use the D extension. Verified in the
+pinned source rather than assumed:
+
+- `kernel/src/arch/riscv/config.cmake` sets `_KernelRiscvExtD ON` by default
+  (it is only forced off for `LLVM_TOOLCHAIN` + RV32), so `lp64d` **is** seL4's
+  default for RISC-V, not a departure from it. What differs from the default is
+  the *verified* configuration: `kernel/configs/include/RISCV64_verified_include.cmake`
+  sets `KernelRiscvExtD OFF`. We therefore get the upstream-default ABI and give
+  up the verified-configuration claim — a trade recorded here deliberately.
+- The RISC-V image flow already assumes this: OpenSBI is built with
+  `PLATFORM_RISCV_ABI=lp64d` by default (`cmake-tool/helpers/rootserver.cmake`),
+  and the toolchain resolves `rv64imafdc_zicsr_zifencei`/`lp64d` to an installed
+  multilib.
+- We pin `KernelRiscvExtD` explicitly in `configs/` anyway, so the ABI cannot
+  change under us through a default flip in a future seL4 release. Changing it
+  later is a whole-system change (every binary, every library), which is why it
+  is decided and written down now.
 
 All architecture-specific detail lives in `configs/` and the CMake glue so that
 application code stays portable across the targets above (project rule).
@@ -24,23 +36,35 @@ application code stays portable across the targets above (project rule).
 
 One toolchain builds everything — kernel, `libsel4`, the seL4 libraries and
 Aegir's own userland — because a single CMake build is configured from the
-kernel's toolchain file and user targets inherit its flags:
+kernel's toolchain file and user targets inherit its flags.
 
-- Compiler: the pinned xPack `riscv-none-elf-gcc` 15.2.0-1 toolchain
-  (`manifests/toolchain.toml`), addressed through
-  `CROSS_COMPILER_PREFIX=riscv-none-elf-`, which is **always set explicitly** in
-  `configs/`. This is required, not merely tidy: seL4's `gcc.cmake` probes a
-  list of known prefixes that does not include `riscv-none-elf-`, so an unset
-  prefix is a hard configure error, and setting it also means the probe can
-  never silently pick up a different (e.g. `riscv64-unknown-linux-gnu-`)
-  toolchain from `PATH`.
-  Mixing a Linux multilib toolchain with seL4's explicit `mabi` flags is a known
-  link failure ("can't link double-float modules with soft-float modules"), so
-  no second toolchain is ever added to `PATH`.
+- Compiler: **Debian's `riscv64-unknown-elf-gcc` 14.2.0+19**, unpacked from its
+  packages into `third_party/toolchain/` (`manifests/toolchain.toml`), addressed
+  through `CROSS_COMPILER_PREFIX=riscv64-unknown-elf-`, which is **always set
+  explicitly** in `configs/`. Setting it explicitly means the build can never
+  silently pick up a different toolchain from `PATH` — including the Linux
+  multilib flavour, whose use with seL4's explicit `mabi` flags is a known link
+  failure ("can't link double-float modules with soft-float modules").
+- **Native TLS is a hard requirement of the toolchain.** User code is compiled
+  with `-ftls-model=local-exec` and seL4's runtime is built around native
+  `tp`-relative TLS (musl's thread pointer, `sel4runtime`'s `static_tls`). A
+  toolchain configured with `--disable-tls` makes GCC emit *emulated* TLS
+  (`__emutls_v.*`, `__emutls_get_address`) with no way to switch it off, and the
+  resulting root task dies at startup with `vm fault on code at address 0`. That
+  is why the toolchain is Debian's (built `--enable-tls`) and **not** xPack's
+  `riscv-none-elf` (built `--disable-tls`), which is otherwise the more
+  attractive package: newer GCC, one tarball, no unpacking. `make tools-check`
+  compiles a `__thread` probe and fails if a toolchain ever regresses to
+  emulated TLS, so this cannot silently come back.
+- The toolchain needs its own runtime libraries: Debian's `cc1` links
+  `libisl`/`libgmp`/`libmpfr`/`libmpc` shared, and a Fedora host has no
+  `libisl.so.23` at all. Those packages are pinned and extracted alongside the
+  compiler, and `scripts/env.sh` puts them on `LD_LIBRARY_PATH`, so the
+  toolchain does not depend on the host's idea of those libraries.
 - C library: **not** from the toolchain. Userland uses the vendored
   `projects/musllibc` (built by the same build) plus `projects/sel4runtime` for
-  the entry point. The image's `riscv64-unknown-elf` package ships no
-  newlib/picolibc, which is irrelevant: seL4 does not use them.
+  the entry point. The toolchain's own newlib/picolibc payload is irrelevant:
+  seL4 does not use it.
 - C++: the C++ frontend works, but there is no target `libstdc++`/`libc++`.
   C++ code is therefore **freestanding**: compiled with `-fno-exceptions
   -fno-rtti -fno-threadsafe-statics` and without the standard library. The
@@ -76,12 +100,32 @@ system-wide and no root is required.
 
 | Input | Pin | Where it lands |
 | --- | --- | --- |
-| RISC-V cross GCC | `manifests/toolchain.toml` (xPack `riscv-none-elf-gcc` 15.2.0-1, sha256) | `third_party/toolchain/` |
-| `cmake`, `ninja` | `manifests/requirements-tools.txt` (version + wheel sha256, installed with `pip --require-hashes`) | `third_party/tools/venv/` |
+| RISC-V cross GCC (+ its runtime libs) | `manifests/toolchain.toml` (Debian `riscv64-unknown-elf-gcc` 14.2.0+19 and four library packages, sha256 from Debian's signed index) | `third_party/toolchain/` |
+| `cmake`, `ninja`, and seL4's Python dependencies | `manifests/tools-declared.txt` (direct pins) → `manifests/requirements-tools.txt` (generated, version + sha256 per artifact, installed with `pip --require-hashes`) | `third_party/tools/venv/` |
+| `dtc` | `manifests/toolchain.toml` (kernel.org release tarball, sha256 from the project's signed `sha256sums.asc`) | `third_party/tools/bin/` |
 
-`make tools` fetches both; `make tools-check` re-verifies them against their
-pins (including that the toolchain really carries the `rv64imafdc/lp64d`
-multilib our ABI needs). `. scripts/env.sh` puts them on `PATH`.
+`make tools` fetches all of it; `make tools-check` re-verifies every pin
+offline. `. scripts/env.sh` puts them on `PATH` (and the toolchain's own runtime
+libraries on `LD_LIBRARY_PATH`).
+
+Two details worth knowing:
+
+- **`dtc` is required, not optional.** seL4's `qemu-riscv-virt` platform
+  generates its device tree at configure time: it dumps a DTB from QEMU,
+  converts it to DTS (`kernel/src/plat/qemu-riscv-virt/config.cmake`), and later
+  compiles DTS back to a DTB for the ELF loader
+  (`cmake-tool/helpers/dts.cmake`). Both directions call `dtc`. It is built from
+  source because the host has no `dtc` and no way to install one. The build is
+  kept hermetic: `GIT_CEILING_DIRECTORIES` stops `git describe` inside dtc's
+  Makefile from reaching Aegir's own repository, which would otherwise stamp our
+  HEAD and dirty state into the binary.
+- **Python dependencies are locked, not guessed.** The seL4 build imports
+  `yaml`, `jsonschema`, `ply`, `Jinja2`, `pyfdt`, `lxml`, `pyelftools` and
+  `libarchive`. Upstream ships a `sel4-deps` metapackage, but it is a superset
+  that also pulls formatting and lint tooling we do not need, so we pin the
+  actual set: `manifests/tools-declared.txt` records the direct pins and
+  `scripts/lock_tools.py` resolves the closure and writes the hashed lock file.
+  `make lock-tools` regenerates it when a version is deliberately bumped.
 
 ### Containers: preferred, but not in the development sandbox
 
@@ -131,6 +175,12 @@ make run          # boot the image under QEMU
 make test         # build + boot sel4test, check for the success marker
 make clean
 ```
+
+`make test` is the acceptance test for the vendored kernel: it drives the real
+seL4 build system (kernel, ELF loader, OpenSBI, musllibc, sel4runtime, libsel4)
+and boots the upstream suite, stopping QEMU once it prints
+`All is well in the universe`. It passes when the vendored tree, the pinned
+toolchain and the chosen ABI all work together.
 
 Rules that apply to all of the above:
 

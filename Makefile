@@ -12,8 +12,9 @@ TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800
 DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 120
+TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check deps deps-force deps-check clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check test clean distclean
 
 all: help
 
@@ -24,10 +25,16 @@ help: ## list available targets
 tools: ## fetch the pinned RISC-V toolchain and host build tools
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/fetch_toolchain.py
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/setup_tools.py
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/build_dtc.py
 
 tools-check: ## verify the fetched tools match their pins
 	$(PYTHON) scripts/fetch_toolchain.py --check
 	$(PYTHON) scripts/setup_tools.py --check
+	$(PYTHON) scripts/build_dtc.py --check
+	$(PYTHON) scripts/lock_tools.py --check
+
+lock-tools: ## regenerate the hashed host-tool lock file (network)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/lock_tools.py
 
 deps: ## fetch vendored sources at their pinned revisions
 	timeout $(DEPS_TIMEOUT) $(PYTHON) scripts/sync_deps.py
@@ -37,6 +44,9 @@ deps-force: ## re-fetch, discarding local changes in vendored trees
 
 deps-check: ## verify vendored trees match their pins, patches and licenses
 	$(PYTHON) scripts/check_pins.py
+
+test: ## build and boot the seL4 test suite on qemu-riscv-virt (acceptance test)
+	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_sel4test.py
 
 clean: ## remove build output, keep fetched tools
 	rm -rf build out

@@ -1,0 +1,53 @@
+# Host build tooling we depend on DIRECTLY.
+#
+# This is the human-authored intent; `make lock-tools` resolves the full
+# transitive set and writes manifests/requirements-tools.txt, which is what
+# gets installed (with --require-hashes). Edit this file, regenerate the lock,
+# never edit the lock by hand.
+#
+# Why not just `sel4-deps`: upstream's metapackage is deliberately a superset
+# ("all python packages you need to build the seL4 microkernel and manual") and
+# drags in formatting and lint tooling — cmake-format, autopep8, guardonce,
+# beautifulsoup4, psutil, sh, pexpect, six, future, protobuf. We pin only what
+# seL4's build actually imports on our target:
+#
+#   PyYAML      kernel/tools/{config_gen,hardware_gen}.py, platform_sift.py
+#               (note: kernel/tools/hardware/outputs/yaml.py is a local module
+#               that shares the name; the imports above resolve to PyYAML)
+#   jsonschema  kernel/tools/hardware_gen.py
+#   ply         kernel/tools/bitfield_gen.py
+#   Jinja2      kernel/tools/{invocation_header_gen,syscall_header_gen}.py,
+#               kernel/tools/hardware/outputs/*.py
+#   pyfdt       kernel/tools/hardware/{fdt,device}.py
+#   lxml        kernel/libsel4/tools/syscall_stub_gen.py (generates
+#               libsel4/include/interfaces/sel4_client.h)
+#   pyelftools  cmake-tool/helpers/elf_sift.py
+#   libarchive-c cmake-tool/helpers/shoehorn.py (CPIO/archive handling)
+#
+# Deliberately NOT included: beautifulsoup4 (kernel/manual/tools only — the
+# reference manual is not part of a build), setuptools (upstream's own
+# packaging script for this metapackage).
+#
+# This list was derived by scanning the vendored tree for non-stdlib imports
+# and then confirmed empirically: the build fails loudly on the first missing
+# module, and it now runs to completion. Re-check it when seL4 is upgraded --
+# a new module is a build-time surprise, not a silent one.
+#
+# cmake and ninja are exact pins because their behaviour matters (and because
+# cmake 4.x rejects projects requiring a CMake older than 3.5).
+
+cmake==3.31.10
+ninja==1.13.2
+
+Jinja2==3.1.6
+PyYAML==6.0.3
+jsonschema==4.26.0
+libarchive-c==5.3
+ply==3.11
+pyelftools==0.33
+pyfdt==0.3
+lxml==6.1.3
+# Not a protobuf library: grpcio-tools is how we get a `protoc` binary at all.
+# scripts/protoc shims `protoc` onto it for seL4's nanopb helper, which
+# generates libsel4rpc's stubs (see that file for the verified invocation).
+grpcio-tools==1.84.0
