@@ -27,6 +27,7 @@ DOWNLOAD = THIRD_PARTY / "download"
 TOOLCHAIN_ROOT = THIRD_PARTY / "toolchain"
 TOOLS_ROOT = THIRD_PARTY / "tools"
 PATCH_ROOT = THIRD_PARTY / "patches"
+STAMP_ROOT = THIRD_PARTY / "stamps"
 
 PINS_FILE = MANIFESTS / "toolchain.toml"
 REQUIREMENTS_FILE = MANIFESTS / "requirements-tools.txt"
@@ -170,7 +171,10 @@ def sha256_file(path: Path) -> str:
 
 
 def stamp_path(name: str) -> Path:
-    return TOOLCHAIN_ROOT / f".{name}.stamp"
+    # Stamps live in their own directory rather than inside a component's
+    # install tree: removing one component (to change toolchain, say) must not
+    # silently invalidate the record of another.
+    return STAMP_ROOT / f"{name}.stamp"
 
 
 def read_stamp(name: str) -> dict[str, Any] | None:
