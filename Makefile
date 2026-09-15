@@ -11,10 +11,10 @@ PYTHON ?= python3
 TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800
 DEPS_TIMEOUT ?= 3600
-RUN_TIMEOUT ?= 120
+BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check build run test clean distclean
 
 all: help
 
@@ -45,8 +45,14 @@ deps-force: ## re-fetch, discarding local changes in vendored trees
 deps-check: ## verify vendored trees match their pins, patches and licenses
 	$(PYTHON) scripts/check_pins.py
 
+build: ## configure and build Aegir's own root task
+	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target aegir --build-only
+
+run: ## boot Aegir under QEMU, stopping once it reports online
+	timeout $(BOOT_TIMEOUT) $(PYTHON) scripts/run_target.py --target aegir
+
 test: ## build and boot the seL4 test suite on qemu-riscv-virt (acceptance test)
-	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_sel4test.py
+	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_target.py --target sel4test
 
 clean: ## remove build output, keep fetched tools
 	rm -rf build out

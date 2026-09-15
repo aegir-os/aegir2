@@ -20,7 +20,8 @@ compatibility layer may be added later as a user-level service
 
 | Path | Contents |
 | --- | --- |
-| `apps/` | Aegir programs (root task, servers, drivers) |
+| `apps/` | Aegir programs — root task, later servers and drivers |
+| `libs/` | Aegir libraries (runtime pieces every binary links) |
 | `configs/` | Per-target build configuration (platform, arch, ABI) |
 | `manifests/` | `repo` manifests: the vendoring pins and their upstream source |
 | `specs/` | Decided specifications |
@@ -33,11 +34,17 @@ extracted into the paths the seL4 build system expects and are gitignored.
 ## Getting started
 
 ```sh
-make deps        # fetch pinned third-party sources (network, ~minutes)
+make tools       # fetch the pinned toolchain and host build tools (no root)
+make deps        # fetch the vendored seL4 tree at its pinned revisions
 make deps-check  # verify every vendored tree matches its pin
-make build       # configure + build for the default target
-make run         # boot under QEMU (always wrapped in timeout)
+make build       # configure + build Aegir's root task
+make run         # boot it under QEMU (stops once it reports online)
+make test        # build + boot the seL4 test suite (kernel acceptance test)
 ```
+
+`make tools` and `make deps` need network access and happen once; after that the
+build is offline. Every step is pinned: revisions in `manifests/`, tool versions
+by version and hash, and nothing is installed outside the repository.
 
 Host prerequisites and the toolchain story are in `specs/build.md`. Everything
 is built inside a pinned container image so the host stays untouched.

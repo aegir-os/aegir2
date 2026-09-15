@@ -71,6 +71,27 @@ kernel's toolchain file and user targets inherit its flags.
   standard-library question is a separate, deferred milestone; it is orthogonal
   to the compiler choice below.
 
+  Establishing this cost four separate discoveries, all now encoded in the
+  build rather than in anyone's memory:
+
+  1. There is no `<cstdint>` and no other C++ header: user code is compiled
+     `-nostdinc -nostdinc++`. musl's staged include directory *is* on the
+     include path, so C++ uses `<stdint.h>` — the C++-on-seL4 convention.
+  2. Static constructors **do** run before `main`: `sel4runtime` walks
+     `__preinit_array`/`__init_array` (`projects/sel4runtime/src/init.c`, called
+     from `env.c`). `apps/aegir-hello` asserts this at boot so a regression
+     cannot pass unnoticed.
+  3. `sel4/assert.h` declares `__assert_fail` **without `extern "C"`**, which is
+     fine in C (musl's C symbol matches) and a mangled, undefined reference in
+     C++. `libs/aegir-runtime` provides the C++-linkage definition, and treats a
+     failed assertion as what it is in Aegir: a fatal fault that reports and
+     stops.
+  4. A virtual destructor emits a deleting destructor, hence a reference to
+     `operator delete`, which does not exist here. There is **no `operator
+     new`/`delete` yet, deliberately**: Aegir gets an allocation story when it
+     gets a memory story. Until then, classes with virtual destructors cannot be
+     destroyed — cheap to avoid, expensive to discover late.
+
 ### Deferred: compiler choice
 
 GCC is used for this milestone set. Modern LLVM was considered and deferred
@@ -191,3 +212,34 @@ Rules that apply to all of the above:
   Disabling a warning is not an acceptable fix.
 - Warnings from unmodified upstream code are upstream's business; we do not
   patch them away, and we do not add flags that mask them.
+
+## Building our own image
+
+`make build` configures and builds Aegir's root task; `make run` boots it and
+stops QEMU once it prints its marker. The top-level `CMakeLists.txt` follows the
+shape of a seL4 application project, and three rules there are load-bearing:
+
+- **`util_libs` is not optional.** The ELF loader links libcpio from it for the
+  CPIO archive it embeds. Without the import, no `cpio` target exists and the
+  loader silently links `-lcpio` instead, then fails to compile.
+- **The ELF loader is imported before the user-mode environment is set up.**
+  `musllibc_set_environment_flags()` rewrites the global link rule to inject the
+  user CRT objects (crt0.o, crti.o, GCC's crtbegin.o/crtend.o) into every target
+  created afterwards. The loader is not a user program — it has its own crt0.S
+  and a linker script that discards `.eh_frame` — so injected CRT objects break
+  it ("`__EH_FRAME_BEGIN__` ... defined in discarded section").
+- **The simulate script's `-m` must agree with the device tree.** The DTB is
+  dumped from QEMU at *configure* time (`QEMU_MEMORY`, 3072 MB by default) and
+  tells the kernel how much RAM it may use. Overriding the simulate script's
+  `MEM_SIZE` smaller — as the ARM platforms do — makes the kernel touch RAM that
+  is not there and abort in `init_freemem` with a store access fault. We
+  therefore do not override it.
+
+Targets are added by dropping a file in `configs/` (see `settings.cmake`), so a
+new board or architecture is data, not a rewrite — per the project rule that
+architecture-specific code stays abstracted.
+
+Every target is configured and booted through `scripts/run_target.py`, which
+streams the guest console and stops QEMU when the target's success marker
+appears (QEMU never exits on its own). `scripts/targets.py` holds the target
+list.

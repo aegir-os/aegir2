@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Configure, build and boot one of Aegir's targets.
+
+QEMU does not stop when a target has finished saying what it has to say, so this
+streams the guest console, stops QEMU once the target's success marker appears,
+and reports what it saw. Every step runs under a timeout, per the project rule
+that long-running processes must not be able to wedge a session.
+
+    python3 scripts/run_target.py --target aegir
+    python3 scripts/run_target.py --target aegir --build-only
+    python3 scripts/run_target.py --target sel4test --reconfigure
+
+Exit status: 0 the marker was seen (or the build succeeded with --build-only).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+import pins
+from targets import TARGETS, Target
+
+ENV_SCRIPT = pins.ROOT / "scripts" / "env.sh"
+TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) tests disabled\.")
+
+
+def bash(command: str, cwd: Path, timeout: int) -> None:
+    """Run a shell command with Aegir's pinned tools on PATH."""
+    print(f"INFO  (cd {cwd.relative_to(pins.ROOT)} && {command})", flush=True)
+    subprocess.run(
+        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; {command}"],
+        cwd=str(cwd),
+        check=True,
+        timeout=timeout,
+    )
+
+
+def configure(target: Target, build_dir: Path, timeout: int) -> None:
+    build_dir.mkdir(parents=True, exist_ok=True)
+    flags = " ".join(target.configure_flags)
+    relative = os.path.relpath(ENV_SCRIPT.parent.parent, build_dir)
+    bash(f"{relative}/init-build.sh {flags}".strip(), build_dir, timeout)
+
+
+def build(target: Target, build_dir: Path, timeout: int) -> None:
+    bash("ninja", build_dir, timeout)
+
+
+def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, str]:
+    """Boot the image, streaming the console until the marker appears."""
+    process = subprocess.Popen(
+        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec ./simulate"],
+        cwd=str(build_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        # The console is a byte stream: a kernel abort or a driver writing raw
+        # bytes is still output we want to see, not a reason to crash.
+        errors="replace",
+        start_new_session=True,
+    )
+    seen = False
+    summary = ""
+    try:
+        stream = process.stdout
+        if stream is None:  # pragma: no cover - Popen above always pipes
+            return False, ""
+        for line in stream:
+            stripped = line.rstrip("\n")
+            if stripped:
+                print(f"    {stripped}", flush=True)
+            match = TEST_SUMMARY.search(stripped)
+            if match:
+                summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
+            if target.marker in stripped:
+                seen = True
+                break
+        stream.close()
+    finally:
+        # Take the whole process group down: QEMU is a child of the shell, and
+        # neither notices that the target is finished.
+        if process.poll() is None:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+    return seen, summary
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--target", required=True, choices=sorted(TARGETS))
+    parser.add_argument("--timeout", type=int, default=900, help="seconds per step")
+    parser.add_argument("--build-only", action="store_true", help="stop after building")
+    parser.add_argument(
+        "--reconfigure", action="store_true", help="re-run cmake instead of reusing the build dir"
+    )
+    arguments = parser.parse_args(argv)
+
+    target = TARGETS[arguments.target]
+    build_dir = pins.ROOT / target.build_dir
+
+    try:
+        if arguments.reconfigure or not (build_dir / "build.ninja").is_file():
+            configure(target, build_dir, arguments.timeout)
+        build(target, build_dir, arguments.timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        pins.report(False, f"{target.name} build failed", str(exc))
+        return 1
+
+    if arguments.build_only:
+        pins.report(True, f"{target.name} built", target.description)
+        return 0
+
+    try:
+        seen, summary = boot_and_watch(target, build_dir, arguments.timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        pins.report(False, f"{target.name} boot failed", str(exc))
+        return 1
+
+    if not seen:
+        pins.report(
+            False,
+            f"{target.name} did not report success",
+            f"never saw {target.marker!r} within {arguments.timeout}s",
+        )
+        return 1
+    pins.report(True, f"{target.name} booted", summary or target.marker)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except pins.PinError as exc:
+        pins.report(False, "run failed", str(exc))
+        sys.exit(1)
