@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tomllib
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,20 @@ PATCH_ROOT = THIRD_PARTY / "patches"
 
 PINS_FILE = MANIFESTS / "toolchain.toml"
 REQUIREMENTS_FILE = MANIFESTS / "requirements-tools.txt"
+MANIFEST_AEGIR = MANIFESTS / "aegir.xml"
+MANIFEST_PINNED = MANIFESTS / "aegir-pinned.xml"
+
+# License files we expect to find at a vendored project's root. Used only to
+# confirm a tree is intact enough to redistribute; the authoritative texts are
+# the LICENSES/ directories inside each tree.
+LICENSE_NAMES = (
+    "LICENSE",
+    "LICENSE.md",
+    "LICENSE.txt",
+    "LICENSES",
+    "COPYING",
+    "COPYRIGHT",
+)
 
 CHUNK = 1 << 20
 
@@ -77,3 +93,55 @@ def report(ok: bool, what: str, detail: str = "") -> None:
     status = "PASS" if ok else "FAIL"
     suffix = f"  ({detail})" if detail else ""
     print(f"{status}  {what}{suffix}", flush=True)
+
+
+def load_projects(manifest: Path = MANIFEST_AEGIR) -> dict[str, str]:
+    """Return {project path: pinned revision} from a repo manifest."""
+    try:
+        tree = ElementTree.parse(manifest)
+    except (OSError, ElementTree.ParseError) as exc:
+        raise PinError(f"cannot read manifest {manifest}: {exc}") from exc
+
+    projects: dict[str, str] = {}
+    for element in tree.getroot().findall("project"):
+        path = element.get("path")
+        revision = element.get("revision")
+        if not path or not revision:
+            raise PinError(f"manifest {manifest}: project without path/revision")
+        projects[path] = revision
+    if not projects:
+        raise PinError(f"manifest {manifest}: no projects")
+    return projects
+
+
+def patches() -> list[tuple[str, Path]]:
+    """Return [(vendored project path, patch file)] for our tracked patches.
+
+    Patch directory names mirror the vendored layout
+    (`third_party/patches/kernel/x.patch`, `third_party/patches/projects/musllibc/y.patch`),
+    so a patch's component is its directory relative to third_party/patches.
+    """
+    if not PATCH_ROOT.is_dir():
+        return []
+    known = set(load_projects())
+    found: list[tuple[str, Path]] = []
+    for patch in sorted(PATCH_ROOT.rglob("*.patch")):
+        component = patch.parent.relative_to(PATCH_ROOT).as_posix()
+        if component not in known:
+            raise PinError(
+                f"patch {patch.relative_to(ROOT)} is not under a vendored project "
+                f"path ({component!r} is not in the manifest)"
+            )
+        found.append((component, patch))
+    return found
+
+
+def git(repository: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Run git in a repository and return the completed process."""
+    return subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=check,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Aegir's vendoring manifest. THE PINS LIVE HERE — see specs/third_party.md.
+
+  The revisions are the seL4 16.0.0 release set, copied from the upstream
+  release manifest (manifests/upstream-16.0.0.xml, which came from
+  seL4/sel4test-manifest tag 16.0.0). We list the same projects upstream does,
+  so that the checkout layout matches what the seL4 build system expects:
+  kernel/, projects/*, tools/seL4.
+
+  Nothing listed here is committed to this repository; it is fetched into
+  gitignored paths by `make deps`.
+
+  Remotes are absolute URLs on purpose. Upstream's manifest uses relative
+  fetches ("." and "../sel4proj") which resolve against the manifest
+  repository's own URL; because Aegir hosts its own manifest, those would
+  resolve into Aegir's namespace instead of seL4's.
+-->
+<manifest>
+
+  <remote name="seL4" fetch="https://github.com/seL4"/>
+  <remote name="opensbi" fetch="https://github.com/riscv"/>
+  <remote name="nanopb" fetch="https://github.com/nanopb"/>
+
+  <!-- Unused: every project below pins its own revision. -->
+  <default remote="seL4" revision="master"/>
+
+  <!--
+    The microkernel. GPL-2.0-only, shipped as a separate program; the GPL stops
+    at the kernel/user boundary (specs/third_party.md). Never patch this
+    project without a written justification.
+  -->
+  <project name="seL4.git" path="kernel" revision="6e7c3b733d296cfd88d5fbf635c96e447a882374"/>
+
+  <!-- Build system (cmake-tool) and the ELF loader (elfloader-tool). BSD-2-Clause. -->
+  <project name="seL4_tools.git" path="tools/seL4" revision="7dd5ba144b1fecf1358a12d2bef3eb365aab35c7">
+    <linkfile src="cmake-tool/init-build.sh" dest="init-build.sh"/>
+    <linkfile src="cmake-tool/griddle" dest="griddle"/>
+  </project>
+
+  <!-- C standard library for userland, on seL4's own branch. MIT. -->
+  <project name="musllibc.git" path="projects/musllibc" revision="b0005f86fecbd6d0257b15363a5b013446914265" upstream="sel4" dest-branch="sel4"/>
+
+  <!-- C runtime and entry point for userland binaries. BSD-2-Clause. -->
+  <project name="sel4runtime.git" path="projects/sel4runtime" revision="86489cf6efab9f314964e79468c036e9035394c7"/>
+
+  <!-- Platform support libraries (libplatsupport and friends). BSD-2-Clause. -->
+  <project name="util_libs.git" path="projects/util_libs" revision="6e55b3c62687779692150e1de411ce61b9d2919a"/>
+
+  <!-- libsel4utils, libsel4simple, libsel4vka/vspace, libsel4muslcsys, ... BSD-2-Clause. -->
+  <project name="seL4_libs.git" path="projects/seL4_libs" revision="d8abd95e7114c852f6636e3084eb1f66091a75ee"/>
+
+  <!-- Additional project libraries. BSD-2-Clause. -->
+  <project name="sel4_projects_libs" path="projects/sel4_projects_libs" revision="5b3c81127b191232489df09a59b22edead1c9db7"/>
+
+  <!-- Upstream kernel test suite: our end-to-end acceptance test. BSD-2-Clause. -->
+  <project name="sel4test.git" path="projects/sel4test" revision="60b7b47ee0a67f56e15951735a6aa9d270d47f55">
+    <linkfile src="easy-settings.cmake" dest="easy-settings.cmake"/>
+  </project>
+
+  <!-- RISC-V firmware, used by the RISC-V image flow. BSD-2-Clause. -->
+  <project name="opensbi" path="tools/opensbi" remote="opensbi" revision="234ed8e427f4d92903123199f6590d144e0d9351"/>
+
+  <!-- Protocol buffers, pulled in by the release manifest. Zlib. -->
+  <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
+
+</manifest>

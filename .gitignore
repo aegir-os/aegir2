@@ -17,11 +17,11 @@
 /griddle
 /easy-settings.cmake
 
-# --- Workspace-local pinned tools ------------------------------------------
-# Fetched by `make tools`; see specs/build.md and manifests/toolchain.toml.
-/third_party/download/
-/third_party/toolchain/
-/third_party/tools/
+# --- Workspace-local pinned tools and fetched artifacts ---------------------
+# Everything under third_party/ is fetched on demand and never committed,
+# except the patch set we maintain ourselves. See specs/third_party.md.
+/third_party/*
+!/third_party/patches/
 
 # --- repo tool state --------------------------------------------------------
 # Contains the repo tool itself plus a copy of every vendored git repo.

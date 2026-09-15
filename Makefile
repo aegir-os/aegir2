@@ -10,9 +10,10 @@ PYTHON ?= python3
 # Wall-clock limits. Generous, but finite.
 TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800
+DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 120
 
-.PHONY: all help tools tools-check clean distclean
+.PHONY: all help tools tools-check deps deps-force deps-check clean distclean
 
 all: help
 
@@ -27,6 +28,15 @@ tools: ## fetch the pinned RISC-V toolchain and host build tools
 tools-check: ## verify the fetched tools match their pins
 	$(PYTHON) scripts/fetch_toolchain.py --check
 	$(PYTHON) scripts/setup_tools.py --check
+
+deps: ## fetch vendored sources at their pinned revisions
+	timeout $(DEPS_TIMEOUT) $(PYTHON) scripts/sync_deps.py
+
+deps-force: ## re-fetch, discarding local changes in vendored trees
+	timeout $(DEPS_TIMEOUT) $(PYTHON) scripts/sync_deps.py --force
+
+deps-check: ## verify vendored trees match their pins, patches and licenses
+	$(PYTHON) scripts/check_pins.py
 
 clean: ## remove build output, keep fetched tools
 	rm -rf build out

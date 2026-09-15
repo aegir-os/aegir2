@@ -27,3 +27,12 @@ archive = "xpack-riscv-none-elf-gcc-15.2.0-1-linux-x64.tar.gz"
 # zaamo/zalrsc), not `rv64imafdc/lp64d`.
 require_march = "rv64imafdc_zicsr_zifencei"
 require_mabi = "lp64d"
+
+[repo_tool]
+# The `repo` tool downloads and can update itself at runtime, which would make
+# `make deps` non-reproducible: it is third-party code that runs inside our
+# tree (.repo/repo). Pin the revision the launcher fetches. `rev` may be a
+# branch, tag or commit; a commit is used here for exactness, and it is
+# reachable from refs/heads/stable.
+url = "https://gerrit.googlesource.com/git-repo"
+rev = "d27d6829a84f488b7253ea693dcc429076c33914"
