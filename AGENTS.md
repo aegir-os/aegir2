@@ -11,6 +11,13 @@
   its own children down on the way out is worth having -- scripts/run_target.py does,
   and a signal that arrives as an ordinary exit is what makes that work.
 - Use the git repository for history.
+- A batch of edits that spans a signature and its callers is two steps, not one: change the
+  signature, build, then change the callers. And when a batch could leave the tree broken,
+  make the revert the fallback in the same command --
+  `make build || git checkout -- <the directory>` -- so a failed attempt costs the work
+  and not the working tree. Both halves of that came from the same afternoon: five
+  mechanical edit mistakes in a row, and a guard that turned the fifth into a clean revert
+  instead of a broken repository.
 - Read the *established implementation* before designing, not only the manual. The manual
   says what is legal; `projects/seL4_libs` and `projects/sel4test` say how it is done, and
   they have already been broken by other people in the places where the shape matters.
