@@ -3,7 +3,13 @@
 - No arbitrary and hardcoded limits without explicit permission. Capacity tables should
   grow on demand.
 - Any use of `make test` or other long running bash process must use `timeout` so as to
-  detect any 'wedged' process.
+  detect any 'wedged' process. But `timeout` signals only the process it started, so
+  killing a wrapper can leave its children running with nobody to stop them: a
+  timed-out `make run` left 47 QEMU machines going for hours before anyone noticed.
+  So a timed-out or killed run is not finished until you have looked for what it left
+  behind (`ps -eo args | grep '[q]emu-system'`, and the like), and a wrapper that takes
+  its own children down on the way out is worth having -- scripts/run_target.py does,
+  and a signal that arrives as an ordinary exit is what makes that work.
 - Use the git repository for history.
 - seL4's documentation is in this repository, and it comes before inference. For any
   question about how the kernel behaves, read the manual (`kernel/manual/parts/*.tex`
