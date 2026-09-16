@@ -192,6 +192,34 @@ because both sides of every port depend on them:
   port's owner is always running before its first consumer. A consumer is never
   handed a capability to something that does not exist yet -- and if the graph has
   a cycle, nothing is created at all and the boot says so.
+- **A port has exactly one reader.** Ownership *is* the read side: the service
+  that `owns` a port is the only one that may receive on it, and everyone else
+  gets Write, for the set of ports the manifest declares with `needs`. This is the
+  rule that closes the hole a shared read side would open. seL4 delivers a message
+  to whichever receiver arrives, so **any** Read holder can take a call meant for
+  someone else -- and the sender cannot tell, because a thief that replies is
+  indistinguishable from the owner it impersonated. Not sharing Read makes that
+  impossible rather than merely impolite. The manifest already guarantees it: port
+  names are unique system-wide, so exactly one entry owns each port and nobody
+  else can be given Read to it.
+
+### Callbacks are the other direction, not a wider grant
+
+A callback-style protocol -- the server answering later, or asking its client
+something -- needs no shared read side. It needs a *second port*, pointed the
+other way: the client owns `answer`, and the server only writes to it. The
+manifest already says which is which, because ownership and `needs` name the
+direction of every port. With that, the symmetric case is two ports and the
+synchronous case is one, and `Call`'s reply needs neither: the reply capability is
+created by the kernel in the callee's CSpace, so it can be neither forged nor
+stolen.
+
+What makes this cheap is that nothing has to be handed over at run time. Whoever
+spawns a process installs its ports into its CSpace, so the device manager gives
+each driver it starts an event port of its own -- exactly as director does for its
+children -- and the driver's answers come back on a port the driver owns. Capability
+transfer (`Grant`, `GrantReply`) is therefore not needed for the boot set at all,
+which is a far narrower question than it first looked.
 
 ### The boot set's protocols
 
@@ -347,13 +375,14 @@ registration. The names are different because the mechanisms are.
   rule; exact names are unambiguous and make a new device type a manifest change.
   Proposal: class patterns, matched literally up to the `*`.
 - **May ports carry capabilities?** `Grant` and `GrantReply` are what let a
-  capability travel inside a message or a reply, and Aegir's ancestry — message
-  ports as the thing you hand someone — suggests they eventually should. For now
-  the answer is no: the device manager's grants happen at *spawn*, by installing
-  capabilities into a driver's CSpace the way director does for its children, and
-  nothing yet needs to hand a capability to a process that is already running.
-  Making it a property of individual ports, when hot-plug needs it, is the shape
-  to design then, rather than granting it to every port now.
+  capability travel inside a message or a reply. With callbacks as reverse-direction
+  ports (above), nothing in the boot set needs it: every port a process holds was
+  installed by whoever spawned it, and a driver's devices are installed the same
+  way. What would need it is two processes that did not spawn each other handing
+  each other something at run time -- hot-plug, or a shell passing a port to a
+  service it did not start. When that arrives, it belongs to *individual* ports (a
+  protocol that says it carries capabilities) rather than to every port by
+  default.
 - **Who registers `Initrd:`** — proposal: director, the moment the VFS is up.
 - **Hot-plug** (a device appearing later) and **device removal** are unmodelled;
   both end up as registry updates plus spawn/stop requests.
