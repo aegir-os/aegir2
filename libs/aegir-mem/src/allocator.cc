@@ -151,7 +151,7 @@ bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
         seL4_Error error =
             seL4_Untyped_Retype(untyped_[index].cap, seL4_UntypedObject, half,
                                 seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
-                                kRootCNodeDepth, slot, 1);
+                                cnode_depth_, slot, 1);
         if (error != seL4_NoError) {
             return false;
         }
@@ -188,7 +188,7 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     }
     *error = seL4_Untyped_Retype(untyped_[index].cap, type, size_bits,
                                  seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
-                                 kRootCNodeDepth, slot, 1);
+                                 cnode_depth_, slot, 1);
     if (*error != seL4_NoError) {
         return 0;
     }
@@ -200,6 +200,20 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     account.objects += 1;
     allocated_bytes_ += 1ull << wanted;
     return slot;
+}
+
+bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept
+{
+    return remember(cap, size_bits, false);
+}
+
+void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept
+{
+    slots_first_ = first;
+    slots_next_ = first;
+    slots_end_ = first + count;
+    slots_used_ = 0;
+    cnode_depth_ = depth;
 }
 
 seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account,

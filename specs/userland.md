@@ -126,3 +126,22 @@ sel4runtime's helpers are not usable from C++ (its header is C-only, and
 `sel4runtime_set_tls_variable` is a macro using `typeof`), so director declares the
 two functions it needs and writes the IPC buffer pointer with
 `__sel4runtime_write_tls_variable`.
+
+## A service's stack is two pages, and some of our objects are not
+
+`aegir-spawn` gives a spawned process two pages of stack. That is enough for ordinary
+functions and not enough for our own larger structures, which are sized for the kernel's
+list rather than for a small process: an `Allocator` carries room for every untyped the
+bootinfo could name, plus the halves that splitting creates, which is tens of kilobytes.
+
+Director gets away with `Allocator allocator(bootinfo)` on `main`'s stack because the
+root task is given the kernel's initial stack and it is large. A spawned service is not,
+and putting one there fails in the least helpful way: the stack runs off the end of its
+pages into unmapped memory, which arrives as a fault the supervisor reports as
+"faulted on a memory access" -- indistinguishable from a bug in anything else the service
+was doing. The device manager hit exactly that, with the allocator as the only new thing
+in it.
+
+So: anything in the tens of kilobytes belongs in **static storage**, and a service's
+stack budget is part of what it can be asked to do. `apps/aegir-device-manager` keeps its
+allocator at file scope for this reason, with the reason written next to it.

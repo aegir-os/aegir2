@@ -20,6 +20,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/devtree.h>
+#include <aegir/mem/allocator.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <sel4/sel4.h>
@@ -69,6 +70,10 @@ public:
     uint64_t mine = 0;
 };
 
+}  // namespace
+
+namespace {
+aegir::mem::Allocator g_objects(nullptr);
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -149,6 +154,11 @@ int main(int argc, char *argv[])
     uint64_t untyped_slot = 0;
     aegir::bootstrap::Block const *block = aegir::bootstrap::find();
     uint32_t named = 0;
+    /* Static, not local, and that is not a style choice: an Allocator carries the table
+     * of untyped memory it knows about -- room for the kernel's whole list, plus the
+     * halves splitting creates -- which is tens of kilobytes. The root task has a large
+     * initial stack and can keep one on `main`'s; a spawned process has two pages, and
+     * putting one there overflows the stack into unmapped memory (specs/userland.md). */
     uint64_t untyped_bits = 0;
     for (uint32_t e = 0; block != nullptr && e < block->entry_count; ++e) {
         if (block->entries[e].kind != aegir::bootstrap::EntryKind::Capability) {
@@ -171,18 +181,25 @@ int main(int argc, char *argv[])
         /* The first slot after the ones the block names is ours to use: the block is
          * the map of what was given, and the layout past it is nobody else's business
          * (specs/services.md). */
-        seL4_CPtr const table = aegir::bootstrap::kSlotFirstDeclared + named;
-        /* `node_depth == 0` is the kernel's way of being told that the destination IS
-         * the capability passed as the root, and the slot inside it is the offset
-         * (kernel/src/object/untyped.c, `decodeUntypedInvocation`: with a non-zero
-         * depth it looks the destination *up* in that CNode instead, and a guard it
-         * does not match is "Invalid destination address"). */
-        seL4_Error const retyped =
-            seL4_Untyped_Retype(untyped_slot, seL4_RISCV_PageTableObject, seL4_PageTableBits,
-                                seL4_CapInitThreadCNode, 0, 0, table, 1);
-        if (retyped != seL4_NoError) {
-            write_line("FAIL", "the untyped could not be made into a page table");
+        /* Through the allocator, not a raw retype: the memory and the slots this
+         * service may put capabilities in were handed to it, so its allocator is
+         * adopted rather than discovered -- which is what makes the spawner usable by
+         * a service and not only by the root task (specs/authority.md). The depth is
+         * zero because these are *our* slots: at depth zero the destination capability
+         * of a retype *is* the CNode (kernel/src/object/untyped.c). */
+        aegir::mem::Account me{"devicemgr", 0, 0, 0};
+        seL4_CPtr table = 0;
+        if (!g_objects.adopt_untyped(untyped_slot, untyped_bits)) {
+            write_line("FAIL", "no room to remember the memory I was given");
         } else {
+            g_objects.adopt_slots(aegir::bootstrap::kSlotFirstDeclared + named, 1, 0);
+            seL4_Error error = seL4_NoError;
+            table = g_objects.alloc_object(seL4_RISCV_PageTableObject, seL4_PageTableBits, me, &error);
+            if (table == 0) {
+                write_line("FAIL", "the untyped could not be made into a page table");
+            }
+        }
+        if (table != 0) {
             seL4_Error const assigned = seL4_RISCV_ASIDPool_Assign(pool_slot, table);
             if (assigned != seL4_NoError) {
                 write_line("FAIL", "no address space id from the pool");

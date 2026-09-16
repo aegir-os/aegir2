@@ -74,6 +74,24 @@ public:
     seL4_CPtr carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error) noexcept;
 
     /**
+     * Adopt an untyped this process was *handed* rather than one it found in its own
+     * bootinfo, so a service can retype objects out of delegated memory. False when
+     * there is no room left to remember it. (specs/authority.md)
+     */
+    bool adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept;
+
+    /**
+     * Adopt a run of slots this process may put capabilities in, and the depth that
+     * addresses them. A service's CSpace is its own -- the slots the block did not
+     * name are nobody else's -- and its allocator has to be told where they are and
+     * how to reach them, the way director's is told by the kernel. `depth` is the
+     * whole word for the kernel's root CNode; a *service* addresses its own slots
+     * with depth zero, where the destination capability *is* the CNode
+     * (kernel/src/object/untyped.c, `decodeUntypedInvocation`).
+     */
+    void adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept;
+
+    /**
      * An ASID pool, for a process that will build address spaces of its own.
      *
      * Not `alloc_object`: the kernel makes a pool from an *untyped* rather than by
@@ -138,6 +156,9 @@ private:
     Untyped untyped_[CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS * 8];
     unsigned untyped_count_;
     unsigned cnode_size_bits_;
+    /* The depth that addresses our slots: the whole word for the kernel's root CNode,
+     * and zero for a service that addresses its own CSpace (adopt_slots explains). */
+    seL4_Word cnode_depth_ = seL4_WordBits;
     seL4_CPtr slots_first_;
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;
