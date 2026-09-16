@@ -162,10 +162,14 @@ int main(int argc, char *argv[])
          * the map of what was given, and the layout past it is nobody else's business
          * (specs/services.md). */
         seL4_CPtr const table = aegir::bootstrap::kSlotFirstDeclared + named;
+        /* `node_depth == 0` is the kernel's way of being told that the destination IS
+         * the capability passed as the root, and the slot inside it is the offset
+         * (kernel/src/object/untyped.c, `decodeUntypedInvocation`: with a non-zero
+         * depth it looks the destination *up* in that CNode instead, and a guard it
+         * does not match is "Invalid destination address"). */
         seL4_Error const retyped =
             seL4_Untyped_Retype(untyped_slot, seL4_RISCV_PageTableObject, seL4_PageTableBits,
-                                seL4_CapInitThreadCNode, seL4_CapInitThreadCNode, seL4_WordBits,
-                                table, 1);
+                                seL4_CapInitThreadCNode, 0, 0, table, 1);
         if (retyped != seL4_NoError) {
             write_line("FAIL", "the untyped could not be made into a page table");
         } else {

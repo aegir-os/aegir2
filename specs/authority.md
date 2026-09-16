@@ -254,18 +254,29 @@ manager launches a driver" becomes a statement about the device manager rather t
 about director, and the remaining pieces -- the child's CSpace, its TCB, and the
 binaries from the initrd -- are the same ones director already assembles.
 
-### The destination of a retype, open
+### A retype's destination, and why the depth is the whole story
 
-The device manager now holds a pool and an untyped and tries to use them:
+The device manager holds a pool and an untyped and uses both -- it retypes a root page
+table and takes an address space id from its own pool, which is the first thing in Aegir
+a service does with delegated authority:
 
-    [seL4(CPU 0) [decodeUntypedInvocation/119 ... "devicemgr"]:
-        Untyped Retype: Invalid destination address.]
+    my own address space: page table at cap 11, with an address space id of my own
 
-So the *destination* of the retype is wrong, and that is the one thing to settle
-before this works. Director's own retypes pass `seL4_CapInitThreadCNode` for both the
-`root` and the `node_index` argument and `seL4_WordBits` for the depth, and land in the
-slots they ask for -- but director's root CNode is the kernel's (8192 slots, a 51-bit
-guard) while a spawned service's is 1024 slots with a 54-bit guard, and the number of
-guard bits is exactly what a depth has to agree with. The next move is the source, not a
-guess: `kernel/src/object/untyped.c`, the line the kernel named, and what it does with
-`node_index`, `node_depth` and `node_offset` when a guard is in the way.
+The one thing that stood in the way is worth writing down, because it was *read* rather
+than guessed at, and because it is the shape of every retype that puts caps in a
+service. `decodeUntypedInvocation` (kernel/src/object/untyped.c):
+
+    if (nodeDepth == 0) {
+        nodeCap = rootSlot->cap;                      /* the destination IS root */
+    } else {
+        lu_ret = lookupTargetSlot(rootCap, nodeIndex, nodeDepth);
+        if (lu_ret.status != EXCEPTION_NONE) {
+            userError("Untyped Retype: Invalid destination address.");
+
+So **`node_depth == 0` means "the destination CNode is the capability I passed as
+`root`"**, and `node_offset` is the slot inside it. A non-zero depth means something
+different: *look the destination up* inside that CNode, where the depth has to agree with
+its guard -- which is why director's `seL4_WordBits` idiom works for director's own CNode
+(the kernel's, 8192 slots, a 51-bit guard) and came back "Invalid destination address" for
+a service's (1024 slots, a 54-bit guard). The rule for a service retyping into its own
+CSpace is `depth = 0` and the CNode itself as the root.
