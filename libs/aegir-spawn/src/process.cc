@@ -190,7 +190,13 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     char const *why = nullptr;
 
     uint64_t elf_size = 0;
-    void const *image = initrd_.find(request.binary, request.binary_length, &elf_size);
+    void const *image = nullptr;
+    if (request.binary_image != nullptr && request.binary_image_bytes > 0) {
+        image = request.binary_image;
+        elf_size = request.binary_image_bytes;
+    } else {
+        image = initrd_.find(request.binary, request.binary_length, &elf_size);
+    }
     if (image == nullptr) {
         return fail("the manifest names a binary the initrd does not contain");
     }

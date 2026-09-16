@@ -136,6 +136,15 @@ struct Request {
     uint32_t name_length;
     char const *binary;
     uint32_t binary_length;
+    /* The binary's bytes directly, when the caller has them rather than an
+     * initrd to look the name up in: the whole initrd is 1.2 MiB and a copy
+     * per spawning service does not fit a service-sized delegation, so a
+     * service that starts one known helper hands over just that helper's
+     * image -- as bytes, because bytes are the one part of spawning that
+     * cannot be delegated as a capability (specs/services.md). Null means the
+     * name is looked up in the spawner's initrd, as before. */
+    void const *binary_image = nullptr;
+    uint64_t binary_image_bytes = 0;
     char const *account;
     uint32_t account_length;
     uint32_t priority;

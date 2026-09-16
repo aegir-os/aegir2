@@ -21,7 +21,10 @@
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/mem/allocator.h>
+#include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/spawn/initrd.h>
+#include <aegir/spawn/process.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -32,6 +35,7 @@ namespace {
  * spawned process's stack is two pages (specs/userland.md). */
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
+aegir::mem::Account g_account{"partmgr", 0, 0, 0};
 
 /* A block port arrives under the driver's instance name, and instance names of
  * block drivers begin this way (specs/services.md). */
@@ -39,6 +43,143 @@ bool name_is_block_port(char const *name, uint32_t length)
 {
     return length >= 4 && name[0] == 'b' && name[1] == 'l' && name[2] == 'k' &&
            name[3] == '.';
+}
+
+/* A copy set of a window's frames, minted from one of the granted groups into
+ * slots of our own, for one filesystem service to be mapped with. The group
+ * it comes from is never mapped by anyone, so the copies arrive with no ASID
+ * -- a frame's first mapping pins its ASID into the capability, and a set
+ * that stayed unmapped mints mappable copies for ever
+ * (kernel/src/arch/riscv/kernel/vspace.c:869-878). */
+seL4_CPtr mint_window_set(uint32_t first_grant, uint32_t pages) noexcept
+{
+    seL4_CPtr base = 0;
+    for (uint32_t p = 0; p < pages; ++p) {
+        uint64_t source = 0;
+        if (!aegir::bootstrap::device_capability(first_grant + p, nullptr, nullptr,
+                                                 &source)) {
+            return 0;
+        }
+        seL4_CPtr const slot = g_objects.alloc_slot();
+        if (slot == 0 ||
+            seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
+                            aegir::bootstrap::kCNodeBits,
+                            aegir::bootstrap::kSlotOwnCNode,
+                            static_cast<seL4_CPtr>(source), aegir::bootstrap::kCNodeBits,
+                            seL4_AllRights, 0) != seL4_NoError) {
+            return 0;
+        }
+        if (p == 0) {
+            base = slot;
+        }
+    }
+    return base;
+}
+
+/* Start the filesystem service for one partition: the caller half of the
+ * block port badged with who it is, the window mapped at spawn time by us,
+ * and the helper's image as bytes. Badges count from 512: our spawner's
+ * children are 256+n, and a spawning service's children live in a range of
+ * their own until the badge space is a designed thing (specs/services.md). */
+void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
+                      char const *device_name, uint32_t device_name_length,
+                      uint32_t partition, seL4_CPtr block_port, uint32_t children_grant,
+                      uint64_t window_physical, uint32_t window_pages,
+                      void const *fs_image, uint32_t fs_image_bytes,
+                      uint64_t badge) noexcept
+{
+    /* Its name: the driver's name for the device, the partition's index, and
+     * the kind of service -- fat.BD0Part0. Bounded by the name's own format:
+     * the device name is 8 by the block protocol, the index is a 32-bit
+     * number. */
+    char name[4 + 8 + 4 + 10];
+    uint32_t name_length = 0;
+    char const *kind = "fat.";
+    for (uint32_t i = 0; kind[i] != '\0'; ++i) {
+        name[name_length++] = kind[i];
+    }
+    for (uint32_t i = 0; i < device_name_length; ++i) {
+        name[name_length++] = device_name[i];
+    }
+    char const *part = "Part";
+    for (uint32_t i = 0; part[i] != '\0'; ++i) {
+        name[name_length++] = part[i];
+    }
+    char digits[10];
+    uint32_t digit_count = 0;
+    for (uint32_t n = partition;; n /= 10) {
+        digits[digit_count++] = static_cast<char>('0' + n % 10);
+        if (n < 10) {
+            break;
+        }
+    }
+    while (digit_count > 0) {
+        name[name_length++] = digits[--digit_count];
+    }
+
+    seL4_CPtr const window = mint_window_set(children_grant, window_pages);
+    aegir::mem::Account child_account{"fs", 0, 0, 0};
+    seL4_Error fault_error = seL4_NoError;
+    seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                                   child_account, &fault_error);
+    if (window == 0 || fault == 0) {
+        aegir::debug_write("      FAIL starting ");
+        aegir::debug_write(name, name_length);
+        aegir::debug_write(": no window set or fault endpoint\n");
+        return;
+    }
+
+    aegir::spawn::PortGrant const ports[] = {
+        {aegir::log::kPortName, aegir::log::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared, spawn_log, seL4_CapRights_new(1, 0, 0, 1),
+         badge, 0},
+        /* The block port, caller half, badged: the driver learns which
+         * filesystem is asking, which is what a range grant will one day
+         * clamp by (specs/services.md). */
+        {"blk", 3, aegir::bootstrap::kSlotFirstDeclared + 1, block_port,
+         seL4_CapRights_new(1, 0, 0, 1), badge, 0},
+    };
+    aegir::spawn::Request request{};
+    request.name = name;
+    request.name_length = name_length;
+    request.binary = name; /* unused: the image comes as bytes */
+    request.binary_length = name_length;
+    request.binary_image = fs_image;
+    request.binary_image_bytes = fs_image_bytes;
+    request.account = "system";
+    request.account_length = 6;
+    request.priority = seL4_MaxPrio - 1;
+    request.ports = ports;
+    request.port_count = 2;
+    request.window_frame = window;
+    request.window_bytes = window_pages * 4096u;
+    request.window_physical = window_physical;
+    request.fault_endpoint = fault;
+    request.badge = badge;
+
+    aegir::spawn::Process process{};
+    if (!spawner.spawn(request, child_account, process)) {
+        aegir::debug_write("      FAIL spawning ");
+        aegir::debug_write(name, name_length);
+        aegir::debug_write(": ");
+        aegir::debug_write(spawner.problem());
+        if (spawner.detail()[0] != '\0') {
+            aegir::debug_write(" (");
+            aegir::debug_write(spawner.detail());
+            aegir::debug_write(", seL4 error ");
+            aegir::debug_write_unsigned(spawner.error());
+            aegir::debug_write(")");
+        }
+        aegir::debug_write("\n");
+        return;
+    }
+    aegir::debug_write("      spawned ");
+    aegir::debug_write(name, name_length);
+    aegir::debug_write(", badge ");
+    aegir::debug_write_unsigned(badge);
+    aegir::debug_write("\n");
+    seL4_Word ready_badge = 0;
+    seL4_Wait(process.supervision, &ready_badge);
 }
 
 }  // namespace
@@ -127,10 +268,12 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    /* The windows arrive as frame capabilities grouped per port in the ports'
-     * own order, pages ascending -- the convention the device manager grants
-     * by, because a capability carries no name to pair by. */
-    if (port_count == 0 || grant_count == 0 || grant_count % port_count != 0) {
+    /* The windows arrive as frame capabilities in two groups per port -- ours
+     * to read through, and a set reserved for the filesystem services we
+     * start -- each group pages ascending, the ports in their own order. The
+     * convention is the device manager's, because a capability carries no
+     * name to pair by. */
+    if (port_count == 0 || grant_count == 0 || grant_count % (2 * port_count) != 0) {
         aegir::debug_write("      partition manager: ");
         aegir::debug_write_unsigned(port_count);
         aegir::debug_write(" block ports, ");
@@ -139,7 +282,35 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    uint32_t const pages_per_window = grant_count / port_count;
+    uint32_t const pages_per_window = grant_count / (2 * port_count);
+
+    /* What starting a filesystem service takes: the pool its address space id
+     * comes from, the delegatable log, and the helper's image as bytes -- the
+     * blob the device manager handed us, because the initrd whole does not
+     * fit a delegation this size (specs/services.md). */
+    uint64_t spawn_log_slot = 0;
+    uint64_t pool_slot = 0;
+    uint64_t fs_image_address = 0;
+    uint32_t fs_image_bytes = 0;
+    bool const can_spawn =
+        aegir::bootstrap::capability("spawn:log.main", 14, &spawn_log_slot) &&
+        aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
+        aegir::bootstrap::devices(&fs_image_address, &fs_image_bytes) &&
+        fs_image_bytes != 0;
+    if (!can_spawn) {
+        aegir::debug_write("      partition manager: no pool, delegatable log or "
+                           "filesystem image -- reading tables only\n");
+    }
+    /* Our own CNode at its own depth: a service's own-CNode cap is a raw copy
+     * with guard 0 and radix kCNodeBits, so mint sources address through it
+     * (aegir/bootstrap.h). No initrd: the image arrives as bytes. */
+    aegir::mem::Arena arena(g_objects, g_scratch, g_account);
+    aegir::spawn::Initrd const no_initrd(nullptr, 0);
+    aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, no_initrd,
+                                  static_cast<seL4_CPtr>(pool_slot),
+                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                  aegir::bootstrap::kCNodeBits);
+    uint32_t fs_started = 0;
 
     aegir::debug_write("      partition manager: ");
     aegir::debug_write_unsigned(port_count);
@@ -168,7 +339,8 @@ int main(int argc, char *argv[])
             uint64_t grant_physical = 0;
             uint32_t grant_bytes = 0;
             uint64_t grant_slot = 0;
-            uint32_t const grant = port_index * pages_per_window + p;
+            /* Our group of this port's frames is the first of the two. */
+            uint32_t const grant = port_index * 2 * pages_per_window + p;
             if (!aegir::bootstrap::device_capability(grant, &grant_physical, &grant_bytes,
                                                      &grant_slot)) {
                 mapped = false;
@@ -269,6 +441,25 @@ int main(int argc, char *argv[])
                             aegir::debug_write("\"");
                         }
                         aegir::debug_write("\n");
+                        /* The filesystem service the partition calls for,
+                         * with the caller half of this port and a window set
+                         * of its own. Its group of this port's frames is the
+                         * second of the two. */
+                        if (can_spawn) {
+                            uint32_t const children_grant =
+                                port_index * 2 * pages_per_window + pages_per_window;
+                            uint64_t window_physical = 0;
+                            static_cast<void>(aegir::bootstrap::device_capability(
+                                children_grant, &window_physical, nullptr, nullptr));
+                            start_filesystem(
+                                spawner, static_cast<seL4_CPtr>(spawn_log_slot),
+                                device_name, device_name_length, i,
+                                static_cast<seL4_CPtr>(entry.number), children_grant,
+                                window_physical, pages_per_window,
+                                reinterpret_cast<void const *>(fs_image_address),
+                                fs_image_bytes, 512u + fs_started);
+                            ++fs_started;
+                        }
                     }
                 }
             }
@@ -279,7 +470,7 @@ int main(int argc, char *argv[])
         for (uint32_t p = pages_per_window; p > 0; --p) {
             uint64_t grant_slot = 0;
             static_cast<void>(aegir::bootstrap::device_capability(
-                port_index * pages_per_window + p - 1, nullptr, nullptr, &grant_slot));
+                port_index * 2 * pages_per_window + p - 1, nullptr, nullptr, &grant_slot));
             g_scratch.unmap(static_cast<seL4_CPtr>(grant_slot));
         }
         ++port_index;

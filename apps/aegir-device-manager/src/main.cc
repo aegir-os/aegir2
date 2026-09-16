@@ -631,7 +631,12 @@ int main(int argc, char *argv[])
              * What it enumerates is what bound, and no more. */
             struct BoundPort {
                 seL4_CPtr port;
-                seL4_CPtr window; /* the pristine set: one frame cap per page */
+                seL4_CPtr window;   /* the pristine set: one frame cap per page */
+                seL4_CPtr children; /* a second pristine set, for the port's
+                                       clients to hand to *their* children:
+                                       nobody ever maps it, so mints from it
+                                       stay mappable (kernel/src/arch/riscv/
+                                       kernel/vspace.c:869-878) */
                 uint32_t window_pages;
                 uint64_t window_physical;
                 char const *name;
@@ -743,8 +748,9 @@ int main(int argc, char *argv[])
                     return base;
                 };
                 seL4_CPtr const window_client = mint_window_set();
+                seL4_CPtr const window_children = mint_window_set();
                 seL4_CPtr const window_smoke = mint_window_set();
-                if (window_client == 0 || window_smoke == 0) {
+                if (window_client == 0 || window_children == 0 || window_smoke == 0) {
                     write_line("FAIL", "the shared window's frames could not be copied");
                     continue;
                 }
@@ -913,8 +919,8 @@ int main(int argc, char *argv[])
                 g_scratch.unmap(window_smoke);
                 /* The binding is whole: port served, window checked. What the
                  * partition manager gets is this list. */
-                bound[bound_count] = BoundPort{block_port, window_client, window_pages,
-                                               window_physical, binding.name,
+                bound[bound_count] = BoundPort{block_port, window_client, window_children,
+                                               window_pages, window_physical, binding.name,
                                                binding.name_length};
                 ++bound_count;
             }
@@ -947,10 +953,12 @@ int main(int argc, char *argv[])
                                            partmgr_account, &fault_error);
                 uint32_t window_grant_count = 0;
                 for (uint32_t i = 0; i < bound_count; ++i) {
-                    window_grant_count += bound[i].window_pages;
+                    /* Two groups per port: the partition manager's own pages,
+                     * then the set reserved for the children it will start. */
+                    window_grant_count += 2 * bound[i].window_pages;
                 }
                 auto *ports = static_cast<aegir::spawn::PortGrant *>(
-                    arena.allocate(sizeof(aegir::spawn::PortGrant) * (3 + bound_count)));
+                    arena.allocate(sizeof(aegir::spawn::PortGrant) * (4 + bound_count)));
                 auto *frames = static_cast<aegir::spawn::DeviceGrant *>(arena.allocate(
                     sizeof(aegir::spawn::DeviceGrant) *
                     (window_grant_count != 0 ? window_grant_count : 1)));
@@ -970,28 +978,44 @@ int main(int argc, char *argv[])
                     ports[2] = {kPoolGrant, sizeof(kPoolGrant) - 1,
                                 aegir::bootstrap::kSlotFirstDeclared + 2,
                                 static_cast<seL4_CPtr>(pool_slot), seL4_AllRights, 0, 0};
+                    /* The delegatable log, for the filesystem services it
+                     * starts: its own log.main is badged with who it is, and a
+                     * badged endpoint cap cannot be minted again -- so the
+                     * unbadged copy travels down the same way it arrived
+                     * (specs/services.md). */
+                    static char const kSpawnLogGrant[] = "spawn:log.main";
+                    ports[3] = {kSpawnLogGrant, sizeof(kSpawnLogGrant) - 1,
+                                aegir::bootstrap::kSlotFirstDeclared + 3,
+                                static_cast<seL4_CPtr>(log_slot), seL4_AllRights, 0, 0};
                     /* Each block port arrives under the driver's instance name:
                      * the caller half, which is Write and GrantReply -- the
                      * kernel's own requirement of a capability that may be
                      * called (out/aegir/libsel4/include/interfaces/
                      * sel4_client.h:1202). The owner half stays here. */
                     for (uint32_t i = 0; i < bound_count; ++i) {
-                        ports[3 + i] = {bound[i].name, bound[i].name_length,
-                                        aegir::bootstrap::kSlotFirstDeclared + 3 + i,
+                        ports[4 + i] = {bound[i].name, bound[i].name_length,
+                                        aegir::bootstrap::kSlotFirstDeclared + 4 + i,
                                         bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
                                         0};
                     }
-                    /* The windows as frame capabilities, grouped per port in
-                     * the ports' own order, pages ascending -- minted from the
-                     * pristine set, so they arrive with no ASID and the child
-                     * may map them (kernel/src/arch/riscv/kernel/
-                     * vspace.c:869-878). */
+                    /* The windows as frame capabilities, two groups per port in
+                     * the ports' own order -- the manager's own pages, then the
+                     * set reserved for its children -- pages ascending within a
+                     * group. All minted from pristine sets, so they arrive with
+                     * no ASID and the child may map them (kernel/src/arch/
+                     * riscv/kernel/vspace.c:869-878). */
                     uint32_t at = 0;
                     for (uint32_t i = 0; i < bound_count; ++i) {
                         for (uint32_t p = 0; p < bound[i].window_pages; ++p) {
                             frames[at] = {bound[i].window_physical +
                                               static_cast<uint64_t>(p) * 4096,
                                           4096, bound[i].window + p};
+                            ++at;
+                        }
+                        for (uint32_t p = 0; p < bound[i].window_pages; ++p) {
+                            frames[at] = {bound[i].window_physical +
+                                              static_cast<uint64_t>(p) * 4096,
+                                          4096, bound[i].children + p};
                             ++at;
                         }
                     }
@@ -1004,8 +1028,21 @@ int main(int argc, char *argv[])
                     request.account_length = 6;
                     request.priority = seL4_MaxPrio - 1;
                     request.ports = ports;
-                    request.port_count = 3 + bound_count;
+                    request.port_count = 4 + bound_count;
                     request.give_vspace = true;
+                    /* The filesystem service's image, as bytes: the whole
+                     * initrd is 1.2 MiB and does not fit a service-sized
+                     * delegation, so what the manager starts is handed over
+                     * one helper at a time (specs/services.md). One
+                     * filesystem type exists today; the day a second does,
+                     * what a partition's type calls for is a descriptor, not
+                     * a recompile. */
+                    static char const kFsBinary[] = "aegir-fs-fat";
+                    uint64_t fs_binary_bytes = 0;
+                    void const *fs_binary =
+                        initrd.find(kFsBinary, sizeof(kFsBinary) - 1, &fs_binary_bytes);
+                    request.devices = fs_binary;
+                    request.devices_bytes = static_cast<uint32_t>(fs_binary_bytes);
                     request.untyped_physical = partmgr_physical;
                     request.untyped_bits = kPartmgrUntypedBits;
                     request.device_grants = frames;
