@@ -153,8 +153,8 @@ Two details worth knowing:
 The recommended environment for CI and release builds is a container derived
 from `seL4-CAmkES-L4v-dockerfiles` (pinned commit + `USE_DEBIAN_SNAPSHOT=yes`
 with a fixed `SNAPSHOT_DATE`, and a pinned `repo` instead of the unverified
-`wget` that the upstream image uses for it). That is also what reproduces the
-toolchain upstream tests against.
+`wget` that the upstream image uses for it). It is also the environment upstream
+tests seL4 in, which is the point of using it.
 
 It cannot be used in this development sandbox, for a reason worth recording so
 nobody re-litigates it:
@@ -170,21 +170,28 @@ built and tested somewhere real — not before, since untested build
 configuration is worse than none.
 
 Consequence: the *toolchain revision* is pinned by us rather than inherited
-from the upstream image, and the compiler is GCC 15.2 rather than the image's
-GCC 14.2. That is a wider gap from what upstream CI exercises, which is exactly
-what the `sel4test` acceptance run in M3 is there to catch.
+from the upstream image, and it is Debian's `riscv64-unknown-elf-gcc`
+14.2.0+19. Anything the image's own compiler carries — its patch level, its TLS
+configuration, the libraries it was linked against — is therefore not what we
+build with, which is exactly what the `sel4test` acceptance run in M3 is there
+to catch.
 
 ## Host prerequisites
 
 `git`, `make`, `python3`, `curl` or `wget`, plus a C toolchain for anything
 built from source. Everything else is fetched on demand:
 
+- Fetched and pinned by `make tools`: `cmake`, `ninja`, the RISC-V cross GCC,
+  and `device-tree-compiler` (`dtc`) — required, not optional, since the
+  platform flow calls it in both directions, and built from source because the
+  host has neither `dtc` nor a way to install one.
 - Provided by the host and used directly: `cpio`, `xxd`, `xmllint`, `flex`,
-  `bison`, `python3`, `make`, `git`, `repo`, `qemu-system-riscv64`.
-- Fetched and pinned by `make tools`: `cmake`, `ninja`, the RISC-V cross GCC.
-- Known gaps, to be resolved only if a build actually needs them:
-  `device-tree-compiler` (`dtc`), `patch`, `gperf`. Our own patch application
-  uses `git apply`, so `patch` is not required for that.
+  `bison`, `python3`, `make`, `git`, `repo`, `qemu-system-riscv64`. `repo` is
+  the launcher only; the tool code it downloads is pinned (see
+  `specs/third_party.md`).
+- Known gaps, to be resolved only if a build actually needs them: `patch`,
+  `gperf`. Our own patch application uses `git apply`, so `patch` is not
+  required for that.
 
 ## Commands
 
@@ -243,3 +250,54 @@ Every target is configured and booted through `scripts/run_target.py`, which
 streams the guest console and stops QEMU when the target's success marker
 appears (QEMU never exits on its own). `scripts/targets.py` holds the target
 list.
+
+## The root task, and what QEMU actually loads
+
+Three things make `apps/aegir-hello` the root task rather than an ordinary
+program:
+
+- Its `CMakeLists.txt` includes seL4's `rootserver` module and calls
+  `DeclareRootserver(aegir-hello)`. That sets the entry point to `_sel4_start`
+  (`-Wl,-u_sel4_start -Wl,-e_sel4_start`) and links the target with
+  `cmake-tool/helpers/tls_rootserver.lds` — the script that lays out a root
+  task's `.tdata`/`.tbss`, which is what `tp`-relative TLS needs.
+- It links `aegir-runtime`, `libsel4`, `sel4runtime` and musl's `libc.a`, and
+  no `libsel4muslcsys` at all (see `specs/userland.md`).
+- The ELF loader embeds it: `elfloader-tool/CMakeLists.txt` strips the kernel
+  and the root task and packs them into a CPIO archive (`MakeCPIO(...)`, symbol
+  `_archive_start`) inside the loader's own image. For this target the archive
+  holds exactly `kernel.elf`, `kernel.dtb` and `rootserver`, and the loader's
+  console reports finding it.
+
+The file QEMU is handed is **not** the ELF loader. On RISC-V the image flow
+(`cmake-tool/helpers/rootserver.cmake`, `UseRiscVOpenSBI`) objcopies the ELF
+loader to a flat binary and builds the vendored `tools/opensbi` with it as
+`FW_PAYLOAD_PATH`, so
+`images/aegir-hello-image-riscv-qemu-riscv-virt` is OpenSBI's `fw_payload.elf`
+with the loader as its payload. The simulate script passes `-bios none`: QEMU
+supplies no firmware, and the banner on the console is the pinned OpenSBI
+(v0.9, the revision the seL4 16.0.0 release manifest picks).
+
+A green boot, from `make run`:
+
+```text
+OpenSBI v0.9
+Firmware Base             : 0x80000000
+Firmware Size             : 100 KB
+ELF-loader started on (HART 0) (NODES 1)
+Looking for DTB in CPIO archive...found at 810204e8.
+Loaded DTB from 810204e8.
+ELF-loading image 'kernel' to 80200000
+ELF-loading image 'rootserver' to 80223000
+Enabling MMU and paging
+Jumping to kernel-image entry point...
+Booting all finished, dropped to user space
+Aegir: root task online
+  device kind (virtual): console
+  target: riscv64, hard-float lp64d
+  static constructors: ran
+  constexpr template max(4, 5): 5
+AEGIR_BOOT_OK
+```
+
+`AEGIR_BOOT_OK` is the `aegir` target's marker in `scripts/targets.py`.

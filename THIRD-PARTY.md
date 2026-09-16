@@ -3,7 +3,7 @@
 Aegir commits **no** third-party source. Every component below is fetched on
 demand at the revision pinned in [`manifests/aegir.xml`](manifests/aegir.xml)
 into a gitignored path, then patched (if we have any patches) by
-`scripts/apply-patches`. `make deps-check` re-verifies the pins.
+`scripts/apply_patches.py`. `make deps-check` re-verifies the pins.
 
 The revisions are the **seL4 16.0.0 release set**, taken verbatim from the
 upstream release manifest (`manifests/upstream-16.0.0.xml`, from

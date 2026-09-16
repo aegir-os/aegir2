@@ -111,6 +111,6 @@ This is engineering policy derived from the upstream licenses, not legal advice.
 
 ## Verification
 
-`make deps-check` (`scripts/check-pins`) fails if any vendored tree is missing,
+`make deps-check` (`scripts/check_pins.py`) fails if any vendored tree is missing,
 sits at a revision other than its pin, is dirty beyond the expected patches, or
 has lost its upstream license file.

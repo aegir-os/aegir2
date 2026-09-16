@@ -22,13 +22,19 @@ set(KernelRiscvExtD ON CACHE BOOL "RISC-V double-precision floating point")
 # toolchain on PATH (a Linux multilib one, say) silently become our compiler.
 set(CROSS_COMPILER_PREFIX "riscv64-unknown-elf-" CACHE STRING "Cross compiler prefix")
 
-# We run under QEMU, which supplies OpenSBI, so the elfloader image is what
-# QEMU loads.
+# Simulation build. The image QEMU is handed is not the bare ELF loader: the
+# RISC-V image flow builds the vendored OpenSBI with the loader as its payload
+# (see specs/build.md), and the simulate script runs QEMU with -bios none.
 set(SIMULATION ON CACHE BOOL "Build for simulation")
 
 # Development target: kernel debug syscalls (seL4_DebugPutChar, used by the
 # hello root task) and kernel assertions.
 set(KernelDebugBuild ON CACHE BOOL "Kernel debug build")
 
-# A root task needs room for the DTB, timer and interrupt capabilities.
+# Root CNode size, as 2^13 slots. The value follows upstream's sel4test
+# project, which sets 13 for its root task and notes that it is "large enough
+# for DTB, timer caps, etc" but "may need to be increased in the future"
+# (projects/sel4test/CMakeLists.txt). It is headroom, not a requirement: the
+# kernel's own default is 12, and this root task boots and reaches its marker
+# with 12 as well. Raise it when the root task's own capability use needs more.
 set(KernelRootCNodeSizeBits 13 CACHE INTERNAL "")

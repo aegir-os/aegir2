@@ -41,11 +41,22 @@ bookkeeping, not Aegir's API: Aegir's own interfaces are ours to define.
 
 ## Open items
 
-To be confirmed when the first Aegir root task is linked (M4):
+Resolved, or re-framed, by the first root task (M4):
 
-- The exact handler-installation API of `libsel4muslcsys`.
-- Whether a `sel4runtime`-only binary (no `muslc`) builds cleanly with the
-  standard cmake-tool flow — relevant if some servers should avoid libc.
-- C++ standard library posture: freestanding C++ (see `specs/build.md`) means no
-  `std::` containers or iostreams until we deliberately vendor a standard
-  library.
+- **`libsel4muslcsys` is not linked.** `apps/aegir-hello` links
+  `aegir-runtime`, `libsel4`, `sel4runtime` and musl's `libc.a` with no syscall
+  shim, and runs. Nothing it does needs one: the only output path it uses is
+  `seL4_DebugPutChar`, a libsel4 inline wrapper for a kernel console syscall
+  (`kernel/libsel4/arch_include/riscv/sel4/arch/syscalls.h`). So the point above
+  cuts both ways: musl really is linked without any of the POSIX-shaped surface
+  being reachable, and the shim's handler-installation API is still
+  unexercised. The first service that wants musl's stdio, heap or file
+  functions is what will settle it.
+- **A `sel4runtime`-only binary (no `muslc`) has not been tried.** Nothing in
+  the current build needs one, and
+  `musllibc_set_environment_flags()` is applied globally by the cmake-tool, so
+  whether a target can opt out cleanly is still open.
+- **C++ standard library posture is not an open question**: freestanding C++
+  (see `specs/build.md`) means no `std::` containers and no iostreams until we
+  deliberately vendor a standard library. Recorded as a posture, not as
+  something to find out.

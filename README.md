@@ -46,8 +46,11 @@ make test        # build + boot the seL4 test suite (kernel acceptance test)
 build is offline. Every step is pinned: revisions in `manifests/`, tool versions
 by version and hash, and nothing is installed outside the repository.
 
-Host prerequisites and the toolchain story are in `specs/build.md`. Everything
-is built inside a pinned container image so the host stays untouched.
+Host prerequisites and the toolchain story are in `specs/build.md`. The
+environment is workspace-local and pinned: nothing is installed system-wide and
+no root is required. A container derived from seL4's CI image is the intended
+environment for CI and release builds, but it cannot be used in this
+development sandbox — see `specs/build.md`.
 
 ## License
 
