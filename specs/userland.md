@@ -185,9 +185,22 @@ not to document it again.
    and the kernel said why -- `Attempted to invoke a null cap #277`, so a slot the library
    had just retyped a frame into was empty when the caller looked at it. The library
    guarantees its frames are `pages` consecutive capabilities starting at `*first_out`; the
-   next attempt should print the slot numbers it hands out and the ones it retypes into,
-   which is the same measurement the window work needed, and now has a kernel message
-   pointing at it.
+   next attempt should print the slot numbers it hands out and the ones it retypes into.
+
+   **The measurement was taken, and its two numbers disagree.** The survey printed the
+   window's first capability and, when a page would not map, the slot it asked for:
+
+       device window: 9 pages from cap 262
+       FAIL the transport could not be mapped: cap 277 of 269 + 8
+
+   `*frame_out` reads **262** at one statement and **269** at the next, seven apart --
+   exactly the page index, and the kernel's `null cap #277` from the attempt before fits
+   `269 + 8`. So the caller is not reading a stable value, which is the same class of
+   mistake as deriving a slot by arithmetic: something between those two statements
+   changes it, and the *only* candidate in the survey is the library call itself being
+   reached more than once. The next probe is a print *inside* the loop rather than above
+   it -- of the slot and of `*frame_out` as they are used -- because a print above a loop
+   has now twice told a different story from the loop underneath it.
 3. `ChildVSpace` gaining a map-and-share call -- the `CNode_Copy` in `main.cc` goes away.
 4. `Spawner` over delegated authority -- the pieces exist (`adopt_untyped`, `adopt_slots`,
    `Allocator::make_asid_pool`); what is missing is a `Spawner` constructor that takes
