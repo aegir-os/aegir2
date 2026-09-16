@@ -23,6 +23,11 @@ namespace aegir {
 /** Write a NUL-terminated string to the kernel debug console. */
 void debug_write(char const *text) noexcept;
 
+/** Write `length` bytes to the kernel debug console: a view into a file is not
+ *  NUL-terminated at its end, and treating it as if it were prints whatever
+ *  the file holds next. */
+void debug_write(char const *text, uint32_t length) noexcept;
+
 /** Write an unsigned decimal number to the kernel debug console. */
 void debug_write_unsigned(uint64_t value) noexcept;
 

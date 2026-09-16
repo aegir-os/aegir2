@@ -21,6 +21,7 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/descriptor.h>
 #include <aegir/devtree.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
@@ -78,12 +79,12 @@ public:
 
 /** A driver the registry knows: which compatible string -- and, on a virtio
  *  transport, which probed device id -- it handles, what it starts from, and
- *  what its instances are called. The registry is the code's knowledge of
- *  drivers; which of them the machine actually has is the tree's to say, and
- *  the table is deliberately small: adding a driver is adding a row, not a
- *  code path (specs/services.md). */
+ *  what its instances are called. The registry is *data*: it is parsed from a
+ *  file the initrd carries (manifests/drivers.registry), so adding a driver is
+ *  adding a row, not a code change (specs/services.md). The pointers are views
+ *  into that text, which is mapped for this service's lifetime. */
 struct DriverRow {
-    char const *compatible; /* the tree's name for the transport */
+    char const *compatible;
     uint32_t compatible_length;
     uint32_t virtio_id; /* 0: the compatible alone decides; else the registers must say this */
     char const *name_prefix; /* instances are prefix.busN: "blk" + "virtio" -> blk.virtio0 */
@@ -93,10 +94,7 @@ struct DriverRow {
     char const *binary;
     uint32_t binary_length;
     uint32_t memory_bits; /* the virtqueue it lays out */
-};
-
-DriverRow const kRegistry[] = {
-    {"virtio,mmio", 11, 2u, "blk", 3, "virtio", 6, "aegir-virtio-blk", 16, 13u},
+    uint32_t window_bits; /* the shared window its port serves through */
 };
 
 /** One cell of the map: a device the tree describes that a registry row claims,
@@ -136,12 +134,12 @@ public:
         if (!device.has_region) {
             return true;
         }
-        for (uint32_t r = 0; r < sizeof(kRegistry) / sizeof(kRegistry[0]); ++r) {
-            if (!compatible_is(device, kRegistry[r])) {
+        for (uint32_t r = 0; r < row_count; ++r) {
+            if (!compatible_is(device, rows[r])) {
                 continue;
             }
             if (fill != nullptr && count < capacity) {
-                fill[count] = Binding{&kRegistry[r], device.base, 0,
+                fill[count] = Binding{&rows[r], device.base, 0,
                                       device.has_interrupt ? device.interrupt : 0, 0,
                                       nullptr, 0};
             }
@@ -151,6 +149,8 @@ public:
         return true;
     }
 
+    DriverRow const *rows = nullptr;
+    uint32_t row_count = 0;
     Binding *fill = nullptr;
     uint32_t capacity = 0;
     uint32_t count = 0;
@@ -405,9 +405,81 @@ int main(int argc, char *argv[])
                                           static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                           aegir::bootstrap::kCNodeBits);
 
+            /* The registry, parsed from the file the initrd carries: the map is
+             * the join of the tree with *this* table, and the table is data, so
+             * adding a driver is adding a row to a file (specs/services.md). Two
+             * passes over the text -- count, then fill -- so the rows array is
+             * exactly the file's size. The archive's name for a file is its
+             * basename (apps/aegir-director/CMakeLists.txt), so the registry is
+             * "drivers.registry" here. */
+            uint64_t registry_bytes = 0;
+            void const *registry_text = initrd.find("drivers.registry", 16, &registry_bytes);
+            DriverRow *rows = nullptr;
+            uint32_t row_count = 0;
+            if (registry_text == nullptr) {
+                write_line("FAIL", "the initrd carries no driver registry");
+            } else {
+                aegir::descriptor::Reader counting(registry_text, registry_bytes);
+                while (counting.next_row()) {
+                    ++row_count;
+                }
+                rows = static_cast<DriverRow *>(
+                    arena.allocate(sizeof(DriverRow) * (row_count != 0 ? row_count : 1)));
+                if (rows == nullptr) {
+                    write_line("FAIL", "no room for the driver registry");
+                    row_count = 0;
+                } else {
+                    uint32_t parsed = 0;
+                    aegir::descriptor::Reader reader(registry_text, registry_bytes);
+                    while (parsed < row_count && reader.next_row()) {
+                        DriverRow row{};
+                        bool fields_ok = true;
+                        aegir::descriptor::Field field;
+                        while (reader.next_field(field)) {
+                            if (aegir::descriptor::key_is(field, "compatible")) {
+                                row.compatible = field.value;
+                                row.compatible_length = field.value_length;
+                            } else if (aegir::descriptor::key_is(field, "id")) {
+                                row.virtio_id = static_cast<uint32_t>(
+                                    aegir::descriptor::number(field, &fields_ok));
+                            } else if (aegir::descriptor::key_is(field, "prefix")) {
+                                row.name_prefix = field.value;
+                                row.name_prefix_length = field.value_length;
+                            } else if (aegir::descriptor::key_is(field, "bus")) {
+                                row.bus = field.value;
+                                row.bus_length = field.value_length;
+                            } else if (aegir::descriptor::key_is(field, "binary")) {
+                                row.binary = field.value;
+                                row.binary_length = field.value_length;
+                            } else if (aegir::descriptor::key_is(field, "memory")) {
+                                row.memory_bits = static_cast<uint32_t>(
+                                    aegir::descriptor::number(field, &fields_ok));
+                            } else if (aegir::descriptor::key_is(field, "window")) {
+                                row.window_bits = static_cast<uint32_t>(
+                                    aegir::descriptor::number(field, &fields_ok));
+                            }
+                        }
+                        if (!fields_ok || row.compatible == nullptr || row.binary == nullptr ||
+                            row.name_prefix == nullptr || row.bus == nullptr ||
+                            row.memory_bits == 0 || row.window_bits == 0) {
+                            write_line("FAIL", "a row of the driver registry is not complete");
+                            continue;
+                        }
+                        rows[parsed++] = row;
+                    }
+                    row_count = parsed;
+                    aegir::debug_write("      registry: ");
+                    aegir::debug_write_unsigned(row_count);
+                    aegir::debug_write(row_count == 1 ? " driver, from the file\n"
+                                                      : " drivers, from the file\n");
+                }
+            }
+
             /* The candidate cells: every tree device a registry row claims.
              * Count, then fill, so the array is exactly the tree's size. */
             MapBuilder counter;
+            counter.rows = rows;
+            counter.row_count = row_count;
             static_cast<void>(tree.walk(counter));
             Binding *bindings = nullptr;
             uint32_t binding_count = 0;
@@ -418,6 +490,8 @@ int main(int argc, char *argv[])
                     write_line("FAIL", "no room for the device map");
                 } else {
                     MapBuilder filler;
+                    filler.rows = rows;
+                    filler.row_count = row_count;
                     filler.fill = bindings;
                     filler.capacity = counter.count;
                     static_cast<void>(tree.walk(filler));
@@ -447,7 +521,7 @@ int main(int argc, char *argv[])
                 }
                 if (binding.frame == 0) {
                     aegir::debug_write("      map: ");
-                    aegir::debug_write(binding.row->compatible);
+                    aegir::debug_write(binding.row->compatible, binding.row->compatible_length);
                     aegir::debug_write(" at ");
                     aegir::debug_write_hex(binding.base);
                     aegir::debug_write(": the tree describes it, but no frame was granted for it\n");
@@ -520,9 +594,9 @@ int main(int argc, char *argv[])
                 binding.name_length = name_bytes;
 
                 aegir::debug_write("      map: ");
-                aegir::debug_write(named);
+                aegir::debug_write(named, name_bytes);
                 aegir::debug_write(": ");
-                aegir::debug_write(row->compatible);
+                aegir::debug_write(row->compatible, row->compatible_length);
                 aegir::debug_write(" at ");
                 aegir::debug_write_hex(binding.base);
                 if (binding.irq != 0) {
@@ -530,7 +604,7 @@ int main(int argc, char *argv[])
                     aegir::debug_write_unsigned(binding.irq);
                 }
                 aegir::debug_write(" -> ");
-                aegir::debug_write(row->binary);
+                aegir::debug_write(row->binary, row->binary_length);
                 aegir::debug_write(", frame cap ");
                 aegir::debug_write_unsigned(binding.frame);
                 aegir::debug_write("\n");
@@ -644,7 +718,7 @@ int main(int argc, char *argv[])
                 aegir::spawn::Process process{};
                 if (!spawner.spawn(request, child_account, process)) {
                     aegir::debug_write("      FAIL spawning ");
-                    aegir::debug_write(binding.name);
+                    aegir::debug_write(binding.name, binding.name_length);
                     aegir::debug_write(": ");
                     aegir::debug_write(spawner.problem());
                     if (spawner.detail()[0] != '\0') {
@@ -658,9 +732,9 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 aegir::debug_write("      spawned ");
-                aegir::debug_write(binding.name);
+                aegir::debug_write(binding.name, binding.name_length);
                 aegir::debug_write(" for ");
-                aegir::debug_write(driver->compatible);
+                aegir::debug_write(driver->compatible, driver->compatible_length);
                 aegir::debug_write(" at ");
                 aegir::debug_write_hex(binding.base);
                 aegir::debug_write(", badge ");

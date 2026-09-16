@@ -17,6 +17,7 @@ project(aegir-director CXX)
 # check belongs here, where the collision would be created.
 set(aegir_initrd_files
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/services.manifest"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/drivers.registry"
     "$<TARGET_FILE:aegir-hello>"
     "$<TARGET_FILE:aegir-logger>"
     "$<TARGET_FILE:aegir-device-manager>"
@@ -26,6 +27,7 @@ set(aegir_initrd_files
 )
 set(aegir_initrd_names
     "services.manifest"
+    "drivers.registry"
     "aegir-hello"
     "aegir-logger"
     "aegir-device-manager"

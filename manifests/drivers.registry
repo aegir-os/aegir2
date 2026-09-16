@@ -1,0 +1,14 @@
+# The driver registry: which driver handles which kind of device, as *data*
+# (specs/services.md). Adding a driver is adding a row here and a binary to the
+# image -- not a code change -- and the day the same file comes from a Devs:
+# volume instead of the initrd, only its source changes.
+#
+# One row per driver, key=value fields:
+#   compatible  the device tree's name for the transport
+#   id          the virtio device id the registers must answer (0: the
+#               compatible string alone decides)
+#   prefix,bus  instance names are prefix.busN: blk + virtio -> blk.virtio0
+#   binary      the initrd entry the driver starts from
+#   memory      the driver's virtqueue memory, in bits (2^n bytes)
+#   window      the shared window its port serves through, in bits
+compatible=virtio,mmio id=2 prefix=blk bus=virtio binary=aegir-virtio-blk memory=13 window=16

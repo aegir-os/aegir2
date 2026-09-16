@@ -18,6 +18,13 @@ void debug_write(char const *text) noexcept
     }
 }
 
+void debug_write(char const *text, uint32_t length) noexcept
+{
+    for (uint32_t i = 0; i < length; ++i) {
+        seL4_DebugPutChar(text[i]);
+    }
+}
+
 void debug_write_unsigned(uint64_t value) noexcept
 {
     char digits[20];
