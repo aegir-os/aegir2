@@ -264,6 +264,13 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
             }
             uint32_t const magic = registers[0x00 / 4];
             uint32_t const device_id = registers[0x08 / 4];
+            /* Unmapped as soon as it has been read. A frame capability that has been
+             * mapped stays mapped, and `RISCVPageUnmap` clears the address space on the
+             * capability it is invoked on and no other
+             * (kernel/src/arch/riscv/kernel/vspace.c, `performPageInvocationUnmap`), so
+             * leaving these mapped is how a frame ends up still belonging to an address
+             * space when it is handed to a service (specs/services.md). */
+            scratch.unmap(slot);
             if (device_id == 0) {
                 continue;
             }
@@ -760,11 +767,12 @@ int main(int argc, char *argv[])
          * the very failure it is testing for. */
         seL4_CPtr device_grant = 0;
         if (device_frame != 0) {
-            scratch.unmap(device_frame);
             device_grant = allocator.alloc_slot();
             if (device_grant == 0) {
                 problem("no slot for the device manager's device");
             } else {
+                /* No unmap here: the survey leaves the frame unmapped, which is the
+                 * only state a capability can be handed to another address space in. */
                 seL4_Error const copied =
                     seL4_CNode_Copy(seL4_CapInitThreadCNode, device_grant, seL4_WordBits,
                                     seL4_CapInitThreadCNode, device_frame, seL4_WordBits,
@@ -785,6 +793,11 @@ int main(int argc, char *argv[])
                 }
             }
         }
+        /* Still refused at the same place, with every mapping in this path unmapped
+         * before handover, so the next experiment is to remove the probe as well: hand
+         * the survey's frame over with nothing having mapped it after the survey read
+         * it. If that is refused too, the address space the frame belongs to is being
+         * set somewhere outside this path (specs/services.md). */
         static_cast<void>(device_grant);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,

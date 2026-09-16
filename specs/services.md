@@ -510,14 +510,20 @@ and saying which half exists is the point of writing it down:
   child's map is what refuses -- which does *not* mean the child's VSpace is broken,
   because every RAM frame maps into it.
 
-  Next, in order: read `performPageInvocationUnmap`
-  (kernel/src/arch/riscv/kernel/vspace.c, the body of `RISCVPageUnmap`) and establish
-  what it clears -- the invoked capability's ASID, or the object's -- and whether it
-  refuses when more than one capability to the object exists, the way `PageTableUnmap`
-  does ("cannot unmap if more than once cap exists", vspace.c:688). We hold *two*
-  capabilities to this frame by then: the survey's, and the copy made for the child.
-  That is the specific thing to check, and the kernel's console line names the branch
-  to confirm it against.
+  What `performPageInvocationUnmap` does is now known
+  (kernel/src/arch/riscv/kernel/vspace.c): it clears `capFMappedASID` **on the
+  capability the unmap is invoked on**, and unmaps the page-table entry only when that
+  capability says it is mapped. It does *not* clear other capabilities to the same
+  object, and it does not refuse when there is more than one.
+
+  With that known, the survey now unmaps each page as soon as it has read it, so
+  nothing in this path leaves a mapping behind -- and the child's map is *still*
+  refused at vspace.c:871, which means the frame's `capFMappedASID` is director's ASID
+  at handover anyway. The next experiment is the smallest one left: remove the probe as
+  well and hand the survey's frame over with nothing having mapped it since the survey
+  read it. If that is refused too, the frame's address space is being set somewhere
+  outside this path, and the thing to look at is what else touches that frame -- the
+  retype itself, or the copy -- rather than the mappings.
 
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
