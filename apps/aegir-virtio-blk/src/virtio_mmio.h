@@ -53,6 +53,24 @@ enum Offset : uint32_t {
     kConfig = 0x100,             /* device-specific, from here to the end of the page */
 };
 
+/* The *legacy* interface's queue registers, which are not the modern ones above: a transport
+ * at version 1 has no QueueDescLow/QueueDriverLow/QueueDeviceLow and describes its queue with
+ * a page-aligned base instead (virtio 1.x, 4.2.2: the legacy interface). Only the offsets
+ * that differ are here -- QueueNotify, InterruptStatus, InterruptACK and Status are at the
+ * same offsets in both, which is why the handshake above works on either.
+ *
+ * These were measured before being relied on: `kLegacyQueueNumMax` reads the device's queue
+ * size and `kLegacyQueueAlign` the alignment it wants, so an offset that is wrong says so
+ * instead of quietly building a queue in the wrong place. */
+enum LegacyOffset : uint32_t {
+    kLegacyGuestPageSize = 0x028, /* the page size the driver is using; written before PFN */
+    kLegacyQueueSel = 0x02c,
+    kLegacyQueueNumMax = 0x030,   /* the queue's size, 0 if this selector does not exist */
+    kLegacyQueueNum = 0x034,
+    kLegacyQueueAlign = 0x03c,    /* the alignment the queue's memory must have */
+    kLegacyQueuePfn = 0x040,      /* the queue's base, in pages of GuestPageSize */
+};
+
 /* Device status bits. Set by writing the whole value, not by setting one bit: the device
  * reads the register and acts on the change (virtio 1.x, 2.1). */
 enum Status : uint32_t {
@@ -63,8 +81,7 @@ enum Status : uint32_t {
     kStatusFailed = 128,         /* something went wrong; the device is not usable */
 };
 
-/* Device ids, as the bus numbers them. 1, 2 and 3 are in
- * projects/sel4_projects_libs/libsel4vmmplatsupport/include/sel4vmmplatsupport/drivers/virtio.h;
+/* Device ids, as the bus numbers them. 1, 2 and 3 are in * projects/sel4_projects_libs/libsel4vmmplatsupport/include/sel4vmmplatsupport/drivers/virtio.h;
  * 4 is the entropy device, which is what QEMU's virtio-rng-device reports and what
  * director's survey measured on this machine. */
 enum DeviceId : uint32_t {
@@ -77,24 +94,24 @@ enum DeviceId : uint32_t {
 /** The magic every virtio transport answers with, little-endian, at offset 0. */
 constexpr uint32_t kMagic = 0x74726976u;
 
-/** A transport's registers, as the volatile words they are. Members correspond to Offset;
- *  the class is just the arithmetic, so that `registers.status()` reads offset 0x070. */
+/** The register offsets an enum names are the ABI; the accessors take a plain offset so that
+ *  the modern and legacy sets are both usable without pretending they are one type. */
 class Registers {
 public:
     explicit Registers(uintptr_t base) noexcept : base_(base) {}
 
-    uint32_t read(Offset offset) const noexcept {
-        return *reinterpret_cast<volatile uint32_t *>(base_ + static_cast<uint32_t>(offset));
+    uint32_t read(uint32_t offset) const noexcept {
+        return *reinterpret_cast<volatile uint32_t *>(base_ + offset);
     }
 
-    void write(Offset offset, uint32_t value) const noexcept {
-        *reinterpret_cast<volatile uint32_t *>(base_ + static_cast<uint32_t>(offset)) = value;
+    void write(uint32_t offset, uint32_t value) const noexcept {
+        *reinterpret_cast<volatile uint32_t *>(base_ + offset) = value;
     }
 
     /** The 64-bit config fields are two 32-bit reads, low half first (virtio 1.x, 4.2.4). */
-    uint64_t read64(Offset offset) const noexcept {
+    uint64_t read64(uint32_t offset) const noexcept {
         uint64_t const low = read(offset);
-        uint64_t const high = read(static_cast<Offset>(static_cast<uint32_t>(offset) + 4));
+        uint64_t const high = read(offset + 4);
         return low | (high << 32);
     }
 
