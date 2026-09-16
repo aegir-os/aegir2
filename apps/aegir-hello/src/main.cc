@@ -236,6 +236,9 @@ int main(int argc, char *argv[])
     }
     aegir::debug_write("AEGIR_CLIENT_OK\n");
 
-    // A process has nothing to return to.
+    /* Nothing here dies on purpose. A deliberate fault was the way to walk
+     * supervision at boot, and it stopped being useful when it became clear the
+     * question was elsewhere: a plain send to the fault endpoint is received by
+     * the supervisor, and a fault is not. See specs/director.md. */
     aegir::halt();
 }

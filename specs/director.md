@@ -296,3 +296,37 @@ also keeps the M4 evidence alive in the tree.
   for itself, and when is the rest handed out? Proposal: everything not needed by
   a manifest entry is custodied by director until an account asks, so that
   "free memory" and "unassigned memory" are the same thing.
+
+
+### Where supervision stands (open)
+
+Two facts from the boot, one of them the thing that was wrong for three attempts:
+
+- **A thread this process starts itself has no thread pointer and no global
+  pointer.** A process gets both from its crt: sel4runtime builds the TLS block
+  from PT_TLS and sets `tp`, and the entry code computes `gp` from
+  `__global_pointer$`. A thread started the way the supervisor is gets neither,
+  and the failure is not where you would look for it: libsel4 finds the IPC
+  buffer through the TLS variable `__sel4_ipc_buffer`
+  (kernel/libsel4/include/sel4/functions.h:13), so with `tp` zero the thread's
+  **first syscall** faults. The supervisor is given a TLS block of its own at the
+  top of its stack, its own IPC buffer pointer written into that copy
+  (`seL4_TCB_SetTLSBase`), the making thread's `gp`, and a stack pointer starting
+  *below* the TLS block -- which is what upstream does for threads
+  (projects/seL4_libs/libsel4utils/src/thread.c:169-177). Verified: the supervisor
+  reports that it is listening.
+- **A fault does not reach the supervisor, although a send does.** A child's
+  `seL4_Send` to the fault endpoint is received (a blocking send only completes
+  when a receiver takes it), so the endpoint, the minted copy in the child's
+  CSpace, the capability the supervisor waits on (director's slot 201), and the
+  supervisor's `Recv` are all working. The same child storing to an unmapped
+  address does *not* produce a message there, and after receiving the send the
+  supervisor printed nothing more. Next probe, in order: a bare
+  `seL4_DebugPutChar` immediately after `Recv` returns, which separates "Recv
+  returned" from "the print path still works" without a function call or a string
+  literal in between; then the fault's own delivery, with the faulting thread's
+  capability badge checked against `faulthandler.c:41`.
+
+Until the second is closed, nothing may die on purpose at boot: the boot thread
+waits for a readiness signal that a dead child never sends, so a deliberate fault
+hangs the boot rather than reporting.

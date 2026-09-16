@@ -80,3 +80,25 @@ The rule this suggests for our own code: our headers are C++ and carry their own
 linkage; a third-party C header is checked before it is included, not after the
 link fails. It is also an argument for Aegir's own interfaces being ours
 (`specs/director.md`) rather than re-exports of somebody else's.
+
+
+## Threads inside a process (found in M6c)
+
+A thread started by hand in an existing address space needs three things a process
+gets for free, and the symptoms of missing them point somewhere else entirely:
+
+- **A thread pointer (`tp`).** libsel4 reaches the IPC buffer through the TLS
+  variable `__sel4_ipc_buffer` (kernel/libsel4/include/sel4/functions.h:13), so a
+  thread with `tp = 0` faults on its first syscall -- including the first
+  `seL4_DebugPutChar`, which looks like "the thread never ran". Give it a TLS
+  block of its own (the process's image copied in, plus *its* IPC buffer pointer)
+  and set the base with `seL4_TCB_SetTLSBase`; upstream's thread setup is the
+  reference (projects/seL4_libs/libsel4utils/src/thread.c:169-177).
+- **A global pointer (`gp`).** The crt computes it from `__global_pointer$`.
+- **A stack that does not overlap the TLS block**: the block sits at the top of the
+  thread's stack pages and the stack pointer starts below it.
+
+sel4runtime's helpers are not usable from C++ (its header is C-only, and
+`sel4runtime_set_tls_variable` is a macro using `typeof`), so director declares the
+two functions it needs and writes the IPC buffer pointer with
+`__sel4runtime_write_tls_variable`.
