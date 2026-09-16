@@ -201,6 +201,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     Entry *current = nullptr;
     bool authority_seen = false;
     bool device_manager_seen = false;
+    bool device_id_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
 
@@ -238,7 +239,13 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             current->name = name;
             current->line = number;
             current->authority = Authority::System;
+            /* The seen-flags are per *section*, not per file: every field a section may
+             * declare is checked against the section that declared it (and `authority`
+             * has been reset here since it was written). Leaving one out means a second
+             * section cannot declare it at all, which is what `device_manager` did. */
             authority_seen = false;
+            device_manager_seen = false;
+            device_id_seen = false;
             return true;
         }
 
@@ -306,6 +313,34 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             failure_line = number;
             failure = "device_manager is either `true` or `false`";
             return false;
+        }
+
+        if (equals(key, "device_id")) {
+            if (device_id_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            device_id_seen = true;
+            /* A small decimal number, which is all a device id is. Read here rather
+             * than in a table because the only thing that gives it meaning is the
+             * bus, and the bus is not in this file. */
+            uint32_t value_number = 0;
+            if (value.length == 0 || value.length > 3) {
+                failure_line = number;
+                failure = "device_id is a small decimal number, or 0 for none";
+                return false;
+            }
+            for (uint32_t d = 0; d < value.length; ++d) {
+                if (value.data[d] < '0' || value.data[d] > '9') {
+                    failure_line = number;
+                    failure = "device_id is a small decimal number, or 0 for none";
+                    return false;
+                }
+                value_number = value_number * 10 + static_cast<uint32_t>(value.data[d] - '0');
+            }
+            current->device_id = value_number;
+            return true;
         }
 
         if (equals(key, "authority")) {

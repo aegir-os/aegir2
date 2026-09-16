@@ -56,6 +56,11 @@ struct Entry {
      * says so here, because that is where composition is declared
      * (specs/services.md). */
     bool device_manager;
+    /* Which device this service is for, as the bus names it -- a virtio device id
+     * (VIRTIO_ID_BLOCK is 2, VIRTIO_ID_NET is 1; projects/sel4_projects_libs
+     * /libsel4vmmplatsupport/include/.../drivers/virtio.h). Zero means none: the
+     * service is not about a device. */
+    uint32_t device_id;
     uint32_t line; /* the line the section started on, for messages */
 };
 
