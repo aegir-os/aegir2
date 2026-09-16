@@ -562,11 +562,23 @@ and saying which half exists is the point of writing it down:
     and the transports begin one page later, so a service handed the whole window must
     find its devices by *offset from the base* -- reading offset `0x08` of the first page
     faults (there is nothing there, which the survey already knew).
-  - **not yet explained**: with the window handed over, the supervisor reports
-    `service 0 faulted (kind 35)` -- badge 0, which is director's own voice rather than a
-    child's, and a kind that is not a fault type. Something sent the shared fault endpoint
-    a message it could not have made itself, and the first candidate is the device manager
-    reading a page that is not a transport. That is where the next attempt starts.
+  - **what the supervisor actually receives, measured**: with the window handed over, a
+    temporary print in the supervisor says
+
+        supervisor: message badge 0, label 35, length 3
+
+    which settles what the previous round could only guess at. This is **not a fault**: it
+    is an *invocation* (a label and a length, and `seL4_MessageInfo_get_length` = 3 means
+    it carried arguments), delivered to the shared fault endpoint with no badge. Badge 0
+    is not a child -- a child's caps are badged with its own id -- so something invoked
+    that endpoint, and the only thing that should ever *send* to it is the kernel
+    delivering a fault. The suspect is therefore the capability that is being handed over:
+    the window change assumes the frame capabilities the survey took are consecutive, so
+    page `i` is `device_frame + i`, and if that arithmetic ever reaches a slot holding
+    something else -- an endpoint, say -- the kernel is handed a page-map invocation it
+    cannot make sense of. That is where the next attempt starts, and the first thing it
+    should do is print the *slot numbers* it maps, because they should all be 4 KiB frame
+    capabilities and the list will show the one that is not.
 - **next**: the bus -> device -> service map inside the device manager, and- **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
