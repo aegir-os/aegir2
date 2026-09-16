@@ -125,8 +125,12 @@ struct Process {
 
 class Spawner {
 public:
+    /** A spawner over the authority it was given: the allocator holding its
+     *  memory, the window it fills frames through, and the ASID pool its
+     *  children's address spaces come from -- director's own initial pool, or
+     *  the one a service was delegated for exactly this (specs/authority.md). */
     Spawner(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
-            Initrd const &initrd) noexcept;
+            Initrd const &initrd, seL4_CPtr asid_pool) noexcept;
 
     /** Create, load and start the process a manifest entry describes. */
     bool spawn(Request const &request, mem::Account &account, Process &process) noexcept;
@@ -148,6 +152,7 @@ private:
     mem::Scratch &scratch_;
     mem::Arena &arena_;
     Initrd const &initrd_;
+    seL4_CPtr asid_pool_;
     char const *problem_;
 };
 

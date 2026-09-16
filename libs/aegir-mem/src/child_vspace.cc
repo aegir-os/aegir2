@@ -23,7 +23,7 @@ ChildVSpace::ChildVSpace(Allocator &allocator, Scratch &scratch) noexcept
 {
 }
 
-bool ChildVSpace::create(Account &account) noexcept
+bool ChildVSpace::create(seL4_CPtr pool, Account &account) noexcept
 {
     seL4_Error error = seL4_NoError;
     /* The root of a RISC-V VSpace is a page table, and the kernel is content to
@@ -35,10 +35,10 @@ bool ChildVSpace::create(Account &account) noexcept
     /* A VSpace root is unusable until it has an address space id, and a TCB
      * cannot be configured with it (the kernel refuses with "not assigned to an
      * ASID pool",
-     * out/aegir/libsel4/include/interfaces/sel4_client.h:884). The pool is ours
-     * -- the spawner's -- and this is the step that makes "an address space is
-     * built from a pool" true in specs/authority.md. */
-    return seL4_RISCV_ASIDPool_Assign(seL4_CapInitThreadASIDPool, root_) == seL4_NoError;
+     * out/aegir/libsel4/include/interfaces/sel4_client.h:884). The pool is the
+     * caller's -- the spawner's -- and this is the step that makes "an address
+     * space is built from a pool" true in specs/authority.md. */
+    return seL4_RISCV_ASIDPool_Assign(pool, root_) == seL4_NoError;
 }
 
 bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,

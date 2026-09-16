@@ -32,8 +32,11 @@ class ChildVSpace {
 public:
     ChildVSpace(Allocator &allocator, Scratch &scratch) noexcept;
 
-    /** Create the root page table. Nothing is mapped until `populate`. */
-    bool create(Account &account) noexcept;
+    /** Create the root page table and give it an address space id from `pool`.
+     *  The pool is the spawner's -- director's own initial pool, or the one a
+     *  service was delegated (specs/authority.md) -- and nothing is mapped until
+     *  `populate`. */
+    bool create(seL4_CPtr pool, Account &account) noexcept;
 
     /**
      * Retype `pages` frames, map them at `address` (read/write when `writable`,

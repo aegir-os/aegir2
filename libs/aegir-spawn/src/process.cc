@@ -54,9 +54,9 @@ void write_auxv(uint8_t *stack, uintptr_t stack_lo, uintptr_t address, int type,
 }  // namespace
 
 Spawner::Spawner(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
-                 Initrd const &initrd) noexcept
+                 Initrd const &initrd, seL4_CPtr asid_pool) noexcept
     : allocator_(allocator), scratch_(scratch), arena_(arena), initrd_(initrd),
-      problem_("no problem")
+      asid_pool_(asid_pool), problem_("no problem")
 {
 }
 
@@ -186,7 +186,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     }
 
     mem::ChildVSpace vspace(allocator_, scratch_);
-    if (!vspace.create(account)) {
+    if (!vspace.create(asid_pool_, account)) {
         return fail("no memory for the child's address space");
     }
 

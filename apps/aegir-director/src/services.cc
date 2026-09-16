@@ -42,7 +42,11 @@ bool declared_as_user(manifest::Entry const &entry) noexcept
 Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
                    spawn::Initrd const &initrd) noexcept
     : allocator_(allocator), arena_(arena), initrd_(initrd), fault_endpoint_(0),
-      graph_(allocator, arena), spawner_(allocator, scratch, arena, initrd)
+      graph_(allocator, arena),
+      /* Director's own pool is the boot set's: delegation hands a service a pool
+       * of its own, so only director-spawned address spaces come from the
+       * initial one (specs/authority.md). */
+      spawner_(allocator, scratch, arena, initrd, seL4_CapInitThreadASIDPool)
 {
 }
 
