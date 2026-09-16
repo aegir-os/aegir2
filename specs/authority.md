@@ -224,3 +224,32 @@ What multiuser means here, concretely:
 - **POSIX-style uid/gid compatibility is explicitly not part of this model.** A
   POSIX compatibility layer, if it is ever built, maps uids onto Aegir identities
   as an ordinary service on top (`specs/userland.md`).
+
+## Spawn rights, in pieces
+
+The requirement is that the *device manager* starts the drivers for the devices it
+finds -- and today only director starts anything, because starting a process needs three
+things director holds: address space ids (an ASID pool), memory (untyped), and the
+binaries. So this becomes delegation, in pieces rather than in one leap.
+
+**Done.** `Allocator::carve_untyped` cuts an untyped out of the machine's memory and
+returns the *capability*, which is the shape the kernel wants for a pool: a pool is made
+from an untyped (`seL4_RISCV_ASIDControl_MakePool`) rather than by retyping, so no
+`alloc_object` path could have produced one. `Allocator::make_asid_pool` uses it and
+keeps the architecture-specific call inside the library, so a caller does not have to
+know which architecture it is on. Every boot says so:
+
+    device manager pool: made, cap 256
+
+**Next.** Give that pool, and an untyped, to the device manager. The mechanism needs no
+invention: the bootstrap block already carries `Capability` entries mapping a name to a
+slot, and granted capabilities are installed exactly the way ports are
+(libs/aegir-spawn, `install`). What is missing is the extra list of grants beyond the
+manifest's ports -- the pool is not a port, and handing it to the device manager is the
+same act of delegation (specs/services.md).
+
+**Then.** The device manager can retype a page table, assign it an ASID from its own
+pool, and hold an address space of its own. That is the point at which "the device
+manager launches a driver" becomes a statement about the device manager rather than
+about director, and the remaining pieces -- the child's CSpace, its TCB, and the
+binaries from the initrd -- are the same ones director already assembles.

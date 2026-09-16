@@ -202,4 +202,51 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     return slot;
 }
 
+seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account,
+                                   seL4_Error *error) noexcept
+{
+    *error = seL4_NoError;
+    int const index = find_untyped(size_bits);
+    if (index < 0) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    if (!split_to(index, size_bits)) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    /* Splitting halves a region and leaves the low half at exactly `size_bits`, so
+     * the capability to hand out is the one that is left. Its record is marked used
+     * rather than freed: the caller is taking it away. */
+    seL4_CPtr const cap = untyped_[index].cap;
+    untyped_[index].used = 1;
+    account.bytes += 1ull << size_bits;
+    account.objects += 1;
+    allocated_bytes_ += 1ull << size_bits;
+    return cap;
+}
+
+seL4_CPtr Allocator::make_asid_pool(Account &account, seL4_Error *error) noexcept
+{
+    *error = seL4_NoError;
+    /* A page is comfortably more than a pool needs, and the kernel refuses anything
+     * smaller -- so if this is ever wrong, it is wrong out loud. */
+    seL4_CPtr const untyped = carve_untyped(seL4_PageBits, account, error);
+    if (untyped == 0) {
+        return 0;
+    }
+    seL4_CPtr const pool = alloc_slot();
+    if (pool == 0) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    *error = seL4_RISCV_ASIDControl_MakePool(seL4_CapASIDControl, untyped,
+                                             seL4_CapInitThreadCNode, pool, kRootCNodeDepth);
+    if (*error != seL4_NoError) {
+        return 0;
+    }
+    account.objects += 1;
+    return pool;
+}
+
 }  // namespace aegir::mem

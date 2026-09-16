@@ -62,6 +62,29 @@ public:
                            seL4_Error *error) noexcept;
 
     /**
+     * A raw untyped capability of exactly `size_bits`, carved out and given away.
+     *
+     * Retyping *objects* is what the rest of this class does; this is for the ones
+     * the kernel makes from an untyped directly rather than by retyping -- an ASID
+     * pool, which `seL4_RISCV_ASIDControl_MakePool` builds from an untyped of its
+     * own. The caller owns the capability and may pass it to another process, which
+     * is how spawing authority is delegated (specs/authority.md). The record it came
+     * from is marked used, so the memory is not handed out twice.
+     */
+    seL4_CPtr carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error) noexcept;
+
+    /**
+     * An ASID pool, for a process that will build address spaces of its own.
+     *
+     * Not `alloc_object`: the kernel makes a pool from an *untyped* rather than by
+     * retyping one (seL4_RISCV_ASIDControl_MakePool), so the memory is consumed and
+     * the capability that comes back is the pool. This is where the
+     * architecture-specific call lives, so a caller does not have to know which
+     * architecture it is on (AGENTS.md, and specs/authority.md for what it is for).
+     */
+    seL4_CPtr make_asid_pool(Account &account, seL4_Error *error) noexcept;
+
+    /**
      * The memory an object of `type`/`size_bits` needs, in bits -- the kernel's
      * own rule (kernel/src/object/objecttype.c:42-48). A CNode is the case that
      * bites: its retype size is the number of slot bits, but it costs those plus

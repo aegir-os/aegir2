@@ -20,6 +20,11 @@
   and separation of concerns into separate source files.
 - All compiler warnings must be fixed. Disabling the warning is not acceptable.
 - Commit after every milestone / phase is finished.
+- Edit from the file, not from memory. Read the exact lines before changing them, change
+  one file per step when the change is coupled, and rebuild between steps. A format
+  change that spans a writer and its readers is one change to the same commit, not two.
+  Assertions on an edit that did not apply are cheap; three failed anchors in one batch
+  cost a round each, and every one of them was quoting a line from memory.
 - Architecture specific code must be abstracted to ensure we properly support multiple
   architectures (like riscv64, aarch64, x86-64, etc).
 - Any third party dependencies will be vendored - we will not commit third party sources

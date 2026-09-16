@@ -700,6 +700,26 @@ int main(int argc, char *argv[])
      * (specs/authority.md). Its capacity grows on demand; there is no ceiling
      * chosen here. */
     aegir::mem::Account system{"system", 0, 0, 0};
+    /* Spawn rights begin here. A service that makes address spaces needs address space
+     * ids of its own, and the kernel makes an ASID pool from an *untyped* rather than
+     * by retyping (seL4_ARCH_ASIDControl_MakePool; sel4test does the same in
+     * projects/sel4test/apps/sel4test-tests/src/tests/vspace.c:141). Director holds
+     * the authority and carves the memory, which is the shape specs/authority.md
+     * argues for -- and nothing is given away yet: this is the capability the device
+     * manager gets when it starts drivers of its own. */
+    seL4_Error pool_error = seL4_NoError;
+    seL4_CPtr const asid_pool = allocator.make_asid_pool(system, &pool_error);
+    if (asid_pool == 0) {
+        write("  FAIL no ASID pool for the device manager (seL4 error ");
+        number(static_cast<uint64_t>(pool_error));
+        write(")\n");
+        ++failures;
+    } else {
+        write("  device manager pool: made, cap ");
+        number(asid_pool);
+        write("\n");
+    }
+
     aegir::mem::Arena arena(allocator, scratch, system);
 
     heading("memory");
