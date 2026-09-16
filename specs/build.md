@@ -301,3 +301,8 @@ AEGIR_BOOT_OK
 ```
 
 `AEGIR_BOOT_OK` is the `aegir` target's marker in `scripts/targets.py`.
+
+How a root task is declared, packaged and loaded — everything above — stays true
+whatever the root task binary is. Which binary that is changes: M4's root task is
+`apps/aegir-hello`, and `specs/director.md` specifies the root task Aegir moves
+to, with `aegir-hello` becoming a spawned client.

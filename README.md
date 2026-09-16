@@ -10,7 +10,8 @@ microkernel, inspired by Amiga OS 3.1 and Workbench.
   (`specs/build.md`).
 - **Languages:** C++ primarily, C where the platform demands it.
 - **Status:** pre-alpha. The kernel is vendored and validated end-to-end; the
-  Aegir userspace is just starting.
+  Aegir userspace is just starting, with its boot, service and authority design
+  specified in `specs/director.md`, `specs/services.md` and `specs/authority.md`.
 
 Aegir is not a POSIX system and does not intend to be one; a POSIX
 compatibility layer may be added later as a user-level service

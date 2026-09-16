@@ -28,7 +28,10 @@ commitment:
   additive change, not a rewrite.
 
 `libsel4utils` is a useful starting point and a reference for capability
-bookkeeping, not Aegir's API: Aegir's own interfaces are ours to define.
+bookkeeping, not Aegir's API: Aegir's own interfaces are ours to define, and the
+first set of them — the root task, its services and ports, and the authority
+model — are specified in `specs/director.md`, `specs/services.md` and
+`specs/authority.md`.
 
 ## Build consequences
 
