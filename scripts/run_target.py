@@ -106,6 +106,17 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
         errors="replace",
         start_new_session=True,
     )
+    # A `timeout` around *this* script kills us directly, and Python's default handler
+    # for SIGTERM exits without unwinding -- so the `finally` below never runs, the
+    # process group is never taken down, and QEMU keeps running for ever. That is how
+    # 47 machines accumulated on one host during a long session. Becoming an exception
+    # is what makes the cleanup run; nothing else about it changes.
+    def _stop(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+
     seen = False
     summary = ""
     try:
