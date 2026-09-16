@@ -21,6 +21,8 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-logger>"
     "$<TARGET_FILE:aegir-device-manager>"
     "$<TARGET_FILE:aegir-virtio-blk>"
+    "$<TARGET_FILE:aegir-partmgr>"
+    "$<TARGET_FILE:aegir-fs-fat>"
 )
 set(aegir_initrd_names
     "services.manifest"
@@ -28,6 +30,8 @@ set(aegir_initrd_names
     "aegir-logger"
     "aegir-device-manager"
     "aegir-virtio-blk"
+    "aegir-partmgr"
+    "aegir-fs-fat"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)

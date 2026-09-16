@@ -37,6 +37,55 @@ bool declared_as_user(manifest::Entry const &entry) noexcept
     return entry.authority == manifest::Authority::User;
 }
 
+/** Does a `spawns` item name this entry? An item is either an exact name or a
+ *  class: `fs.*` covers every entry whose name begins `fs.` -- matched
+ *  literally up to the star, which is the whole of the rule
+ *  (specs/services.md). */
+bool spawn_covers(manifest::View item, manifest::View name) noexcept
+{
+    uint32_t prefix = item.length;
+    if (prefix > 0 && item.data[prefix - 1] == '*') {
+        --prefix;
+        if (name.length < prefix) {
+            return false;
+        }
+    } else if (name.length != prefix) {
+        return false;
+    }
+    for (uint32_t k = 0; k < prefix; ++k) {
+        if (name.data[k] != item.data[k]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Call `each` with every item of a comma-separated `spawns` value, trimmed --
+ *  the same shape ports.cc's split_names gives `owns` and `needs`, kept local
+ *  because a spawn right is this file's business, not the port graph's. */
+template <typename F>
+void for_each_spawn(manifest::View spawns, F &&each) noexcept
+{
+    uint32_t at = 0;
+    while (at < spawns.length) {
+        while (at < spawns.length && (spawns.data[at] == ',' || spawns.data[at] == ' ')) {
+            ++at;
+        }
+        uint32_t end = at;
+        while (end < spawns.length && spawns.data[end] != ',') {
+            ++end;
+        }
+        uint32_t trimmed = end;
+        while (trimmed > at && spawns.data[trimmed - 1] == ' ') {
+            --trimmed;
+        }
+        if (trimmed > at) {
+            each(manifest::View{spawns.data + at, trimmed - at});
+        }
+        at = end < spawns.length ? end + 1 : spawns.length;
+    }
+}
+
 }  // namespace
 
 Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
@@ -84,31 +133,23 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             boot.problem = "a boot service cannot be declared as a user service";
             return;
         }
-        /* A `spawns` name that resolves to nothing is a typo that would only
-         * surface as a driver that never starts, so it is checked here, where
-         * the whole set is at hand (specs/services.md). */
-        if (entry.spawns.length > 0) {
+        /* Every `spawns` item -- a name or a `prefix*` class -- must resolve to
+         * at least one declared entry: a spawn right over nothing is a typo that
+         * would only surface as a driver that never starts, so it is checked
+         * here, where the whole set is at hand (specs/services.md). */
+        bool unresolved_spawn = false;
+        for_each_spawn(entry.spawns, [&](manifest::View item) {
             bool resolves = false;
-            for (uint32_t j = 0; j < manifest.size(); ++j) {
-                manifest::Entry const &other = manifest[j];
-                if (other.name.length == entry.spawns.length) {
-                    bool same = true;
-                    for (uint32_t k = 0; k < entry.spawns.length; ++k) {
-                        if (other.name.data[k] != entry.spawns.data[k]) {
-                            same = false;
-                            break;
-                        }
-                    }
-                    if (same) {
-                        resolves = true;
-                        break;
-                    }
-                }
+            for (uint32_t j = 0; j < manifest.size() && !resolves; ++j) {
+                resolves = spawn_covers(item, manifest[j].name);
             }
             if (!resolves) {
-                boot.problem = "a service spawns a name the manifest does not declare";
-                return;
+                unresolved_spawn = true;
             }
+        });
+        if (unresolved_spawn) {
+            boot.problem = "a service spawns a name the manifest does not declare";
+            return;
         }
     }
 
@@ -124,25 +165,18 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         uint32_t const i = graph_.order()[step];
         manifest::Entry const &entry = manifest[i];
         /* A service another entry spawns is not director's to start: the device
-         * manager starts its driver when it gets to it (specs/services.md), and
-         * starting it twice is not a philosophical problem -- the second copy
-         * would be given the device the first one already drives. */
+         * manager starts its driver and its partition manager when it gets to
+         * them (specs/services.md), and starting one twice is not a philosophical
+         * problem -- the second copy would be given the device the first one
+         * already drives. The check is transitive: a class one of *those* spawns
+         * (`fs.*`) is skipped here too. */
         bool spawned_by_another = false;
         for (uint32_t j = 0; j < manifest.size() && !spawned_by_another; ++j) {
-            manifest::Entry const &parent = manifest[j];
-            if (parent.spawns.length != entry.name.length) {
-                continue;
-            }
-            bool same = true;
-            for (uint32_t k = 0; k < entry.name.length; ++k) {
-                if (parent.spawns.data[k] != entry.name.data[k]) {
-                    same = false;
-                    break;
+            for_each_spawn(manifest[j].spawns, [&](manifest::View item) {
+                if (spawn_covers(item, entry.name)) {
+                    spawned_by_another = true;
                 }
-            }
-            if (same) {
-                spawned_by_another = true;
-            }
+            });
         }
         if (spawned_by_another) {
             continue;
@@ -212,32 +246,27 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
              * with seL4_IllegalOperation meant), so a service that hands a port on
              * must be given one it may badge itself. The name carries a "spawn:"
              * prefix, because which copy is which is not something the block should
-             * make a reader guess. */
+             * make a reader guess. The union over every entry its `spawns` covers
+             * -- names and classes -- with each port once: two children both
+             * needing log.main share one delegatable copy. The count is the worst
+             * case; duplicates are dropped at the fill, and `at` says how many
+             * there really are. */
             uint32_t spawn_needs = 0;
-            uint32_t spawned = manifest.size();
             if (entry.device_manager && entry.spawns.length > 0) {
                 for (uint32_t j = 0; j < manifest.size(); ++j) {
-                    manifest::Entry const &other = manifest[j];
-                    if (other.name.length != entry.spawns.length) {
+                    bool covered = false;
+                    for_each_spawn(entry.spawns, [&](manifest::View item) {
+                        if (spawn_covers(item, manifest[j].name)) {
+                            covered = true;
+                        }
+                    });
+                    if (!covered) {
                         continue;
                     }
-                    bool same = true;
-                    for (uint32_t k = 0; k < entry.spawns.length; ++k) {
-                        if (other.name.data[k] != entry.spawns.data[k]) {
-                            same = false;
-                            break;
+                    for (uint32_t g = 0; g < graph_.grant_count(j); ++g) {
+                        if (graph_.grants(j)[g].badge != 0) {
+                            ++spawn_needs;
                         }
-                    }
-                    if (same) {
-                        spawned = j;
-                        break;
-                    }
-                }
-            }
-            if (spawned < manifest.size()) {
-                for (uint32_t g = 0; g < graph_.grant_count(spawned); ++g) {
-                    if (graph_.grants(spawned)[g].badge != 0) {
-                        ++spawn_needs;
                     }
                 }
             }
@@ -258,31 +287,67 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     ++at;
                 }
             }
-            if (spawned < manifest.size() && spawn_needs > 0) {
+            if (spawn_needs > 0) {
                 static char const kSpawnPrefix[] = "spawn:";
-                for (uint32_t g = 0; g < graph_.grant_count(spawned); ++g) {
-                    spawn::PortGrant const &need = graph_.grants(spawned)[g];
-                    if (need.badge == 0) {
+                for (uint32_t j = 0; j < manifest.size(); ++j) {
+                    bool covered = false;
+                    for_each_spawn(entry.spawns, [&](manifest::View item) {
+                        if (spawn_covers(item, manifest[j].name)) {
+                            covered = true;
+                        }
+                    });
+                    if (!covered) {
                         continue;
                     }
-                    auto *named = static_cast<char *>(
-                        arena_.allocate(sizeof(kSpawnPrefix) - 1 + need.name_length));
-                    if (named == nullptr) {
-                        boot.problem = "no room to name a delegatable port";
-                        return;
+                    for (uint32_t g = 0; g < graph_.grant_count(j); ++g) {
+                        spawn::PortGrant const &need = graph_.grants(j)[g];
+                        if (need.badge == 0) {
+                            continue;
+                        }
+                        /* One delegatable copy per port, however many children need
+                         * it: matching by name, because the endpoint is what makes
+                         * two "log.main"s the same port. The spawn: copies were
+                         * appended after the service's own grants, which is where
+                         * the comparison starts. */
+                        bool already = false;
+                        for (uint32_t m = grant_count + added; !already && m < at; ++m) {
+                            spawn::PortGrant const &given = merged[m];
+                            if (given.name_length !=
+                                sizeof(kSpawnPrefix) - 1 + need.name_length) {
+                                continue;
+                            }
+                            bool same = true;
+                            for (uint32_t c = 0; c < need.name_length; ++c) {
+                                if (given.name[sizeof(kSpawnPrefix) - 1 + c] !=
+                                    need.name[c]) {
+                                    same = false;
+                                    break;
+                                }
+                            }
+                            already = same;
+                        }
+                        if (already) {
+                            continue;
+                        }
+                        auto *named = static_cast<char *>(
+                            arena_.allocate(sizeof(kSpawnPrefix) - 1 + need.name_length));
+                        if (named == nullptr) {
+                            boot.problem = "no room to name a delegatable port";
+                            return;
+                        }
+                        for (uint32_t c = 0; c < sizeof(kSpawnPrefix) - 1; ++c) {
+                            named[c] = kSpawnPrefix[c];
+                        }
+                        for (uint32_t c = 0; c < need.name_length; ++c) {
+                            named[sizeof(kSpawnPrefix) - 1 + c] = need.name[c];
+                        }
+                        merged[at] = spawn::PortGrant{
+                            named,
+                            static_cast<uint32_t>(sizeof(kSpawnPrefix) - 1) + need.name_length,
+                            bootstrap::kSlotFirstDeclared + at,
+                            need.capability, need.rights, 0, 0};
+                        ++at;
                     }
-                    for (uint32_t c = 0; c < sizeof(kSpawnPrefix) - 1; ++c) {
-                        named[c] = kSpawnPrefix[c];
-                    }
-                    for (uint32_t c = 0; c < need.name_length; ++c) {
-                        named[sizeof(kSpawnPrefix) - 1 + c] = need.name[c];
-                    }
-                    merged[at] = spawn::PortGrant{
-                        named,
-                        static_cast<uint32_t>(sizeof(kSpawnPrefix) - 1) + need.name_length,
-                        bootstrap::kSlotFirstDeclared + at,
-                        need.capability, need.rights, 0, 0};
-                    ++at;
                 }
             }
             grants = merged;
@@ -335,8 +400,23 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             request.give_vspace = true;
             request.binaries = initrd_.blob();
             request.binaries_bytes = static_cast<uint32_t>(initrd_.blob_size());
+            /* One device grant per covered child that is *for* a device, however
+             * many of them the manifest declares: count first, so the array is
+             * the manifest's size rather than a number somebody picked. */
+            uint32_t wanted = 0;
+            for (uint32_t j = 0; j < manifest.size(); ++j) {
+                bool covered = false;
+                for_each_spawn(entry.spawns, [&](manifest::View item) {
+                    if (spawn_covers(item, manifest[j].name)) {
+                        covered = true;
+                    }
+                });
+                if (covered && manifest[j].device_id != 0) {
+                    ++wanted;
+                }
+            }
             auto *device_grants = static_cast<spawn::DeviceGrant *>(
-                arena_.allocate(sizeof(spawn::DeviceGrant) * 2));
+                arena_.allocate(sizeof(spawn::DeviceGrant) * (wanted != 0 ? wanted : 1)));
             if (device_grants == nullptr) {
                 boot.problem = "no room to list what a spawning service is given";
                 return;
@@ -344,17 +424,13 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             uint32_t device_grant_count = 0;
             for (uint32_t j = 0; j < manifest.size(); ++j) {
                 manifest::Entry const &child = manifest[j];
-                if (child.name.length != entry.spawns.length) {
-                    continue;
-                }
-                bool same = true;
-                for (uint32_t k = 0; k < entry.spawns.length; ++k) {
-                    if (child.name.data[k] != entry.spawns.data[k]) {
-                        same = false;
-                        break;
+                bool covered = false;
+                for_each_spawn(entry.spawns, [&](manifest::View item) {
+                    if (spawn_covers(item, child.name)) {
+                        covered = true;
                     }
-                }
-                if (!same || child.device_id == 0) {
+                });
+                if (!covered || child.device_id == 0) {
                     continue;
                 }
                 for (uint32_t d = 0; d < bus_count; ++d) {

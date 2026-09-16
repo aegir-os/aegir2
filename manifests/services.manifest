@@ -41,8 +41,10 @@ device_id  = 4
 # the bus -> device -> service map, so the process made for a device is made by
 # the service that knows the bus (specs/services.md). Director delegates the
 # authority -- an untyped, an ASID pool, its own VSpace root, the initrd, and the
-# device frames as capabilities -- and skips starting what this names.
-spawns    = blkdriver
+# device frames as capabilities -- and skips starting what this names. The
+# partition manager goes with it: the storage stack's composition belongs to the
+# service that owns the devices, not to director's port graph.
+spawns    = blkdriver, partmgr
 
 # The block driver. Director's survey found virtio device 2 behind a transport, and this
 # service asks for it by id -- one device per service, because a device is a capability and
@@ -59,6 +61,30 @@ device_id = 2
 # memory is -- so director carves a region, says where it is, and hands over the
 # capability (specs/services.md, specs/authority.md).
 memory_kib = 8
+restart   = always
+
+# The partition manager. The device manager starts it once block drivers answer,
+# and hands it their ports: reading partition tables is a filesystem-agnostic job
+# that belongs above the drivers, not inside them (specs/services.md). Its spawn
+# right is a class: filesystem services are `fs.*`, so a new filesystem type in
+# the class is a new entry here, not an authority change.
+[partmgr]
+binary    = aegir-partmgr
+authority = system
+account   = system
+needs     = log.main
+spawns    = fs.*
+restart   = always
+
+# The FAT filesystem service: one instance per FAT partition, started by the
+# partition manager with the block device's port and a range grant rather than
+# the whole device (specs/services.md). FAT16/32/ExFAT are the interchange
+# filesystems -- not Aegir's own -- and read-only to begin with.
+[fs.fat]
+binary    = aegir-fs-fat
+authority = system
+account   = system
+needs     = log.main
 restart   = always
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static

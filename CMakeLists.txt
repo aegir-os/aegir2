@@ -70,6 +70,8 @@ add_subdirectory(libs/aegir-spawn)
 # packs it into its initrd.
 add_subdirectory(apps/aegir-device-manager)
 add_subdirectory(apps/aegir-virtio-blk)
+add_subdirectory(apps/aegir-partmgr)
+add_subdirectory(apps/aegir-fs-fat)
 add_subdirectory(apps/aegir-hello)
 add_subdirectory(apps/aegir-logger)
 add_subdirectory(apps/aegir-director)
