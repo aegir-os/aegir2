@@ -235,7 +235,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     }
     /* The block describes the ports as well as the process, because they are part
      * of who it is: the child finds a port by name and the slot stays a layout
-     * detail it did not choose (specs/services.md). */
+     * detail it did not choose (specs/services.md). One spare entry, for the
+     * "vspace" grant when the child is trusted with its own address space. */
     auto *port_entries =
         static_cast<bootstrap::PortEntry *>(arena_.allocate(sizeof(bootstrap::PortEntry) *
                                                            (request.port_count + 1)));
@@ -248,6 +249,18 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         port_entries[i].slot = request.ports[i].slot;
         port_entries[i].size_bits = request.ports[i].size_bits;
     }
+    /* Declared slots are handed out from kSlotFirstDeclared upward: the ports the
+     * caller named, then the vspace grant, then the device capabilities. The
+     * block and the installs below use the same arithmetic, which is what makes
+     * the two agree. */
+    uint32_t port_count = request.port_count;
+    uint64_t const vspace_slot = bootstrap::kSlotFirstDeclared + port_count;
+    if (request.give_vspace) {
+        port_entries[port_count] =
+            bootstrap::PortEntry{"vspace", 6, vspace_slot, 0};
+        ++port_count;
+    }
+    uint64_t const device_slot_base = bootstrap::kSlotFirstDeclared + port_count;
     /* A blob the caller wants the child to have -- the device tree, for the device
      * manager. It goes above the stack so a bigger program cannot collide with it,
      * and the child reads it in place. */
@@ -297,17 +310,61 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         }
         device_address = at;
     }
+    /* The initrd copy, for a child that starts processes of its own: mapped above
+     * the device window, read in place, and recorded in the block. */
+    uint64_t binaries_address = 0;
+    uintptr_t const after_device =
+        align_up(static_cast<uintptr_t>(devices_end) + request.device_bytes, kPage);
+    uintptr_t const binaries_end = [&] {
+        if (request.binaries == nullptr || request.binaries_bytes == 0) {
+            return after_device;
+        }
+        uint64_t const pages = (request.binaries_bytes + kPage - 1) / kPage;
+        if (!vspace.populate(after_device, static_cast<unsigned>(pages), request.binaries,
+                             request.binaries_bytes, 0, false, account)) {
+            return uintptr_t{0};
+        }
+        binaries_address = after_device;
+        return after_device + pages * kPage;
+    }();
+    if (binaries_end == 0) {
+        return fail("the initrd copy the child was to be given could not be mapped");
+    }
+
     /* Where a service's own memory goes, chosen the way a device's is: the spawner knows the
      * layout of the address space it is filling, and the child cannot map for itself. It goes
-     * *past the device window*, which is mapped at `devices_end` -- the same expression would
-     * put it on top of that window, and the kernel refuses a second mapping at one address. */
-    uintptr_t const memory_at =
-        align_up(static_cast<uintptr_t>(devices_end) + request.device_bytes, kPage);
-    if (bootstrap::write(block_storage, kBlockBytes, request.name, request.name_length,
-                         request.account, request.account_length, port_entries,
-                         request.port_count, devices_address, request.devices_bytes,
-                         device_address, request.device_bytes, request.device_physical,
-                         request.untyped_physical, request.untyped_bits, memory_at) == nullptr) {
+     * *past the device window and the binaries*, which are mapped at `after_device` -- the same
+     * expression would put it on top of them, and the kernel refuses a second mapping at one
+     * address. */
+    uintptr_t const memory_at = align_up(binaries_end, kPage);
+    /* Everything above the memory is the child's, when it is trusted with its own
+     * VSpace root: addresses cost nothing, so the window is generous, and the
+     * spawner -- not the child -- is what chose it. */
+    constexpr uint64_t kWindowBytes = 1ull << 30;
+    uint64_t const window_base =
+        request.give_vspace ? memory_at + request.memory_bytes : 0;
+
+    auto *device_cap_entries =
+        static_cast<bootstrap::DeviceCapEntry *>(arena_.allocate(
+            sizeof(bootstrap::DeviceCapEntry) * (request.device_grant_count + 1)));
+    if (device_cap_entries == nullptr) {
+        return fail("no memory for the bootstrap block's device list");
+    }
+    for (uint32_t i = 0; i < request.device_grant_count; ++i) {
+        device_cap_entries[i] = bootstrap::DeviceCapEntry{request.device_grants[i].physical,
+                                                          request.device_grants[i].bytes,
+                                                          device_slot_base + i};
+    }
+
+    bootstrap::Contents const contents{
+        request.name,       request.name_length,   request.account, request.account_length,
+        port_entries,       port_count,            devices_address, request.devices_bytes,
+        device_address,     request.device_bytes,  request.device_physical,
+        request.untyped_physical, request.untyped_bits, memory_at,
+        binaries_address,   request.binaries_bytes, window_base,    kWindowBytes,
+        device_cap_entries, request.device_grant_count,
+    };
+    if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {
@@ -400,6 +457,20 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             return fail("a port could not be installed into the child");
         }
     }
+    /* The vspace grant and the device grants sit where the block said they would:
+     * the slots were chosen before the block was written, and an install uses the
+     * slot it announced. */
+    if (request.give_vspace &&
+        !install(process.cspace, vspace_slot, vspace.root(), seL4_AllRights, 0)) {
+        return fail("the child's own address space could not be given to it");
+    }
+    for (uint32_t i = 0; i < request.device_grant_count; ++i) {
+        DeviceGrant const &grant = request.device_grants[i];
+        if (grant.frame == 0 ||
+            !install(process.cspace, device_slot_base + i, grant.frame, seL4_AllRights, 0)) {
+            return fail("a device frame could not be given to the child");
+        }
+    }
 
     /* Configure, then start. The fault endpoint is named in the child's CSpace --
      * that is what "this capability is in the CSpace of the thread being
@@ -441,6 +512,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     process.entry = elf.entry();
     process.stack_top = stack_top;
     process.block = block_at;
+    process.vspace_root = vspace.root();
+    process.mapped_end = memory_at + request.memory_bytes;
     return true;
 }
 

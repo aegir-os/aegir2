@@ -102,6 +102,25 @@ enum class EntryKind : uint32_t {
      *  where its slot is: the slot is what the child retypes from, the physical base
      *  is what it tells the device (specs/services.md, specs/authority.md). */
     Untyped = 8,
+    /** A copy of the flat initrd, mapped into the child: `number` is its address,
+     *  `length` its byte count. A service that starts processes reads their images
+     *  out of it -- the binaries are the one part of spawning that cannot be
+     *  delegated as a capability, so they travel as bytes (specs/services.md). */
+    Binaries = 9,
+    /** A window of unused addresses in the child's *own* address space: `number`
+     *  is its base, `length` its byte count. Only meaningful together with the
+     *  child's own VSpace root (a `Capability` entry named `vspace`): a service
+     *  that fills frames for the processes it starts writes through a window it
+     *  can map into, and RISC-V has no narrower mapping authority than the root
+     *  (specs/services.md). */
+    Window = 10,
+    /** A device's frame, given as a *capability* rather than a mapping: `number`
+     *  is the device's physical address, `length` its byte count, and `reserved`
+     *  the slot the frame capability was installed in. Nothing is mapped: the
+     *  service maps the frame through its own window when it wants to read the
+     *  registers, and hands it to a driver when it starts one -- which is what a
+     *  device manager is *for* (specs/services.md). */
+    DeviceCapability = 11,
 };
 
 struct Entry {
@@ -144,16 +163,43 @@ struct PortEntry {
     uint32_t size_bits;
 };
 
+/** A device frame being handed over as a capability (EntryKind::DeviceCapability). */
+struct DeviceCapEntry {
+    uint64_t physical;
+    uint32_t bytes;
+    uint64_t slot;
+};
+
+/** Everything a block says, in one place: the parameter list had grown past what
+ *  a call site could be trusted to read. Zero/empty fields mean "not given". */
+struct Contents {
+    char const *name;
+    uint32_t name_length;
+    char const *account;
+    uint32_t account_length;
+    PortEntry const *ports;
+    uint32_t port_count;
+    uint64_t devices_address;
+    uint32_t devices_bytes;
+    uint64_t device_address;
+    uint32_t device_bytes;
+    uint64_t device_physical;
+    uint64_t untyped_physical;
+    uint32_t untyped_bits;
+    uint64_t untyped_address;
+    uint64_t binaries_address;
+    uint32_t binaries_bytes;
+    uint64_t window_base;
+    uint32_t window_bytes;
+    DeviceCapEntry const *device_caps;
+    uint32_t device_cap_count;
+};
+
 /** Build a block in memory we can write: `storage` is a page that will be
  *  mapped into the child. Returns the block, or nullptr when it does not fit.
  *  `name`, `account` and every port name must outlive the call (they are copied
  *  in). */
-Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
-             char const *account, uint32_t account_length, PortEntry const *ports,
-             uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
-             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical,
-             uint64_t untyped_physical, uint32_t untyped_bits,
-             uint64_t untyped_address) noexcept;
+Block *write(void *storage, uint64_t storage_size, Contents const &contents) noexcept;
 
 /* --- reading (a spawned process) ------------------------------------------- */
 
@@ -184,6 +230,20 @@ bool device(uint64_t *address, uint32_t *length, uint64_t *physical) noexcept;
  *  capability is found with `capability()` under the same name; a slot is what the child
  *  retypes from, and the physical base is what it tells a device. */
 bool untyped(uint64_t *physical, uint32_t *size_bits, uint64_t *address) noexcept;
+
+/** The initrd copy this process was given, and where it is. False when there is
+ *  none -- which is every process that may not start processes of its own. */
+bool binaries(uint64_t *address, uint32_t *length) noexcept;
+
+/** The window of unused addresses in this process's own address space, when its
+ *  spawner said it has one. False when there is none. */
+bool window(uint64_t *base, uint32_t *bytes) noexcept;
+
+/** The `index`th device frame this process was given as a capability: its
+ *  physical address, its size and the slot the capability is in. False when
+ *  there is no such entry. */
+bool device_capability(uint32_t index, uint64_t *physical, uint32_t *bytes,
+                       uint64_t *slot) noexcept;
 
 }  // namespace aegir::bootstrap
 

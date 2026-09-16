@@ -36,30 +36,28 @@ uint32_t copy(char *destination, char const *source, uint32_t length, uint32_t r
 
 }  // namespace
 
-Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
-             char const *account, uint32_t account_length, PortEntry const *ports,
-             uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
-             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical,
-             uint64_t untyped_physical, uint32_t untyped_bits,
-             uint64_t untyped_address) noexcept
+Block *write(void *storage, uint64_t storage_size, Contents const &contents) noexcept
 {
-    if (storage == nullptr || name == nullptr || account == nullptr) {
+    if (storage == nullptr || contents.name == nullptr || contents.account == nullptr) {
         return nullptr;
     }
-    if (port_count > 0 && ports == nullptr) {
+    if (contents.port_count > 0 && contents.ports == nullptr) {
+        return nullptr;
+    }
+    if (contents.device_cap_count > 0 && contents.device_caps == nullptr) {
         return nullptr;
     }
 
-    /* Seven fixed entries -- size, name, account, page bits, devices, device, untyped --
-     * and one per port,
-     * because the ports a process is given are part of who it is. Growing the
+    /* Nine fixed entries -- size, name, account, page bits, devices, device, untyped,
+     * binaries, window -- then one per device capability, then one per port,
+     * because what a process is given is part of who it is. Growing the
      * block means bumping the version rather than gambling on a layout, and
      * `entry_count` is what makes that safe for readers that know less. */
-    uint32_t const entries = 7 + port_count;
+    uint32_t const entries = 9 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
-    uint64_t data_size = static_cast<uint64_t>(name_length) + account_length;
-    for (uint32_t i = 0; i < port_count; ++i) {
-        data_size += ports[i].name_length;
+    uint64_t data_size = static_cast<uint64_t>(contents.name_length) + contents.account_length;
+    for (uint32_t i = 0; i < contents.port_count; ++i) {
+        data_size += contents.ports[i].name_length;
     }
     if (header_size + data_size > storage_size) {
         return nullptr;
@@ -73,47 +71,68 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
 
     auto *data = reinterpret_cast<char *>(storage) + header_size;
     uint64_t room = storage_size - header_size;
-    uint32_t const name_copied = copy(data, name, name_length, static_cast<uint32_t>(room));
-    if (name_copied != name_length) {
+    uint32_t const name_copied = copy(data, contents.name, contents.name_length,
+                                      static_cast<uint32_t>(room));
+    if (name_copied != contents.name_length) {
         return nullptr;
     }
-    room -= name_length;
-    uint32_t const account_copied = copy(data + name_length, account, account_length,
-                                         static_cast<uint32_t>(room));
-    if (account_copied != account_length) {
+    room -= contents.name_length;
+    uint32_t const account_copied = copy(data + contents.name_length, contents.account,
+                                         contents.account_length, static_cast<uint32_t>(room));
+    if (account_copied != contents.account_length) {
         return nullptr;
     }
-    room -= account_length;
+    room -= contents.account_length;
 
     uint32_t const name_offset = static_cast<uint32_t>(header_size);
-    uint32_t const account_offset = static_cast<uint32_t>(header_size + name_length);
+    uint32_t const account_offset = static_cast<uint32_t>(header_size + contents.name_length);
     block->entries[0] = Entry{EntryKind::Size, 0, header_size + data_size, 0, 0};
-    block->entries[1] = Entry{EntryKind::Name, name_length, 0, name_offset, 0};
-    block->entries[2] = Entry{EntryKind::Account, account_length, 0, account_offset, 0};
+    block->entries[1] = Entry{EntryKind::Name, contents.name_length, 0, name_offset, 0};
+    block->entries[2] = Entry{EntryKind::Account, contents.account_length, 0, account_offset, 0};
     block->entries[3] = Entry{EntryKind::PageBits, 0, seL4_PageBits, 0, 0};
-    block->entries[4] =
-        Entry{EntryKind::Devices, devices_address == 0 ? 0 : devices_bytes, devices_address, 0, 0};
-    block->entries[5] = Entry{EntryKind::Device, device_address == 0 ? 0 : device_bytes,
-                              device_physical,
-                              static_cast<uint32_t>(device_address), 0};
+    block->entries[4] = Entry{EntryKind::Devices,
+                              contents.devices_address == 0 ? 0 : contents.devices_bytes,
+                              contents.devices_address, 0, 0};
+    block->entries[5] = Entry{EntryKind::Device,
+                              contents.device_address == 0 ? 0 : contents.device_bytes,
+                              contents.device_physical,
+                              static_cast<uint32_t>(contents.device_address), 0};
     /* The same shape as a device: an address the spawner knows and the child cannot work out
      * for itself, plus a size. `reserved` carries the size in bits, as a `Capability` entry
      * carries it for the same region. */
-    block->entries[6] = Entry{EntryKind::Untyped, 0, untyped_physical,
-                              static_cast<uint32_t>(untyped_address), untyped_bits};
+    block->entries[6] = Entry{EntryKind::Untyped, 0, contents.untyped_physical,
+                              static_cast<uint32_t>(contents.untyped_address),
+                              contents.untyped_bits};
+    block->entries[7] = Entry{EntryKind::Binaries,
+                              contents.binaries_address == 0 ? 0 : contents.binaries_bytes,
+                              contents.binaries_address, 0, 0};
+    block->entries[8] = Entry{EntryKind::Window,
+                              contents.window_base == 0 ? 0 : contents.window_bytes,
+                              contents.window_base, 0, 0};
 
-    uint64_t next_offset = static_cast<uint64_t>(header_size) + name_length + account_length;
-    for (uint32_t i = 0; i < port_count; ++i) {
-        uint32_t const copied = copy(data + (next_offset - header_size), ports[i].name,
-                                     ports[i].name_length, static_cast<uint32_t>(room));
-        if (copied != ports[i].name_length) {
+    for (uint32_t i = 0; i < contents.device_cap_count; ++i) {
+        block->entries[9 + i] =
+            Entry{EntryKind::DeviceCapability, contents.device_caps[i].bytes,
+                  contents.device_caps[i].physical, 0,
+                  static_cast<uint32_t>(contents.device_caps[i].slot)};
+    }
+
+    uint64_t next_offset = static_cast<uint64_t>(header_size) + contents.name_length +
+                           contents.account_length;
+    for (uint32_t i = 0; i < contents.port_count; ++i) {
+        uint32_t const copied = copy(data + (next_offset - header_size),
+                                     contents.ports[i].name,
+                                     contents.ports[i].name_length,
+                                     static_cast<uint32_t>(room));
+        if (copied != contents.ports[i].name_length) {
             return nullptr;
         }
-        room -= ports[i].name_length;
-        block->entries[7 + i] =
-            Entry{EntryKind::Capability, ports[i].name_length, ports[i].slot,
-                  static_cast<uint32_t>(next_offset), ports[i].size_bits};
-        next_offset += ports[i].name_length;
+        room -= contents.ports[i].name_length;
+        block->entries[9 + contents.device_cap_count + i] =
+            Entry{EntryKind::Capability, contents.ports[i].name_length,
+                  contents.ports[i].slot, static_cast<uint32_t>(next_offset),
+                  contents.ports[i].size_bits};
+        next_offset += contents.ports[i].name_length;
     }
     return block;
 }
@@ -252,6 +271,78 @@ bool capability(char const *name, uint32_t length, uint64_t *slot) noexcept
             }
             return true;
         }
+    }
+    return false;
+}
+
+bool binaries(uint64_t *address, uint32_t *length) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind == EntryKind::Binaries && entry.number != 0) {
+            if (address != nullptr) {
+                *address = entry.number;
+            }
+            if (length != nullptr) {
+                *length = entry.length;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool window(uint64_t *base, uint32_t *bytes) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind == EntryKind::Window && entry.number != 0) {
+            if (base != nullptr) {
+                *base = entry.number;
+            }
+            if (bytes != nullptr) {
+                *bytes = entry.length;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool device_capability(uint32_t index, uint64_t *physical, uint32_t *bytes,
+                       uint64_t *slot) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind != EntryKind::DeviceCapability) {
+            continue;
+        }
+        if (seen == index) {
+            if (physical != nullptr) {
+                *physical = entry.number;
+            }
+            if (bytes != nullptr) {
+                *bytes = entry.length;
+            }
+            if (slot != nullptr) {
+                *slot = entry.reserved;
+            }
+            return true;
+        }
+        ++seen;
     }
     return false;
 }

@@ -62,6 +62,16 @@ struct PortGrant {
     uint32_t size_bits = 0;
 };
 
+/** A device frame handed over as a *capability* rather than a mapping: the child
+ *  is told the slot and nothing is mapped. It maps the frame through a window of
+ *  its own when it wants to read the registers, or hands it to a driver it starts
+ *  -- which is what a device manager is for (specs/services.md). */
+struct DeviceGrant {
+    uint64_t physical;
+    uint32_t bytes;
+    seL4_CPtr frame;
+};
+
 /** What the manifest says about the process to create (specs/services.md). The
  *  strings are views into the manifest text, not copies, and the ports are the
  *  ones this process was granted -- ports it owns and ports it may call. */
@@ -95,6 +105,23 @@ struct Request {
      * be mapped at `memory_address`, and the child is told the physical base separately. */
     seL4_CPtr memory_frame = 0;
     uint32_t memory_bytes = 0;
+    /* A copy of the flat initrd, mapped read-only, for a process that starts
+     * processes of its own: the binaries are the one part of spawning that cannot
+     * be delegated as a capability, so they travel as bytes (specs/services.md).
+     * Null for a child that may not spawn. */
+    void const *binaries = nullptr;
+    uint32_t binaries_bytes = 0;
+    /* True when the process is trusted with its own VSpace root: the capability
+     * arrives as a port named "vspace", and the block's Window entry says which of
+     * the child's own addresses are free for it to map into. RISC-V has no
+     * narrower mapping authority than the root, so this is the grant a spawner
+     * needs (specs/services.md). */
+    bool give_vspace = false;
+    /* Device frames handed over as capabilities rather than mappings, for a child
+     * that hands them on -- a device manager. The slots are assigned by the
+     * spawner, right after the ports, and the block says where they are. */
+    DeviceGrant const *device_grants = nullptr;
+    uint32_t device_grant_count = 0;
     char const *name;
     uint32_t name_length;
     char const *binary;
@@ -118,9 +145,14 @@ struct Process {
     seL4_CPtr tcb;
     seL4_CPtr fault_endpoint; /* where its faults arrive, in our CSpace */
     seL4_CPtr supervision;    /* the notification it signals when it is ready */
+    seL4_CPtr vspace_root;    /* its address space's root -- what a minted copy of the
+                                 "vspace" grant names */
     uint64_t entry;
     uint64_t stack_top;
     uint64_t block;           /* the child's bootstrap block */
+    uint64_t mapped_end;      /* the first page past everything spawn() mapped: where
+                                 a child trusted with its own VSpace root begins its
+                                 own window */
 };
 
 class Spawner {
