@@ -11,6 +11,19 @@
   its own children down on the way out is worth having -- scripts/run_target.py does,
   and a signal that arrives as an ordinary exit is what makes that work.
 - Use the git repository for history.
+- Read the *established implementation* before designing, not only the manual. The manual
+  says what is legal; `projects/seL4_libs` and `projects/sel4test` say how it is done, and
+  they have already been broken by other people in the places where the shape matters.
+  Designing our own shape first means rediscovering, one kernel error at a time, the
+  constraints theirs already respects. Two of those, from `sel4utils/src/process.c`
+  (`next_free_slot`, `sel4utils_mint_cap_to_process`), worth stating on their own:
+  - **every capability installed into a CSpace is named by a `cspacepath` -- root, slot
+    and depth -- that was handed out for it.** Never derive one object's slot by adding to
+    another's: `device_frame + i` is adjacency reasoning, and adjacency is something that
+    happens to hold, not something that is guaranteed.
+  - **a slot cursor advances only when the install succeeds.** A cursor that moves on
+    failure leaves it behind the slots actually in use, and the next allocation lands on
+    top of one (`seL4_DeleteFirst`, "the destination slot is occupied").
 - seL4's documentation is in this repository, and it comes before inference. For any
   question about how the kernel behaves, read the manual (`kernel/manual/parts/*.tex`
   -- `vspace.tex` for mappings and page sharing, `objects.tex` for untypeds and the
