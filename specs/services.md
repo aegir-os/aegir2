@@ -433,15 +433,19 @@ and answers "who owns this device?" for everyone else.
 The device manager is not spawned yet; this milestone is the foundation it needs,
 and saying which half exists is the point of writing it down:
 
-- **exists**: director maps the device tree, reads it with our own reader
-  (libs/aegir-devtree), and reports the devices it describes;
+- **exists**: director maps the device tree and hands it to the device manager
+  through the bootstrap block (a `Devices` entry: the blob's address in the child's
+  own address space, and its size). The device manager reads it with our own reader
+  (libs/aegir-devtree) and reports the buses it describes;
   the tree must be *moved* into the scratch window rather than mapped there, because
   the kernel has already mapped the extra bootinfo pages into the root task and a
   frame cannot be mapped at two addresses -- the kernel says so out loud
   (`RISCVPageMap: attempting to map frame into multiple addresses`);
-- **next**: the device manager service, given that report at spawn and holding
-  the bus -> device -> service map, spawning drivers (virtio-blk first) and
-  giving each the device's register window and interrupt.
+- **next**: the bus -> device -> service map inside the device manager, and
+  spawning drivers (virtio-blk first) for the devices it finds, giving each the
+  device's register window and interrupt. The service exists and reports the
+  machine; what it does not have yet is anything to *serve*, which is why it owns
+  no port and why its report goes to the console.
 
 Devices are given to a driver the way everything else here is given: capabilities
 for the device's register frames (retyped from the device's own untyped memory --

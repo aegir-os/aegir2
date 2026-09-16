@@ -68,6 +68,7 @@ add_subdirectory(libs/aegir-manifest)
 add_subdirectory(libs/aegir-spawn)
 # aegir-hello is director's smoke client, so it is built before the task that
 # packs it into its initrd.
+add_subdirectory(apps/aegir-device-manager)
 add_subdirectory(apps/aegir-hello)
 add_subdirectory(apps/aegir-logger)
 add_subdirectory(apps/aegir-director)

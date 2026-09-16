@@ -247,9 +247,21 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         port_entries[i].name_length = request.ports[i].name_length;
         port_entries[i].slot = request.ports[i].slot;
     }
+    /* A blob the caller wants the child to have -- the device tree, for the device
+     * manager. It goes above the stack so a bigger program cannot collide with it,
+     * and the child reads it in place. */
+    uint64_t devices_address = 0;
+    if (request.devices != nullptr && request.devices_bytes > 0) {
+        uint64_t const pages = (request.devices_bytes + kPage - 1) / kPage;
+        if (!vspace.populate(stack_top, static_cast<unsigned>(pages), request.devices,
+                             request.devices_bytes, 0, false, account)) {
+            return fail("the blob the child was to be given could not be mapped");
+        }
+        devices_address = stack_top;
+    }
     if (bootstrap::write(block_storage, kBlockBytes, request.name, request.name_length,
                          request.account, request.account_length, port_entries,
-                         request.port_count) == nullptr) {
+                         request.port_count, devices_address, request.devices_bytes) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {

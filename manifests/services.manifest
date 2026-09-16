@@ -20,6 +20,16 @@ account   = system
 owns      = log.main
 restart   = always
 
+# The device manager owns what the machine is, rather than director repeating it:
+# it is given the device tree, reads it, and will hold the bus -> device -> service
+# map that lets a driver be started for a device (specs/services.md).
+[devicemgr]
+binary    = aegir-device-manager
+authority = system
+account   = system
+needs     = log.main
+restart   = always
+
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process
 # can call a port it was given.

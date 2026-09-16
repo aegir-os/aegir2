@@ -59,6 +59,12 @@ struct PortGrant {
  *  strings are views into the manifest text, not copies, and the ports are the
  *  ones this process was granted -- ports it owns and ports it may call. */
 struct Request {
+    /* A flat blob to map into the child's address space and tell it about through
+     *  the bootstrap block. The device tree travels this way: a device manager is
+     *  given the machine's own description of itself rather than being told about
+     *  hardware by its spawner. Null for a child that is given no such thing. */
+    void const *devices = nullptr;
+    uint32_t devices_bytes = 0;
     char const *name;
     uint32_t name_length;
     char const *binary;

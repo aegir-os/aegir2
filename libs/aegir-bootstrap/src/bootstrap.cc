@@ -38,7 +38,7 @@ uint32_t copy(char *destination, char const *source, uint32_t length, uint32_t r
 
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
              char const *account, uint32_t account_length, PortEntry const *ports,
-             uint32_t port_count) noexcept
+             uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes) noexcept
 {
     if (storage == nullptr || name == nullptr || account == nullptr) {
         return nullptr;
@@ -47,11 +47,12 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
         return nullptr;
     }
 
-    /* Four fixed entries -- size, name, account, page bits -- and one per port,
+    /* Five fixed entries -- size, name, account, page bits, devices -- and one per
+     * port,
      * because the ports a process is given are part of who it is. Growing the
      * block means bumping the version rather than gambling on a layout, and
      * `entry_count` is what makes that safe for readers that know less. */
-    uint32_t const entries = 4 + port_count;
+    uint32_t const entries = 5 + port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(name_length) + account_length;
     for (uint32_t i = 0; i < port_count; ++i) {
@@ -87,6 +88,8 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
     block->entries[1] = Entry{EntryKind::Name, name_length, 0, name_offset, 0};
     block->entries[2] = Entry{EntryKind::Account, account_length, 0, account_offset, 0};
     block->entries[3] = Entry{EntryKind::PageBits, 0, seL4_PageBits, 0, 0};
+    block->entries[4] =
+        Entry{EntryKind::Devices, devices_address == 0 ? 0 : devices_bytes, devices_address, 0, 0};
 
     uint64_t next_offset = static_cast<uint64_t>(header_size) + name_length + account_length;
     for (uint32_t i = 0; i < port_count; ++i) {
@@ -96,7 +99,7 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
             return nullptr;
         }
         room -= ports[i].name_length;
-        block->entries[4 + i] =
+        block->entries[5 + i] =
             Entry{EntryKind::Capability, ports[i].name_length, ports[i].slot,
                   static_cast<uint32_t>(next_offset), 0};
         next_offset += ports[i].name_length;
@@ -121,6 +124,27 @@ Block const *find() noexcept
         return block;
     }
     return nullptr;
+}
+
+bool devices(uint64_t *address, uint32_t *length) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        if (block->entries[i].kind != EntryKind::Devices || block->entries[i].number == 0) {
+            continue;
+        }
+        if (address != nullptr) {
+            *address = block->entries[i].number;
+        }
+        if (length != nullptr) {
+            *length = block->entries[i].length;
+        }
+        return true;
+    }
+    return false;
 }
 
 char const *string(EntryKind kind, uint32_t *length) noexcept

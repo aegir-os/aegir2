@@ -69,8 +69,12 @@ public:
 
     /** `supervisor`, when given, is told about each service as it is created --
      *  before it can fault, rather than after. */
+    /** `devices`/`devices_bytes`, when given, is a blob every service is handed
+     *  through the bootstrap block: the machine's own description of itself, which
+     *  is public information the device manager owns (specs/services.md). */
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
-              Boot &boot, Supervisor *supervisor) noexcept;
+              Boot &boot, Supervisor *supervisor, void const *devices,
+              uint32_t devices_bytes) noexcept;
 
     seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
 

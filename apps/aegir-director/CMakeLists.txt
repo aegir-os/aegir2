@@ -19,11 +19,13 @@ set(aegir_initrd_files
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/services.manifest"
     "$<TARGET_FILE:aegir-hello>"
     "$<TARGET_FILE:aegir-logger>"
+    "$<TARGET_FILE:aegir-device-manager>"
 )
 set(aegir_initrd_names
     "services.manifest"
     "aegir-hello"
     "aegir-logger"
+    "aegir-device-manager"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)

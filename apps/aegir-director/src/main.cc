@@ -129,56 +129,26 @@ void write_name(char const *name, unsigned length) noexcept
     }
 }
 
-/** What the device tree says the machine has. */
-class DeviceReport : public aegir::devtree::Tree::Visitor {
-public:
-    bool device(aegir::devtree::Device const &device) override {
-        if (!device.has_region) {
-            return true;
-        }
-        ++with_region;
-        if (same_string(device.compatible, device.compatible_length, "virtio,mmio")) {
-            ++virtio_mmio;
-            aegir::debug_write("    ");
-            aegir::debug_write_hex(device.base);
-            if (device.has_interrupt) {
-                aegir::debug_write(" irq ");
-                aegir::debug_write_unsigned(device.interrupt);
-            } else {
-                aegir::debug_write(" (no interrupt)");
-            }
-            aegir::debug_write("\n");
-        }
-        return true;
-    }
-
-    unsigned with_region = 0;
-    unsigned virtio_mmio = 0;
-
-    static bool same_string(char const *text, uint32_t length, char const *wanted) noexcept {
-        for (uint32_t i = 0; i < length; ++i) {
-            if (text[i] != wanted[i]) {
-                return false;
-            }
-            if (wanted[i] == '\0') {
-                return true;
-            }
-        }
-        return wanted[length] == '\0';
-    }
-};
-
-/** Count the devices the tree describes, and report the buses in it.
+/** Map the device tree the firmware left us, and say where it is.
  *
  *  The blob lives in the extra bootinfo pages, whose frame capabilities the kernel
- *  put in our CSpace, and it is read in place: the scratch window only ever hands
- *  out the next page, so mapping them in order gives one contiguous window, and
- *  nothing is unmapped while the tree points into it. Where the blob *starts* in
- *  those pages is not something we assume -- the magic says so.
+ *  put in our CSpace, and it is read in place: those pages are already mapped
+ *  ("RISCVPageMap: attempting to map frame into multiple addresses"), so they are
+ *  moved into the scratch window, which only ever hands out the next page -- which
+ *  is also what makes them contiguous to walk. Where the blob *starts* is not
+ *  something we assume: the magic says so.
  *
- *  This is all of Aegir's device discovery for now: the device manager, which owns
- *  the bus -> device -> service map, is not spawned yet (specs/services.md). */
-unsigned report_devices(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scratch) noexcept {
+ *  Director does not read the tree's contents. It maps it, checks that it is one,
+ *  and hands it to the device manager, which is the service that owns what the
+ *  machine is (specs/services.md).
+ *
+ *  Nothing is unmapped afterwards: the blob stays mapped, because the bytes handed
+ *  on are those bytes. */
+unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scratch,
+                         void const **blob_out, uint32_t *bytes_out) noexcept {
+    *blob_out = nullptr;
+    *bytes_out = 0;
+
     uint32_t const pages =
         static_cast<uint32_t>(bootinfo->extraBIPages.end - bootinfo->extraBIPages.start);
     if (pages == 0) {
@@ -189,12 +159,6 @@ unsigned report_devices(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scra
     uint8_t const *blob = nullptr;
     uint64_t mapped = 0;
     for (seL4_CPtr cap = bootinfo->extraBIPages.start; cap < bootinfo->extraBIPages.end; ++cap) {
-        /* These frames are already mapped: the kernel puts the extra bootinfo
-         * pages -- which is where the device tree lives -- into the root task's
-         * address space, and a frame cannot be mapped at two addresses
-         * ("RISCVPageMap: attempting to map frame into multiple addresses"). So
-         * move each one into the scratch window, because the tree is read in place
-         * and needs its pages to be contiguous to be walked. */
         seL4_RISCV_Page_Unmap(cap);
         auto *page = static_cast<uint8_t *>(scratch->map(cap));
         if (page == nullptr) {
@@ -229,26 +193,12 @@ unsigned report_devices(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scra
     aegir::debug_write_unsigned(tree.version());
     aegir::debug_write(", ");
     aegir::debug_write_unsigned(tree.total_size() / 1024);
-    aegir::debug_write(" KiB of it, ");
+    aegir::debug_write(" KiB, ");
     aegir::debug_write_unsigned(tree.reserved_entries());
-    aegir::debug_write(" reserved regions\n");
+    aegir::debug_write(" reserved regions, handed to the device manager\n");
 
-    DeviceReport report;
-    if (!tree.walk(report)) {
-        aegir::debug_write("  FAIL the device tree could not be read: stopped ");
-        aegir::debug_write_unsigned(tree.failure_offset());
-        aegir::debug_write(" of ");
-        aegir::debug_write_unsigned(tree.struct_size());
-        aegir::debug_write(" struct bytes, ");
-        aegir::debug_write_unsigned(tree.strings_size());
-        aegir::debug_write(" string bytes\n");
-        return 1;
-    }
-    aegir::debug_write("  devices: ");
-    aegir::debug_write_unsigned(report.with_region);
-    aegir::debug_write(" with a register window, of which ");
-    aegir::debug_write_unsigned(report.virtio_mmio);
-    aegir::debug_write(" are virtio transports\n");
+    *blob_out = blob + offset;
+    *bytes_out = tree.total_size();
     return 0;
 }
 
@@ -374,7 +324,8 @@ void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
  * honest outcome while there is no timer to time out on. */
 bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest const &manifest,
                    aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
-                   aegir::mem::Arena &arena, aegir::mem::Account &account) noexcept
+                   aegir::mem::Arena &arena, aegir::mem::Account &account,
+                  void const *devices, uint32_t devices_bytes) noexcept
 {
     auto *started =
         static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
@@ -405,7 +356,7 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     }
 
     Boot boot{};
-    services.boot(manifest, account, started, boot, &supervisor);
+    services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes);
 
     heading("boot set");
     write("  ");
@@ -519,10 +470,12 @@ int main(int argc, char *argv[])
         problem("the address space window could not be worked out");
     }
 
-    /* The device tree, before anything is spawned: it is what the device manager
-     * will own, and it is the only place Aegir learns what the machine is
+    /* The device tree, before anything is spawned: it is the only place Aegir
+     * learns what the machine is, and it is handed to the device manager
      * (specs/services.md). */
-    failures += report_devices(bootinfo, &scratch);
+    void const *device_tree = nullptr;
+    uint32_t device_tree_bytes = 0;
+    failures += map_device_tree(bootinfo, &scratch, &device_tree, &device_tree_bytes);
 
     /* Everything boot allocates is charged to the system account
      * (specs/authority.md). Its capacity grows on demand; there is no ceiling
@@ -582,7 +535,7 @@ int main(int argc, char *argv[])
 
     bool booted = false;
     if (initrd_ok && manifest_ok) {
-        booted = boot_services(initrd, manifest, allocator, scratch, arena, system);
+        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree, device_tree_bytes);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread

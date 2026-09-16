@@ -64,7 +64,7 @@ constexpr uint64_t kSlotFirstDeclared = 8;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -80,6 +80,11 @@ enum class EntryKind : uint32_t {
     Capability = 4,
     /** The page size the child's mappings use, for anything that has to agree. */
     PageBits = 5,
+    /** A blob mapped into the child's address space: its address in `number` and
+     *  its byte count in `length`. The device tree arrives this way -- the child
+     *  reads it in place, and what it says the machine is belongs to whoever is
+     *  given it, not to whoever spawned the process (specs/services.md). */
+    Devices = 6,
 };
 
 struct Entry {
@@ -119,7 +124,7 @@ struct PortEntry {
  *  in). */
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
              char const *account, uint32_t account_length, PortEntry const *ports,
-             uint32_t port_count) noexcept;
+             uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes) noexcept;
 
 /* --- reading (a spawned process) ------------------------------------------- */
 
@@ -137,6 +142,9 @@ char const *string(EntryKind kind, uint32_t *length) noexcept;
 /** The slot a named port was installed in. False when this process was not given
  *  that port. */
 bool capability(char const *name, uint32_t length, uint64_t *slot) noexcept;
+
+/** A blob the process was given, and where it is. False when there is none. */
+bool devices(uint64_t *address, uint32_t *length) noexcept;
 
 }  // namespace aegir::bootstrap
 
