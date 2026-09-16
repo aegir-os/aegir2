@@ -56,6 +56,18 @@ struct Boot {
     char const *problem; /* the empty string when every entry started */
 };
 
+/** One device the bus reported: where it is in the machine, what it is, and the frame its
+ *  registers are behind.
+ *
+ *  This is the shape of the bus map: director surveys the machine once, and a service says
+ *  which device it is for by naming the id the bus gives it. The selection itself is the
+ *  next step -- this type is what it selects from (specs/services.md, specs/authority.md). */
+struct Device {
+    uint64_t address;
+    uint32_t id;
+    seL4_CPtr frame;
+};
+
 class Services {
 public:
     Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
