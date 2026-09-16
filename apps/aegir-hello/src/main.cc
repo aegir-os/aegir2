@@ -31,6 +31,8 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/ipc/port.h>
+#include <aegir/log.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -200,6 +202,23 @@ int main(int argc, char *argv[])
     write_line("static constructors", constructor_ran ? "ran" : "DID NOT RUN");
     write_number("constexpr template max(4, 5)", larger<uint64_t>(4, 5));
     write_line("floating point", floating_point_works() ? "works" : "WRONG");
+
+    /* Ask the logger to record that we started. This is the whole point of the
+     * port we were given: a call, an answer, and a badge at the other end that
+     * says who called (specs/services.md). */
+    aegir::ipc::Consumer const log =
+        aegir::ipc::Consumer::find(aegir::log::kPortName, aegir::log::kPortNameLength);
+    if (!log.valid()) {
+        write_line("log.main port", "not given");
+    } else {
+        aegir::ipc::Reply const answer =
+            log.call(aegir::log::kMethodEvent, static_cast<uint64_t>(aegir::log::Event::Starting));
+        /* A refused call comes back as an error label rather than as data, so
+         * this says which happened instead of printing a nonsense answer. */
+        write_line("log.main call",
+                   answer.error != 0 ? "refused"
+                                     : (answer.word == aegir::log::kRecorded ? "recorded" : "answered"));
+    }
 
     /* Tell the supervisor we got here. A notification signal is one word and
      * cannot be forged into saying someone else finished (specs/director.md). */

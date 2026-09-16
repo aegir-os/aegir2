@@ -267,6 +267,31 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     write(" declared, ");
     number(boot.started);
     write(" started\n");
+    write("  ports: ");
+    number(services.graph().port_count());
+    write("\n");
+    for (unsigned i = 0; i < services.graph().port_count(); ++i) {
+        uint32_t name_length = 0;
+        char const *port_name = services.graph().port_name(i, &name_length);
+        write("    ");
+        write_name(port_name, name_length);
+        write(": owned by ");
+        uint32_t owner_length = 0;
+        char const *owner = manifest[services.graph().port_owner(i)].name.data;
+        owner_length = manifest[services.graph().port_owner(i)].name.length;
+        write_name(owner, owner_length);
+        write("\n");
+    }
+    write("  order: ");
+    for (unsigned step = 0; step < boot.started; ++step) {
+        /* The graph's order is what services were created in; the records keep
+         * the names as they started. */
+        if (step > 0) {
+            write(", ");
+        }
+        write_name(started[step].name, started[step].name_length);
+    }
+    write("\n");
     for (unsigned i = 0; i < boot.started; ++i) {
         write("  ");
         write_name(started[i].name, started[i].name_length);

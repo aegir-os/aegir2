@@ -41,7 +41,7 @@ bool declared_as_user(manifest::Entry const &entry) noexcept
 
 Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
                    spawn::Initrd const &initrd) noexcept
-    : initrd_(initrd), spawner_(allocator, scratch, arena, initrd)
+    : initrd_(initrd), graph_(allocator, arena), spawner_(allocator, scratch, arena, initrd)
 {
 }
 
@@ -69,7 +69,16 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         }
     }
 
-    for (uint32_t i = 0; i < manifest.size(); ++i) {
+    /* The ports first: who owns what, who may call it, and the order that makes
+     * an owner always run before its first consumer. Nothing is created until all
+     * of it validates (src/ports.h). */
+    if (!graph_.build(manifest, account)) {
+        boot.problem = graph_.problem();
+        return;
+    }
+
+    for (uint32_t step = 0; step < manifest.size(); ++step) {
+        uint32_t const i = graph_.order()[step];
         manifest::Entry const &entry = manifest[i];
         spawn::Request request{};
         request.name = entry.name.data;
@@ -79,6 +88,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.account = entry.account.data;
         request.account_length = entry.account.length;
         request.priority = priority_for(entry);
+        request.ports = graph_.grants(i);
+        request.port_count = graph_.grant_count(i);
 
         spawn::Process process{};
         if (!spawner_.spawn(request, account, process)) {

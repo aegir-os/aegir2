@@ -28,6 +28,8 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
+
+#include "ports.h"
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -59,8 +61,12 @@ public:
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
               Boot &boot) noexcept;
 
+    /** The ports the manifest declares, for whoever wants to report them. */
+    PortGraph const &graph() const noexcept { return graph_; }
+
 private:
     spawn::Initrd const &initrd_;
+    PortGraph graph_;
     spawn::Spawner spawner_;
 };
 

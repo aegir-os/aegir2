@@ -18,10 +18,12 @@ project(aegir-director CXX)
 set(aegir_initrd_files
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/services.manifest"
     "$<TARGET_FILE:aegir-hello>"
+    "$<TARGET_FILE:aegir-logger>"
 )
 set(aegir_initrd_names
     "services.manifest"
     "aegir-hello"
+    "aegir-logger"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)
@@ -32,17 +34,17 @@ if(NOT "${aegir_initrd_names_check}" STREQUAL "${aegir_initrd_names}")
 endif()
 
 include(cpio)
-MakeCPIO(director_initrd.o "${aegir_initrd_files}" DEPENDS aegir-hello)
+MakeCPIO(director_initrd.o "${aegir_initrd_files}" DEPENDS aegir-hello aegir-logger)
 
-add_executable(aegir-director src/main.cc src/services.cc director_initrd.o)
+add_executable(aegir-director src/main.cc src/services.cc src/ports.cc director_initrd.o)
 
 target_compile_options(aegir-director PRIVATE -Wall -Wextra -Werror)
 
 # cpio is util_libs' reader for the initrd above; everything else is ours.
 target_link_libraries(
   aegir-director
-  PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-manifest aegir-spawn
-          sel4 muslc sel4runtime cpio
+  PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-ipc aegir-log
+          aegir-manifest aegir-spawn sel4 muslc sel4runtime cpio
 )
 
 include(rootserver)

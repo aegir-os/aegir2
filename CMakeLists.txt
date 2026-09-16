@@ -62,11 +62,13 @@ add_subdirectory(libs/aegir-runtime)
 add_subdirectory(libs/aegir-mem)
 add_subdirectory(libs/aegir-bootstrap)
 add_subdirectory(libs/aegir-ipc)
+add_subdirectory(libs/aegir-log)
 add_subdirectory(libs/aegir-manifest)
 add_subdirectory(libs/aegir-spawn)
 # aegir-hello is director's smoke client, so it is built before the task that
 # packs it into its initrd.
 add_subdirectory(apps/aegir-hello)
+add_subdirectory(apps/aegir-logger)
 add_subdirectory(apps/aegir-director)
 
 if(SIMULATION)

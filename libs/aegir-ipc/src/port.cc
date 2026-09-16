@@ -31,7 +31,7 @@ Consumer Consumer::find(char const *name, uint32_t length) noexcept
     return Consumer(slot);
 }
 
-Reply Consumer::call(uint32_t method, uint64_t word) noexcept
+Reply Consumer::call(uint32_t method, uint64_t word) const noexcept
 {
     seL4_SetMR(kMethodMr, method);
     seL4_SetMR(kWordMr, word);

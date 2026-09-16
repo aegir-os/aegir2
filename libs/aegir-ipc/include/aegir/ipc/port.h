@@ -66,7 +66,7 @@ public:
      *  when the kernel refused the call -- a missing right, or an owner that is
      *  not there -- which is a fact the caller has to be able to see rather than
      *  read as a nonsense answer. */
-    Reply call(uint32_t method, uint64_t word) noexcept;
+    Reply call(uint32_t method, uint64_t word) const noexcept;
 
 private:
     seL4_CPtr capability_;

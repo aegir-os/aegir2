@@ -5,18 +5,27 @@
 # parsed at boot. It is data: changing the service set is an image change, not a
 # code change. The authoritative copy will be served by a config service later.
 #
-# The entries here are the ones whose binaries exist in this image. The boot set
-# from specs/services.md (logger, device-manager, vfs, partition-manager, auth)
-# joins it as each service lands: a `binary` that names an entry the image does
-# not contain is an error, so the manifest cannot get ahead of the build.
+# `owns` and `needs` are the port graph: a port has exactly one owner (its only
+# reader), and whoever needs it may call it. Creation follows that graph, so an
+# owner is always running before its first consumer, and a cycle stops the boot.
 
 format = 1
 
+# The logger owns the port everything else talks to, and is therefore first:
+# a service that cannot say what it is doing is a service nobody can supervise.
+[logger]
+binary    = aegir-logger
+authority = system
+account   = system
+owns      = log.main
+restart   = always
+
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
-# constructors, TLS, console) and needs no port at all, which is what makes it
-# the cheapest thing to start first (specs/director.md).
+# constructors, TLS, floating point, console) and now also that a spawned process
+# can call a port it was given.
 [hello]
 binary    = aegir-hello
 authority = system
 account   = boot
+needs     = log.main
 restart   = never
