@@ -454,31 +454,34 @@ and saying which half exists is the point of writing it down:
   the answer is a property of the machine and not of the code. Note that the tree
   lists the transports in *descending* order, so "the first the tree names" is the
   highest address and a driver will want them the other way up.
-- **a device frame can be taken, but the frame that comes back is not the device**:
-  the frame at a transport's address is nine retypes away, one per page before it,
-  and the retype's depth must be `seL4_WordBits` -- the root task's CNode has a
-  guard, so anything less is `seL4_FailedLookup` (the allocator's `kRootCNodeDepth`
-  is `seL4_WordBits` for the same reason). The frame then maps through the scratch
-  window and `Scratch::map` reports success, and the mapping answers with zeros
-  where a virtio magic should be. The sharpest fact is the one that rules out the
-  device: the fault that follows is at *the same address in every run* (`0xbf008`,
-  `vm fault on data ... status 0x5`, a load access fault) no matter which transport's
-  page was taken. The failing access is therefore about the mapping, not the device,
-  and a load access fault is what an access to unimplemented physical memory gives --
-  so the frame's *physical* address is not the device's, and the next thing to check
-  is what `seL4_UntypedDesc.paddr` plus the retype cursor actually produce: take one
-  frame from that untyped's base and compare. The scratch window itself is known
-  good for ordinary frames (director's self-test retypes, maps, writes and reads one
-  back every boot), which is exactly why this looked like the device's fault.
-- **the machine has no devices on its transports unless it is given one**: with none
-  attached, the transports are empty, answer zero, and cannot distinguish "the
-  device path works" from "the mapping is wrong". The run now gives the machine
-  `-device virtio-rng-device` (scripts/targets.py, `qemu_args`; no backing file
-  needed), and director reports the transport it lands on.
-- **which transport a device lands on is not the first one the tree names**: QEMU
-  gives devices to its transports from the bottom up, so the first device attached is
-  at `0x10001000` with interrupt 1, while the tree lists them in *descending* order
-  and names `0x10008000` first. The boot report now says which one it is.
+- **a device's registers can be read, and the machine says so every boot**:
+
+      device memory: the transport with a device behind it is at 0x10001000 (4096 bytes, irq 1)
+      device 0x10001000: magic 0x74726976, version 1, device id 0, vendor 0x554d4551,
+        reached after 2 retypes  (virtio: the magic reads)
+
+  `0x74726976` is "virt" and `0x554d4551` is "QEMU", so this is a real virtio-mmio
+  transport being read through a frame retyped out of device untyped memory and
+  mapped into director's own address space. Two things make it work, and both were
+  wrong first:
+- **the retype's depth is the whole word**: the root task's CNode has a guard, so
+  `seL4_WordBits` is what addresses its slots and anything less comes back as
+  `seL4_FailedLookup` (the allocator's own `kRootCNodeDepth` is `seL4_WordBits` for
+  the same reason).
+- **a frame that is dropped goes back to its untyped, and the next retype carves it
+  again.** A retype has no interior offset, so reaching a transport's page means
+  retyping every page before it -- and doing that into *one slot*, deleting the frame
+  in between, yields the untyped's *first* page every time. That is what read as "the
+  device answers zeros" for three attempts. The pages along the way are kept, each in
+  its own slot, and the survey that found this is the reason the boot report now
+  prints how many retypes it took (`reached after 2 retypes`).
+- **an empty transport still answers**: magic, version 1, vendor, and **device id 0**.
+  So the magic proves the *transport* is reachable; the *device id* is what says
+  whether anything is behind it. The run gives the machine one device
+  (`-device virtio-rng-device`, scripts/targets.py, no backing file needed) precisely
+  so there is a transport with a non-zero device id to find -- and `0x10001000` is
+  not it, which is the next thing to look for: survey the transports for the one whose
+  device id is not zero, and that is the device a driver is given.
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the

@@ -202,7 +202,87 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
     return 0;
 }
 
-/** The first device the tree describes on a bus we care about. 
+/** Read a virtio-mmio transport's identity registers: what a driver's first line
+ *  does, and the only thing that shows a device is a device rather than a range of
+ *  addresses.
+ *
+ *  Reaching the transport's page means retyping every page before it, because a
+ *  retype carves from the untyped's own cursor and there is no interior offset. The
+ *  pages before it are *kept*, each in its own slot, and that is not tidiness: a
+ *  frame that is dropped goes back to its untyped, and the next retype carves it
+ *  again, so every round yields the untyped's first page. That mistake read as
+ *  "the device answers zeros" for three attempts, and the survey that found it is
+ *  why this says so (specs/services.md). */
+unsigned report_device_registers(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &allocator,
+                                 aegir::mem::Scratch &scratch, uint64_t paddr) noexcept {
+    seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
+    for (seL4_Word i = 0; i < count; ++i) {
+        seL4_UntypedDesc const &desc = bootinfo->untypedList[i];
+        if (desc.isDevice == 0) {
+            continue;
+        }
+        uint64_t const base = desc.paddr;
+        uint64_t const span = 1ull << desc.sizeBits;
+        if (paddr < base || paddr - base + (1ull << seL4_PageBits) > span) {
+            continue;
+        }
+        seL4_Word const pages = ((paddr - base) >> seL4_PageBits) + 1;
+        seL4_CPtr frame = 0;
+        for (seL4_Word page = 0; page < pages; ++page) {
+            frame = allocator.alloc_slot();
+            if (frame == 0) {
+                aegir::debug_write("  FAIL out of slots before reaching the device\n");
+                return 1;
+            }
+            /* The depth is the whole word: the root task's CNode has a guard, so
+             * anything less comes back as seL4_FailedLookup (the allocator's own
+             * kRootCNodeDepth is seL4_WordBits for the same reason). */
+            seL4_Error const error =
+                seL4_Untyped_Retype(bootinfo->untyped.start + i, seL4_RISCV_4K_Page,
+                                    seL4_PageBits, seL4_CapInitThreadCNode,
+                                    seL4_CapInitThreadCNode, seL4_WordBits, frame, 1);
+            if (error != seL4_NoError) {
+                aegir::debug_write("  FAIL retype (seL4 error ");
+                aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+                aegir::debug_write(")\n");
+                return 1;
+            }
+        }
+        auto *registers = static_cast<volatile uint32_t *>(scratch.map(frame));
+        if (registers == nullptr) {
+            aegir::debug_write("  FAIL the device frame could not be mapped\n");
+            return 1;
+        }
+
+        /* virtio-mmio, offsets 0x00 to 0x0c (virtio 1.x, 4.2.2). */
+        uint32_t const magic = registers[0x00 / 4];
+        aegir::debug_write("  device ");
+        aegir::debug_write_hex(paddr);
+        aegir::debug_write(": magic ");
+        aegir::debug_write_hex(magic);
+        uint32_t const version = registers[0x04 / 4];
+        aegir::debug_write(", version ");
+        aegir::debug_write_unsigned(version);
+        uint32_t const device_id = registers[0x08 / 4];
+        aegir::debug_write(", device id ");
+        aegir::debug_write_unsigned(device_id);
+        uint32_t const vendor_id = registers[0x0c / 4];
+        aegir::debug_write(", vendor ");
+        aegir::debug_write_hex(vendor_id);
+        aegir::debug_write(", reached after ");
+        aegir::debug_write_unsigned(pages);
+        aegir::debug_write(magic == 0x74726976u ? " retypes  (virtio: the magic reads)\n"
+                                               : " retypes  (NOT a virtio transport)\n");
+        return magic == 0x74726976u ? 0 : 1;
+    }
+    aegir::debug_write("  FAIL no device untyped covers ");
+    aegir::debug_write_hex(paddr);
+    aegir::debug_write("\n");
+    return 1;
+}
+
+/* One is enough to find out whether a device can be reached at all, before a
+ *  service is given
  *  find out whether a device can be reached at all, before a service is given
  *  one. */
 class FirstVirtioTransport : public aegir::devtree::Tree::Visitor {
@@ -249,8 +329,8 @@ public:
  *  own free position. Reaching a device therefore means knowing how far into its
  *  untyped the device sits, which is what this reports: the untyped that covers
  *  the address, and the page's position within it. */
-unsigned report_device_memory(seL4_BootInfo const *bootinfo, void const *blob,
-                              uint32_t bytes) noexcept {
+unsigned report_device_memory(seL4_BootInfo const *bootinfo, void const *blob, uint32_t bytes,
+                             uint64_t *base_out) noexcept {
     if (blob == nullptr) {
         return 0;
     }
@@ -265,6 +345,7 @@ unsigned report_device_memory(seL4_BootInfo const *bootinfo, void const *blob,
         return 1;
     }
 
+    *base_out = first.base;
     aegir::debug_write("  device memory: the transport with a device behind it is at ");
     aegir::debug_write_hex(first.base);
     aegir::debug_write(" (");
@@ -573,7 +654,11 @@ int main(int argc, char *argv[])
     void const *device_tree = nullptr;
     uint32_t device_tree_bytes = 0;
     failures += map_device_tree(bootinfo, &scratch, &device_tree, &device_tree_bytes);
-    failures += report_device_memory(bootinfo, device_tree, device_tree_bytes);
+    uint64_t device_base = 0;
+    failures += report_device_memory(bootinfo, device_tree, device_tree_bytes, &device_base);
+    if (device_base != 0) {
+        failures += report_device_registers(bootinfo, allocator, scratch, device_base);
+    }
 
     /* Everything boot allocates is charged to the system account
      * (specs/authority.md). Its capacity grows on demand; there is no ceiling
