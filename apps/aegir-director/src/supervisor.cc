@@ -10,6 +10,21 @@
 #include <aegir/debug.h>
 #include <sel4/faults.h>
 
+/* sel4runtime's TLS helpers, declared here rather than by including its header:
+ * sel4runtime.h is C-only (specs/userland.md), and these are the three things a
+ * thread needs that a process gets from its crt. */
+extern "C" {
+uintptr_t sel4runtime_get_tls_size(void);
+uintptr_t sel4runtime_write_tls_image(void *tls_memory);
+void __sel4runtime_write_tls_variable(uintptr_t thread_pointer, unsigned char *variable,
+                                      unsigned char *value, uint64_t size);
+/* Where libsel4 keeps the IPC buffer pointer: per *thread*, in TLS. Every syscall
+ * wrapper reads it, so a thread whose thread pointer is zero faults on its first
+ * syscall -- which is exactly what happened here. It is declared by libsel4
+ * itself (kernel/libsel4/include/sel4/functions.h:13), so it is used, not
+ * redeclared. */
+}
+
 namespace aegir::director {
 
 namespace {
@@ -88,6 +103,11 @@ void report_fault(seL4_Word badge, seL4_MessageInfo_t info) noexcept
 extern "C" [[noreturn]] void aegir_supervisor_entry()
 {
     using aegir::director::Supervised;
+
+    /* Said before anything else, and before any global is touched: a string
+     * literal needs no global pointer, so this line answers "did the thread run"
+     * without also depending on "did its data addresses work". */
+    aegir::director::write("  supervisor: listening for faults\n");
 
     for (;;) {
         seL4_Word badge = 0;
@@ -170,7 +190,11 @@ bool Supervisor::start(seL4_CPtr fault_endpoint, Supervised *table, uint32_t cap
         return false;
     }
 
-    /* Two pages of stack, mapped the same way and left mapped. */
+    /* Two pages of stack, mapped the same way and left mapped. The thread's TLS
+     * block lives at the top of them and the stack grows down below it, which is
+     * how upstream threads are built (projects/seL4_libs/libsel4utils/src/thread.c:169-177)
+     * -- and it has to be per thread, because the IPC buffer pointer lives in TLS
+     * and two threads must not share one. */
     uintptr_t stack_top = 0;
     for (unsigned page = 0; page < 2; ++page) {
         seL4_CPtr const frame =
@@ -209,6 +233,31 @@ bool Supervisor::start(seL4_CPtr fault_endpoint, Supervised *table, uint32_t cap
     }
 
     g_world = World{fault_endpoint, table_, capacity_, count_, faults_};
+
+    /* The thread's own TLS: the process's image, copied where this thread can
+     * reach it, with its own IPC buffer pointer written into it. */
+    uintptr_t const tls_size = sel4runtime_get_tls_size();
+    if (tls_size == 0 || tls_size >= 2 * kPage) {
+        problem_ = "the supervisor's TLS does not fit its stack";
+        return false;
+    }
+    auto *tls_memory = reinterpret_cast<void *>(stack_top - tls_size);
+    uintptr_t const thread_pointer = sel4runtime_write_tls_image(tls_memory);
+    if (thread_pointer == 0) {
+        problem_ = "the supervisor's TLS could not be written";
+        return false;
+    }
+    seL4_IPCBuffer *ipc_pointer = static_cast<seL4_IPCBuffer *>(ipc_buffer);
+    __sel4runtime_write_tls_variable(thread_pointer,
+                                     reinterpret_cast<unsigned char *>(&__sel4_ipc_buffer),
+                                     reinterpret_cast<unsigned char *>(&ipc_pointer),
+                                     sizeof(ipc_pointer));
+    error = seL4_TCB_SetTLSBase(tcb, thread_pointer);
+    if (error != seL4_NoError) {
+        problem_ = "the supervisor's TLS base could not be set";
+        return false;
+    }
+
     seL4_UserContext context = {};
     /* The thread has to be given the global pointer the rest of this process
      * uses. A process gets it from its crt -- the entry code computes it from
@@ -221,7 +270,9 @@ bool Supervisor::start(seL4_CPtr fault_endpoint, Supervised *table, uint32_t cap
     asm volatile("mv %0, gp" : "=r"(gp));
     context.gp = gp;
     context.pc = reinterpret_cast<seL4_Word>(&aegir_supervisor_entry);
-    context.sp = stack_top & ~static_cast<seL4_Word>(15);
+    /* The stack pointer starts below the TLS block, not at the top of the stack:
+     * that memory belongs to the thread's TLS now. */
+    context.sp = (stack_top - tls_size) & ~static_cast<seL4_Word>(15);
     error = seL4_TCB_WriteRegisters(tcb, 1 /* resume */, 0, sizeof(context) / sizeof(seL4_Word),
                                      &context);
     if (error != seL4_NoError) {
