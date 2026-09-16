@@ -88,6 +88,13 @@ struct Request {
      * the name `untyped` (specs/services.md, specs/authority.md). */
     uint64_t untyped_physical = 0;
     uint32_t untyped_bits = 0;
+    /* The page of memory director will map into this child, and where it will land. The
+     * same shape as `device_frame`/`device_address`, and for a reason that only shows up
+     * when it bites: a service cannot map into its own address space, because the spawner
+     * holds the child's root page table (specs/services.md). So `memory_bytes` is what will
+     * be mapped at `memory_address`, and the child is told the physical base separately. */
+    seL4_CPtr memory_frame = 0;
+    uint32_t memory_bytes = 0;
     char const *name;
     uint32_t name_length;
     char const *binary;

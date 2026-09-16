@@ -171,19 +171,17 @@ int main(int argc, char *argv[])
      * (specs/services.md). */
     uint64_t memory_physical = 0;
     uint32_t memory_bits = 0;
-    uint64_t untyped_slot = 0;
-    if (!aegir::bootstrap::untyped(&memory_physical, &memory_bits)) {
+    uint64_t memory_address = 0;
+    if (!aegir::bootstrap::untyped(&memory_physical, &memory_bits, &memory_address)) {
         write_line("my memory", "the block did not say where it is");
-    } else if (!aegir::bootstrap::capability("untyped", 7, &untyped_slot)) {
-        write_line("my memory", "no capability was installed for it");
     } else {
         aegir::debug_write("      my memory: ");
         aegir::debug_write_unsigned(1ull << memory_bits);
-        aegir::debug_write(" bytes at physical ");
+        aegir::debug_write(" bytes at ");
+        aegir::debug_write_hex(memory_address);
+        aegir::debug_write(" (physical ");
         aegir::debug_write_hex(memory_physical);
-        aegir::debug_write(", capability ");
-        aegir::debug_write_unsigned(untyped_slot);
-        aegir::debug_write("\n");
+        aegir::debug_write(")\n");
     }
 
     uint32_t features = 0;

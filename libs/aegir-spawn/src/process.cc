@@ -297,15 +297,33 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         }
         device_address = at;
     }
+    /* Where a service's own memory goes, chosen the way a device's is: the spawner knows the
+     * layout of the address space it is filling, and the child cannot map for itself. It goes
+     * *past the device window*, which is mapped at `devices_end` -- the same expression would
+     * put it on top of that window, and the kernel refuses a second mapping at one address. */
+    uintptr_t const memory_at =
+        align_up(static_cast<uintptr_t>(devices_end) + request.device_bytes, kPage);
     if (bootstrap::write(block_storage, kBlockBytes, request.name, request.name_length,
                          request.account, request.account_length, port_entries,
                          request.port_count, devices_address, request.devices_bytes,
                          device_address, request.device_bytes, request.device_physical,
-                         request.untyped_physical, request.untyped_bits) == nullptr) {
+                         request.untyped_physical, request.untyped_bits, memory_at) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {
         return fail("the bootstrap block could not be mapped");
+    }
+
+    /* The memory follows the device window it was placed after. */
+    if (request.memory_frame != 0 && request.memory_bytes > 0) {
+        uint32_t const pages = request.memory_bytes / static_cast<uint32_t>(kPage);
+        for (uint32_t i = 0; i < pages; ++i) {
+            seL4_Error mapped = seL4_NoError;
+            if (!vspace.map_page(memory_at + i * kPage, request.memory_frame + i, true, account,
+                                 &mapped)) {
+                return fail("the memory a service asked for could not be mapped into it");
+            }
+        }
     }
 
     /* The IPC buffer's frame capability is part of the TCB configuration, so it

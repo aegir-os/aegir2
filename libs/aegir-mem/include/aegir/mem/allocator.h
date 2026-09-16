@@ -115,6 +115,15 @@ public:
     bool adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept;
 
     /**
+     * A page retyped out of an untyped this allocator handed out, put in a slot of its own.
+     * `carve_untyped` gives away the authority over a region; this gives back something a
+     * caller can use, which is what a service's memory grant needs to become a frame the
+     * spawner can map into it. The region's physical base is the page's, because an untyped
+     * of exactly `seL4_PageBits` holds exactly one page.
+     */
+    seL4_CPtr carve_page(seL4_CPtr untyped_cap, Account &account, seL4_Error *error) noexcept;
+
+    /**
      * Adopt a run of slots this process may put capabilities in, and the depth that
      * addresses them. A service's CSpace is its own -- the slots the block did not
      * name are nobody else's -- and its allocator has to be told where they are and

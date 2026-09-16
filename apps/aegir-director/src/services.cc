@@ -106,14 +106,15 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
          * graph; it is installed the way a port is -- by name, which is how the child
          * finds it, and by slot, which is the layout's business and not the caller's
          * (specs/authority.md). The slots come after the service's own ports. */
-        /* Memory the service asked for. It is carved here because the allocator is here and
-         * the *address* is what matters: a region's physical base is the one thing a service
-         * cannot find out for itself and a device has to be told, since a virtqueue's
-         * descriptor entries are guest-physical addresses (specs/services.md,
-         * specs/authority.md). */
+        /* The memory the service asked for is carved, retyped into a page and mapped into the
+         * child by the spawner -- the child is told the address it can write and the physical
+         * base the device reads, and needs no authority of its own. The untyped stays behind:
+         * a carved region that has been *split* cannot be given away (the kernel answers
+         * `RevokeFirst`), which is what "a port could not be installed" turned out to mean. */
         uint64_t memory_physical = 0;
         uint32_t memory_bits = 0;
         seL4_CPtr memory_cap = 0;
+        seL4_CPtr memory_frame = 0;
         if (entry.memory_kib > 0) {
             memory_bits = 10;
             while ((1u << (memory_bits - 10)) < entry.memory_kib) {
@@ -126,10 +127,19 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                 boot.problem = "no memory for a service that asked for some";
                 return;
             }
+            /* The authority is the untyped; what the spawner needs is a *frame* it can map
+             * into the child, and the child needs to be told the address it landed at --
+             * which is the untyped's physical base, since a page-sized untyped is one page
+             * (specs/services.md). */
+            seL4_Error page_error = seL4_NoError;
+            memory_frame = allocator_.carve_page(memory_cap, account, &page_error);
+            if (memory_frame == 0) {
+                boot.problem = "the memory a service asked for could not be turned into a page";
+                return;
+            }
         }
         if ((entry.device_manager && extra_count > 0) || memory_cap != 0) {
-            uint32_t const added =
-                (entry.device_manager && extra_count > 0 ? extra_count : 0) + (memory_cap != 0 ? 1 : 0);
+            uint32_t const added = entry.device_manager && extra_count > 0 ? extra_count : 0;
             auto *merged = static_cast<spawn::PortGrant *>(
                 arena_.allocate(sizeof(spawn::PortGrant) * (grant_count + added)));
             if (merged == nullptr) {
@@ -146,14 +156,6 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     merged[at].slot = bootstrap::kSlotFirstDeclared + at;
                     ++at;
                 }
-            }
-            if (memory_cap != 0) {
-                /* Named `untyped`, which is what the service looks it up by, and given the
-                 * size in bits with it: a port has no size and there is no invocation that
-                 * reads an untyped's, so it has to be told (PortGrant::size_bits). */
-                merged[at] = spawn::PortGrant{"untyped", 7, bootstrap::kSlotFirstDeclared + at,
-                                              memory_cap, seL4_AllRights, 0, memory_bits};
-                ++at;
             }
             grants = merged;
             grant_count += added;
@@ -184,6 +186,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.device_physical = mine != nullptr ? mine->address : 0;
         request.untyped_physical = memory_physical;
         request.untyped_bits = memory_bits;
+        request.memory_frame = memory_frame;
+        request.memory_bytes = memory_frame != 0 ? (1u << memory_bits) : 0;
         request.fault_endpoint = fault_endpoint_;
         /* Badges count from one so that zero keeps meaning "nobody in
          * particular" -- which is what director itself looks like. */

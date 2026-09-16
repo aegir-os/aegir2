@@ -306,6 +306,27 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
     return cap;
 }
 
+seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
+                                seL4_Error *error) noexcept
+{
+    *error = seL4_NoError;
+    seL4_CPtr const slot = alloc_slot();
+    if (slot == 0) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    seL4_Error const retyped =
+        seL4_Untyped_Retype(untyped_cap, seL4_RISCV_4K_Page, seL4_PageBits, seL4_CapInitThreadCNode,
+                            seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
+    if (retyped != seL4_NoError) {
+        slot_failed(slot);
+        *error = retyped;
+        return 0;
+    }
+    account.objects += 1;
+    return slot;
+}
+
 seL4_CPtr Allocator::make_asid_pool(Account &account, seL4_Error *error) noexcept
 {
     *error = seL4_NoError;

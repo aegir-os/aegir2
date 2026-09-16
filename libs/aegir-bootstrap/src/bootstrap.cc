@@ -40,7 +40,8 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
              char const *account, uint32_t account_length, PortEntry const *ports,
              uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
              uint64_t device_address, uint32_t device_bytes, uint64_t device_physical,
-             uint64_t untyped_physical, uint32_t untyped_bits) noexcept
+             uint64_t untyped_physical, uint32_t untyped_bits,
+             uint64_t untyped_address) noexcept
 {
     if (storage == nullptr || name == nullptr || account == nullptr) {
         return nullptr;
@@ -98,7 +99,8 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
     /* The same shape as a device: an address the spawner knows and the child cannot work out
      * for itself, plus a size. `reserved` carries the size in bits, as a `Capability` entry
      * carries it for the same region. */
-    block->entries[6] = Entry{EntryKind::Untyped, 0, untyped_physical, 0, untyped_bits};
+    block->entries[6] = Entry{EntryKind::Untyped, 0, untyped_physical,
+                              static_cast<uint32_t>(untyped_address), untyped_bits};
 
     uint64_t next_offset = static_cast<uint64_t>(header_size) + name_length + account_length;
     for (uint32_t i = 0; i < port_count; ++i) {
@@ -201,7 +203,7 @@ char const *string(EntryKind kind, uint32_t *length) noexcept
     return nullptr;
 }
 
-bool untyped(uint64_t *physical, uint32_t *size_bits) noexcept
+bool untyped(uint64_t *physical, uint32_t *size_bits, uint64_t *address) noexcept
 {
     Block const *block = find();
     if (block == nullptr) {
@@ -215,6 +217,9 @@ bool untyped(uint64_t *physical, uint32_t *size_bits) noexcept
             }
             if (size_bits != nullptr) {
                 *size_bits = entry.reserved;
+            }
+            if (address != nullptr) {
+                *address = entry.data_offset;
             }
             return true;
         }
