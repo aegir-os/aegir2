@@ -26,9 +26,13 @@
   Where a script is genuinely needed (a rename across many files), assert each replacement
   before writing and read the region back.
 - Make the revert the fallback in the same command as the build --
-  `make build || git checkout -- <the directory>` -- so a failed attempt costs the work and
-  not the working tree. That guard earned its place seven times in one afternoon, and the
-  repository was never left broken.
+  `make build || git checkout -- <the directory>` -- and chain the build with `&&`, never with
+  `;`. Both are the same idea from two sides: one makes a failure leave the tree standing, the
+  other makes it stop the work. A check that cannot fail the command is not a check --
+  `make build ; make run ; git commit` committed a `-Werror` build error and a message claiming
+  a verification that had not happened, because the `;` let the failure through. That guard and
+  this chain each earned their place in one afternoon: seven reverts that never touched the
+  repository, and one commit that did.
 - Land the small change you are sure of rather than the whole change you are not: the build
   is the checkpoint, so each piece wants its own. A round that reverts has produced nothing a
   reader or the next round can use; a round that commits one certain piece has produced
