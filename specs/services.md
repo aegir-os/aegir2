@@ -454,19 +454,26 @@ and saying which half exists is the point of writing it down:
   the answer is a property of the machine and not of the code. Note that the tree
   lists the transports in *descending* order, so "the first the tree names" is the
   highest address and a driver will want them the other way up.
-- **a device frame can be taken, but reading it reads the wrong thing**: the frame
-  at `0x10008000` is nine retypes away, one per page before it, and the retype's
-  depth must be `seL4_WordBits` -- the root task's CNode has a guard, so anything
-  less comes back as `seL4_FailedLookup` (the allocator's `kRootCNodeDepth` is
-  `seL4_WordBits` for the same reason). The frame then maps *successfully* through
-  the scratch window and the mapping answers -- but not as the device: offset `0x00`
-  reads `0` where the virtio magic (`0x74726976`) has to be, and offset `0x08` faults
-  (`vm fault on data at ... with status 0x5`, a load access fault). So the frame in
-  hand is not the transport's registers. Next is the frame's *identity*, not the
-  mapping's attributes: take the frame at the untyped's own base (`0x10000000`) and
-  read it, which says whether the retype cursor really starts where
-  `seL4_UntypedDesc.paddr` says it does. Written down because every one of these
-  looked like "the mapping failed", and none of them was.
+- **a device frame can be taken, and what it reads depends on there being a
+  device**: the frame at `0x10008000` is nine retypes away, one per page before it,
+  and the retype's depth must be `seL4_WordBits` -- the root task's CNode has a
+  guard, so anything less comes back as `seL4_FailedLookup` (the allocator's
+  `kRootCNodeDepth` is `seL4_WordBits` for the same reason). The frame then maps
+  through the scratch window and the mapping *answers*, but not as a device: offset
+  `0x00` reads `0` where a virtio magic (`0x74726976`) would be, and offset `0x08`
+  faults with `vm fault on data ... status 0x5`, a load access fault.
+- **the machine has no devices on its transports, which is why that proves
+  nothing**: the virtual machine is started with no virtio device attached, so the
+  eight transports the tree describes are empty and answer nothing -- and a magic
+  read from an empty transport cannot distinguish "the device path works" from "the
+  mapping is wrong". A device has to exist before a driver can be proven right about
+  anything: `-device virtio-rng-device` needs no backing file and is the cheapest one
+  to add to the run (scripts/targets.py, `qemu_args`).
+- **which transport a device lands on is not the first one the tree names**: QEMU
+  gives devices to its transports from the bottom up, so the first device attached is
+  at `0x10001000`, while the tree lists the transports in *descending* order and
+  names `0x10008000` first. Reading "the first the tree names" reads the wrong
+  transport, twice in a row here.
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
