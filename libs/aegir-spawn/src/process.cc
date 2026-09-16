@@ -229,8 +229,23 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (block_storage == nullptr) {
         return fail("no memory for the bootstrap block");
     }
+    /* The block describes the ports as well as the process, because they are part
+     * of who it is: the child finds a port by name and the slot stays a layout
+     * detail it did not choose (specs/services.md). */
+    auto *port_entries =
+        static_cast<bootstrap::PortEntry *>(arena_.allocate(sizeof(bootstrap::PortEntry) *
+                                                           (request.port_count + 1)));
+    if (port_entries == nullptr) {
+        return fail("no memory for the bootstrap block's port list");
+    }
+    for (uint32_t i = 0; i < request.port_count; ++i) {
+        port_entries[i].name = request.ports[i].name;
+        port_entries[i].name_length = request.ports[i].name_length;
+        port_entries[i].slot = request.ports[i].slot;
+    }
     if (bootstrap::write(block_storage, kBlockBytes, request.name, request.name_length,
-                         request.account, request.account_length) == nullptr) {
+                         request.account, request.account_length, port_entries,
+                         request.port_count) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {
@@ -291,6 +306,22 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (!install(process.cspace, bootstrap::kSlotSupervision, process.supervision,
                  seL4_CanWrite)) {
         return fail("the supervision notification could not be installed");
+    }
+
+    /* The ports, each with the rights its side of the port calls for: an owner
+     * gets Read (it receives; replying needs nothing from the endpoint), a caller
+     * gets Write and GrantReply. The second half is not a guess: the kernel
+     * requires "both Write rights and either Grant or GrantReply" of a capability
+     * that may be called, and says so for fault endpoints in
+     * out/aegir/libsel4/include/interfaces/sel4_client.h:1202. A call that the
+     * kernel refuses comes back as an error label, which libs/aegir-ipc reports,
+     * so a wrong guess here is visible rather than silent. */
+    for (uint32_t i = 0; i < request.port_count; ++i) {
+        PortGrant const &grant = request.ports[i];
+        if (grant.capability == 0 || !install(process.cspace, grant.slot, grant.capability,
+                                              grant.rights)) {
+            return fail("a port could not be installed into the child");
+        }
     }
 
     /* Configure, then start. The fault endpoint is named in the child's CSpace --

@@ -75,7 +75,8 @@ enum class EntryKind : uint32_t {
     Name = 2,
     /** The account the child is charged to. */
     Account = 3,
-    /** A capability the child was given: `slot`, `value` and a name in `data`. */
+    /** A port the child was given: the slot in `number`, and its name at
+     *  `data_offset`. The name is the identity; the slot is a layout detail. */
     Capability = 4,
     /** The page size the child's mappings use, for anything that has to agree. */
     PageBits = 5,
@@ -103,11 +104,22 @@ struct Block {
 
 /* --- writing (director) ---------------------------------------------------- */
 
+/** A port a child is being given: its name, and the slot it was installed in
+ *  (specs/services.md). The child looks a port up by name -- the name is the
+ *  identity, the slot is an artifact of a layout the child did not choose. */
+struct PortEntry {
+    char const *name;
+    uint32_t name_length;
+    uint64_t slot;
+};
+
 /** Build a block in memory we can write: `storage` is a page that will be
  *  mapped into the child. Returns the block, or nullptr when it does not fit.
- *  `name` and `account` must outlive the call (they are copied in). */
+ *  `name`, `account` and every port name must outlive the call (they are copied
+ *  in). */
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
-             char const *account, uint32_t account_length) noexcept;
+             char const *account, uint32_t account_length, PortEntry const *ports,
+             uint32_t port_count) noexcept;
 
 /* --- reading (a spawned process) ------------------------------------------- */
 
@@ -121,6 +133,10 @@ char const *name(uint32_t *length) noexcept;
 /** Look up one string entry by kind. The pointer is into the block, so it is
  *  valid for as long as the block is. */
 char const *string(EntryKind kind, uint32_t *length) noexcept;
+
+/** The slot a named port was installed in. False when this process was not given
+ *  that port. */
+bool capability(char const *name, uint32_t length, uint64_t *slot) noexcept;
 
 }  // namespace aegir::bootstrap
 

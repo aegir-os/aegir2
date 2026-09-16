@@ -39,8 +39,21 @@
 
 namespace aegir::spawn {
 
+/** A port to install into the child before it starts (specs/services.md): the
+ *  endpoint capability, the slot it goes in, and the rights for *this* side. Who
+ *  gets which side is the graph's decision, not the spawner's -- the spawner's job
+ *  is to install exactly what it is handed and say so in the block. */
+struct PortGrant {
+    char const *name;
+    uint32_t name_length;
+    uint64_t slot;
+    seL4_CPtr capability;
+    seL4_CapRights_t rights;
+};
+
 /** What the manifest says about the process to create (specs/services.md). The
- *  strings are views into the manifest text, not copies. */
+ *  strings are views into the manifest text, not copies, and the ports are the
+ *  ones this process was granted -- ports it owns and ports it may call. */
 struct Request {
     char const *name;
     uint32_t name_length;
@@ -49,6 +62,8 @@ struct Request {
     char const *account;
     uint32_t account_length;
     uint32_t priority;
+    PortGrant const *ports;
+    uint32_t port_count;
 };
 
 /** A created process, from its creator's side: the capabilities we hold for it. */

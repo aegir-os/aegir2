@@ -61,6 +61,7 @@ target_compile_options(
 add_subdirectory(libs/aegir-runtime)
 add_subdirectory(libs/aegir-mem)
 add_subdirectory(libs/aegir-bootstrap)
+add_subdirectory(libs/aegir-ipc)
 add_subdirectory(libs/aegir-manifest)
 add_subdirectory(libs/aegir-spawn)
 # aegir-hello is director's smoke client, so it is built before the task that
