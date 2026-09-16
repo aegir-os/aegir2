@@ -15,5 +15,8 @@ add_library(aegir-runtime STATIC src/assert.cc src/debug.cc)
 
 target_include_directories(aegir-runtime PUBLIC include)
 # sel4runtime brings the kernel's generated config headers (it links
-# sel4_autoconf PUBLIC), which libsel4's own headers include.
-target_link_libraries(aegir-runtime PUBLIC aegir-cxx-policy sel4 sel4runtime)
+# sel4_autoconf PUBLIC), which libsel4's own headers include. muslc is the
+# C library, and it is also where <stdint.h> comes from: user code is compiled
+# -nostdinc, so a target that wants C headers has to link it (specs/build.md,
+# specs/userland.md).
+target_link_libraries(aegir-runtime PUBLIC aegir-cxx-policy sel4 sel4runtime muslc)

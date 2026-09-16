@@ -1,9 +1,13 @@
 #
-# aegir-hello: the root task.
+# aegir-hello: the spawn smoke client, not a root task.
 #
-# First Aegir program: it exists to prove the C++ path end to end -- that a C++
-# root task compiles for this target, that static constructors run, and that it
-# can talk to the kernel console. See apps/aegir-hello/src/main.cc.
+# It exists to prove the C++ path end to end -- that a C++ program compiles for
+# this target, that static constructors run, and that it can talk to the kernel
+# console -- and to be the cheapest thing director can start, because it needs no
+# port at all. See apps/aegir-hello/src/main.cc and specs/director.md.
+#
+# It is packed into director's initrd (apps/aegir-director/CMakeLists.txt) under
+# the flat name `aegir-hello`, which is how it is addressed now.
 #
 
 cmake_minimum_required(VERSION 3.16.0)
@@ -17,6 +21,3 @@ target_compile_options(aegir-hello PRIVATE -Wall -Wextra -Werror)
 # aegir-cxx-policy carries the freestanding C++ flags; aegir-runtime provides
 # the pieces every binary needs (see libs/aegir-runtime).
 target_link_libraries(aegir-hello PRIVATE aegir-cxx-policy aegir-runtime sel4 muslc sel4runtime)
-
-include(rootserver)
-DeclareRootserver(aegir-hello)

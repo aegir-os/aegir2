@@ -1,0 +1,22 @@
+# Aegir's boot manifest. See specs/services.md for the format, the fields and
+# the rules director validates against.
+#
+# This file is packed into director's initrd under the flat name `services` and
+# parsed at boot. It is data: changing the service set is an image change, not a
+# code change. The authoritative copy will be served by a config service later.
+#
+# The entries here are the ones whose binaries exist in this image. The boot set
+# from specs/services.md (logger, device-manager, vfs, partition-manager, auth)
+# joins it as each service lands: a `binary` that names an entry the image does
+# not contain is an error, so the manifest cannot get ahead of the build.
+
+format = 1
+
+# The spawn smoke client. It proves the C++ path end to end (ABI, static
+# constructors, TLS, console) and needs no port at all, which is what makes it
+# the cheapest thing to start first (specs/director.md).
+[hello]
+binary    = aegir-hello
+authority = system
+account   = boot
+restart   = never

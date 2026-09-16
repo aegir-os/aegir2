@@ -18,6 +18,33 @@ void debug_write(char const *text) noexcept
     }
 }
 
+void debug_write_unsigned(uint64_t value) noexcept
+{
+    char digits[20];
+    int length = 0;
+    do {
+        digits[length++] = static_cast<char>('0' + (value % 10));
+        value /= 10;
+    } while (value != 0 && length < static_cast<int>(sizeof(digits)));
+    while (length > 0) {
+        seL4_DebugPutChar(digits[--length]);
+    }
+}
+
+void debug_write_hex(uint64_t value) noexcept
+{
+    debug_write("0x");
+    bool leading = true;
+    for (int shift = 60; shift >= 0; shift -= 4) {
+        auto digit = static_cast<unsigned>(value >> shift) & 0xfu;
+        if (digit == 0 && leading && shift != 0) {
+            continue;
+        }
+        leading = false;
+        seL4_DebugPutChar(static_cast<char>(digit < 10 ? ('0' + digit) : ('a' + digit - 10)));
+    }
+}
+
 [[noreturn]] void halt() noexcept
 {
     // Parking by yielding keeps the hart available to the rest of the system

@@ -59,7 +59,12 @@ target_compile_options(
 )
 
 add_subdirectory(libs/aegir-runtime)
+add_subdirectory(libs/aegir-mem)
+add_subdirectory(libs/aegir-manifest)
+# aegir-hello is director's smoke client, so it is built before the task that
+# packs it into its initrd.
 add_subdirectory(apps/aegir-hello)
+add_subdirectory(apps/aegir-director)
 
 if(SIMULATION)
   include(simulation)

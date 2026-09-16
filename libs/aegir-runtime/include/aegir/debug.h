@@ -14,10 +14,20 @@
 #ifndef AEGIR_DEBUG_H
 #define AEGIR_DEBUG_H
 
+/* The C header, not <cstdint>: there is no C++ standard library here
+ * (specs/build.md). */
+#include <stdint.h>
+
 namespace aegir {
 
 /** Write a NUL-terminated string to the kernel debug console. */
 void debug_write(char const *text) noexcept;
+
+/** Write an unsigned decimal number to the kernel debug console. */
+void debug_write_unsigned(uint64_t value) noexcept;
+
+/** Write a number in hexadecimal, prefixed with `0x`. */
+void debug_write_hex(uint64_t value) noexcept;
 
 /** Halt this thread forever. Never returns. */
 [[noreturn]] void halt() noexcept;

@@ -63,11 +63,11 @@ repo, boot input for director, and the config service's payload.
 
 ### Shape
 
-A section per service, `key = value`, comments from `#` to end of line. Shown
-below as one file; whether it ships as one file or one per service is the open
-item near the end of this spec — the fields are the same either way. It is
-deliberately dull: director parses it from a memory buffer, with no filesystem and
-no dependencies.
+A section per service, `key = value`, comments from `#` to end of line. It ships
+as one file — `manifests/services.manifest`, packed into the initrd under its
+basename — with the fields below; whether a large boot set should become one file
+per service is the last item of this spec. It is deliberately dull: director
+parses it from a memory buffer, with no filesystem and no dependencies.
 
 ```ini
 format = 1
@@ -271,11 +271,13 @@ registration. The names are different because the mechanisms are.
 
 ## Open, for review
 
-- **Where the manifest lives in the repo**, and whether one file or one per
-  service. Proposal: `manifests/services/` — one file per service plus a boot-set
-  file — because a per-service diff is easier to review than one long file, and
-  because `manifests/` is already where Aegir keeps the data that defines a build.
-  Cost: director parses several flat entries instead of one.
+- **Where the manifest lives in the repo.** Settled by the first implementation:
+  `manifests/services.manifest`, one file, packed into the initrd under its
+  basename (`services.manifest`), which is how director finds it. One file rather
+  than one per service for now, because director reads one entry and the set is
+  small; the cost of the alternative is reading several flat entries, and the
+  benefit is a per-service diff. Revisit when the file stops being readable in
+  one sitting — the fields do not change either way.
 - **The grammar's details** (list syntax, quoting, whether a protocol is part of
   the port name or a separate key) are fixed with the parser; the fields above are
   fixed here.

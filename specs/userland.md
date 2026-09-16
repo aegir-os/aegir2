@@ -63,3 +63,20 @@ Resolved, or re-framed, by the first root task (M4):
   (see `specs/build.md`) means no `std::` containers and no iostreams until we
   deliberately vendor a standard library. Recorded as a posture, not as
   something to find out.
+
+## The C/C++ boundary, recorded from building it
+
+`specs/build.md` covers freestanding C++; what building the root task added is
+that **third-party C headers are not automatically usable from C++**, in three
+distinct ways, all found the same way — by the build refusing:
+
+| Header | What happens from C++ | What we do |
+| --- | --- | --- |
+| `sel4/assert.h` | declares `__assert_fail` without `extern "C"`, so a C++ translation unit needs a C++-linkage definition | `libs/aegir-runtime/src/assert.cc` defines it (`specs/build.md`) |
+| `sel4runtime.h` (and `sel4runtime/stdint.h`) | C-only: `_Static_assert`, which C++ rejects (`projects/sel4runtime/include/sel4runtime/stdint.h:15-19`) | declare the one function needed (`sel4runtime_bootinfo`) with `extern "C"` |
+| `cpio/cpio.h` | no `extern "C"` guard, so prototypes are mangled and the link fails on names the library does not define | include it inside `extern "C" { }` |
+
+The rule this suggests for our own code: our headers are C++ and carry their own
+linkage; a third-party C header is checked before it is included, not after the
+link fails. It is also an argument for Aegir's own interfaces being ours
+(`specs/director.md`) rather than re-exports of somebody else's.

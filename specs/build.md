@@ -253,16 +253,18 @@ list.
 
 ## The root task, and what QEMU actually loads
 
-Three things make `apps/aegir-hello` the root task rather than an ordinary
-program:
+Three things make `apps/aegir-director` the root task rather than an ordinary
+program (it took over from `apps/aegir-hello` in M6; see the end of this
+section):
 
 - Its `CMakeLists.txt` includes seL4's `rootserver` module and calls
-  `DeclareRootserver(aegir-hello)`. That sets the entry point to `_sel4_start`
+  `DeclareRootserver(aegir-director)`. That sets the entry point to `_sel4_start`
   (`-Wl,-u_sel4_start -Wl,-e_sel4_start`) and links the target with
   `cmake-tool/helpers/tls_rootserver.lds` — the script that lays out a root
   task's `.tdata`/`.tbss`, which is what `tp`-relative TLS needs.
-- It links `aegir-runtime`, `libsel4`, `sel4runtime` and musl's `libc.a`, and
-  no `libsel4muslcsys` at all (see `specs/userland.md`).
+- It links `aegir-runtime`, `aegir-mem`, `aegir-manifest`, `libsel4`,
+  `sel4runtime`, musl's `libc.a` and util_libs' `cpio` (which reads its initrd),
+  and no `libsel4muslcsys` at all (see `specs/userland.md`).
 - The ELF loader embeds it: `elfloader-tool/CMakeLists.txt` strips the kernel
   and the root task and packs them into a CPIO archive (`MakeCPIO(...)`, symbol
   `_archive_start`) inside the loader's own image. For this target the archive
@@ -273,7 +275,7 @@ The file QEMU is handed is **not** the ELF loader. On RISC-V the image flow
 (`cmake-tool/helpers/rootserver.cmake`, `UseRiscVOpenSBI`) objcopies the ELF
 loader to a flat binary and builds the vendored `tools/opensbi` with it as
 `FW_PAYLOAD_PATH`, so
-`images/aegir-hello-image-riscv-qemu-riscv-virt` is OpenSBI's `fw_payload.elf`
+`images/aegir-director-image-riscv-qemu-riscv-virt` is OpenSBI's `fw_payload.elf`
 with the loader as its payload. The simulate script passes `-bios none`: QEMU
 supplies no firmware, and the banner on the console is the pinned OpenSBI
 (v0.9, the revision the seL4 16.0.0 release manifest picks).
@@ -281,28 +283,39 @@ supplies no firmware, and the banner on the console is the pinned OpenSBI
 A green boot, from `make run`:
 
 ```text
-OpenSBI v0.9
-Firmware Base             : 0x80000000
-Firmware Size             : 100 KB
+OpenSBI v0.9 ... Firmware Base : 0x80000000, Firmware Size : 100 KB
 ELF-loader started on (HART 0) (NODES 1)
 Looking for DTB in CPIO archive...found at 810204e8.
 Loaded DTB from 810204e8.
 ELF-loading image 'kernel' to 80200000
 ELF-loading image 'rootserver' to 80223000
-Enabling MMU and paging
-Jumping to kernel-image entry point...
+Enabling MMU and paging / Jumping to kernel-image entry point...
 Booting all finished, dropped to user space
-Aegir: root task online
-  device kind (virtual): console
-  target: riscv64, hard-float lp64d
-  static constructors: ran
-  constexpr template max(4, 5): 5
+Aegir: director online
+the machine
+  cnode size: 2^13 slots; 8055 free for us
+  untyped caps: 60; ipc buffer at 0x49000
+memory
+  untyped: 60 caps, 2 GiB normal, 508 GiB device
+  self test: retyped, mapped, wrote and read back a page
+  window: 0x4d000..0x200000, 4 KiB mapped
+  charged to `system`: 4 KiB in 1 objects
+initrd (flat: names are identities, there are no paths)
+  services.manifest  986 bytes
+  aegir-hello  53944 bytes
+boot manifest
+  1 service(s) declared
+  hello: binary aegir-hello, authority system, account boot
 AEGIR_BOOT_OK
 ```
 
 `AEGIR_BOOT_OK` is the `aegir` target's marker in `scripts/targets.py`.
 
 How a root task is declared, packaged and loaded — everything above — stays true
-whatever the root task binary is. Which binary that is changes: M4's root task is
-`apps/aegir-hello`, and `specs/director.md` specifies the root task Aegir moves
-to, with `aegir-hello` becoming a spawned client.
+whatever the root task binary is. Which binary that is changed in M6: the root
+task is `apps/aegir-director` (`specs/director.md`), and M4's root task,
+`apps/aegir-hello`, is now packed into director's own initrd as the client it
+starts first. Director also carries a second, Aegir-owned archive — the initrd
+above, holding the service binaries and the boot manifest — which is a different
+archive from the loader's, and the one `specs/services.md` describes as the flat
+filesystem that will mount as `Initrd:`.
