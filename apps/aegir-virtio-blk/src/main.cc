@@ -237,6 +237,15 @@ int main(int argc, char *argv[])
      * device told "go" before its queue exists may ignore the queue entirely (virtio 1.x,
      * 2.1.1 step 8). This is where the modern and legacy layouts are sorted out, and the
      * report says which the device took. */
+    /* Zero the queue's page before anything is put in it -- the specification's step four, and
+     * Linux does it with __GFP_ZERO for the same reason: a device reads the rings' own words,
+     * indices in particular, so memory that happens to hold a nonzero used index is memory
+     * that makes a driver believe the device has already answered. */
+    volatile uint8_t *queue_page = reinterpret_cast<volatile uint8_t *>(memory_address);
+    for (uint32_t i = 0; i < aegir::virtio::kQueueBytes; ++i) {
+        queue_page[i] = 0;
+    }
+
     aegir::virtio::QueueReport queue_report{};
     aegir::virtio::set_up(registers, memory_physical, aegir::virtio::kQueueSize, &queue_report);
     aegir::debug_write("      queue: num ");
@@ -251,6 +260,9 @@ int main(int argc, char *argv[])
     aegir::debug_write(queue_report.legacy ? "legacy, pfn " : "modern");
     if (queue_report.legacy) {
         aegir::debug_write_hex(queue_report.pfn_back);
+        aegir::debug_write(" (was ");
+        aegir::debug_write_hex(queue_report.pfn_before);
+        aegir::debug_write(")");
     }
     aegir::debug_write("\n");
 
@@ -265,9 +277,8 @@ int main(int argc, char *argv[])
      * by virtual one. The disk was given to QEMU as a file, so what sector 0 holds is not
      * 512 zero bytes -- and if it is, nothing actually happened. */
     uint8_t sector_data[aegir::virtio::kSectorBytes];
-    aegir::virtio::ReadResult const read = aegir::virtio::read_sector(
-        registers, reinterpret_cast<volatile uint8_t *>(memory_address), memory_physical, 0,
-        sector_data);
+    aegir::virtio::ReadResult const read =
+        aegir::virtio::read_sector(registers, queue_page, memory_physical, 0, sector_data);
     if (!read.completed) {
         aegir::debug_write("      nothing came back: status ");
         aegir::debug_write_unsigned(read.status);
@@ -277,6 +288,12 @@ int main(int argc, char *argv[])
         aegir::debug_write_unsigned(read.used_idx);
         aegir::debug_write(", len ");
         aegir::debug_write_unsigned(read.used_bytes);
+        aegir::debug_write(", device status ");
+        aegir::debug_write_unsigned(read.device_status);
+        aegir::debug_write(" (needs-reset is ");
+        aegir::debug_write_unsigned(0x40u);
+        aegir::debug_write("), interrupt status ");
+        aegir::debug_write_unsigned(read.interrupt_status);
         aegir::debug_write("\n");
         write_line("FAIL", "the device never answered the read");
     } else {

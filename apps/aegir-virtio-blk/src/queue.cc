@@ -40,15 +40,58 @@ void put_word(volatile uint32_t *words, uint32_t index, uint32_t value) noexcept
 void set_up(Registers const &registers, uint64_t physical, uint32_t num,
             QueueReport *report) noexcept
 {
-    QueueReport local{0, 0, 0, 0, false, 0};
+    QueueReport local{0, 0, 0, 0, false, 0, 0};
 
-    /* The queue's three parts, in the modern layout: three byte addresses and a ready bit.
-     * QueueReady is what tells the device the addresses are set and it may read them. */
+    /* GuestPageSize and QueueAlign come before QueueNum, and that order is the whole point.
+     * The specification lists QueueNum first and QueueAlign second, but QEMU computes the
+     * ring's internal offsets when it is given the size:
+     *
+     *     virtio_queue_set_num(vdev, sel, value);
+     *     if (proxy->legacy) {
+     *         virtio_queue_update_rings(vdev, sel);       // hw/virtio/virtio-mmio.c
+     *     }
+     *
+     * and virtio_queue_update_rings returns early unless `vring->align` is already set --
+     * it places the available and used rings from the alignment. Write the size first and the
+     * device never computes them: `QueuePFN` then maps a ring at address zero, the device reads
+     * it there, finds nothing, and does nothing at all. Which is indistinguishable, from the
+     * driver's side, from a device that is not listening. */
+    registers.write(kLegacyGuestPageSize, kPageBytes);
+
+    registers.write(kQueueSel, 0);
+    local.pfn_before = registers.read(kLegacyQueuePfn);
+    local.num_max = registers.read(kQueueNumMax);
+    registers.write(kLegacyQueueAlign, kUsedOffset);
+
+    /* QueuePFN before QueueNum, and this one is not a preference either. `QueueNum` is what
+     * makes QEMU compute the ring's layout:
+     *
+     *     virtio_queue_set_num(vdev, sel, value);
+     *     if (proxy->legacy) {
+     *         virtio_queue_update_rings(vdev, sel);       // hw/virtio/virtio-mmio.c
+     *     }
+     *
+     * and update_rings places the available and used rings by adding to `vring->desc` -- which
+     * `QueuePFN` is what sets. Write the size first and the address is still zero: the device
+     * computes avail at physical 128 and used at physical 4096, then maps *those* when the
+     * page frame arrives. It then reads a ring in near-zero memory, finds no requests, and
+     * does nothing -- with no error and no interrupt, because from its side nothing is wrong.
+     * The specification's own sequence puts QueuePFN last as the activation step; the device
+     * needs it early enough to be the thing the layout is measured from. */
+    registers.write(kLegacyQueuePfn, static_cast<uint32_t>(physical / kPageBytes));
+
+    /* A queue with no size is a queue the device will not use, so the size is the smaller of
+     * what the caller asked for and what the device offers. */
+    uint32_t const size = local.num_max < num ? local.num_max : num;
+    registers.write(kQueueNum, size);
+    local.num_back = registers.read(kQueueNum);
+
+    /* The modern shape first: three addresses and a ready bit. A legacy device has none of
+     * these registers -- they are past the end of its map -- and leaves the ready bit zero,
+     * which is how the two are told apart without trusting the version register. */
     uint64_t const desc_at = physical + kDescOffset;
     uint64_t const avail_at = physical + kAvailOffset;
     uint64_t const used_at = physical + kUsedOffset;
-    registers.write(kQueueSel, 0);
-    registers.write(kQueueNum, num);
     registers.write(kQueueDescLow, static_cast<uint32_t>(desc_at));
     registers.write(kQueueDescHigh, static_cast<uint32_t>(desc_at >> 32));
     registers.write(kQueueDriverLow, static_cast<uint32_t>(avail_at));
@@ -56,25 +99,12 @@ void set_up(Registers const &registers, uint64_t physical, uint32_t num,
     registers.write(kQueueDeviceLow, static_cast<uint32_t>(used_at));
     registers.write(kQueueDeviceHigh, static_cast<uint32_t>(used_at >> 32));
     registers.write(kQueueReady, 1);
-    local.num_back = registers.read(kQueueNum);
-    local.ready_back = registers.read(kQueueReady);
     local.desc_back = registers.read(kQueueDescLow);
-    local.num_max = registers.read(kQueueNumMax);
+    local.ready_back = registers.read(kQueueReady);
 
-    /* If the device kept none of that, it is the *legacy* interface whatever its version
-     * register said -- and the two layouts overlap where it counts. 0x030 and 0x034 are
-     * QueueSel and QueueNumMax in the modern set and QueueNumMax and QueueNum in the legacy
-     * one, which is why the earlier probe's "1024" looked like an answer: it was the legacy
-     * QueueNum reading its own default, and every write above landed on a register meaning
-     * something else. A legacy queue is described as a selector, a size, an alignment and a
-     * *page frame number* -- the base in pages of GuestPageSize, not a byte address
-     * (virtio 1.x, 4.2.2, the legacy interface). */
-    if (local.ready_back == 0 && local.num_back != num) {
-        registers.write(kLegacyGuestPageSize, kPageBytes);
-        registers.write(kLegacyQueueSel, 0);
-        registers.write(kLegacyQueueNum, num);
-        registers.write(kLegacyQueueAlign, kUsedOffset);
-        registers.write(kLegacyQueuePfn, static_cast<uint32_t>(physical / kPageBytes));
+    if (local.ready_back == 0) {
+        /* No ready bit, so the legacy interface. The page frame and the alignment were
+         * written above, before the size, for the reason given there. */
         local.legacy = true;
         local.pfn_back = registers.read(kLegacyQueuePfn);
     }
@@ -87,7 +117,7 @@ void set_up(Registers const &registers, uint64_t physical, uint32_t num,
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint8_t *data_out) noexcept
 {
-    ReadResult result{false, 0, 0, 0, 0};
+    ReadResult result{false, 0, 0, 0, 0, 0, 0};
 
     /* The request header: a read, of one sector at `sector`. Written *before* it is published,
      * because the device may look as soon as it is told there is something to do. */
@@ -141,6 +171,7 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
     __atomic_thread_fence(__ATOMIC_RELEASE);
     avail[1] = 1; /* idx, last */
     __atomic_thread_fence(__ATOMIC_RELEASE);
+    /* The notify carries the queue's index: this is the kick that makes the device look. */
     registers.write(kQueueNotify, 0);
 
     /* Wait for the device to say it is done. virtio promises progress without an interrupt,
@@ -149,16 +180,21 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
     volatile uint16_t *used = half_at(page, kUsedOffset);
     for (unsigned spin = 0; spin < 200000000 && used[1] == 0; ++spin) {
     }
-    /* On a timeout the raw state is the evidence: the used ring's own words, whether the
-     * device wrote the status byte, and whether the data buffer changed at all. */
+    /* On a timeout the raw state is the evidence, not a summary: the used ring's own words,
+     * and whether the device wrote the status byte at all. A request the device never looked
+     * at leaves the sentinel above untouched, and that is a different fault from one it
+     * looked at and refused. */
     result.status = *byte_at(page, kStatusOffset);
-    result.used_bytes = word_at(page, kUsedOffset + 8)[1];
     result.used_flags = used[0];
     result.used_idx = used[1];
+    result.used_bytes = word_at(page, kUsedOffset + 8)[1];
+    result.device_status = registers.read(kStatus);
+    result.interrupt_status = registers.read(kInterruptStatus);
     if (used[1] == 0) {
         return result;
     }
     result.completed = true;
+
     if (data_out != nullptr) {
         volatile uint8_t *src = byte_at(page, kDataOffset);
         for (uint32_t i = 0; i < kSectorBytes; ++i) {

@@ -53,22 +53,17 @@ enum Offset : uint32_t {
     kConfig = 0x100,             /* device-specific, from here to the end of the page */
 };
 
-/* The *legacy* interface's queue registers, which are not the modern ones above: a transport
- * at version 1 has no QueueDescLow/QueueDriverLow/QueueDeviceLow and describes its queue with
- * a page-aligned base instead (virtio 1.x, 4.2.2: the legacy interface). Only the offsets
- * that differ are here -- QueueNotify, InterruptStatus, InterruptACK and Status are at the
- * same offsets in both, which is why the handshake above works on either.
- *
- * These were measured before being relied on: `kLegacyQueueNumMax` reads the device's queue
- * size and `kLegacyQueueAlign` the alignment it wants, so an offset that is wrong says so
- * instead of quietly building a queue in the wrong place. */
+/* The registers the *legacy* interface has that the modern one does not. Everything else a
+ * legacy queue needs is at the same offset in both (specs/reference/virtio-mmio.md, whose
+ * table is Linux's `virtio_mmio.c`): QueueSel is 0x030, QueueNumMax 0x034 and QueueNum 0x038
+ * in *both* layouts, which is exactly the trap this enum used to be --
+ * it had them shifted by one register, so the queue size went into a read-only
+ * QueueNumMax and QueueNum was never written at all. A queue with no size is a queue the
+ * device is notified about and does nothing with. */
 enum LegacyOffset : uint32_t {
-    kLegacyGuestPageSize = 0x028, /* the page size the driver is using; written before PFN */
-    kLegacyQueueSel = 0x02c,
-    kLegacyQueueNumMax = 0x030,   /* the queue's size, 0 if this selector does not exist */
-    kLegacyQueueNum = 0x034,
-    kLegacyQueueAlign = 0x03c,    /* the alignment the queue's memory must have */
-    kLegacyQueuePfn = 0x040,      /* the queue's base, in pages of GuestPageSize */
+    kLegacyGuestPageSize = 0x028, /* in bytes; written once, before any queue is used */
+    kLegacyQueueAlign = 0x03c,    /* the Used Ring's alignment for the selected queue */
+    kLegacyQueuePfn = 0x040,      /* page number of the queue's first page; 0 = inactive */
 };
 
 /* Device status bits. Set by writing the whole value, not by setting one bit: the device

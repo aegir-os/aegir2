@@ -114,6 +114,7 @@ struct QueueReport {
     uint32_t num_max;
     bool legacy;
     uint32_t pfn_back;
+    uint32_t pfn_before; /* what QueuePFN held before: nonzero means already in use */
 };
 
 /** What one read produced. */
@@ -125,6 +126,12 @@ struct ReadResult {
      * on a timeout they are the evidence rather than a summary. */
     uint32_t used_flags;
     uint32_t used_idx;
+    /* The *device's* status register, read after the request -- not the status byte above,
+     * which is the block device's answer in the queue page. If the device could not map the
+     * rings it raises VIRTIO_CONFIG_S_NEEDS_RESET (0x40) here, and that is a different fault
+     * from one that quietly did nothing. */
+    uint32_t device_status;
+    uint32_t interrupt_status;
 };
 
 constexpr uint32_t kPageBytes = 4096;
