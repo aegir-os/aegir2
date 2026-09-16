@@ -121,6 +121,10 @@ struct ReadResult {
     bool completed;   /* the device published a used entry before the poll ran out */
     uint32_t status;  /* the device's own status byte: 0 is OK, 2 is unsupported */
     uint32_t used_bytes;
+    /* The used ring's own words and a status byte, read whether or not the device answered:
+     * on a timeout they are the evidence rather than a summary. */
+    uint32_t used_flags;
+    uint32_t used_idx;
 };
 
 constexpr uint32_t kPageBytes = 4096;

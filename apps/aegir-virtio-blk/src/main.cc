@@ -83,22 +83,17 @@ bool handshake(aegir::virtio::Registers const &registers, uint32_t *features_out
     }
     static_cast<void>(features_high);
 
-    /* We ask for none of them. Each feature a driver turns on is one it must then honour --
-     * a flush, a barrier, a discard -- and asking for none is the honest place to start.
-     * The registers still have to be written: the device reads them to know we are done
-     * choosing (virtio 1.x, 2.1.1 steps 4 and 5).
-     *
-     * With one exception: VIRTIO_F_VERSION_1 is bit 32, and it is not a feature so much as
-     * the handshake saying which interface we understood. This device answered the *modern*
-     * register layout even while its version register said 1, and a device that offers that
-     * layout will not use a queue until the driver confirms it -- which is what "the device
-     * never answered the read" was: a queue set up, notified, and ignored. */
+    /* With one exception: VIRTIO_F_VERSION_1 is bit 32, and it is not a feature so much as the
+     * handshake saying which interface we understood. It is written whether or not the version
+     * register claims the modern interface, because this device's version register says 1
+     * while it answers the modern register layout -- and a device that offers that layout will
+     * not use a queue until the driver confirms it. Gating this on the version register is
+     * exactly the assumption that left a queue set up, notified, and untouched: the status
+     * byte's sentinel came back unchanged. */
     registers.write(kDriverFeatures, 0);
-    if (modern) {
-        registers.write(kDriverFeaturesSel, 1);
-        registers.write(kDriverFeatures, 1); /* VIRTIO_F_VERSION_1 */
-        registers.write(kDriverFeaturesSel, 0);
-    }
+    registers.write(kDriverFeaturesSel, 1);
+    registers.write(kDriverFeatures, 1); /* VIRTIO_F_VERSION_1 */
+    registers.write(kDriverFeaturesSel, 0);
 
     registers.write(kStatus, kStatusAcknowledge | kStatusDriver | kStatusFeaturesOk);
 
@@ -259,6 +254,15 @@ int main(int argc, char *argv[])
         registers, reinterpret_cast<volatile uint8_t *>(memory_address), memory_physical, 0,
         sector_data);
     if (!read.completed) {
+        aegir::debug_write("      nothing came back: status ");
+        aegir::debug_write_unsigned(read.status);
+        aegir::debug_write(", used flags ");
+        aegir::debug_write_unsigned(read.used_flags);
+        aegir::debug_write(", idx ");
+        aegir::debug_write_unsigned(read.used_idx);
+        aegir::debug_write(", len ");
+        aegir::debug_write_unsigned(read.used_bytes);
+        aegir::debug_write("\n");
         write_line("FAIL", "the device never answered the read");
     } else {
         aegir::debug_write("      read sector 0: status ");

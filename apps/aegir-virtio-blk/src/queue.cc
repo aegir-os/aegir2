@@ -87,7 +87,7 @@ void set_up(Registers const &registers, uint64_t physical, uint32_t num,
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint8_t *data_out) noexcept
 {
-    ReadResult result{false, 0, 0};
+    ReadResult result{false, 0, 0, 0, 0};
 
     /* The request header: a read, of one sector at `sector`. Written *before* it is published,
      * because the device may look as soon as it is told there is something to do. */
@@ -149,13 +149,16 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
     volatile uint16_t *used = half_at(page, kUsedOffset);
     for (unsigned spin = 0; spin < 200000000 && used[1] == 0; ++spin) {
     }
+    /* On a timeout the raw state is the evidence: the used ring's own words, whether the
+     * device wrote the status byte, and whether the data buffer changed at all. */
+    result.status = *byte_at(page, kStatusOffset);
+    result.used_bytes = word_at(page, kUsedOffset + 8)[1];
+    result.used_flags = used[0];
+    result.used_idx = used[1];
     if (used[1] == 0) {
         return result;
     }
     result.completed = true;
-    result.used_bytes = word_at(page, kUsedOffset + 8)[1];
-
-    result.status = *byte_at(page, kStatusOffset);
     if (data_out != nullptr) {
         volatile uint8_t *src = byte_at(page, kDataOffset);
         for (uint32_t i = 0; i < kSectorBytes; ++i) {
