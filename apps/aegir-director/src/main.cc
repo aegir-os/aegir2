@@ -827,6 +827,13 @@ int main(int argc, char *argv[])
         /* And the memory to make objects of its own: an untyped is what a page table
          * is retyped from, and a page is exactly enough for the first one. More is
          * delegated when something needs more (specs/authority.md). */
+        /* How much memory to hand over is a policy choice -- how much authority the
+         * device manager is trusted with -- and it has to cover what starting a process
+         * costs: a CSpace with the slots a child is given (2^(kCNodeBits +
+         * seL4_SlotBits), which is 16 KiB for the 1024 slots aegir-spawn builds), its
+         * TCB, and the page tables for its first pages. Those come to a little over
+         * 16 KiB, and untyped memory is power-of-two, so this is the smallest untyped
+         * that covers them. */
         seL4_Error untyped_error = seL4_NoError;
         seL4_CPtr const delegated_untyped =
             allocator.carve_untyped(seL4_PageTableBits, system, &untyped_error);

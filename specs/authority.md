@@ -296,3 +296,35 @@ member of `PortGrant` on purpose, so the places that build ports by aggregate
 initialization are unchanged -- and it is *last* rather than merely appended anywhere,
 which a `-Werror=missing-field-initializers` warning pointed out the hard way when it
 landed between `rights` and `badge` and quietly turned every port's badge into a size.
+
+### A untyped that has been split cannot be given away, and why that matters
+
+The delegation is a page of untyped, and the next thing it needs to cover is a *process*:
+a CSpace with the slots a child is given is 16 KiB on its own. Delegating 32 KiB instead
+failed, and it failed in the most instructive way -- the pool was made, the allocator
+reported `largest 2^29` free, and then:
+
+    FAIL a port could not be installed into the child
+
+The capability was not null; the *kernel* refused to install it. The difference between
+the page that works and the 32 KiB that does not is **splitting**: `Allocator::carve_untyped`
+splits a larger untyped down to the size asked for, and each split *derives an object from
+the parent*. seL4 will not let a capability with derived objects be copied or moved until
+they are gone -- the manual's error table says it in as many words:
+
+    Revoke First: The object currently has other objects derived from it and the requested
+    invocation cannot be performed until either these objects are deleted or the revoke
+    invocation is performed on the capability.
+
+A page can come from a untyped that is exactly a page (no splitting, no children). 32 KiB
+cannot, on this machine, without splitting first.
+
+**Two ways out, and the next experiment is to pick between them:**
+- hand over the *leaf* the split produced rather than the parent that has children -- one
+  power of two larger than asked for, and nothing derived from it;
+- or have `carve_untyped` treat a request that needs splitting as needing a *revoke* of
+  the halves it does not want, which is a bigger hammer and worth understanding before
+  using.
+
+Either way this is the last thing between the device manager and a CSpace for a child, and
+it is a *rule* with a sentence in the manual rather than an inference.
