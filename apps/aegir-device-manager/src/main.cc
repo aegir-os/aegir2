@@ -11,10 +11,12 @@
  * what the machine has would be a device manager that could not be given a
  * machine it had not seen before.
  *
- * The next thing it grows is the bus -> device id -> service map and the drivers
- * it launches from it. What it does today is read, report, and say it is ready, so
- * the boot set has something that owns the machine's description rather than
- * having director repeat it.
+ * The map this service exists for -- bus -> device id -> the service process
+ * that handles it (specs/services.md) -- is built from the machine's own
+ * description of itself: the tree says which devices there are, the registry
+ * says which driver handles which kind, the grants director delegated say
+ * which of them are ours to drive, and the join of the three is what gets
+ * spawned.
  */
 
 #include <aegir/bootstrap.h>
@@ -72,6 +74,86 @@ public:
     unsigned total = 0;
     unsigned with_region = 0;
     uint64_t mine = 0;
+};
+
+/** A driver the registry knows: which compatible string -- and, on a virtio
+ *  transport, which probed device id -- it handles, what it starts from, and
+ *  what its instances are called. The registry is the code's knowledge of
+ *  drivers; which of them the machine actually has is the tree's to say, and
+ *  the table is deliberately small: adding a driver is adding a row, not a
+ *  code path (specs/services.md). */
+struct DriverRow {
+    char const *compatible; /* the tree's name for the transport */
+    uint32_t compatible_length;
+    uint32_t virtio_id; /* 0: the compatible alone decides; else the registers must say this */
+    char const *name_prefix; /* instances are prefix.busN: "blk" + "virtio" -> blk.virtio0 */
+    uint32_t name_prefix_length;
+    char const *bus;
+    uint32_t bus_length;
+    char const *binary;
+    uint32_t binary_length;
+    uint32_t memory_bits; /* the virtqueue it lays out */
+};
+
+DriverRow const kRegistry[] = {
+    {"virtio,mmio", 11, 2u, "blk", 3, "virtio", 6, "aegir-virtio-blk", 16, 13u},
+};
+
+/** One cell of the map: a device the tree describes that a registry row claims,
+ *  joined with the frame director granted for it. `frame` stays 0 -- reported,
+ *  not driven -- when the join finds no grant or the probe finds a different
+ *  device behind the transport. */
+struct Binding {
+    DriverRow const *row;
+    uint64_t base;    /* where the tree puts the register window */
+    uint32_t bytes;   /* the granted frame's size, set at the join */
+    uint32_t irq;     /* 0: none */
+    seL4_CPtr frame;  /* the granted capability; 0 until the join */
+    char const *name; /* the instance name, built at the join */
+    uint32_t name_length;
+};
+
+bool compatible_is(aegir::devtree::Device const &device, DriverRow const &row) noexcept
+{
+    if (device.compatible_length != row.compatible_length) {
+        return false;
+    }
+    for (uint32_t i = 0; i < row.compatible_length; ++i) {
+        if (device.compatible[i] != row.compatible[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** The tree walk that builds the candidate list. Two passes over the same walk
+ *  -- count, then fill -- so the bindings array is exactly as large as the tree
+ *  says it needs to be: a machine with more devices gets a bigger map, not a
+ *  full one. */
+class MapBuilder : public aegir::devtree::Tree::Visitor {
+public:
+    bool device(aegir::devtree::Device const &device) override {
+        if (!device.has_region) {
+            return true;
+        }
+        for (uint32_t r = 0; r < sizeof(kRegistry) / sizeof(kRegistry[0]); ++r) {
+            if (!compatible_is(device, kRegistry[r])) {
+                continue;
+            }
+            if (fill != nullptr && count < capacity) {
+                fill[count] = Binding{&kRegistry[r], device.base, 0,
+                                      device.has_interrupt ? device.interrupt : 0, 0,
+                                      nullptr, 0};
+            }
+            ++count;
+            break;
+        }
+        return true;
+    }
+
+    Binding *fill = nullptr;
+    uint32_t capacity = 0;
+    uint32_t count = 0;
 };
 
 }  // namespace
@@ -294,21 +376,9 @@ int main(int argc, char *argv[])
     }
 
     /* Spawning: what this service was given the authority for (specs/services.md).
-     * The bus map's first row says which driver answers to which virtio device id;
-     * probing the granted frames is how a row meets a device, because a frame
-     * arrives as a capability and the id lives in the device's registers. */
-    struct DriverChoice {
-        uint32_t device_id;   /* the virtio id it answers to */
-        char const *name;     /* who the process is */
-        uint32_t name_length;
-        char const *binary;   /* the initrd entry it starts from */
-        uint32_t binary_length;
-        uint32_t memory_bits; /* the virtqueue it lays out */
-    };
-    static DriverChoice const kDrivers[] = {
-        {2u, "blkdriver", 9u, "aegir-virtio-blk", 16u, 13u},
-    };
-
+     * The map is the join of three sources: the tree says which devices the
+     * machine has, the registry says which driver handles which kind, and the
+     * grants director delegated say which of them are ours to drive. */
     bool const can_spawn = given_vspace && untyped_slot != 0 && pool_slot != 0 &&
                            binaries_address != 0 && binaries_bytes != 0;
     if (!can_spawn) {
@@ -334,61 +404,163 @@ int main(int argc, char *argv[])
                                           static_cast<seL4_CPtr>(pool_slot),
                                           static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                           aegir::bootstrap::kCNodeBits);
+
+            /* The candidate cells: every tree device a registry row claims.
+             * Count, then fill, so the array is exactly the tree's size. */
+            MapBuilder counter;
+            static_cast<void>(tree.walk(counter));
+            Binding *bindings = nullptr;
+            uint32_t binding_count = 0;
+            if (counter.count > 0) {
+                bindings = static_cast<Binding *>(
+                    arena.allocate(sizeof(Binding) * counter.count));
+                if (bindings == nullptr) {
+                    write_line("FAIL", "no room for the device map");
+                } else {
+                    MapBuilder filler;
+                    filler.fill = bindings;
+                    filler.capacity = counter.count;
+                    static_cast<void>(tree.walk(filler));
+                    binding_count = filler.count;
+                }
+            }
+
+            /* The join and the probe, binding by binding: a candidate becomes
+             * real when director granted its frame, and -- on a virtio transport,
+             * which does not say what is behind it -- when the registers say the
+             * device id the row answers to. */
+            for (uint32_t b = 0; b < binding_count; ++b) {
+                Binding &binding = bindings[b];
+                for (uint32_t d = 0;; ++d) {
+                    uint64_t grant_physical = 0;
+                    uint32_t grant_bytes = 0;
+                    uint64_t grant_slot = 0;
+                    if (!aegir::bootstrap::device_capability(d, &grant_physical,
+                                                             &grant_bytes, &grant_slot)) {
+                        break;
+                    }
+                    if (grant_physical == binding.base) {
+                        binding.frame = static_cast<seL4_CPtr>(grant_slot);
+                        binding.bytes = grant_bytes;
+                        break;
+                    }
+                }
+                if (binding.frame == 0) {
+                    aegir::debug_write("      map: ");
+                    aegir::debug_write(binding.row->compatible);
+                    aegir::debug_write(" at ");
+                    aegir::debug_write_hex(binding.base);
+                    aegir::debug_write(": the tree describes it, but no frame was granted for it\n");
+                    continue;
+                }
+                if (binding.row->virtio_id != 0) {
+                    auto const *registers = static_cast<volatile uint32_t const *>(
+                        g_scratch.map(binding.frame));
+                    if (registers == nullptr) {
+                        write_line("FAIL", "a device frame could not be mapped for probing");
+                        binding.frame = 0;
+                        continue;
+                    }
+                    uint32_t const probed_magic = registers[0x00 / 4];
+                    uint32_t const probed_id = registers[0x08 / 4];
+                    g_scratch.unmap(binding.frame);
+                    if (probed_magic != 0x74726976u) {
+                        binding.frame = 0;
+                        continue;
+                    }
+                    if (probed_id != binding.row->virtio_id) {
+                        aegir::debug_write("      map: virtio device ");
+                        aegir::debug_write_unsigned(probed_id);
+                        aegir::debug_write(" at ");
+                        aegir::debug_write_hex(binding.base);
+                        aegir::debug_write(": no driver in the registry\n");
+                        binding.frame = 0;
+                        continue;
+                    }
+                }
+                /* The instance name: which kind, which bus, and which one it is --
+                 * blk.virtio0 rather than blkdriver, because the second device of a
+                 * kind is not the first (specs/services.md). Instances count only
+                 * bindings that made it this far. */
+                uint32_t instance = 0;
+                for (uint32_t o = 0; o < b; ++o) {
+                    if (bindings[o].name != nullptr && bindings[o].row == binding.row) {
+                        ++instance;
+                    }
+                }
+                uint32_t digits = 1;
+                for (uint32_t t = instance; t >= 10; t /= 10) {
+                    ++digits;
+                }
+                DriverRow const *row = binding.row;
+                uint32_t const name_bytes =
+                    row->name_prefix_length + 1 + row->bus_length + digits;
+                auto *named = static_cast<char *>(arena.allocate(name_bytes));
+                if (named == nullptr) {
+                    write_line("FAIL", "no room to name a device instance");
+                    binding.frame = 0;
+                    continue;
+                }
+                uint32_t at = 0;
+                for (uint32_t c = 0; c < row->name_prefix_length; ++c) {
+                    named[at++] = row->name_prefix[c];
+                }
+                named[at++] = '.';
+                for (uint32_t c = 0; c < row->bus_length; ++c) {
+                    named[at++] = row->bus[c];
+                }
+                for (uint32_t c = digits; c > 0; --c) {
+                    uint32_t divisor = 1;
+                    for (uint32_t m = 1; m < c; ++m) {
+                        divisor *= 10;
+                    }
+                    named[at++] = static_cast<char>('0' + (instance / divisor) % 10);
+                }
+                binding.name = named;
+                binding.name_length = name_bytes;
+
+                aegir::debug_write("      map: ");
+                aegir::debug_write(named);
+                aegir::debug_write(": ");
+                aegir::debug_write(row->compatible);
+                aegir::debug_write(" at ");
+                aegir::debug_write_hex(binding.base);
+                if (binding.irq != 0) {
+                    aegir::debug_write(" irq ");
+                    aegir::debug_write_unsigned(binding.irq);
+                }
+                aegir::debug_write(" -> ");
+                aegir::debug_write(row->binary);
+                aegir::debug_write(", frame cap ");
+                aegir::debug_write_unsigned(binding.frame);
+                aegir::debug_write("\n");
+            }
+
+            /* The cap the children call is minted from the *delegatable* copy:
+             * our own log.main is already badged with who we are, and a badged
+             * endpoint cap cannot be minted again -- so director grants the
+             * ports a spawning service's children need under a "spawn:" name,
+             * unbadged, for exactly this (specs/services.md). */
+            uint64_t log_slot = 0;
+            bool const have_log =
+                aegir::bootstrap::capability("spawn:log.main", 14, &log_slot);
+            if (binding_count > 0 && !have_log) {
+                write_line("FAIL", "no delegatable log.main was given");
+            }
             /* Badges for the processes we start count from 256: the low badges are
              * director's boot set, and until the badge space is a designed thing,
              * a spawning service's children live in a range of their own
              * (specs/services.md). */
-            for (uint32_t d = 0;; ++d) {
-                uint64_t grant_physical = 0;
-                uint32_t grant_bytes = 0;
-                uint64_t grant_slot = 0;
-                if (!aegir::bootstrap::device_capability(d, &grant_physical, &grant_bytes,
-                                                         &grant_slot)) {
-                    break;
-                }
-                static_cast<void>(grant_physical);
-                static_cast<void>(grant_bytes);
-                auto const *registers = static_cast<volatile uint32_t const *>(
-                    g_scratch.map(static_cast<seL4_CPtr>(grant_slot)));
-                if (registers == nullptr) {
-                    write_line("FAIL", "a device frame could not be mapped for probing");
+            for (uint32_t b = 0; have_log && b < binding_count; ++b) {
+                Binding const &binding = bindings[b];
+                if (binding.frame == 0) {
                     continue;
                 }
-                uint32_t const probed_magic = registers[0x00 / 4];
-                uint32_t const probed_id = registers[0x08 / 4];
-                g_scratch.unmap(static_cast<seL4_CPtr>(grant_slot));
-                if (probed_magic != 0x74726976u) {
-                    write_line("spawning", "a granted frame is not a virtio transport");
-                    continue;
-                }
-                DriverChoice const *driver = nullptr;
-                for (uint32_t k = 0; k < sizeof(kDrivers) / sizeof(kDrivers[0]); ++k) {
-                    if (kDrivers[k].device_id == probed_id) {
-                        driver = &kDrivers[k];
-                        break;
-                    }
-                }
-                if (driver == nullptr) {
-                    aegir::debug_write("      spawning: no driver for virtio device ");
-                    aegir::debug_write_unsigned(probed_id);
-                    aegir::debug_write("\n");
-                    continue;
-                }
-
-                /* The cap the child calls is minted from the *delegatable* copy:
-                 * our own log.main is already badged with who we are, and a badged
-                 * endpoint cap cannot be minted again -- so director grants the
-                 * ports a spawning service's children need under a "spawn:" name,
-                 * unbadged, for exactly this (specs/services.md). */
-                uint64_t log_slot = 0;
-                if (!aegir::bootstrap::capability("spawn:log.main", 14, &log_slot)) {
-                    write_line("FAIL", "no delegatable log.main was given");
-                    continue;
-                }
+                DriverRow const *driver = binding.row;
                 /* The queue's memory: carved from our untyped, paged, and handed to
                  * the child as frames to map -- the same shape director gives a
                  * service that declares memory (specs/authority.md). */
-                aegir::mem::Account child_account{driver->name, 0, 0, 0};
+                aegir::mem::Account child_account{binding.name, 0, 0, 0};
                 seL4_Error queue_error = seL4_NoError;
                 uint64_t queue_physical = 0;
                 seL4_CPtr const queue = g_objects.carve_untyped(driver->memory_bits,
@@ -422,14 +594,14 @@ int main(int argc, char *argv[])
                     {aegir::log::kPortName, aegir::log::kPortNameLength,
                      aegir::bootstrap::kSlotFirstDeclared,
                      static_cast<seL4_CPtr>(log_slot), seL4_CapRights_new(1, 0, 0, 1),
-                     256u + d, 0},
+                     256u + b, 0},
                 };
                 aegir::spawn::DeviceGrant const devices[] = {
-                    {grant_physical, grant_bytes, static_cast<seL4_CPtr>(grant_slot)},
+                    {binding.base, binding.bytes, binding.frame},
                 };
                 aegir::spawn::Request request{};
-                request.name = driver->name;
-                request.name_length = driver->name_length;
+                request.name = binding.name;
+                request.name_length = binding.name_length;
                 request.binary = driver->binary;
                 request.binary_length = driver->binary_length;
                 request.account = "system";
@@ -440,9 +612,9 @@ int main(int argc, char *argv[])
                 request.priority = seL4_MaxPrio - 1;
                 request.ports = ports;
                 request.port_count = 1;
-                request.device_frame = static_cast<seL4_CPtr>(grant_slot);
-                request.device_bytes = grant_bytes;
-                request.device_physical = grant_physical;
+                request.device_frame = binding.frame;
+                request.device_bytes = binding.bytes;
+                request.device_physical = binding.base;
                 request.device_grants = devices;
                 request.device_grant_count = 1;
                 request.memory_frame = memory_frame;
@@ -467,12 +639,12 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 request.fault_endpoint = fault_endpoint;
-                request.badge = 256u + d;
+                request.badge = 256u + b;
 
                 aegir::spawn::Process process{};
                 if (!spawner.spawn(request, child_account, process)) {
                     aegir::debug_write("      FAIL spawning ");
-                    aegir::debug_write(driver->name);
+                    aegir::debug_write(binding.name);
                     aegir::debug_write(": ");
                     aegir::debug_write(spawner.problem());
                     if (spawner.detail()[0] != '\0') {
@@ -486,9 +658,11 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 aegir::debug_write("      spawned ");
-                aegir::debug_write(driver->name);
-                aegir::debug_write(" for virtio device ");
-                aegir::debug_write_unsigned(probed_id);
+                aegir::debug_write(binding.name);
+                aegir::debug_write(" for ");
+                aegir::debug_write(driver->compatible);
+                aegir::debug_write(" at ");
+                aegir::debug_write_hex(binding.base);
                 aegir::debug_write(", badge ");
                 aegir::debug_write_unsigned(request.badge);
                 aegir::debug_write("\n");
@@ -506,9 +680,9 @@ int main(int argc, char *argv[])
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("device manager", "ready");
 
-    /* Nothing to serve yet. A service with no port of its own has nothing to wait
-     * on, and the map and the drivers it launches are what will give it one, so
+    /* Nothing to serve yet. The map is built and the drivers it binds are
+     * running; what it still does not have is a port anyone can ask it, so
      * until then it stops rather than spins at somebody else's priority. */
-    aegir::debug_write("      device manager: the map and the drivers come next\n");
+    aegir::debug_write("      device manager: the map is up; a port to serve it comes next\n");
     aegir::halt();
 }
