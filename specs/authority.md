@@ -280,3 +280,19 @@ its guard -- which is why director's `seL4_WordBits` idiom works for director's 
 (the kernel's, 8192 slots, a 51-bit guard) and came back "Invalid destination address" for
 a service's (1024 slots, a 54-bit guard). The rule for a service retyping into its own
 CSpace is `depth = 0` and the CNode itself as the root.
+
+### A delegated untyped has to be told, not asked
+
+A service cannot ask the kernel how large an untyped is -- there is no invocation that
+reads one -- so a delegated untyped has to come with its size, or the service that holds
+it cannot use it for anything. The size travels in the bootstrap block, on the
+`Capability` entry for the memory (`Entry::reserved`, which nothing else uses), and
+`spawn::PortGrant` carries it from director to the block:
+
+    my own memory: 12 bits of untyped, as the block says
+
+Zero for everything else, which is every port: a port has no size. The field is the last
+member of `PortGrant` on purpose, so the places that build ports by aggregate
+initialization are unchanged -- and it is *last* rather than merely appended anywhere,
+which a `-Werror=missing-field-initializers` warning pointed out the hard way when it
+landed between `rights` and `badge` and quietly turned every port's badge into a size.

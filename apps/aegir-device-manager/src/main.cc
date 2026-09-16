@@ -149,9 +149,19 @@ int main(int argc, char *argv[])
     uint64_t untyped_slot = 0;
     aegir::bootstrap::Block const *block = aegir::bootstrap::find();
     uint32_t named = 0;
+    uint64_t untyped_bits = 0;
     for (uint32_t e = 0; block != nullptr && e < block->entry_count; ++e) {
-        if (block->entries[e].kind == aegir::bootstrap::EntryKind::Capability) {
-            ++named;
+        if (block->entries[e].kind != aegir::bootstrap::EntryKind::Capability) {
+            continue;
+        }
+        ++named;
+        /* The size of what a capability is, when it has one. It is in the block rather
+         * than asked of the kernel, because there is no invocation that reads an
+         * untyped's size (specs/authority.md). */
+        auto const *name = reinterpret_cast<char const *>(block) + block->entries[e].data_offset;
+        if (block->entries[e].length == 7 && name[0] == 'u' && name[1] == 'n' && name[2] == 't' &&
+            name[3] == 'y' && name[4] == 'p' && name[5] == 'e' && name[6] == 'd') {
+            untyped_bits = block->entries[e].reserved;
         }
     }
     if (!aegir::bootstrap::capability("untyped", 7, &untyped_slot) ||
@@ -177,7 +187,10 @@ int main(int argc, char *argv[])
             if (assigned != seL4_NoError) {
                 write_line("FAIL", "no address space id from the pool");
             } else {
-                aegir::debug_write("      my own address space: page table at cap ");
+                aegir::debug_write("      my own memory: ");
+        aegir::debug_write_unsigned(untyped_bits);
+        aegir::debug_write(" bits of untyped, as the block says\n");
+        aegir::debug_write("      my own address space: page table at cap ");
                 aegir::debug_write_unsigned(table);
                 aegir::debug_write(", with an address space id of my own\n");
             }

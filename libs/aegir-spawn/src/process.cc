@@ -246,6 +246,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         port_entries[i].name = request.ports[i].name;
         port_entries[i].name_length = request.ports[i].name_length;
         port_entries[i].slot = request.ports[i].slot;
+        port_entries[i].size_bits = request.ports[i].size_bits;
     }
     /* A blob the caller wants the child to have -- the device tree, for the device
      * manager. It goes above the stack so a bigger program cannot collide with it,

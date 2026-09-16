@@ -105,6 +105,11 @@ struct Entry {
      * the child's, at a different address, so a pointer in here would be a
      * number that means nothing to whoever reads it. */
     uint32_t data_offset;
+    /* Unused by the entries above. A `Capability` entry uses it for the size in bits
+     * of what the capability is, when what it is has a size -- an untyped a service is
+     * given to retype objects out of -- and zero otherwise. The name is history: the
+     * field has always been here, and a service cannot ask the kernel how large an
+     * untyped is, so the block has to say (specs/authority.md). */
     uint32_t reserved;
 };
 
@@ -125,6 +130,10 @@ struct PortEntry {
     char const *name;
     uint32_t name_length;
     uint64_t slot;
+    /** Zero for a port. For a capability that is memory, how big it is in bits: a
+     *  service cannot ask the kernel how large an untyped is, so the block has to say
+     *  (specs/authority.md). */
+    uint32_t size_bits;
 };
 
 /** Build a block in memory we can write: `storage` is a page that will be

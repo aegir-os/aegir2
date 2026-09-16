@@ -53,6 +53,13 @@ struct PortGrant {
      *  port's owner learns who called; zero for the copy it reads, because a
      *  receiver's badge is never what identifies it (specs/services.md). */
     uint64_t badge;
+    /* For a capability that *is* memory -- an untyped a service is given to retype
+     *  objects out of -- how big it is, in bits. Zero for everything else, which is
+     *  every port: a port has no size, and a service cannot ask the kernel for one
+     *  (there is no invocation that reads an untyped's size), so it has to be told.
+     *  Last member on purpose: the places that build ports by aggregate
+     *  initialization are then unchanged, and mean zero. */
+    uint32_t size_bits = 0;
 };
 
 /** What the manifest says about the process to create (specs/services.md). The

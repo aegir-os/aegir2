@@ -836,8 +836,9 @@ int main(int argc, char *argv[])
         static char const kAsidPoolName[] = "asid-pool";
         static char const kUntypedName[] = "untyped";
         aegir::spawn::PortGrant const delegated[] = {
-            {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0},
-            {kUntypedName, sizeof(kUntypedName) - 1, 0, delegated_untyped, seL4_AllRights, 0},
+            {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0, 0},
+            {kUntypedName, sizeof(kUntypedName) - 1, 0, delegated_untyped, seL4_AllRights, 0,
+             seL4_PageTableBits},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, device_grant, 1u << seL4_PageBits,
