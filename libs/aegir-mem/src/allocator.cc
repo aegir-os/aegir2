@@ -278,9 +278,9 @@ bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *fi
     return false;
 }
 
-bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept
+bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits, uint64_t paddr) noexcept
 {
-    return remember(cap, size_bits, false, 0);
+    return remember(cap, size_bits, false, paddr);
 }
 
 void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept

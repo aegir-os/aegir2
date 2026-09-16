@@ -61,7 +61,8 @@ bool Services::prepare(mem::Account &account) noexcept
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
                     Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, Device const *bus, uint32_t bus_count,
-              spawn::PortGrant const *extra, uint32_t extra_count) noexcept
+              spawn::PortGrant const *extra, uint32_t extra_count,
+              uint64_t extra_untyped_physical) noexcept
 {
     boot.declared = manifest.size();
     boot.started = 0;
@@ -200,6 +201,18 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.device_physical = mine != nullptr ? mine->address : 0;
         request.untyped_physical = memory_physical;
         request.untyped_bits = memory_bits;
+        /* A delegated untyped says where it is the same way (specs/authority.md):
+         * the block's `untyped` entry is how the service learns both the size and
+         * the physical base of the memory its objects come from. */
+        if (entry.device_manager && extra_untyped_physical != 0) {
+            request.untyped_physical = extra_untyped_physical;
+            request.untyped_bits = 0;
+            for (uint32_t g = 0; g < extra_count; ++g) {
+                if (extra[g].size_bits != 0) {
+                    request.untyped_bits = extra[g].size_bits;
+                }
+            }
+        }
         request.memory_frame = memory_frame;
         request.memory_bytes = memory_frame != 0 ? (1u << memory_bits) : 0;
         request.fault_endpoint = fault_endpoint_;

@@ -178,6 +178,14 @@ int main(int argc, char *argv[])
         !aegir::bootstrap::capability("asid-pool", 9, &pool_slot)) {
         write_line("authority", "no pool and no memory were given");
     } else {
+        /* The block's `untyped` entry says where the memory is in the machine: a
+         * capability carries no address, and nothing this region becomes may be
+         * named to a device without one (specs/services.md). */
+        uint64_t untyped_physical = 0;
+        uint32_t entry_bits = 0;
+        uint64_t untyped_address = 0;
+        static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &entry_bits,
+                                                    &untyped_address));
         /* The first slot after the ones the block names is ours to use: the block is
          * the map of what was given, and the layout past it is nobody else's business
          * (specs/services.md). */
@@ -189,7 +197,7 @@ int main(int argc, char *argv[])
          * of a retype *is* the CNode (kernel/src/object/untyped.c). */
         aegir::mem::Account me{"devicemgr", 0, 0, 0};
         seL4_CPtr table = 0;
-        if (!g_objects.adopt_untyped(untyped_slot, untyped_bits)) {
+        if (!g_objects.adopt_untyped(untyped_slot, untyped_bits, untyped_physical)) {
             write_line("FAIL", "no room to remember the memory I was given");
         } else {
             g_objects.adopt_slots(aegir::bootstrap::kSlotFirstDeclared + named, 1, 0);
@@ -206,7 +214,9 @@ int main(int argc, char *argv[])
             } else {
                 aegir::debug_write("      my own memory: ");
         aegir::debug_write_unsigned(untyped_bits);
-        aegir::debug_write(" bits of untyped, as the block says\n");
+        aegir::debug_write(" bits of untyped at physical ");
+        aegir::debug_write_hex(untyped_physical);
+        aegir::debug_write(", as the block says\n");
         aegir::debug_write("      my own address space: page table at cap ");
                 aegir::debug_write_unsigned(table);
                 aegir::debug_write(", with an address space id of my own\n");

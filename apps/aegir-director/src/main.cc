@@ -546,7 +546,8 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
                    aegir::mem::Arena &arena, aegir::mem::Account &account,
                   void const *devices, uint32_t devices_bytes,
                   aegir::director::Device const *bus, uint32_t bus_count,
-                  aegir::spawn::PortGrant const *extra, uint32_t extra_count) noexcept
+                  aegir::spawn::PortGrant const *extra, uint32_t extra_count,
+                  uint64_t extra_untyped_physical) noexcept
 {
     auto *started =
         static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
@@ -578,7 +579,7 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
 
     Boot boot{};
     services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes, bus,
-                  bus_count, extra, extra_count);
+                  bus_count, extra, extra_count, extra_untyped_physical);
 
     heading("boot set");
     write("  ");
@@ -818,8 +819,13 @@ int main(int argc, char *argv[])
          * 16 KiB, and untyped memory is power-of-two, so this is the smallest untyped
          * that covers them. */
         seL4_Error untyped_error = seL4_NoError;
+        /* The physical base comes with the capability: there is no invocation that
+         * reads an untyped's address, so a region a driver will one day point a
+         * device at has to arrive with its address attached (specs/services.md). */
+        uint64_t delegated_physical = 0;
         seL4_CPtr const delegated_untyped =
-            allocator.carve_untyped(seL4_PageTableBits, system, &untyped_error);
+            allocator.carve_untyped(seL4_PageTableBits, system, &untyped_error,
+                                    &delegated_physical);
         if (delegated_untyped == 0) {
             problem("no untyped memory to delegate to the device manager");
         }
@@ -831,7 +837,8 @@ int main(int argc, char *argv[])
              seL4_PageTableBits},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
-                               device_tree_bytes, bus, bus_count, delegated, 2);
+                               device_tree_bytes, bus, bus_count, delegated, 2,
+                               delegated_physical);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread

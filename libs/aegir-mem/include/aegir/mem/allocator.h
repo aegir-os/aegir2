@@ -119,8 +119,13 @@ public:
      * Adopt an untyped this process was *handed* rather than one it found in its own
      * bootinfo, so a service can retype objects out of delegated memory. False when
      * there is no room left to remember it. (specs/authority.md)
+     *
+     * `paddr` is where the region is in the machine, when the giver said: there is
+     * no invocation that reads an untyped's address, so a region a device will be
+     * pointed at has to arrive with its address attached -- zero means unknown, and
+     * nothing derived from this region should be named to a device.
      */
-    bool adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept;
+    bool adopt_untyped(seL4_CPtr cap, seL4_Word size_bits, uint64_t paddr = 0) noexcept;
 
     /**
      * A page retyped out of an untyped this allocator handed out, put in a slot of its own.

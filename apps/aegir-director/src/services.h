@@ -83,11 +83,15 @@ public:
      *  before it can fault, rather than after. */
     /** `devices`/`devices_bytes`, when given, is a blob every service is handed
      *  through the bootstrap block: the machine's own description of itself, which
-     *  is public information the device manager owns (specs/services.md). */
+     *  is public information the device manager owns (specs/services.md).
+     *  `extra_untyped_physical` is where in the machine the delegated untyped in
+     *  the `extra` list sits -- a capability carries no address, and a spawner
+     *  needs to know where its memory is (specs/authority.md). */
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
               Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, Device const *bus, uint32_t bus_count,
-              spawn::PortGrant const *extra, uint32_t extra_count) noexcept;
+              spawn::PortGrant const *extra, uint32_t extra_count,
+              uint64_t extra_untyped_physical) noexcept;
 
     seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
 
