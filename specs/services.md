@@ -525,6 +525,27 @@ and saying which half exists is the point of writing it down:
   device's physical address -- identical transports are told apart only by where they
   are, so a service that drives one has to be told *which* -- and `data_offset` is
   where in its own address space it can read them.
+- **next, and designed**: give the device manager the *series* of transport frames, so
+  it can inspect every transport rather than only its own. The shape:
+  - the survey already retypes and keeps every page of the series, one slot per page;
+    what it must also report is the *first* slot, the page count, and the base
+    physical address (`pages` and `base` are both in scope where the loop starts).
+  - `Request.device_frame` becomes the first of `device_frame_count` capabilities in
+    **consecutive slots**, which is how the allocator hands slots out
+    (libs/aegir-mem, `alloc_slot`) and is what lets the spawner map them without a
+    list: `device_frame + i` is page `i`'s capability.
+  - `device_bytes = count * 4096`, and the child's window offsets equal the machine's,
+    so a service can work out which device is at which offset.
+  - the `Device` block entry already has what is needed (address in `data_offset`,
+    size in `length`) and the *physical base* of the window in `number`, so a service
+    knows where its window is in the machine.
+
+  **The trap, paid for once**: `bootstrap::write` now puts a device's *physical*
+  address in `number` and its *child* address in `data_offset`, and the readers
+  (`bootstrap::devices` and `bootstrap::device`) read different fields of the same
+  entry kinds. Editing one without the other makes the device manager walk a wrong
+  pointer and fault -- which is exactly what happened, and why this is written down
+  rather than left to the diff.
 - **next**: the bus -> device -> service map inside the device manager, and- **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
