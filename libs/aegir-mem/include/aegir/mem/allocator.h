@@ -46,7 +46,14 @@ public:
     /** Index the untyped memory and the free slots the kernel reported. */
     bool initialise() noexcept;
 
-    /** A free slot in our CSpace root, or 0 when the range is exhausted. */
+    /**
+     * A free slot in our CSpace root, or 0 when the range is exhausted.
+     *
+     * This *reserves* it: the cursor moves, and `slot_failed` gives it back if what
+     * the slot was reserved for does not happen. Nothing here can free a slot that has
+     * been used -- see the deferral in specs/userland.md -- so a slot lost to a failed
+     * allocation is lost for good, which is why the failure paths give theirs back.
+     */
     seL4_CPtr alloc_slot() noexcept;
 
     /**
@@ -141,6 +148,13 @@ private:
 
     /** Index of the smallest unused normal untyped that can hold `size_bits`. */
     int find_untyped(seL4_Word size_bits) const noexcept;
+
+    /** Give back the most recent reservation, if `slot` is it. A cursor that keeps
+     *  walking past a failed retype leaves it behind the slots actually in use, and a
+     *  later allocation lands on top of one (seL4_DeleteFirst, "the destination slot is
+     *  occupied"). Only the last reservation can be returned, which is all these paths
+     *  need: one slot is outstanding at a time. */
+    void slot_failed(seL4_CPtr slot) noexcept;
 
     /** Halve `untyped_[index]` until it is exactly `size_bits` wide. */
     bool split_to(int index, seL4_Word size_bits) noexcept;

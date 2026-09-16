@@ -89,6 +89,14 @@ seL4_CPtr Allocator::alloc_slot() noexcept
     return slots_next_++;
 }
 
+void Allocator::slot_failed(seL4_CPtr slot) noexcept
+{
+    if (slots_next_ != 0 && slot + 1 == slots_next_) {
+        --slots_next_;
+        --slots_used_;
+    }
+}
+
 unsigned Allocator::untyped_free() const noexcept
 {
     unsigned free = 0;
@@ -153,6 +161,7 @@ bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
                                 seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
                                 cnode_depth_, slot, 1);
         if (error != seL4_NoError) {
+        slot_failed(slot);
             return false;
         }
         if (!remember(slot, half, false)) {
@@ -190,6 +199,7 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
                                  seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
                                  cnode_depth_, slot, 1);
     if (*error != seL4_NoError) {
+        slot_failed(slot);
         return 0;
     }
 

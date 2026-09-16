@@ -185,5 +185,24 @@ not to document it again.
 4. `Spawner` over delegated authority -- the pieces exist (`adopt_untyped`, `adopt_slots`,
    `Allocator::make_asid_pool`); what is missing is a `Spawner` constructor that takes
    them instead of a bootinfo, and it is what a device manager needs to start a driver.
+**Deferred, with a trigger, by decision (2026): the allocator does not free.** A used
+untyped piece is never returned and a slot cursor only ever moves forwards -- no `free`, no
+`CNode_Delete`, no revoking of a piece's derived objects. That is the right amount of
+allocator for the root task, where everything allocated lives as long as the system does,
+and the wrong amount for two things that do not exist yet:
+
+- **a service that restarts another.** `restart = always` is in the manifest and means
+  nothing until the supervisor can hand a dead service's slots and memory back rather than
+  leaking them one restart at a time.
+- **a service that reacts to something appearing** -- hot-plug through the device manager,
+  which is what USB will need and is a long way off.
+
+Until one of those exists, allocation-only is correct and the work is not worth doing
+speculatively. What it will be when it is: `seL4_CNode_Delete` for slots and revoking a
+piece's derived objects for memory, which is what `vka_cnode_delete` and `utspace_free` do
+upstream. What *was* worth doing now is narrower and in place: `alloc_slot` is a
+*reservation*, and the three library paths that can fail after taking one give it back
+(`Allocator::slot_failed`), because a slot lost to a failed allocation is lost for good.
+
 5. Frames as a *list* through the spawn path, replacing the inferred range -- which is
    where the current work on handing a service a window of devices stopped.
