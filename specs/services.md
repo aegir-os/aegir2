@@ -542,9 +542,11 @@ and answers "who owns this device?" for everyone else.
   the queue's addresses in registers (QueueDescLow/High at 0x080/0x084, QueueDriver at
   0x090/0x094, QueueDevice at 0x0a0/0x0a4). A service can be given device frames and can map
   them, but nothing in that tells it a *physical* address. So a driver needs what the device
-  manager already has -- an untyped to retype frames from, whose physical base director knows
-  -- plus a way to be told that base. That is the next piece, and it is a change to the spawn
-  path rather than to the driver: the manifest asks for memory the way it now asks for a device.
+  manager already has -- an untyped to retype frames from, whose physical base is known
+  -- plus a way to be told that base. Done: the manifest asks for memory the way it asks
+  for a device, the spawn path maps the frames and records the region's physical base and
+  size in the block's `untyped` entry, and a spawner that carves the memory itself (the
+  device manager, for its driver) records the base of its own carve the same way.
 - **a virtqueue is written, and the device answers**: the driver lays out a queue -
   descriptor table, available ring, used ring, request header, one sector of data, a status
   byte, in the two pages the spawner mapped - publishes a read of sector 0, notifies, and
@@ -696,11 +698,16 @@ and answers "who owns this device?" for everyone else.
     cannot make sense of. That is where the next attempt starts, and the first thing it
     should do is print the *slot numbers* it maps, because they should all be 4 KiB frame
     capabilities and the list will show the one that is not.
-- **next**: the bus -> device -> service map inside the device manager, and- **next**: the bus -> device -> service map inside the device manager, and
-  spawning drivers (virtio-blk first) for the devices it finds, giving each the
-  device's register window and interrupt. The service exists and reports the
-  machine; what it does not have yet is anything to *serve*, which is why it owns
-  no port and why its report goes to the console.
+- **done**: the device manager spawns the virtio-blk driver itself, from the authority
+  director delegates to it (the untyped, the ASID pool, its VSpace root, the initrd, and
+  the device frames -- `specs/authority.md` records the pieces and the kernel rules they
+  taught). It probes each granted frame for the virtio id in the device's registers,
+  carves the driver's queue memory, mints it a log port, and waits for its ready before
+  its own.
+- **next**: the rest of the bus -> device -> service map -- recognising devices from the
+  tree rather than a table of one row -- and each driver's interrupt. What the service
+  still does not have is anything to *serve*, which is why it owns no port and why its
+  report goes to the console.
 
 Devices are given to a driver the way everything else here is given: capabilities
 for the device's register frames (retyped from the device's own untyped memory --

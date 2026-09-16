@@ -203,9 +203,13 @@ not to document it again.
    it -- of the slot and of `*frame_out` as they are used -- because a print above a loop
    has now twice told a different story from the loop underneath it.
 3. `ChildVSpace` gaining a map-and-share call -- the `CNode_Copy` in `main.cc` goes away.
-4. `Spawner` over delegated authority -- the pieces exist (`adopt_untyped`, `adopt_slots`,
-   `Allocator::make_asid_pool`); what is missing is a `Spawner` constructor that takes
-   them instead of a bootinfo, and it is what a device manager needs to start a driver.
+4. **Done (`d7f1a8a`).** `Spawner` runs over delegated authority: its constructor takes an
+   allocator, a window, an ASID pool and the *source addressing* of the caller's own
+   CSpace instead of a bootinfo, and the device manager starts the block driver with it
+   (`specs/authority.md` records the four kernel rules that took: guard-0 mint sources,
+   a fresh TCB's zero MCP, no re-badging a badged endpoint, and the measured 256 KiB
+   untyped). What it did *not* take is a second spawner -- the same `Spawner` serves the
+   root task and a service, which is the point of the delegation model.
 **Deferred, with a trigger, by decision (2026): the allocator does not free.** A used
 untyped piece is never returned and a slot cursor only ever moves forwards -- no `free`, no
 `CNode_Delete`, no revoking of a piece's derived objects. That is the right amount of

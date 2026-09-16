@@ -241,18 +241,29 @@ know which architecture it is on. Every boot says so:
 
     device manager pool: made, cap 256
 
-**Next.** Give that pool, and an untyped, to the device manager. The mechanism needs no
-invention: the bootstrap block already carries `Capability` entries mapping a name to a
-slot, and granted capabilities are installed exactly the way ports are
-(libs/aegir-spawn, `install`). What is missing is the extra list of grants beyond the
-manifest's ports -- the pool is not a port, and handing it to the device manager is the
-same act of delegation (specs/services.md).
+**Done.** That pool, an untyped, the device manager's own VSpace root with a window of
+free addresses, a copy of the initrd, and the device frames its children are for are all
+delegated at boot (`44fea54`). The mechanism needed no invention: the bootstrap block
+already carried `Capability` entries mapping a name to a slot, and granted capabilities
+are installed exactly the way ports are (libs/aegir-spawn, `install`); what it grew was
+the extra list of grants beyond the manifest's ports (`Binaries`, `Window` and
+`DeviceCapability` block entries, format v3), because a pool is not a port. Every boot
+says so:
 
-**Then.** The device manager can retype a page table, assign it an ASID from its own
-pool, and hold an address space of its own. That is the point at which "the device
-manager launches a driver" becomes a statement about the device manager rather than
-about director, and the remaining pieces -- the child's CSpace, its TCB, and the
-binaries from the initrd -- are the same ones director already assembles.
+    my own address space's root: cap 11, with a window of my own from 0x40000000, 1024 MiB of it
+    the initrd: 716 KiB at 0x40200000, to start processes from
+    a device to hand on: physical 0x10008000, 4096 bytes, frame at cap 12
+
+**Done.** The device manager starts the block driver itself (`d7f1a8a`): it probes each
+granted frame through its window for the virtio id in the device's registers, carves the
+driver's queue memory out of its untyped, mints the driver a log port badged with who
+the driver is, spawns it, and waits for the driver's ready before signalling its own:
+
+    spawned blkdriver for virtio device 2, badge 256
+    read sector 0: status 0 (0 is ok), 513 bytes used
+
+The remaining pieces were not the ones director already assembles -- they were four
+kernel rules the spawn path had never needed before, each recorded below.
 
 ### A retype's destination, and why the depth is the whole story
 
@@ -319,12 +330,59 @@ they are gone -- the manual's error table says it in as many words:
 A page can come from a untyped that is exactly a page (no splitting, no children). 32 KiB
 cannot, on this machine, without splitting first.
 
-**Two ways out, and the next experiment is to pick between them:**
-- hand over the *leaf* the split produced rather than the parent that has children -- one
-  power of two larger than asked for, and nothing derived from it;
-- or have `carve_untyped` treat a request that needs splitting as needing a *revoke* of
-  the halves it does not want, which is a bigger hammer and worth understanding before
-  using.
+**Resolved: hand over the leaf.** `Allocator::carve_untyped` splits down to the size
+asked for and returns the *leaf* the split produced (`5a9f323`), which has nothing
+derived from it and so may be installed into another CSpace. The revoke hammer was
+never needed.
 
-Either way this is the last thing between the device manager and a CSpace for a child, and
-it is a *rule* with a sentence in the manual rather than an inference.
+### A mint's source is addressed the caller's way, not the callee's
+
+The first service-side spawn died installing the child's own TCB with `FailedLookup`,
+and the lookup fault said why: `DepthMismatch, 54 bits unconsumed`. The root task's
+initial CNode cap carries a guard of `seL4_WordBits - radixBits`, so a plain slot number
+resolves at full word depth; a service's own-CNode cap (slot 2, `kSlotOwnCNode`) is a
+*raw copy* with guard 0 and radix `kCNodeBits`, and with no guard the index is read
+MSB-first (`kernel/src/kernel/cspace.c:126-193`) -- so a plain slot at depth 64 names
+slot 0 and leaves 54 bits nobody reads. `seL4_CapInitThreadCNode` is, on top of that,
+the *root task's* name for its CSpace, not anyone else's.
+
+The kernel offers no invocation to ask which of these the caller is, so the caller says:
+`Spawner` takes the source root and depth it addresses mint sources through
+(`seL4_CapInitThreadCNode` at `seL4_WordBits` for director, `kSlotOwnCNode` at
+`kCNodeBits` for a service), and `kCNodeBits` moved to `aegir/bootstrap.h` because the
+guard a child's TCB is configured with and the depth its spawner addresses it at are the
+same constant.
+
+### A fresh TCB may confer no priority at all
+
+`create_object` for a TCB sets only the fields that differ from zero
+(`kernel/src/object/objecttype.c:525`), so a new thread's maximum controlled priority is
+**0**, and `SetPriority` refuses a priority above what the authority cap's MCP allows
+(`kernel/src/object/tcb.c:1236`). Director never noticed -- its own MCP is the maximum.
+A service spawning its first child did: the spawner now raises the child's MCP
+(`SetMCPriority`, within what the spawner's own TCB may confer) before setting its
+priority.
+
+### A badged endpoint cap cannot be minted again
+
+Two installs failed with `seL4_IllegalOperation` and the kernel's own words, "Mutated
+cap would be invalid": the device manager's own `log.main` cap is badged with who *it*
+is, and so is the fault endpoint it was given. Deriving a differently-badged cap from an
+already-badged endpoint is exactly what the kernel refuses. The shape that respects it:
+
+- **a spawning service is given an *unbadged* copy of every port its children need to
+  call**, under a `spawn:`-prefixed name in its block, so the badge it mints for a child
+  is the first badge that cap ever carries (director builds the list from the spawned
+  entry's port grants);
+- **its children's fault endpoint is one it makes**, not the one it was given -- a
+  spawning service supervises what it spawns, and its own badged cap could no more be
+  re-badged than the log port's.
+
+### The sizes, measured
+
+- The delegated untyped is **256 KiB** (`kDelegatedUntypedBits = 18`): the driver's image
+  alone maps ~172 KiB of frames (its queues are static storage), and 64 KiB and 128 KiB
+  were both measured too small rather than guessed.
+- Badges for a service's spawned children count from **256** -- the low badges are
+  director's boot set, and until the badge space is a designed thing, a spawning
+  service's children live in a range of their own.
