@@ -300,7 +300,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (bootstrap::write(block_storage, kBlockBytes, request.name, request.name_length,
                          request.account, request.account_length, port_entries,
                          request.port_count, devices_address, request.devices_bytes,
-                         device_address, request.device_bytes, request.device_physical) == nullptr) {
+                         device_address, request.device_bytes, request.device_physical,
+                         request.untyped_physical, request.untyped_bits) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {

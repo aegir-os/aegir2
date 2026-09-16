@@ -39,7 +39,8 @@ uint32_t copy(char *destination, char const *source, uint32_t length, uint32_t r
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
              char const *account, uint32_t account_length, PortEntry const *ports,
              uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
-             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical) noexcept
+             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical,
+             uint64_t untyped_physical, uint32_t untyped_bits) noexcept
 {
     if (storage == nullptr || name == nullptr || account == nullptr) {
         return nullptr;
@@ -48,12 +49,12 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
         return nullptr;
     }
 
-    /* Six fixed entries -- size, name, account, page bits, devices, device -- and
-     * one per port,
+    /* Seven fixed entries -- size, name, account, page bits, devices, device, untyped --
+     * and one per port,
      * because the ports a process is given are part of who it is. Growing the
      * block means bumping the version rather than gambling on a layout, and
      * `entry_count` is what makes that safe for readers that know less. */
-    uint32_t const entries = 6 + port_count;
+    uint32_t const entries = 7 + port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(name_length) + account_length;
     for (uint32_t i = 0; i < port_count; ++i) {
@@ -94,6 +95,10 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
     block->entries[5] = Entry{EntryKind::Device, device_address == 0 ? 0 : device_bytes,
                               device_physical,
                               static_cast<uint32_t>(device_address), 0};
+    /* The same shape as a device: an address the spawner knows and the child cannot work out
+     * for itself, plus a size. `reserved` carries the size in bits, as a `Capability` entry
+     * carries it for the same region. */
+    block->entries[6] = Entry{EntryKind::Untyped, 0, untyped_physical, 0, untyped_bits};
 
     uint64_t next_offset = static_cast<uint64_t>(header_size) + name_length + account_length;
     for (uint32_t i = 0; i < port_count; ++i) {
@@ -194,6 +199,27 @@ char const *string(EntryKind kind, uint32_t *length) noexcept
         return reinterpret_cast<char const *>(block) + entry.data_offset;
     }
     return nullptr;
+}
+
+bool untyped(uint64_t *physical, uint32_t *size_bits) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind == EntryKind::Untyped && entry.number != 0) {
+            if (physical != nullptr) {
+                *physical = entry.number;
+            }
+            if (size_bits != nullptr) {
+                *size_bits = entry.reserved;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 bool capability(char const *name, uint32_t length, uint64_t *slot) noexcept

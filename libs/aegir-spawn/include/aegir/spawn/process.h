@@ -81,6 +81,13 @@ struct Request {
      *  transports are told apart only by this, so a service that drives one needs
      *  it to know which one it was given. */
     uint64_t device_physical = 0;
+    /* Memory the child is given to lay objects out in, when it needs some -- a driver's
+     * virtqueue is the reason: a queue's descriptor entries carry *physical* addresses, and
+     * only the spawner knows a region's physical base. Zero for a child that is given none.
+     * The capability travels the same way a port's does (see `PortGrant::size_bits`), under
+     * the name `untyped` (specs/services.md, specs/authority.md). */
+    uint64_t untyped_physical = 0;
+    uint32_t untyped_bits = 0;
     char const *name;
     uint32_t name_length;
     char const *binary;

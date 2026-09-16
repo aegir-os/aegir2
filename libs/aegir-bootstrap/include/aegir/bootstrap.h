@@ -64,7 +64,7 @@ constexpr uint64_t kSlotFirstDeclared = 8;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -94,6 +94,14 @@ enum class EntryKind : uint32_t {
      *  `number` is the device's *physical* address -- which device it is, since
      *  identical transports are told apart only by where they are -- and
      *  `data_offset` is where the child can read them. `length` is the size. */
+    /** Memory the child owns the authority for: `number` is the region's *physical*
+     *  base and `reserved` its size in bits. Two things need the physical address
+     *  and only the spawner knows it -- a device reads a virtqueue by physical
+     *  address, and a service cannot ask the kernel where its own memory is. The
+     *  capability itself travels as a `Capability` entry named the same, which is
+     *  where its slot is: the slot is what the child retypes from, the physical base
+     *  is what it tells the device (specs/services.md, specs/authority.md). */
+    Untyped = 8,
 };
 
 struct Entry {
@@ -143,7 +151,8 @@ struct PortEntry {
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
              char const *account, uint32_t account_length, PortEntry const *ports,
              uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
-             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical) noexcept;
+             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical,
+             uint64_t untyped_physical, uint32_t untyped_bits) noexcept;
 
 /* --- reading (a spawned process) ------------------------------------------- */
 
@@ -168,6 +177,12 @@ bool devices(uint64_t *address, uint32_t *length) noexcept;
 /** A device's registers the process was given, and where they are. False when this
  *  process was given no device. */
 bool device(uint64_t *address, uint32_t *length, uint64_t *physical) noexcept;
+
+/** The memory region this process was given to lay objects out in: its *physical* base in
+ *  `physical` and its size in bits in `size_bits`. False when it was given none. The
+ *  capability is found with `capability()` under the same name; a slot is what the child
+ *  retypes from, and the physical base is what it tells a device. */
+bool untyped(uint64_t *physical, uint32_t *size_bits) noexcept;
 
 }  // namespace aegir::bootstrap
 
