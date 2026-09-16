@@ -17,6 +17,7 @@
  * a request needs one.
  */
 
+#include "queue.h"
 #include "virtio_mmio.h"
 
 #include <aegir/bootstrap.h>
@@ -85,11 +86,17 @@ bool handshake(aegir::virtio::Registers const &registers, uint32_t *features_out
     /* We ask for none of them. Each feature a driver turns on is one it must then honour --
      * a flush, a barrier, a discard -- and asking for none is the honest place to start.
      * The registers still have to be written: the device reads them to know we are done
-     * choosing (virtio 1.x, 2.1.1 steps 4 and 5). */
+     * choosing (virtio 1.x, 2.1.1 steps 4 and 5).
+     *
+     * With one exception: VIRTIO_F_VERSION_1 is bit 32, and it is not a feature so much as
+     * the handshake saying which interface we understood. This device answered the *modern*
+     * register layout even while its version register said 1, and a device that offers that
+     * layout will not use a queue until the driver confirms it -- which is what "the device
+     * never answered the read" was: a queue set up, notified, and ignored. */
     registers.write(kDriverFeatures, 0);
     if (modern) {
         registers.write(kDriverFeaturesSel, 1);
-        registers.write(kDriverFeatures, 0);
+        registers.write(kDriverFeatures, 1); /* VIRTIO_F_VERSION_1 */
         registers.write(kDriverFeaturesSel, 0);
     }
 
@@ -254,6 +261,46 @@ int main(int argc, char *argv[])
             write_line("FAIL", "neither queue layout answered");
             return 0;
         }
+    }
+
+    /* Read sector 0, and see what comes back. Everything above exists for this: the page the
+     * spawner mapped is written here, and the *physical* address of that same page goes into
+     * the queue registers, because the device reads by physical address and the driver writes
+     * by virtual one. The disk was given to QEMU as a file, so what sector 0 holds is not
+     * 512 zero bytes -- and if it is, nothing actually happened. */
+    uint8_t sector_data[aegir::virtio::kSectorBytes];
+    aegir::virtio::ReadResult const read = aegir::virtio::read_sector(
+        registers, reinterpret_cast<volatile uint8_t *>(memory_address), memory_physical, 0,
+        sector_data);
+    if (!read.completed) {
+        aegir::debug_write("      queue the device kept: num ");
+        aegir::debug_write_unsigned(read.queue_num_back);
+        aegir::debug_write(" (max ");
+        aegir::debug_write_unsigned(read.queue_num_max);
+        aegir::debug_write("), ready ");
+        aegir::debug_write_unsigned(read.queue_ready_back);
+        aegir::debug_write(", desc ");
+        aegir::debug_write_hex(read.queue_desc_back);
+        aegir::debug_write(" (gave ");
+        aegir::debug_write_hex(static_cast<uint32_t>(memory_physical));
+        aegir::debug_write("), ");
+        aegir::debug_write(read.legacy_queue ? "legacy queue, pfn " : "modern queue");
+        if (read.legacy_queue) {
+            aegir::debug_write_hex(read.queue_pfn_back);
+        }
+        aegir::debug_write("\n");
+        write_line("FAIL", "the device never answered the read");
+    } else {
+        aegir::debug_write("      read sector 0: status ");
+        aegir::debug_write_unsigned(read.status);
+        aegir::debug_write(" (0 is ok), ");
+        aegir::debug_write_unsigned(read.used_bytes);
+        aegir::debug_write(" bytes used, first 16: ");
+        for (unsigned i = 0; i < 16; ++i) {
+            aegir::debug_write_hex(sector_data[i]);
+            aegir::debug_write(" ");
+        }
+        aegir::debug_write("\n");
     }
 
     seL4_Signal(aegir::bootstrap::kSlotSupervision);

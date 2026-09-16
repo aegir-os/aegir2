@@ -17,7 +17,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-virtio-blk CXX)
 
-add_executable(aegir-virtio-blk src/main.cc)
+add_executable(aegir-virtio-blk src/main.cc src/queue.cc)
 
 target_compile_options(aegir-virtio-blk PRIVATE -Wall -Wextra -Werror)
 

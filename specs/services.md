@@ -545,6 +545,26 @@ and answers "who owns this device?" for everyone else.
   manager already has -- an untyped to retype frames from, whose physical base director knows
   -- plus a way to be told that base. That is the next piece, and it is a change to the spawn
   path rather than to the driver: the manifest asks for memory the way it now asks for a device.
+- **a virtqueue is written and the device does not answer yet**: the driver lays out a queue -
+  descriptor table, available ring, used ring, request header, one sector of data, a status
+  byte, all in the one page the spawner mapped - publishes a read of sector 0, notifies, and
+  polls the used ring. The device never publishes a used entry. What that has established so
+  far, each by measurement rather than assumption:
+
+  - `VIRTIO_F_VERSION_1` (feature bit 32) has to be negotiated once the device offers the
+    modern register layout; offering no features at all leaves a queue set up and ignored.
+  - the device reports version 1 and yet answers the *modern* register layout at 0x030/0x034,
+    while keeping *none* of the modern queue registers: `QueueNum` reads back 0, `QueueReady`
+    0, `QueueDescLow` 0 after being written.
+  - the *legacy* shape does take: `QueuePFN` reads back as the page frame of the physical
+    address given (`pfn 0xfffed` for `0xfffed000`), and its `QueueAlign` is a *bounded* alignment
+    - the used ring goes at the next align boundary after the available ring, which is why 4
+    and 152 are the numbers in the layout rather than a page and 256.
+
+  So the queue's location is accepted and the request is not processed, which leaves the
+  publish, the notify and the ring's internal offsets as the suspects - and the next step is
+  to read the legacy interface's queue rules as closely as the modern ones were read, rather
+  than to guess at them.
 - **a service cannot map into its own address space, so its spawner maps for it**: the spawner
   retypes the child's root page table, assigns it to an ASID pool, and keeps the capability.
   What a child is *given* is its TCB, its CNode, the fault endpoint, the supervision
