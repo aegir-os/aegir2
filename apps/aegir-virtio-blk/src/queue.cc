@@ -1,5 +1,5 @@
 /*
- * The virtqueue's implementation: one page, one chain of descriptors, one request.
+ * The virtqueue's implementation: one queue, one chain of descriptors, one request.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
@@ -37,10 +37,57 @@ void put_word(volatile uint32_t *words, uint32_t index, uint32_t value) noexcept
 
 }  // namespace
 
+void set_up(Registers const &registers, uint64_t physical, uint32_t num,
+            QueueReport *report) noexcept
+{
+    QueueReport local{0, 0, 0, 0, false, 0};
+
+    /* The queue's three parts, in the modern layout: three byte addresses and a ready bit.
+     * QueueReady is what tells the device the addresses are set and it may read them. */
+    uint64_t const desc_at = physical + kDescOffset;
+    uint64_t const avail_at = physical + kAvailOffset;
+    uint64_t const used_at = physical + kUsedOffset;
+    registers.write(kQueueSel, 0);
+    registers.write(kQueueNum, num);
+    registers.write(kQueueDescLow, static_cast<uint32_t>(desc_at));
+    registers.write(kQueueDescHigh, static_cast<uint32_t>(desc_at >> 32));
+    registers.write(kQueueDriverLow, static_cast<uint32_t>(avail_at));
+    registers.write(kQueueDriverHigh, static_cast<uint32_t>(avail_at >> 32));
+    registers.write(kQueueDeviceLow, static_cast<uint32_t>(used_at));
+    registers.write(kQueueDeviceHigh, static_cast<uint32_t>(used_at >> 32));
+    registers.write(kQueueReady, 1);
+    local.num_back = registers.read(kQueueNum);
+    local.ready_back = registers.read(kQueueReady);
+    local.desc_back = registers.read(kQueueDescLow);
+    local.num_max = registers.read(kQueueNumMax);
+
+    /* If the device kept none of that, it is the *legacy* interface whatever its version
+     * register said -- and the two layouts overlap where it counts. 0x030 and 0x034 are
+     * QueueSel and QueueNumMax in the modern set and QueueNumMax and QueueNum in the legacy
+     * one, which is why the earlier probe's "1024" looked like an answer: it was the legacy
+     * QueueNum reading its own default, and every write above landed on a register meaning
+     * something else. A legacy queue is described as a selector, a size, an alignment and a
+     * *page frame number* -- the base in pages of GuestPageSize, not a byte address
+     * (virtio 1.x, 4.2.2, the legacy interface). */
+    if (local.ready_back == 0 && local.num_back != num) {
+        registers.write(kLegacyGuestPageSize, kPageBytes);
+        registers.write(kLegacyQueueSel, 0);
+        registers.write(kLegacyQueueNum, num);
+        registers.write(kLegacyQueueAlign, kUsedOffset);
+        registers.write(kLegacyQueuePfn, static_cast<uint32_t>(physical / kPageBytes));
+        local.legacy = true;
+        local.pfn_back = registers.read(kLegacyQueuePfn);
+    }
+
+    if (report != nullptr) {
+        *report = local;
+    }
+}
+
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint8_t *data_out) noexcept
 {
-    ReadResult result{false, 0, 0, 0, 0, 0, 0, false, 0};
+    ReadResult result{false, 0, 0};
 
     /* The request header: a read, of one sector at `sector`. Written *before* it is published,
      * because the device may look as soon as it is told there is something to do. */
@@ -83,50 +130,17 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
                  static_cast<uint32_t>(flags) | (static_cast<uint32_t>(next) << 16));
     }
 
-    /* Where the queue is, in physical memory, in the modern layout: three byte addresses and
-     * a ready bit. QueueReady is what tells the device the addresses are set and it may read
-     * them. */
-    uint64_t const desc_at = physical + kDescOffset;
-    uint64_t const avail_at = physical + kAvailOffset;
-    uint64_t const used_at = physical + kUsedOffset;
-    registers.write(kQueueSel, 0);
-    registers.write(kQueueNum, kQueueSize);
-    registers.write(kQueueDescLow, static_cast<uint32_t>(desc_at));
-    registers.write(kQueueDescHigh, static_cast<uint32_t>(desc_at >> 32));
-    registers.write(kQueueDriverLow, static_cast<uint32_t>(avail_at));
-    registers.write(kQueueDriverHigh, static_cast<uint32_t>(avail_at >> 32));
-    registers.write(kQueueDeviceLow, static_cast<uint32_t>(used_at));
-    registers.write(kQueueDeviceHigh, static_cast<uint32_t>(used_at >> 32));
-    registers.write(kQueueReady, 1);
-    result.queue_num_back = registers.read(kQueueNum);
-    result.queue_ready_back = registers.read(kQueueReady);
-    result.queue_desc_back = registers.read(kQueueDescLow);
-    result.queue_num_max = registers.read(kQueueNumMax);
-
-    /* If the device kept none of that, it is the *legacy* interface whatever its version
-     * register said -- and the two layouts overlap where it counts. 0x030 and 0x034 are
-     * QueueSel and QueueNumMax in the modern set and QueueNumMax and QueueNum in the legacy
-     * one, which is why the earlier probe's "1024" looked like an answer: it was the legacy
-     * QueueNum reading its own default, and every write above landed on a register meaning
-     * something else. A legacy queue is described as a selector, a size, an alignment and a
-     * *page frame number* -- the base in pages of GuestPageSize, not a byte address
-     * (virtio 1.x, 4.2.2, the legacy interface). */
-    if (result.queue_ready_back == 0 && result.queue_num_back != kQueueSize) {
-        registers.write(kLegacyGuestPageSize, kPageBytes);
-        registers.write(kLegacyQueueSel, 0);
-        registers.write(kLegacyQueueNum, kQueueSize);
-        registers.write(kLegacyQueueAlign, 4);
-        registers.write(kLegacyQueuePfn, static_cast<uint32_t>(physical / kPageBytes));
-        result.legacy_queue = true;
-        result.queue_pfn_back = registers.read(kLegacyQueuePfn);
-    }
-
     /* Publish: the head of the chain goes in the available ring, and its index is the last
-     * word written. The notify is what tells the device to read the ring. */
+     * word written. The fence is not decoration -- RISC-V orders stores weakly, and without it
+     * the device can see the index before the descriptors it refers to. The in-tree legacy
+     * driver brackets its own `avail->idx++` the same way
+     * (projects/util_libs/libethdrivers/src/virtio_pci.c:286-289). */
     volatile uint16_t *avail = half_at(page, kAvailOffset);
     avail[0] = 0; /* flags */
     avail[2] = 0; /* ring[0]: the chain starts at descriptor 0 */
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     avail[1] = 1; /* idx, last */
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     registers.write(kQueueNotify, 0);
 
     /* Wait for the device to say it is done. virtio promises progress without an interrupt,

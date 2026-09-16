@@ -131,11 +131,21 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
              * into the child, and the child needs to be told the address it landed at --
              * which is the untyped's physical base, since a page-sized untyped is one page
              * (specs/services.md). */
+            /* As many pages as were granted, retyped one after another. The allocator hands
+             * out consecutive slots (alloc_slot bumps a cursor), which is what lets the
+             * spawner map them as `memory_frame + i`. The queue needs two: the used ring
+             * sits a page after the rest of it. */
+            uint32_t const pages = (1u << memory_bits) / 4096u;
             seL4_Error page_error = seL4_NoError;
-            memory_frame = allocator_.carve_page(memory_cap, account, &page_error);
-            if (memory_frame == 0) {
-                boot.problem = "the memory a service asked for could not be turned into a page";
-                return;
+            for (uint32_t i = 0; i < pages; ++i) {
+                seL4_CPtr const frame = allocator_.carve_page(memory_cap, account, &page_error);
+                if (frame == 0) {
+                    boot.problem = "the memory a service asked for could not be turned into pages";
+                    return;
+                }
+                if (i == 0) {
+                    memory_frame = frame;
+                }
             }
         }
         if ((entry.device_manager && extra_count > 0) || memory_cap != 0) {

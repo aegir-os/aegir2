@@ -45,7 +45,14 @@ constexpr uint32_t kQueueSize = 8;
  * used. */
 constexpr uint32_t kDescOffset = 0;
 constexpr uint32_t kAvailOffset = kDescOffset + kQueueSize * 16;         /* 128 */
-constexpr uint32_t kUsedOffset = 152;                                    /* align(150, 4) */
+/* The used ring is a *page* away, not packed after the available ring: `vring_init` puts it
+ * at `align(&avail->ring[num] + sizeof(uint16_t), align)` and the alignment is 4096
+ * (projects/util_libs/libvirtio/include/virtio/virtio_pci.h, VIRTIO_PCI_VRING_ALIGN -- "the
+ * alignment to use between consumer and producer parts of vring"). That is the whole reason
+ * this queue needs two pages: 150 rounded up to 4096 is a second page, and a device writing
+ * its used entry at base+4096 has been writing outside the page the driver polls. */
+constexpr uint32_t kUsedOffset = 4096;
+constexpr uint32_t kQueueBytes = 8192;
 constexpr uint32_t kRequestOffset = 512;
 constexpr uint32_t kDataOffset = kRequestOffset + 16;                         /* 528 */
 constexpr uint32_t kStatusOffset = kDataOffset + 512;                         /* 1040 */
@@ -98,32 +105,35 @@ struct BlkRequest {
     uint64_t sector;
 };
 
+/** What the device says about the queue it was given, read back after setup. A device that
+ *  kept nothing answers zero here, which is worth knowing before blaming the ring. */
+struct QueueReport {
+    uint32_t num_back;
+    uint32_t ready_back;
+    uint32_t desc_back;
+    uint32_t num_max;
+    bool legacy;
+    uint32_t pfn_back;
+};
+
 /** What one read produced. */
 struct ReadResult {
     bool completed;   /* the device published a used entry before the poll ran out */
     uint32_t status;  /* the device's own status byte: 0 is OK, 2 is unsupported */
     uint32_t used_bytes;
-    /* What the device says about the queue it was given, read back after setup: a device that
-     * kept nothing answers zero here, and that is worth knowing before blaming the ring. */
-    uint32_t queue_num_back;
-    uint32_t queue_ready_back;
-    uint32_t queue_desc_back;
-    uint32_t queue_num_max;
-    /* True when the device kept none of the modern queue registers and the legacy shape had
-     * to be used instead; `queue_pfn_back` is what it says about that. */
-    bool legacy_queue;
-    uint32_t queue_pfn_back;
 };
 
 constexpr uint32_t kPageBytes = 4096;
 
-/** Set up one queue in `page`, tell the device where the page is *physically*, publish a
- *  read of `sector`, and wait for the device to say it is done.
- *
- *  `page` is the address the spawner mapped the page at, and `physical` is where that same
- *  page is in the machine -- the value the descriptor entries have to carry, because the
- *  device reads them, not the driver. Writing the page through a volatile pointer is not
- *  paranoia: the device is reading it as the driver writes. */
+/** Set the queue up: lay its three parts out in `page`, and tell the device where the page is
+ *  *physically*. This has to happen *before* the driver sets DRIVER_OK: the status bit is the
+ *  driver saying everything is ready, and a device told "go" before its queue exists is a
+ *  device that may ignore the queue entirely (virtio 1.x, 2.1.1 step 8). */
+void set_up(Registers const &registers, uint64_t physical, uint32_t num,
+            QueueReport *report) noexcept;
+
+/** Publish a read of `sector` and wait for the device to say it is done. The queue must be
+ *  set up and DRIVER_OK written first. */
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint8_t *data_out) noexcept;
 

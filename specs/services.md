@@ -556,15 +556,23 @@ and answers "who owns this device?" for everyone else.
   - the device reports version 1 and yet answers the *modern* register layout at 0x030/0x034,
     while keeping *none* of the modern queue registers: `QueueNum` reads back 0, `QueueReady`
     0, `QueueDescLow` 0 after being written.
-  - the *legacy* shape does take: `QueuePFN` reads back as the page frame of the physical
-    address given (`pfn 0xfffed` for `0xfffed000`), and its `QueueAlign` is a *bounded* alignment
-    - the used ring goes at the next align boundary after the available ring, which is why 4
-    and 152 are the numbers in the layout rather than a page and 256.
+  - **the used ring is a page after the rest of the queue.** `vring_init` puts it at
+    `align(&avail->ring[num] + sizeof(uint16_t), align)` and the alignment is 4096 --
+    `VIRTIO_PCI_VRING_ALIGN`, "the alignment to use between consumer and producer parts of
+    vring" (projects/util_libs/libvirtio/include/virtio/virtio_pci.h:92). 150 rounded to 4096
+    is a second page, so the queue needs two, and a device writing its used entry at base+4096
+    had been writing outside the single page the driver polled.
+  - **DRIVER_OK comes after the queues are set up.** It is the driver saying everything is
+    ready (virtio 1.x, 2.1.1 step 8); the driver had been writing it *before* configuring the
+    queue.
+  - **RISC-V orders stores weakly**, so the available index needs a release fence on either
+    side of it, which is what the in-tree legacy driver does around its own `avail->idx++`
+    (projects/util_libs/libethdrivers/src/virtio_pci.c:286-289).
 
-  So the queue's location is accepted and the request is not processed, which leaves the
-  publish, the notify and the ring's internal offsets as the suspects - and the next step is
-  to read the legacy interface's queue rules as closely as the modern ones were read, rather
-  than to guess at them.
+  The last measured state: the queue's location is accepted (`legacy, pfn 0xfffee` for a page
+  at `0xfffee000`), while `QueueNum` and `QueueReady` read back 0 because those are modern
+  registers this device does not have. The request is still not processed, which leaves the
+  legacy interface's own queue rules to read as closely as the modern ones were.
 - **a service cannot map into its own address space, so its spawner maps for it**: the spawner
   retypes the child's root page table, assigns it to an ASID pool, and keeps the capability.
   What a child is *given* is its TCB, its CNode, the fault endpoint, the supervision

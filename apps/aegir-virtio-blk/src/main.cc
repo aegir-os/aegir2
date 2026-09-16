@@ -209,11 +209,8 @@ int main(int argc, char *argv[])
     aegir::debug_write_unsigned((capacity * 512) / (1024 * 1024));
     aegir::debug_write(" MiB)\n");
 
-    /* Only now is the device usable: DRIVER_OK is the last step of the handshake, and a
-     * device whose status says FAILED is one to leave alone (virtio 1.x, 2.1.1 step 8). */
-    registers.write(aegir::virtio::kStatus,
-                    aegir::virtio::kStatusAcknowledge | aegir::virtio::kStatusDriver |
-                        aegir::virtio::kStatusFeaturesOk | aegir::virtio::kStatusDriverOk);
+    /* The device's own status is read for FAILED below, once DRIVER_OK has actually been
+     * written -- after the queue is set up. */
     if (registers.read(aegir::virtio::kStatus) & aegir::virtio::kStatusFailed) {
         write_line("FAIL", "the device reported failure");
         return 0;
@@ -226,42 +223,31 @@ int main(int argc, char *argv[])
      * laid out with; a wrong offset would read 0 for both and say so here rather than in a
      * request that never comes back (virtio 1.x, 4.2.2, and the ring layout itself in
      * projects/util_libs/libvirtio/include/virtio/virtio_ring.h). */
-    bool const legacy = registers.read(aegir::virtio::kVersion) == 1;
-    if (legacy) {
-        /* Which offsets does this device actually answer on? The legacy and modern interfaces
-         * put QueueSel/QueueNumMax at different addresses (0x02c/0x030 against 0x030/0x034),
-         * and the version register says which one it means -- but a device that disagrees with
-         * its own version register is exactly the kind of thing worth finding out by asking
-         * rather than by assuming. So both are tried, and the answer is reported.
-         *
-         * The queue registers are about whichever queue QueueSel names, so the selection comes
-         * first either way: reading them without selecting answers zero, which is how the
-         * first attempt at this measured 0 and 0. */
-        registers.write(aegir::virtio::kLegacyQueueSel, 0);
-        uint32_t queue_num_max = registers.read(aegir::virtio::kLegacyQueueNumMax);
-        uint32_t queue_align = registers.read(aegir::virtio::kLegacyQueueAlign);
-        bool legacy_layout = true;
-        if (queue_num_max == 0) {
-            registers.write(aegir::virtio::kQueueSel, 0);
-            queue_num_max = registers.read(aegir::virtio::kQueueNumMax);
-            queue_align = 0;
-            legacy_layout = false;
-        }
-        aegir::debug_write("      queue: size ");
-        aegir::debug_write_unsigned(queue_num_max);
-        aegir::debug_write(", on the ");
-        aegir::debug_write(legacy_layout ? "legacy" : "modern");
-        aegir::debug_write(" layout");
-        if (legacy_layout) {
-            aegir::debug_write(", alignment ");
-            aegir::debug_write_unsigned(queue_align);
-        }
-        aegir::debug_write("\n");
-        if (queue_num_max == 0) {
-            write_line("FAIL", "neither queue layout answered");
-            return 0;
-        }
+    /* The queue is set up *before* DRIVER_OK: the status bit says everything is ready, and a
+     * device told "go" before its queue exists may ignore the queue entirely (virtio 1.x,
+     * 2.1.1 step 8). This is where the modern and legacy layouts are sorted out, and the
+     * report says which the device took. */
+    aegir::virtio::QueueReport queue_report{};
+    aegir::virtio::set_up(registers, memory_physical, aegir::virtio::kQueueSize, &queue_report);
+    aegir::debug_write("      queue: num ");
+    aegir::debug_write_unsigned(queue_report.num_back);
+    aegir::debug_write(" of ");
+    aegir::debug_write_unsigned(queue_report.num_max);
+    aegir::debug_write(", ready ");
+    aegir::debug_write_unsigned(queue_report.ready_back);
+    aegir::debug_write(", desc ");
+    aegir::debug_write_hex(queue_report.desc_back);
+    aegir::debug_write(", ");
+    aegir::debug_write(queue_report.legacy ? "legacy, pfn " : "modern");
+    if (queue_report.legacy) {
+        aegir::debug_write_hex(queue_report.pfn_back);
     }
+    aegir::debug_write("\n");
+
+    /* Only now is the device told the driver is ready. */
+    registers.write(aegir::virtio::kStatus,
+                    aegir::virtio::kStatusAcknowledge | aegir::virtio::kStatusDriver |
+                        aegir::virtio::kStatusFeaturesOk | aegir::virtio::kStatusDriverOk);
 
     /* Read sector 0, and see what comes back. Everything above exists for this: the page the
      * spawner mapped is written here, and the *physical* address of that same page goes into
@@ -273,22 +259,6 @@ int main(int argc, char *argv[])
         registers, reinterpret_cast<volatile uint8_t *>(memory_address), memory_physical, 0,
         sector_data);
     if (!read.completed) {
-        aegir::debug_write("      queue the device kept: num ");
-        aegir::debug_write_unsigned(read.queue_num_back);
-        aegir::debug_write(" (max ");
-        aegir::debug_write_unsigned(read.queue_num_max);
-        aegir::debug_write("), ready ");
-        aegir::debug_write_unsigned(read.queue_ready_back);
-        aegir::debug_write(", desc ");
-        aegir::debug_write_hex(read.queue_desc_back);
-        aegir::debug_write(" (gave ");
-        aegir::debug_write_hex(static_cast<uint32_t>(memory_physical));
-        aegir::debug_write("), ");
-        aegir::debug_write(read.legacy_queue ? "legacy queue, pfn " : "modern queue");
-        if (read.legacy_queue) {
-            aegir::debug_write_hex(read.queue_pfn_back);
-        }
-        aegir::debug_write("\n");
         write_line("FAIL", "the device never answered the read");
     } else {
         aegir::debug_write("      read sector 0: status ");
