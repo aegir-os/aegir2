@@ -798,6 +798,14 @@ int main(int argc, char *argv[])
          * the survey's frame over with nothing having mapped it after the survey read
          * it. If that is refused too, the address space the frame belongs to is being
          * set somewhere outside this path (specs/services.md). */
+        /* The kernel instrument said frame_asid=2, asid=3: the frame belongs to
+         * *our* address space (2) and the child's is 3. So it is mapped in ours at
+         * handover even though every mapping in this path is unmapped -- survey pages
+         * as they are read, and the probe's copy immediately after it maps. The next
+         * instrument is therefore on the other side: a print inside
+         * performPageInvocationUnmap (kernel/src/arch/riscv/kernel/vspace.c) to see
+         * whether it runs for each unmap and which capability it clears
+         * (specs/services.md). */
         static_cast<void>(device_grant);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,

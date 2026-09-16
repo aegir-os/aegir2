@@ -518,12 +518,17 @@ and saying which half exists is the point of writing it down:
 
   With that known, the survey now unmaps each page as soon as it has read it, so
   nothing in this path leaves a mapping behind -- and the child's map is *still*
-  refused at vspace.c:871, which means the frame's `capFMappedASID` is director's ASID
-  at handover anyway. The next experiment is the smallest one left: remove the probe as
-  well and hand the survey's frame over with nothing having mapped it since the survey
-  read it. If that is refused too, the frame's address space is being set somewhere
-  outside this path, and the thing to look at is what else touches that frame -- the
-  retype itself, or the copy -- rather than the mappings.
+  refused at vspace.c:871. A temporary print in that branch (reverted) said exactly
+  which side is which:
+
+      [aegir] remap: frame_asid=2 asid=3 asidInvalid=0
+
+  Director is ASID 2 and the child is ASID 3, so the frame belongs to *our* address
+  space at handover, with every unmap in this path having been called. The next
+  instrument is therefore on the other side of the unmap: a print inside
+  `performPageInvocationUnmap`, to see whether it is reached for each of those unmaps
+  and which capability it clears. That is the last thing between here and a service
+  reading its own device.
 
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
