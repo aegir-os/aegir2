@@ -20,12 +20,14 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-hello>"
     "$<TARGET_FILE:aegir-logger>"
     "$<TARGET_FILE:aegir-device-manager>"
+    "$<TARGET_FILE:aegir-virtio-blk>"
 )
 set(aegir_initrd_names
     "services.manifest"
     "aegir-hello"
     "aegir-logger"
     "aegir-device-manager"
+    "aegir-virtio-blk"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)

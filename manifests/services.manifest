@@ -38,6 +38,18 @@ restart   = always
 device_manager = true
 device_id  = 4
 
+# The block driver. Director's survey found virtio device 2 behind a transport, and this
+# service asks for it by id -- one device per service, because a device is a capability and
+# two services wanting two devices is what the bus map is for. It owns no port yet: serving
+# a request needs a virtqueue, and the queue comes before the port (specs/services.md).
+[blkdriver]
+binary    = aegir-virtio-blk
+authority = system
+account   = system
+needs     = log.main
+device_id = 2
+restart   = always
+
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process
 # can call a port it was given.
