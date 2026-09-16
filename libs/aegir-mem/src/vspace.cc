@@ -7,6 +7,8 @@
 
 #include <aegir/mem/vspace.h>
 
+#include <aegir/mem/allocator.h>
+
 /* The end of our image, from the linker script the build already uses. It is
  * the image's own end rather than a number chosen here, which is the point:
  * things that move when the code grows must not be assumptions. */
@@ -57,17 +59,57 @@ bool Scratch::initialise() noexcept
     return true;
 }
 
+bool Scratch::adopt(seL4_CPtr vspace_root, uintptr_t base, uintptr_t limit,
+                    Allocator *tables) noexcept
+{
+    if (vspace_root == 0 || tables == nullptr || base >= limit ||
+        (base & (kPage - 1)) != 0 || (limit & (kPage - 1)) != 0) {
+        return false;
+    }
+    root_ = vspace_root;
+    tables_ = tables;
+    base_ = base;
+    next_ = base;
+    limit_ = limit;
+    return true;
+}
+
 void *Scratch::map(seL4_CPtr frame) noexcept
 {
     if (frame == 0 || next_ + kPage > limit_) {
         return nullptr;
     }
     uintptr_t address = next_;
-    seL4_Error error = seL4_RISCV_Page_Map(frame, seL4_CapInitThreadVSpace, address,
-                                          seL4_AllRights, seL4_RISCV_Default_VMAttributes);
+    seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                           seL4_RISCV_Default_VMAttributes);
+    /* A service's window has no page tables promised above it: the spawner said
+     * where the window is, not that anything was ever mapped there. The kernel
+     * says which level is missing by refusing with FailedLookup, and the table
+     * to create is a page table at whatever level failed -- the same idiom the
+     * child VSpace walks (aegir/mem/child_vspace.cc), against our own root. */
+    unsigned attempts = 0;
+    while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
+        ++attempts;
+        seL4_Error created = seL4_NoError;
+        /* Charged to a throwaway account: the window's tables are the service's
+         * own scaffolding, and the caller's accounts are per-spawn. */
+        Account self{"scratch", 0, 0, 0};
+        seL4_CPtr const table = tables_->alloc_object(seL4_RISCV_PageTableObject,
+                                                      seL4_PageTableBits, self, &created);
+        if (table == 0) {
+            return nullptr;
+        }
+        if (seL4_RISCV_PageTable_Map(table, root_, address,
+                                     seL4_RISCV_Default_VMAttributes) != seL4_NoError) {
+            return nullptr;
+        }
+        error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                    seL4_RISCV_Default_VMAttributes);
+    }
     if (error != seL4_NoError) {
         return nullptr;
     }
+    last_cap_ = frame;
     next_ += kPage;
     mapped_bytes_ += kPage;
     return reinterpret_cast<void *>(address);
@@ -75,8 +117,15 @@ void *Scratch::map(seL4_CPtr frame) noexcept
 
 void Scratch::unmap(seL4_CPtr frame) noexcept
 {
-    if (frame != 0) {
-        seL4_RISCV_Page_Unmap(frame);
+    if (frame == 0) {
+        return;
+    }
+    seL4_RISCV_Page_Unmap(frame);
+    if (frame == last_cap_) {
+        /* The strict map-write-unmap rhythm hands its page back (see the header):
+         * the next map reuses it rather than walking the window to its end. */
+        next_ -= kPage;
+        last_cap_ = 0;
     }
 }
 
