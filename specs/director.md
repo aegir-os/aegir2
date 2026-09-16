@@ -150,6 +150,12 @@ Objects come from `seL4_TCBObject`, `seL4_EndpointObject`, `seL4_NotificationObj
 and `seL4_CapTableObject` (`kernel/libsel4/include/sel4/objecttype.h:10-13`), plus
 frames — all of it retyped from untyped memory the account holds.
 
+One thing the spawner deliberately does *not* touch: the child's floating point.
+A fresh TCB has FP enabled — only the idle thread opts out — so a service can
+compute in floating point because the kernel switches FP state per thread, not
+because the spawn asks for it (`specs/build.md` records the three places that
+decide it, and `apps/aegir-hello` checks it at boot).
+
 ### The startup ABI
 
 A spawned process is an ordinary linked program (musl plus `sel4runtime`), so it

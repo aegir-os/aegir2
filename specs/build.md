@@ -29,6 +29,32 @@ pinned source rather than assumed:
   later is a whole-system change (every binary, every library), which is why it
   is decided and written down now.
 
+#### Hard-float is a kernel capability, not only an ABI
+
+`lp64d` says how floating-point arguments travel; whether a program may compute
+in floating point at all is the kernel's decision, and it is made in three
+places:
+
+- `KernelRiscvExtD` → `CONFIG_HAVE_FPU` in the built kernel
+  (`out/aegir/kernel/gen_config/kernel/gen_config.h`). With it the kernel saves
+  and restores FP state per thread, lazily: the state is written out when the FPU
+  is taken away, not on every switch
+  (`kernel/src/arch/riscv/machine/fpu.c`, `lazyFPURestore` in
+  `kernel/src/object/tcb.c:795-810`).
+- A freshly retyped TCB has FP **enabled**: the only thread that opts out is the
+  idle thread, which must not leave the FPU's state dirty
+  (`kernel/src/kernel/thread.c:33`, `configureIdleThread`). This is why a service
+  director creates can compute in floating point without anyone asking for it.
+- A thread can opt *out* with `seL4_TCB_SetFlags(tcb, seL4_TCBFlag_fpuDisabled,
+  0)` (`kernel/libsel4/include/sel4/constants.h:73-81`) to save the switching
+  cost. Nothing in Aegir does that yet; it is the shape a per-service choice would
+  take when a service that never touches a float is worth optimising.
+
+The consequence for the trade above: `KernelRiscvExtD OFF` would not merely change
+the ABI, it would take floating point away from every program. And it is checked
+at boot rather than trusted — `apps/aegir-hello` computes in `float` and `double`
+and reports `floating point: works`, or fails and says so.
+
 All architecture-specific detail lives in `configs/` and the CMake glue so that
 application code stays portable across the targets above (project rule).
 

@@ -80,6 +80,55 @@ constexpr T larger(T left, T right)
     return left > right ? left : right;
 }
 
+/* Floating point in userland is a kernel capability, not only an ABI choice:
+ * the kernel switches FP state per thread and a freshly retyped TCB has it
+ * enabled -- only the idle thread opts out, because it must not leave the
+ * FPU's state dirty (kernel/src/kernel/thread.c:33 is configureIdleThread).
+ * Checked here, at boot, for the same reason the static constructor is: a
+ * regression would show up as arithmetic that is quietly wrong, or as a trap
+ * the first time a program touched a float.
+ *
+ * The values are exact in binary, so this tests the FPU rather than a rounding
+ * mode, and the yields in the loop put the value through context switches. */
+union FloatBits {
+    float value;
+    uint32_t bits;
+};
+
+union DoubleBits {
+    double value;
+    uint64_t bits;
+};
+
+bool floating_point_works()
+{
+    FloatBits single;
+    single.value = 1.5f + 2.25f;
+    FloatBits const single_expected = [] {
+        FloatBits expected;
+        expected.value = 3.75f;
+        return expected;
+    }();
+    if (single.bits != single_expected.bits) {
+        return false;
+    }
+
+    /* 0.125 doubled six times is 8, and each step is exactly representable. */
+    double accumulated = 1.0 / 8.0;
+    for (unsigned step = 0; step < 6; ++step) {
+        seL4_Yield();
+        accumulated = accumulated * 2.0;
+    }
+    DoubleBits wide;
+    wide.value = accumulated;
+    DoubleBits const wide_expected = [] {
+        DoubleBits expected;
+        expected.value = 8.0;
+        return expected;
+    }();
+    return wide.bits == wide_expected.bits;
+}
+
 void write_unsigned(uint64_t value)
 {
     char digits[20];
@@ -150,6 +199,7 @@ int main(int argc, char *argv[])
     write_line("target", word_size_and_abi());
     write_line("static constructors", constructor_ran ? "ran" : "DID NOT RUN");
     write_number("constexpr template max(4, 5)", larger<uint64_t>(4, 5));
+    write_line("floating point", floating_point_works() ? "works" : "WRONG");
 
     /* Tell the supervisor we got here. A notification signal is one word and
      * cannot be forged into saying someone else finished (specs/director.md). */
