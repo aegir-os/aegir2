@@ -31,7 +31,12 @@ needs     = log.main
 restart   = always
 # The machine's devices are given to this service and to no other: a device is a
 # capability, so it cannot be handed out to everyone who might want one.
+# `device_id` is what a service is *for*: the bus's id for the device it drives, which
+# director looks up in the survey of what the machine has. The random number generator
+# is virtio device 4 (`VIRTIO_ID_*`, projects/sel4_projects_libs/libsel4vmmplatsupport);
+# the block device is 2, which is what a driver will claim.
 device_manager = true
+device_id  = 4
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process
