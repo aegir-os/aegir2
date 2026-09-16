@@ -11,18 +11,28 @@
   its own children down on the way out is worth having -- scripts/run_target.py does,
   and a signal that arrives as an ordinary exit is what makes that work.
 - Use the git repository for history.
-- Edit by unique content, never by a multi-line pattern. A declaration and its definition
-  get wrapped at different points, and when they do, one pattern cannot match both and a
-  line-number slice lands on the wrong side of a brace. Read the exact lines first, then
-  replace text that appears exactly once. Six failed attempts at one signature change came
-  from not doing this; the change itself was three lines.
+- Prefer the mechanism over the reminder. Two of the rules in this file are mechanisms --
+  `pipefail`, and a build whose fallback is the revert -- and both held every time they were
+  used. Three others asked for care in prose: edit by unique content, read the exact lines
+  first, land the smallest piece. They were correct, and the same class of mistake still
+  happened seven times *after* they were written. So when a mistake repeats, change the tool
+  rather than write it down harder. For edits the mechanism is `edit_file`: it requires its
+  anchor to occur exactly once and refuses otherwise -- and it refuses to touch a file that
+  has not been read in the session -- so a silent no-op is impossible and a multi-line
+  pattern is not expressible. A script doing `str.replace`, `re.sub` or a line-number slice
+  is the failure mode, not the tool: `replace` returns its input unchanged when nothing
+  matches, and a slice lands wherever the numbers point -- across a brace, inside a block, or
+  over a neighbour's declaration. Every one of those seven reverts was one of those three.
+  Where a script is genuinely needed (a rename across many files), assert each replacement
+  before writing and read the region back.
 - Make the revert the fallback in the same command as the build --
   `make build || git checkout -- <the directory>` -- so a failed attempt costs the work and
-  not the working tree. That guard earned its place six times in one afternoon, and the
+  not the working tree. That guard earned its place seven times in one afternoon, and the
   repository was never left broken.
-- Land the small change you are sure of rather than the whole change you are not. A round
-  that reverts has produced nothing a reader or the next round can use; a round that
-  commits one certain piece has produced something.
+- Land the small change you are sure of rather than the whole change you are not: the build
+  is the checkpoint, so each piece wants its own. A round that reverts has produced nothing a
+  reader or the next round can use; a round that commits one certain piece has produced
+  something.
 - Read the *established implementation* before designing, not only the manual. The manual
   says what is legal; `projects/seL4_libs` and `projects/sel4test` say how it is done, and
   they have already been broken by other people in the places where the shape matters.
