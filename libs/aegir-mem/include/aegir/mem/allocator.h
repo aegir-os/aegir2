@@ -99,6 +99,14 @@ public:
      * is how spawing authority is delegated (specs/authority.md). The record it came
      * from is marked used, so the memory is not handed out twice.
      *
+     * What comes back is always a capability the kernel will let the caller *copy*:
+     * a capability with derived objects cannot be (`seL4_RevokeFirst`), and a parent
+     * that was split has them. So when the region had to be split out of something
+     * larger, the handout is the last leaf the splitting made -- which is exactly
+     * `size_bits` wide and has nothing derived from it -- and the parent's remainder
+     * stays here, free for later allocations. When an exact-size untyped existed it
+     * is handed over as it stands.
+     *
      * `physical_out`, when given, is set to the region's *physical* base -- the one
      * thing a service cannot find out for itself and a device has to be told, because
      * a virtqueue's descriptor entries are guest-physical addresses
@@ -177,14 +185,20 @@ private:
      * size is what lets the allocator split and fit without asking the kernel. */
     struct Untyped {
         seL4_CPtr cap;
-        /* Where the region is in the machine. The kernel's list says for the ones it
-         * found; a half made by splitting is the parent's base plus the half's size,
-         * because the parent keeps the low half (split_to). Zero means unknown, which
-         * is what an untyped handed in from outside has. */
+        /* Where the region's *free* memory is in the machine. The kernel's list says
+         * for the ones it found; splitting moves it, because the kernel carves a child
+         * from the low end of what is left and the remainder -- what this entry tracks --
+         * sits above every child so far (split_to). Zero means unknown, which is what an
+         * untyped handed in from outside has unless its giver said where it is. */
         uint64_t physical;
         uint8_t size_bits;
         uint8_t device;
         uint8_t used;
+        /* Split off leaves have been carved out of this one. A capability with
+         * derived objects cannot be copied (seL4_RevokeFirst), which is what makes
+         * such a remainder useless as a *handout* while remaining fine to retype
+         * from locally -- carve_untyped looks elsewhere when it can. */
+        uint8_t children;
     };
 
     /** Index of the smallest unused normal untyped that can hold `size_bits`. */
@@ -197,8 +211,12 @@ private:
      *  need: one slot is outstanding at a time. */
     void slot_failed(seL4_CPtr slot) noexcept;
 
-    /** Halve `untyped_[index]` until it is exactly `size_bits` wide. */
-    bool split_to(int index, seL4_Word size_bits) noexcept;
+    /** Halve `untyped_[index]` until its free remainder is exactly `size_bits` wide.
+     *  `last_child`, when given, receives the capability of the last leaf the
+     *  halving made -- or 0 when nothing had to be split. The leaf is the piece a
+     *  caller may give away: the remainder has children and the kernel refuses to
+     *  copy a capability that does (`seL4_RevokeFirst`). */
+    bool split_to(int index, seL4_Word size_bits, seL4_CPtr *last_child = nullptr) noexcept;
 
     bool remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept;
 

@@ -27,7 +27,7 @@ Allocator::Allocator(seL4_BootInfo *bootinfo) noexcept
       allocated_bytes_(0), last_request_bits_(0), last_candidate_bits_(0)
 {
     for (auto &entry : untyped_) {
-        entry = Untyped{0, 0, 0, 0, 0};
+        entry = Untyped{0, 0, 0, 0, 0, 0};
     }
 }
 
@@ -78,6 +78,7 @@ bool Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64
     untyped_[untyped_count_].size_bits = static_cast<uint8_t>(size_bits);
     untyped_[untyped_count_].device = device ? 1 : 0;
     untyped_[untyped_count_].used = 0;
+    untyped_[untyped_count_].children = 0;
     ++untyped_count_;
     return true;
 }
@@ -147,8 +148,11 @@ int Allocator::find_untyped(seL4_Word memory_bits) const noexcept
     return best;
 }
 
-bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
+bool Allocator::split_to(int index, seL4_Word memory_bits, seL4_CPtr *last_child) noexcept
 {
+    if (last_child != nullptr) {
+        *last_child = 0;
+    }
     while (static_cast<seL4_Word>(untyped_[index].size_bits) > memory_bits) {
         seL4_Word half = untyped_[index].size_bits - 1;
         seL4_CPtr slot = alloc_slot();
@@ -178,6 +182,10 @@ bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
             untyped_[index].physical += 1ull << half;
         }
         untyped_[index].size_bits = static_cast<uint8_t>(half);
+        untyped_[index].children = 1;
+        if (last_child != nullptr) {
+            *last_child = slot;
+        }
     }
     return true;
 }
@@ -285,28 +293,53 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) n
 }
 
 seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,
-                                   uint64_t *physical_out) noexcept
+                                    uint64_t *physical_out) noexcept
 {
     *error = seL4_NoError;
-    int const index = find_untyped(size_bits);
+    int index = find_untyped(size_bits);
     if (index < 0) {
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    if (!split_to(index, size_bits)) {
+    /* An exact-size untyped that splitting left over has children, and a capability
+     * with children cannot be given away (see below). Splitting a larger one makes a
+     * leaf that can, so that is the better candidate for a handout when there is one. */
+    if (untyped_[index].children != 0 &&
+        static_cast<seL4_Word>(untyped_[index].size_bits) == size_bits) {
+        for (unsigned i = 0; i < untyped_count_; ++i) {
+            Untyped const &entry = untyped_[i];
+            if (entry.used != 0 || entry.device != 0 ||
+                static_cast<seL4_Word>(entry.size_bits) <= size_bits) {
+                continue;
+            }
+            if (untyped_[index].children != 0 ||
+                entry.size_bits < untyped_[index].size_bits) {
+                index = static_cast<int>(i);
+            }
+        }
+    }
+    seL4_CPtr leaf = 0;
+    if (!split_to(index, size_bits, &leaf)) {
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    /* Splitting leaves exactly `size_bits` of the region free, and the capability
-     * to hand out is the one that is left. Its recorded physical base is where the
-     * free part actually sits -- the far end of the splits, not the region's start
-     * (see split_to). The record is marked used rather than freed: the caller is
-     * taking it away. */
-    seL4_CPtr const cap = untyped_[index].cap;
-    if (physical_out != nullptr) {
-        *physical_out = untyped_[index].physical;
+    /* What is handed out must be a capability the kernel will let the caller copy:
+     * giving it to a service is the point (specs/authority.md), and a capability
+     * with derived objects cannot be copied ("RevokeFirst: The untyped has been
+     * used to retype an object",
+     * out/aegir/libsel4/include/interfaces/sel4_client.h:419). The split's last
+     * leaf has nothing derived from it; the remainder it came from does. So the
+     * leaf is the handout when there was one, and the remainder stays here, free.
+     * The leaf is the entry remember() just appended. */
+    int taken = index;
+    if (leaf != 0) {
+        taken = static_cast<int>(untyped_count_) - 1;
     }
-    untyped_[index].used = 1;
+    seL4_CPtr const cap = untyped_[taken].cap;
+    if (physical_out != nullptr) {
+        *physical_out = untyped_[taken].physical;
+    }
+    untyped_[taken].used = 1;
     account.bytes += 1ull << size_bits;
     account.objects += 1;
     allocated_bytes_ += 1ull << size_bits;
