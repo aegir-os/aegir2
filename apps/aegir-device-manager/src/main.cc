@@ -626,6 +626,20 @@ int main(int argc, char *argv[])
              * director's boot set, and until the badge space is a designed thing,
              * a spawning service's children live in a range of their own
              * (specs/services.md). */
+            /* What bound, collected for the partition manager: the caller half of
+             * each block port and the pristine window-cap set its clients map.
+             * What it enumerates is what bound, and no more. */
+            struct BoundPort {
+                seL4_CPtr port;
+                seL4_CPtr window; /* the pristine set: one frame cap per page */
+                uint32_t window_pages;
+                uint64_t window_physical;
+                char const *name;
+                uint32_t name_length;
+            };
+            auto *bound = static_cast<BoundPort *>(arena.allocate(
+                sizeof(BoundPort) * (binding_count != 0 ? binding_count : 1)));
+            uint32_t bound_count = 0;
             for (uint32_t b = 0; have_log && b < binding_count; ++b) {
                 Binding const &binding = bindings[b];
                 if (binding.frame == 0) {
@@ -703,29 +717,34 @@ int main(int argc, char *argv[])
                  * (kernel/src/arch/riscv/kernel/vspace.c:869-878), so one cap
                  * can never serve two VSpaces -- while a copy made before any
                  * mapping carries no ASID yet and may be mapped into another.
-                 * The window's consumers each need their own set of caps: the
-                 * originals go to the child, and one copy set stays with us,
-                 * for the smoke below and for whatever client the port is
-                 * later delegated to. Made now, because a copy made after the
-                 * child maps would inherit the child's ASID and be useless. */
-                seL4_CPtr window_copy = 0;
-                bool copied = true;
-                for (uint32_t p = 0; p < window_pages; ++p) {
-                    seL4_CPtr const slot = g_objects.alloc_slot();
-                    if (slot == 0 ||
-                        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
-                                        aegir::bootstrap::kCNodeBits,
-                                        aegir::bootstrap::kSlotOwnCNode, window_frame + p,
-                                        aegir::bootstrap::kCNodeBits, seL4_AllRights,
-                                        0) != seL4_NoError) {
-                        copied = false;
-                        break;
+                 * The window's consumers each need their own set of caps, made
+                 * now, before anything maps: the originals go to the child,
+                 * one copy set stays pristine as the source for every client
+                 * grant (the partition manager's frames are minted from it
+                 * straight into the child's CSpace), and one set is ours to
+                 * peek through for the smoke. A copy made after a mapping
+                 * would inherit that mapping's ASID and be useless. */
+                auto mint_window_set = [&window_frame, window_pages]() -> seL4_CPtr {
+                    seL4_CPtr base = 0;
+                    for (uint32_t p = 0; p < window_pages; ++p) {
+                        seL4_CPtr const slot = g_objects.alloc_slot();
+                        if (slot == 0 ||
+                            seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
+                                            aegir::bootstrap::kCNodeBits,
+                                            aegir::bootstrap::kSlotOwnCNode, window_frame + p,
+                                            aegir::bootstrap::kCNodeBits, seL4_AllRights,
+                                            0) != seL4_NoError) {
+                            return 0;
+                        }
+                        if (p == 0) {
+                            base = slot;
+                        }
                     }
-                    if (p == 0) {
-                        window_copy = slot;
-                    }
-                }
-                if (!copied) {
+                    return base;
+                };
+                seL4_CPtr const window_client = mint_window_set();
+                seL4_CPtr const window_smoke = mint_window_set();
+                if (window_client == 0 || window_smoke == 0) {
                     write_line("FAIL", "the shared window's frames could not be copied");
                     continue;
                 }
@@ -838,11 +857,11 @@ int main(int argc, char *argv[])
                  * window without a byte crossing the message. We hold the caller
                  * half because we made the endpoint; the window's frames stay
                  * ours as well, and are what a later client maps. */
-                auto *shared = static_cast<uint8_t *>(g_scratch.map(window_copy));
+                auto *shared = static_cast<uint8_t *>(g_scratch.map(window_smoke));
                 if (shared == nullptr) {
                     uint64_t const window_map_error = g_scratch.last_error();
                     aegir::debug_write("      FAIL the shared window (slot ");
-                    aegir::debug_write_unsigned(window_copy);
+                    aegir::debug_write_unsigned(window_smoke);
                     aegir::debug_write(") could not be mapped for the smoke read (seL4 error ");
                     aegir::debug_write_unsigned(window_map_error);
                     aegir::debug_write(")\n");
@@ -853,7 +872,7 @@ int main(int argc, char *argv[])
                     block_caller.call(aegir::block::kMethodIdentify, 0);
                 if (identity.error != 0 || identity.word != sizeof(aegir::block::Identify)) {
                     write_line("FAIL", "the block port would not identify");
-                    g_scratch.unmap(window_copy);
+                    g_scratch.unmap(window_smoke);
                     continue;
                 }
                 auto const *who = reinterpret_cast<aegir::block::Identify const *>(shared);
@@ -891,7 +910,128 @@ int main(int argc, char *argv[])
                     }
                     aegir::debug_write("\n");
                 }
-                g_scratch.unmap(window_copy);
+                g_scratch.unmap(window_smoke);
+                /* The binding is whole: port served, window checked. What the
+                 * partition manager gets is this list. */
+                bound[bound_count] = BoundPort{block_port, window_client, window_pages,
+                                               window_physical, binding.name,
+                                               binding.name_length};
+                ++bound_count;
+            }
+
+            /* The partition manager, started once the drivers answer: it gets
+             * the caller half of every bound block port, the pristine window
+             * frames its reads move data through, and the authority to map
+             * them -- an untyped, the ASID pool and its VSpace root
+             * (specs/services.md). It is ours to start: the director knows
+             * services, not the storage stack's insides. No initrd copy yet:
+             * the initrd is 1.2 MiB and a copy per spawning service does not
+             * fit a 1 MiB delegation, so what the filesystem launch travels
+             * with is a narrower answer than "everything". */
+            if (bound_count > 0) {
+                static char const kPartmgrName[] = "partmgr";
+                static char const kPartmgrBinary[] = "aegir-partmgr";
+                /* Room for its own objects and for what it carves for the
+                 * filesystem services it starts. */
+                constexpr uint32_t kPartmgrUntypedBits = 18;
+                uint64_t const partmgr_badge = 256u + binding_count;
+                aegir::mem::Account partmgr_account{"partmgr", 0, 0, 0};
+                seL4_Error untyped_error = seL4_NoError;
+                uint64_t partmgr_physical = 0;
+                seL4_CPtr const partmgr_untyped =
+                    g_objects.carve_untyped(kPartmgrUntypedBits, partmgr_account,
+                                            &untyped_error, &partmgr_physical);
+                seL4_Error fault_error = seL4_NoError;
+                seL4_CPtr const partmgr_fault =
+                    g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                           partmgr_account, &fault_error);
+                uint32_t window_grant_count = 0;
+                for (uint32_t i = 0; i < bound_count; ++i) {
+                    window_grant_count += bound[i].window_pages;
+                }
+                auto *ports = static_cast<aegir::spawn::PortGrant *>(
+                    arena.allocate(sizeof(aegir::spawn::PortGrant) * (3 + bound_count)));
+                auto *frames = static_cast<aegir::spawn::DeviceGrant *>(arena.allocate(
+                    sizeof(aegir::spawn::DeviceGrant) *
+                    (window_grant_count != 0 ? window_grant_count : 1)));
+                if (partmgr_untyped == 0 || partmgr_fault == 0 || ports == nullptr ||
+                    frames == nullptr) {
+                    write_line("FAIL", "no memory for the partition manager");
+                } else {
+                    ports[0] = {aegir::log::kPortName, aegir::log::kPortNameLength,
+                                aegir::bootstrap::kSlotFirstDeclared,
+                                static_cast<seL4_CPtr>(log_slot),
+                                seL4_CapRights_new(1, 0, 0, 1), partmgr_badge, 0};
+                    static char const kUntypedGrant[] = "untyped";
+                    ports[1] = {kUntypedGrant, sizeof(kUntypedGrant) - 1,
+                                aegir::bootstrap::kSlotFirstDeclared + 1, partmgr_untyped,
+                                seL4_AllRights, 0, kPartmgrUntypedBits};
+                    static char const kPoolGrant[] = "asid-pool";
+                    ports[2] = {kPoolGrant, sizeof(kPoolGrant) - 1,
+                                aegir::bootstrap::kSlotFirstDeclared + 2,
+                                static_cast<seL4_CPtr>(pool_slot), seL4_AllRights, 0, 0};
+                    /* Each block port arrives under the driver's instance name:
+                     * the caller half, which is Write and GrantReply -- the
+                     * kernel's own requirement of a capability that may be
+                     * called (out/aegir/libsel4/include/interfaces/
+                     * sel4_client.h:1202). The owner half stays here. */
+                    for (uint32_t i = 0; i < bound_count; ++i) {
+                        ports[3 + i] = {bound[i].name, bound[i].name_length,
+                                        aegir::bootstrap::kSlotFirstDeclared + 3 + i,
+                                        bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
+                                        0};
+                    }
+                    /* The windows as frame capabilities, grouped per port in
+                     * the ports' own order, pages ascending -- minted from the
+                     * pristine set, so they arrive with no ASID and the child
+                     * may map them (kernel/src/arch/riscv/kernel/
+                     * vspace.c:869-878). */
+                    uint32_t at = 0;
+                    for (uint32_t i = 0; i < bound_count; ++i) {
+                        for (uint32_t p = 0; p < bound[i].window_pages; ++p) {
+                            frames[at] = {bound[i].window_physical +
+                                              static_cast<uint64_t>(p) * 4096,
+                                          4096, bound[i].window + p};
+                            ++at;
+                        }
+                    }
+                    aegir::spawn::Request request{};
+                    request.name = kPartmgrName;
+                    request.name_length = sizeof(kPartmgrName) - 1;
+                    request.binary = kPartmgrBinary;
+                    request.binary_length = sizeof(kPartmgrBinary) - 1;
+                    request.account = "system";
+                    request.account_length = 6;
+                    request.priority = seL4_MaxPrio - 1;
+                    request.ports = ports;
+                    request.port_count = 3 + bound_count;
+                    request.give_vspace = true;
+                    request.untyped_physical = partmgr_physical;
+                    request.untyped_bits = kPartmgrUntypedBits;
+                    request.device_grants = frames;
+                    request.device_grant_count = window_grant_count;
+                    request.fault_endpoint = partmgr_fault;
+                    request.badge = partmgr_badge;
+                    aegir::spawn::Process process{};
+                    if (!spawner.spawn(request, partmgr_account, process)) {
+                        aegir::debug_write("      FAIL spawning partmgr: ");
+                        aegir::debug_write(spawner.problem());
+                        if (spawner.detail()[0] != '\0') {
+                            aegir::debug_write(" (");
+                            aegir::debug_write(spawner.detail());
+                            aegir::debug_write(", seL4 error ");
+                            aegir::debug_write_unsigned(spawner.error());
+                            aegir::debug_write(")");
+                        }
+                        aegir::debug_write("\n");
+                    } else {
+                        aegir::debug_write("      spawned partmgr, badge ");
+                        aegir::debug_write_unsigned(partmgr_badge);
+                        aegir::debug_write("\n");
+                        seL4_Word ready_badge = 0;
+                        seL4_Wait(process.supervision, &ready_badge);
+                    }
+                }
             }
         }
     }

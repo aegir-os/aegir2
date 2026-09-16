@@ -22,8 +22,12 @@ constexpr uint64_t kPage = 1ull << seL4_PageBits;
  * CSpace size is layout, not a default: a service that itself spawns addresses
  * its own CNode through it, so it lives with the other block layout constants in
  * aegir/bootstrap.h (kCNodeBits). */
-constexpr unsigned kStackPages = 2;   /* 8 KiB of stack */
-constexpr uint64_t kBlockBytes = 512; /* the bootstrap block, in its own page */
+constexpr unsigned kStackPages = 2; /* 8 KiB of stack */
+/* The bootstrap block fills the page it is mapped as: what a process is given
+ * is part of who it is, and a service with many grants -- the partition
+ * manager carries a window's frame per page -- is not a smaller kind of
+ * process. */
+constexpr uint64_t kBlockBytes = kPage;
 
 constexpr uint64_t kAuxvEntrySize = 16; /* int plus a word, padded */
 constexpr uint32_t kAuxvEntries = 8;    /* seven below, plus AT_NULL */

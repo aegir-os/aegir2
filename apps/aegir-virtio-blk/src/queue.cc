@@ -114,6 +114,18 @@ void set_up(Registers const &registers, uint64_t physical, uint32_t num,
     }
 }
 
+namespace {
+
+/* The driver-side cursors of the two rings. A ring's index only ever advances,
+ * and the device only ever appends: which available slot the next request
+ * takes, and which used entry the driver has seen, are what a second request
+ * needs that a first one did not -- the queue was single-shot until the block
+ * port made it a service. */
+uint16_t next_avail = 0;
+uint16_t last_used = 0;
+
+}  // namespace
+
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept
 {
@@ -160,25 +172,29 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
                  static_cast<uint32_t>(flags) | (static_cast<uint32_t>(next) << 16));
     }
 
-    /* Publish: the head of the chain goes in the available ring, and its index is the last
-     * word written. The fence is not decoration -- RISC-V orders stores weakly, and without it
-     * the device can see the index before the descriptors it refers to. The in-tree legacy
-     * driver brackets its own `avail->idx++` the same way
+    /* Publish: the head of the chain goes in the available ring's next slot,
+     * and its index is the last word written. The fence is not decoration --
+     * RISC-V orders stores weakly, and without it the device can see the index
+     * before the descriptors it refers to. The in-tree legacy driver brackets
+     * its own `avail->idx++` the same way
      * (projects/util_libs/libethdrivers/src/virtio_pci.c:286-289). */
     volatile uint16_t *avail = half_at(page, kAvailOffset);
     avail[0] = 0; /* flags */
-    avail[2] = 0; /* ring[0]: the chain starts at descriptor 0 */
+    avail[2 + next_avail % kQueueSize] = 0; /* ring: the chain starts at descriptor 0 */
     __atomic_thread_fence(__ATOMIC_RELEASE);
-    avail[1] = 1; /* idx, last */
+    avail[1] = static_cast<uint16_t>(next_avail + 1); /* idx, last */
     __atomic_thread_fence(__ATOMIC_RELEASE);
+    ++next_avail;
     /* The notify carries the queue's index: this is the kick that makes the device look. */
     registers.write(kQueueNotify, 0);
 
-    /* Wait for the device to say it is done. virtio promises progress without an interrupt,
-     * so this is a legal way to drive it -- and the bound keeps "it never answered" a report
-     * rather than a hang. */
+    /* Wait for the device to say it is done -- for *this* request: the used
+     * index advancing past what the driver has seen, not being nonzero, which
+     * the first request made true for ever. virtio promises progress without
+     * an interrupt, so this is a legal way to drive it -- and the bound keeps
+     * "it never answered" a report rather than a hang. */
     volatile uint16_t *used = half_at(page, kUsedOffset);
-    for (unsigned spin = 0; spin < 200000000 && used[1] == 0; ++spin) {
+    for (unsigned spin = 0; spin < 200000000 && used[1] == last_used; ++spin) {
     }
     /* On a timeout the raw state is the evidence, not a summary: the used ring's own words,
      * and whether the device wrote the status byte at all. A request the device never looked
@@ -190,9 +206,10 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
     result.used_bytes = word_at(page, kUsedOffset + 8)[0];
     result.device_status = registers.read(kStatus);
     result.interrupt_status = registers.read(kInterruptStatus);
-    if (used[1] == 0) {
+    if (used[1] == last_used) {
         return result;
     }
+    last_used = used[1];
     result.completed = true;
 
     if (data_out != nullptr) {
