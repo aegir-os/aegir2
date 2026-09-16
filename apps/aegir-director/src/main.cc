@@ -57,6 +57,8 @@ namespace {
 using aegir::director::Boot;
 using aegir::director::Services;
 using aegir::director::Started;
+using aegir::director::Supervised;
+using aegir::director::Supervisor;
 
 /* The name director looks its manifest up by: the flat name the archive uses,
  * which is the file's basename. */
@@ -258,8 +260,28 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     }
 
     Services services(allocator, scratch, arena, initrd);
+    if (!services.prepare(account)) {
+        problem("no memory for the shared fault endpoint");
+        return false;
+    }
+
+    /* The supervisor starts before the first service, because a service that
+     * faults before anyone is listening for faults is a service whose death
+     * nobody sees (specs/director.md). */
+    auto *supervised = static_cast<Supervised *>(
+        arena.allocate(sizeof(Supervised) * (manifest.size() + 1)));
+    if (supervised == nullptr) {
+        problem("no memory for the supervisor's records");
+        return false;
+    }
+    Supervisor supervisor(allocator, scratch, arena);
+    if (!supervisor.start(services.fault_endpoint(), supervised, manifest.size(), account)) {
+        problem(supervisor.problem());
+        return false;
+    }
+
     Boot boot{};
-    services.boot(manifest, account, started, boot);
+    services.boot(manifest, account, started, boot, &supervisor);
 
     heading("boot set");
     write("  ");
@@ -297,6 +319,8 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
         write_name(started[i].name, started[i].name_length);
         write(" running at ");
         aegir::debug_write_hex(started[i].entry);
+        write(", badge ");
+        number(started[i].badge);
         write("\n");
     }
     if (boot.problem[0] != '\0') {
@@ -317,13 +341,30 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
         return false;
     }
 
+    /* Wait for each service to report ready -- or for its supervisor to say it
+     * died. The badge is what tells the two apart: a service signals with the
+     * capability it was given, which carries its own badge, and a death notice
+     * carries director's (zero), which no service can produce for itself. */
+    unsigned ready = 0;
+    unsigned faulted = 0;
     for (unsigned i = 0; i < boot.started; ++i) {
         seL4_Word badge = 0;
         seL4_Wait(started[i].supervision, &badge);
         write("  ");
         write_name(started[i].name, started[i].name_length);
-        write(" ready\n");
+        if (badge == started[i].badge) {
+            write(" ready\n");
+            ++ready;
+        } else {
+            write(" did not report ready: it faulted\n");
+            ++faulted;
+        }
     }
+    write("  ");
+    number(ready);
+    write(" ready, ");
+    number(faulted);
+    write(" faulted\n");
     return true;
 }
 

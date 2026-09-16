@@ -67,14 +67,18 @@ bool Spawner::fail(char const *what) noexcept
 }
 
 bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
-                      seL4_CapRights_t rights) noexcept
+                      seL4_CapRights_t rights, uint64_t badge) noexcept
 {
     /* The destination is a single-level CNode with no guard, so a slot is
      * addressed by index at the node's own depth; the source is a slot in our
      * root CNode, which is addressed at the full word depth
-     * (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440). */
-    return seL4_CNode_Copy(into_cspace, slot, kCNodeBits, seL4_CapInitThreadCNode, source,
-                           seL4_WordBits, rights) == seL4_NoError;
+     * (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440).
+     *
+     * Minting rather than copying, even when the badge is zero: the badge is how
+     * a child is identified to whoever it talks to, and it has to come from the
+     * cap it uses rather than from anything it says about itself. */
+    return seL4_CNode_Mint(into_cspace, slot, kCNodeBits, seL4_CapInitThreadCNode, source,
+                           seL4_WordBits, rights, badge) == seL4_NoError;
 }
 
 uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
@@ -276,10 +280,9 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (process.tcb == 0) {
         return fail("no memory for the child's TCB");
     }
-    process.fault_endpoint =
-        allocator_.alloc_object(seL4_EndpointObject, seL4_EndpointBits, account, &error);
+    process.fault_endpoint = request.fault_endpoint;
     if (process.fault_endpoint == 0) {
-        return fail("no memory for the child's fault endpoint");
+        return fail("the caller did not provide a fault endpoint to share");
     }
     process.supervision =
         allocator_.alloc_object(seL4_NotificationObject, seL4_NotificationBits, account, &error);
@@ -287,24 +290,28 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         return fail("no memory for the supervision notification");
     }
 
-    /* Its own CSpace and TCB, so it can name itself; the fault endpoint its
-     * supervisor listens on; and the notification it signals when it is ready --
-     * with write rights only, because signalling is all it needs to do. */
+    /* Its own CSpace and TCB, so it can name itself; the supervisor's fault
+     * endpoint, carrying its badge; and the notification it signals when it is
+     * ready -- write rights only, because signalling is all it needs to do. */
     /* Slots 1 and 2 are seL4's: a child that does not have its TCB at slot 1 and
      * its CNode at slot 2 is stopped by the kernel as soon as it names itself
      * (aegir/bootstrap.h explains). */
-    if (!install(process.cspace, bootstrap::kSlotOwnTcb, process.tcb, seL4_AllRights)) {
+    if (!install(process.cspace, bootstrap::kSlotOwnTcb, process.tcb, seL4_AllRights, 0)) {
         return fail("the child's own TCB could not be given to it");
     }
-    if (!install(process.cspace, bootstrap::kSlotOwnCNode, process.cspace, seL4_AllRights)) {
+    if (!install(process.cspace, bootstrap::kSlotOwnCNode, process.cspace, seL4_AllRights, 0)) {
         return fail("the child's own CSpace could not be given to it");
     }
+    /* The fault endpoint needs Write and Grant-or-GrantReply, which is the
+     * kernel's own requirement of a capability it delivers faults to
+     * (out/aegir/libsel4/include/interfaces/sel4_client.h:1202) -- the same rule
+     * a caller's port capability satisfies. */
     if (!install(process.cspace, bootstrap::kSlotFaultEndpoint, process.fault_endpoint,
-                 seL4_AllRights)) {
+                 seL4_AllRights, request.badge)) {
         return fail("the child's fault endpoint could not be installed");
     }
-    if (!install(process.cspace, bootstrap::kSlotSupervision, process.supervision,
-                 seL4_CanWrite)) {
+    if (!install(process.cspace, bootstrap::kSlotSupervision, process.supervision, seL4_CanWrite,
+                 request.badge)) {
         return fail("the supervision notification could not be installed");
     }
 
@@ -319,7 +326,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     for (uint32_t i = 0; i < request.port_count; ++i) {
         PortGrant const &grant = request.ports[i];
         if (grant.capability == 0 || !install(process.cspace, grant.slot, grant.capability,
-                                              grant.rights)) {
+                                              grant.rights, grant.badge)) {
             return fail("a port could not be installed into the child");
         }
     }

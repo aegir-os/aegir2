@@ -39,6 +39,13 @@ enum class Event : uint64_t {
     BootSetCreated = 3,
 };
 
+/* There is deliberately no "a service faulted" event. Any holder of this port
+ * could send one, and the logger cannot tell a supervisor's report from a
+ * service announcing someone else's death -- so fault reports have to be
+ * attributable to whoever makes them. The supervisor says so on the console
+ * today, and through a port of its own when director has one
+ * (specs/director.md). */
+
 /** The reply the logger gives: zero when the event was recorded. */
 constexpr uint64_t kRecorded = 0;
 

@@ -30,6 +30,7 @@
 #include <aegir/spawn/process.h>
 
 #include "ports.h"
+#include "supervisor.h"
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -41,6 +42,10 @@ struct Started {
     uint32_t name_length;
     /** The notification it will signal when it has finished starting. */
     seL4_CPtr supervision;
+    /** Its own TCB, which is what a supervisor needs to stop it. */
+    seL4_CPtr tcb;
+    /** The badge every other service sees when this one calls. */
+    uint64_t badge;
     uint64_t entry;
 };
 
@@ -58,14 +63,24 @@ public:
 
     /** Check the manifest against the image, then create what it declares.
      *  `started` needs room for `manifest.size()` entries. */
+    /** Create the shared fault endpoint: one for every service, badged per child
+     *  (specs/director.md). Must happen before anything is started. */
+    bool prepare(mem::Account &account) noexcept;
+
+    /** `supervisor`, when given, is told about each service as it is created --
+     *  before it can fault, rather than after. */
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
-              Boot &boot) noexcept;
+              Boot &boot, Supervisor *supervisor) noexcept;
+
+    seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
 
     /** The ports the manifest declares, for whoever wants to report them. */
     PortGraph const &graph() const noexcept { return graph_; }
 
 private:
+    mem::Allocator &allocator_;
     spawn::Initrd const &initrd_;
+    seL4_CPtr fault_endpoint_;
     PortGraph graph_;
     spawn::Spawner spawner_;
 };

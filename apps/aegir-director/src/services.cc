@@ -41,12 +41,21 @@ bool declared_as_user(manifest::Entry const &entry) noexcept
 
 Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
                    spawn::Initrd const &initrd) noexcept
-    : initrd_(initrd), graph_(allocator, arena), spawner_(allocator, scratch, arena, initrd)
+    : allocator_(allocator), initrd_(initrd), fault_endpoint_(0), graph_(allocator, arena),
+      spawner_(allocator, scratch, arena, initrd)
 {
 }
 
+bool Services::prepare(mem::Account &account) noexcept
+{
+    seL4_Error error = seL4_NoError;
+    fault_endpoint_ = allocator_.alloc_object(seL4_EndpointObject, seL4_EndpointBits, account,
+                                              &error);
+    return fault_endpoint_ != 0;
+}
+
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
-                    Boot &boot) noexcept
+                    Boot &boot, Supervisor *supervisor) noexcept
 {
     boot.declared = manifest.size();
     boot.started = 0;
@@ -90,6 +99,10 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.priority = priority_for(entry);
         request.ports = graph_.grants(i);
         request.port_count = graph_.grant_count(i);
+        request.fault_endpoint = fault_endpoint_;
+        /* Badges count from one so that zero keeps meaning "nobody in
+         * particular" -- which is what director itself looks like. */
+        request.badge = i + 1;
 
         spawn::Process process{};
         if (!spawner_.spawn(request, account, process)) {
@@ -99,7 +112,13 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         started[boot.started].name = entry.name.data;
         started[boot.started].name_length = entry.name.length;
         started[boot.started].supervision = process.supervision;
+        started[boot.started].tcb = process.tcb;
+        started[boot.started].badge = request.badge;
         started[boot.started].entry = process.entry;
+        if (supervisor != nullptr) {
+            supervisor->record(boot.started, request.badge, process.tcb, process.supervision,
+                               entry.name.data, entry.name.length);
+        }
         ++boot.started;
     }
 }

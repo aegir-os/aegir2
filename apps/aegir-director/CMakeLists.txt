@@ -36,7 +36,10 @@ endif()
 include(cpio)
 MakeCPIO(director_initrd.o "${aegir_initrd_files}" DEPENDS aegir-hello aegir-logger)
 
-add_executable(aegir-director src/main.cc src/services.cc src/ports.cc director_initrd.o)
+add_executable(
+  aegir-director src/main.cc src/services.cc src/ports.cc src/supervisor.cc
+                  director_initrd.o
+)
 
 target_compile_options(aegir-director PRIVATE -Wall -Wextra -Werror)
 

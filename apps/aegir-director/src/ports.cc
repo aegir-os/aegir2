@@ -218,15 +218,16 @@ bool PortGraph::build(manifest::Manifest const &manifest, mem::Account &account)
         uint64_t slot = bootstrap::kSlotFirstDeclared;
         for (uint32_t j = 0; j < own_count_[i]; ++j) {
             Port const &port = ports_[own_offset_[i] + j];
-            grants_[grant_offset_[i] + j] = spawn::PortGrant{port.name.data, port.name.length,
-                                                             slot, port.endpoint, seL4_CanRead};
+            grants_[grant_offset_[i] + j] =
+                spawn::PortGrant{port.name.data, port.name.length, slot, port.endpoint,
+                                 seL4_CanRead, 0};
             ++slot;
         }
         for (uint32_t j = 0; j < need_count_[i]; ++j) {
             Port const &port = ports_[need_port_[need_offset_[i] + j]];
             grants_[grant_offset_[i] + own_count_[i] + j] =
                 spawn::PortGrant{port.name.data, port.name.length, slot, port.endpoint,
-                                 seL4_CapRights_new(1, 0, 0, 1)};
+                                 seL4_CapRights_new(1, 0, 0, 1), i + 1};
             ++slot;
         }
     }

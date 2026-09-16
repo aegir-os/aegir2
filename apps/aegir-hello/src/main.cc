@@ -221,7 +221,15 @@ int main(int argc, char *argv[])
     }
 
     /* Tell the supervisor we got here. A notification signal is one word and
-     * cannot be forged into saying someone else finished (specs/director.md). */
+     * cannot be forged into saying someone else finished, and it carries this
+     * service's badge, which is how the supervisor knows who is speaking
+     * (specs/director.md).
+     *
+     * A deliberate fault used to live here, to walk the supervision path at boot.
+     * It hung the boot instead: the supervisor is not receiving faults yet, so the
+     * boot thread waited for a "ready" that never came. Until that is diagnosed,
+     * supervision is machinery that has not been exercised -- which is worth
+     * saying out loud rather than testing a path that eats the boot. */
     if (supervised) {
         write_line("supervision", "signalling ready");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);

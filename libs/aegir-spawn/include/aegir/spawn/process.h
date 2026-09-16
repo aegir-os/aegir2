@@ -49,6 +49,10 @@ struct PortGrant {
     uint64_t slot;
     seL4_CPtr capability;
     seL4_CapRights_t rights;
+    /** The badge this copy carries: the child's own id when it is a caller, so the
+     *  port's owner learns who called; zero for the copy it reads, because a
+     *  receiver's badge is never what identifies it (specs/services.md). */
+    uint64_t badge;
 };
 
 /** What the manifest says about the process to create (specs/services.md). The
@@ -64,6 +68,12 @@ struct Request {
     uint32_t priority;
     PortGrant const *ports;
     uint32_t port_count;
+    /** The fault endpoint every service shares, and this service's badge on it.
+     *  One endpoint plus a badge per child is what lets one supervisor watch them
+     *  all and still know who it is looking at
+     *  (kernel/src/kernel/faulthandler.c:41, :92). */
+    seL4_CPtr fault_endpoint;
+    uint64_t badge;
 };
 
 /** A created process, from its creator's side: the capabilities we hold for it. */
@@ -91,7 +101,7 @@ public:
 private:
     bool fail(char const *what) noexcept;
     bool install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
-                 seL4_CapRights_t rights) noexcept;
+                 seL4_CapRights_t rights, uint64_t badge) noexcept;
     /** Lay out argc/argv/envp/auxv on the child's stack. Returns the stack
      *  pointer, or 0 when it does not fit. */
     uintptr_t build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
