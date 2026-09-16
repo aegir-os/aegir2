@@ -456,12 +456,37 @@ int main(int argc, char *argv[])
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system);
     }
 
+    /* Director's own inbox. Nothing signals it yet; it exists so the boot thread
+     * has something to *block* on at the end, which it must do rather than spin --
+     * it runs at seL4_MaxPrio, so a spinning root task starves every service below
+     * it. That is not a theory: it is why the supervisor received faults it could
+     * never report, and why the client's lines after its readiness signal were
+     * missing from every transcript. Restarts and the elevation path arrive here
+     * later, so this is the right place for the root task to sleep. */
+    seL4_Error inbox_error = seL4_NoError;
+    seL4_CPtr const director_inbox =
+        allocator.alloc_object(seL4_NotificationObject, seL4_NotificationBits, system,
+                               &inbox_error);
+    if (director_inbox == 0) {
+        write("  FAIL director's own notification could not be created\n");
+        ++failures;
+    }
+
     if (failures == 0 && memory_ok && initrd_ok && manifest_ok && booted) {
         write("\nAEGIR_BOOT_OK\n");
     } else {
         write("\nAEGIR_BOOT_INCOMPLETE\n");
     }
 
-    /* A root task has nothing to return to. */
-    aegir::halt();
+    if (director_inbox == 0) {
+        /* Already reported incomplete; there is nothing to wait on. */
+        aegir::halt();
+    }
+
+    /* Boot is done: sleep until something needs the root task. A root task has
+     * nothing to return to. */
+    for (;;) {
+        seL4_Word badge = 0;
+        seL4_Wait(director_inbox, &badge);
+    }
 }

@@ -230,15 +230,18 @@ int main(int argc, char *argv[])
      * boot thread waited for a "ready" that never came. Until that is diagnosed,
      * supervision is machinery that has not been exercised -- which is worth
      * saying out loud rather than testing a path that eats the boot. */
+    /* Ready first, then the send. Ordering it this way means a send that blocks
+     * can never keep the boot from finishing: the marker depends on readiness, and
+     * readiness is already reported by the time the send happens. */
     if (supervised) {
         write_line("supervision", "signalling ready");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
     }
     aegir::debug_write("AEGIR_CLIENT_OK\n");
 
-    /* Nothing here dies on purpose. A deliberate fault was the way to walk
-     * supervision at boot, and it stopped being useful when it became clear the
-     * question was elsewhere: a plain send to the fault endpoint is received by
-     * the supervisor, and a fault is not. See specs/director.md. */
+    /* Nothing here dies on purpose yet. A deliberate fault was the way to walk
+     * supervision at boot, and it cannot come back until a fault reaches the
+     * supervisor at all: meanwhile it hangs the boot instead of reporting
+     * (specs/director.md, "Where supervision stands"). */
     aegir::halt();
 }

@@ -327,6 +327,32 @@ Two facts from the boot, one of them the thing that was wrong for three attempts
   literal in between; then the fault's own delivery, with the faulting thread's
   capability badge checked against `faulthandler.c:41`.
 
-Until the second is closed, nothing may die on purpose at boot: the boot thread
-waits for a readiness signal that a dead child never sends, so a deliberate fault
-hangs the boot rather than reporting.
+- **The root task must block when boot is done, not spin.** It runs at
+  `seL4_MaxPrio`; a spinning boot thread starves every service below it, including
+  the supervisor that is supposed to report faults. Director now blocks on a
+  notification of its own -- which is also where restarts and the elevation path
+  will arrive, so the root task should be asleep until something needs it.
+  Instrumenting this is what showed the two are different questions: "the
+  supervisor is receiving" and "the supervisor ever runs" had been one assumption.
+  Note that `make run` stops the machine at `AEGIR_BOOT_OK`, so nothing after the
+  last readiness wait is observable in a run: the case that *is* observable is a
+  service dying before it reports ready, because the boot thread is still waiting
+  then.
+
+Until the fault path is closed, nothing may die on purpose at boot: the boot
+thread waits for a readiness signal that a dead child never sends, so a deliberate
+fault hangs the boot rather than reporting.
+
+**Where to look next, since the whole chain reads correct.** Every link in it was
+checked by reading: the spawner installs the fault endpoint into the child's
+CSpace *before* `seL4_TCB_Configure`, with the rights the kernel requires and the
+child's badge (libs/aegir-spawn/src/process.cc:283-315); `Configure` is given the
+child's CSpace guard and the CPtr `3`, and its error is checked; the director
+hands the children the same endpoint the supervisor waits on
+(apps/aegir-director/src/services.cc:52,102); and the fault endpoint's object is a
+mint of the one the supervisor receives on, so both sides name the same endpoint.
+Nothing in that chain explains a fault that never arrives, so the next probe is on
+the kernel side rather than in userland: a temporary print where the kernel sends
+fault IPC (`projects/seL4/src/kernel/.../faulthandler.c`), which is a vendored
+dependency, so as a temporary local edit reverted afterwards or as an entry under
+`third_party/patches/`.
