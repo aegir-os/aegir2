@@ -27,7 +27,7 @@ Allocator::Allocator(seL4_BootInfo *bootinfo) noexcept
       allocated_bytes_(0), last_request_bits_(0), last_candidate_bits_(0)
 {
     for (auto &entry : untyped_) {
-        entry = Untyped{0, 0, 0, 0};
+        entry = Untyped{0, 0, 0, 0, 0};
     }
 }
 
@@ -47,7 +47,8 @@ bool Allocator::initialise() noexcept
     }
     for (seL4_Word i = 0; i < untyped_caps; ++i) {
         seL4_UntypedDesc const &desc = bootinfo_->untypedList[i];
-        if (!remember(bootinfo_->untyped.start + i, desc.sizeBits, desc.isDevice != 0)) {
+        if (!remember(bootinfo_->untyped.start + i, desc.sizeBits, desc.isDevice != 0,
+                      desc.paddr)) {
             return false;
         }
         if (desc.isDevice != 0) {
@@ -65,7 +66,7 @@ bool Allocator::initialise() noexcept
     return true;
 }
 
-bool Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device) noexcept
+bool Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept
 {
     /* Never silently: an untyped this allocator cannot remember is memory it
      * would hand out twice or lose, and both are worse than failing. */
@@ -73,6 +74,7 @@ bool Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device) noexce
         return false;
     }
     untyped_[untyped_count_].cap = cap;
+    untyped_[untyped_count_].physical = paddr;
     untyped_[untyped_count_].size_bits = static_cast<uint8_t>(size_bits);
     untyped_[untyped_count_].device = device ? 1 : 0;
     untyped_[untyped_count_].used = 0;
@@ -164,7 +166,10 @@ bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
         slot_failed(slot);
             return false;
         }
-        if (!remember(slot, half, false)) {
+        if (!remember(slot, half, false,
+                      untyped_[index].physical == 0
+                          ? 0
+                          : untyped_[index].physical + (1ull << half))) {
             return false;
         }
         untyped_[index].size_bits = static_cast<uint8_t>(half);
@@ -262,7 +267,7 @@ bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *fi
 
 bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept
 {
-    return remember(cap, size_bits, false);
+    return remember(cap, size_bits, false, 0);
 }
 
 void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept
@@ -274,8 +279,8 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) n
     cnode_depth_ = depth;
 }
 
-seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account,
-                                   seL4_Error *error) noexcept
+seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,
+                                   uint64_t *physical_out) noexcept
 {
     *error = seL4_NoError;
     int const index = find_untyped(size_bits);
@@ -291,6 +296,9 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account,
      * the capability to hand out is the one that is left. Its record is marked used
      * rather than freed: the caller is taking it away. */
     seL4_CPtr const cap = untyped_[index].cap;
+    if (physical_out != nullptr) {
+        *physical_out = untyped_[index].physical;
+    }
     untyped_[index].used = 1;
     account.bytes += 1ull << size_bits;
     account.objects += 1;

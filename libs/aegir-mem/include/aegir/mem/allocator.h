@@ -98,8 +98,14 @@ public:
      * own. The caller owns the capability and may pass it to another process, which
      * is how spawing authority is delegated (specs/authority.md). The record it came
      * from is marked used, so the memory is not handed out twice.
+     *
+     * `physical_out`, when given, is set to the region's *physical* base -- the one
+     * thing a service cannot find out for itself and a device has to be told, because
+     * a virtqueue's descriptor entries are guest-physical addresses
+     * (specs/services.md).
      */
-    seL4_CPtr carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error) noexcept;
+    seL4_CPtr carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,
+                            uint64_t *physical_out = nullptr) noexcept;
 
     /**
      * Adopt an untyped this process was *handed* rather than one it found in its own
@@ -162,6 +168,11 @@ private:
      * size is what lets the allocator split and fit without asking the kernel. */
     struct Untyped {
         seL4_CPtr cap;
+        /* Where the region is in the machine. The kernel's list says for the ones it
+         * found; a half made by splitting is the parent's base plus the half's size,
+         * because the parent keeps the low half (split_to). Zero means unknown, which
+         * is what an untyped handed in from outside has. */
+        uint64_t physical;
         uint8_t size_bits;
         uint8_t device;
         uint8_t used;
@@ -180,7 +191,7 @@ private:
     /** Halve `untyped_[index]` until it is exactly `size_bits` wide. */
     bool split_to(int index, seL4_Word size_bits) noexcept;
 
-    bool remember(seL4_CPtr cap, seL4_Word size_bits, bool device) noexcept;
+    bool remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept;
 
     seL4_BootInfo *bootinfo_;
     /* Room for the kernel's own list *and* the halves splitting creates: every
