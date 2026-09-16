@@ -202,6 +202,99 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
     return 0;
 }
 
+/** The first device the tree describes on a bus we care about. One is enough to
+ *  find out whether a device can be reached at all, before a service is given
+ *  one. */
+class FirstVirtioTransport : public aegir::devtree::Tree::Visitor {
+public:
+    bool device(aegir::devtree::Device const &device) override {
+        if (found || !device.has_region) {
+            return true;
+        }
+        static char const wanted[] = "virtio,mmio";
+        uint32_t const length = device.compatible_length;
+        if (length != sizeof(wanted) - 1) {
+            return true;
+        }
+        for (uint32_t i = 0; i < length; ++i) {
+            if (device.compatible[i] != wanted[i]) {
+                return true;
+            }
+        }
+        found = true;
+        base = device.base;
+        size = device.size;
+        interrupt = device.interrupt;
+        /* One is enough: stop the walk. */
+        return false;
+    }
+
+    bool found = false;
+    uint64_t base = 0;
+    uint64_t size = 0;
+    uint32_t interrupt = 0;
+};
+
+/** Where a device's registers live, as memory the kernel calls device.
+ *
+ *  This is the question every driver's first line depends on. Device memory is
+ *  untyped like any other, marked as device, and a device frame can only be
+ *  retyped from one -- but `Untyped_Retype` takes no interior offset
+ *  (kernel/src/object/untyped.c, `decodeUntypedInvocation`: type, sizeBits,
+ *  nodeIndex, nodeDepth, nodeOffset, nodeWindow), so it carves from the untyped's
+ *  own free position. Reaching a device therefore means knowing how far into its
+ *  untyped the device sits, which is what this reports: the untyped that covers
+ *  the address, and the page's position within it. */
+unsigned report_device_memory(seL4_BootInfo const *bootinfo, void const *blob,
+                              uint32_t bytes) noexcept {
+    if (blob == nullptr) {
+        return 0;
+    }
+    aegir::devtree::Tree tree;
+    if (!tree.adopt(blob, bytes)) {
+        aegir::debug_write("  FAIL the blob handed to the device manager is not a tree\n");
+        return 1;
+    }
+    FirstVirtioTransport first;
+    if (!tree.walk(first) || !first.found) {
+        aegir::debug_write("  FAIL the device tree names no virtio transport\n");
+        return 1;
+    }
+
+    aegir::debug_write("  device memory: the first virtio transport is at ");
+    aegir::debug_write_hex(first.base);
+    aegir::debug_write(" (");
+    aegir::debug_write_unsigned(first.size);
+    aegir::debug_write(" bytes, irq ");
+    aegir::debug_write_unsigned(first.interrupt);
+    aegir::debug_write(")\n");
+
+    seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
+    for (seL4_Word i = 0; i < count; ++i) {
+        seL4_UntypedDesc const &desc = bootinfo->untypedList[i];
+        if (desc.isDevice == 0) {
+            continue;
+        }
+        uint64_t const base = desc.paddr;
+        uint64_t const span = 1ull << desc.sizeBits;
+        if (first.base < base || first.base - base >= span) {
+            continue;
+        }
+        aegir::debug_write("    covered by device untyped ");
+        aegir::debug_write_unsigned(i);
+        aegir::debug_write(" at ");
+        aegir::debug_write_hex(base);
+        aegir::debug_write(" of 2^");
+        aegir::debug_write_unsigned(desc.sizeBits);
+        aegir::debug_write(" bytes; the device page is object ");
+        aegir::debug_write_unsigned(static_cast<uint64_t>(first.base - base) >> seL4_PageBits);
+        aegir::debug_write(" of it\n");
+        return 0;
+    }
+    aegir::debug_write("  FAIL no device untyped covers that address\n");
+    return 1;
+}
+
 void report_bootinfo(seL4_BootInfo const *bootinfo) noexcept
 {
     heading("the machine");
@@ -476,6 +569,7 @@ int main(int argc, char *argv[])
     void const *device_tree = nullptr;
     uint32_t device_tree_bytes = 0;
     failures += map_device_tree(bootinfo, &scratch, &device_tree, &device_tree_bytes);
+    failures += report_device_memory(bootinfo, device_tree, device_tree_bytes);
 
     /* Everything boot allocates is charged to the system account
      * (specs/authority.md). Its capacity grows on demand; there is no ceiling

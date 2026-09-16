@@ -441,6 +441,19 @@ and saying which half exists is the point of writing it down:
   the kernel has already mapped the extra bootinfo pages into the root task and a
   frame cannot be mapped at two addresses -- the kernel says so out loud
   (`RISCVPageMap: attempting to map frame into multiple addresses`);
+- **device memory, measured**: a device's registers are untyped like any other
+  memory, marked as device, and a device frame can only be retyped from one. But
+  `Untyped_Retype` takes no interior offset -- the kernel's own decoding is type,
+  sizeBits, nodeIndex, nodeDepth, nodeOffset, nodeWindow
+  (kernel/src/object/untyped.c, `decodeUntypedInvocation`) -- so it carves from the
+  untyped's own free position, and reaching a device means knowing how far into its
+  untyped it sits. On the QEMU virtual machine that is comfortable: the transports
+  are covered by one device untyped based at `0x10000000`, so `0x10001000` through
+  `0x10008000` are objects 1 to 8 of it. The boot report says so out loud
+  (`device memory: ...`, `covered by device untyped ... object N of it`), because
+  the answer is a property of the machine and not of the code. Note that the tree
+  lists the transports in *descending* order, so "the first the tree names" is the
+  highest address and a driver will want them the other way up.
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
