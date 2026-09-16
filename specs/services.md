@@ -545,6 +545,23 @@ and answers "who owns this device?" for everyone else.
   manager already has -- an untyped to retype frames from, whose physical base director knows
   -- plus a way to be told that base. That is the next piece, and it is a change to the spawn
   path rather than to the driver: the manifest asks for memory the way it now asks for a device.
+- **a service can be given memory and told where it is**: `memory_kib` in a manifest section
+  makes director carve an untyped from the system account, hand over the capability, and say
+  the region's *physical* base, because a virtqueue's descriptor entries are guest-physical
+  addresses the *device* reads and no invocation tells a service where its own memory is. The
+  block carries it as its own entry kind (`number` = physical base, `reserved` = size in bits),
+  beside the `Capability` entry that already carried the size:
+
+      blkdriver: binary aegir-virtio-blk, authority system, account system, memory 4 KiB
+          my memory: 4096 bytes at physical 0xfff1d000, capability 9
+
+  **The bug in that was an index, and the count was right anyway**, which is why it took a
+  probe rather than arithmetic: adding the entry made the block's fixed count 7, but the loop
+  that writes the ports still started at 6, so the *first port overwrote the new entry*. The
+  entry count was correct, the capability search was correct (it matches on kind, not on
+  index), and everything worked except the one entry that had been overwritten. Reading
+  `entries[6]` from the child said `kind 4` -- a `Capability` -- where 8 was expected. Any
+  fixed entry added before the ports has to move the port base with it.
 - **where a driver's shared parts go, and why nothing moved yet**: the first driver,
   virtio-blk, has a register window and a status handshake that every virtio device on the
   bus shares -- the layout is the same ABI for all of them (virtio 1.x, 4.2.2), and the

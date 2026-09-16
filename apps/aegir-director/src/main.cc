@@ -528,6 +528,11 @@ void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
         write(entry.authority == Authority::System ? "system" : "user");
         write(", account ");
         write_name(entry.account.data, entry.account.length);
+        if (entry.memory_kib > 0) {
+            write(", memory ");
+            number(entry.memory_kib);
+            write(" KiB");
+        }
         write("\n");
     }
 }

@@ -165,6 +165,27 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    /* The memory director carved for us, if we asked for any. The physical base is the whole
+     * reason this exists: a virtqueue's descriptor entries are guest-physical addresses that
+     * the *device* reads, and no invocation can tell a service where its own memory is
+     * (specs/services.md). */
+    uint64_t memory_physical = 0;
+    uint32_t memory_bits = 0;
+    uint64_t untyped_slot = 0;
+    if (!aegir::bootstrap::untyped(&memory_physical, &memory_bits)) {
+        write_line("my memory", "the block did not say where it is");
+    } else if (!aegir::bootstrap::capability("untyped", 7, &untyped_slot)) {
+        write_line("my memory", "no capability was installed for it");
+    } else {
+        aegir::debug_write("      my memory: ");
+        aegir::debug_write_unsigned(1ull << memory_bits);
+        aegir::debug_write(" bytes at physical ");
+        aegir::debug_write_hex(memory_physical);
+        aegir::debug_write(", capability ");
+        aegir::debug_write_unsigned(untyped_slot);
+        aegir::debug_write("\n");
+    }
+
     uint32_t features = 0;
     if (!handshake(registers, &features)) {
         write_line("FAIL", "the device refused the features we asked for");

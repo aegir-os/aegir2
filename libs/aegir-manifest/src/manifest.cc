@@ -202,6 +202,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool authority_seen = false;
     bool device_manager_seen = false;
     bool device_id_seen = false;
+    bool memory_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
 
@@ -246,6 +247,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             authority_seen = false;
             device_manager_seen = false;
             device_id_seen = false;
+            memory_seen = false;
             return true;
         }
 
@@ -313,6 +315,44 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             failure_line = number;
             failure = "device_manager is either `true` or `false`";
             return false;
+        }
+
+        if (equals(key, "memory_kib")) {
+            if (memory_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            memory_seen = true;
+            /* A decimal number of KiB: what a service asks for is a region to lay its own
+             * objects out in, and a page or a few is what that means in practice. The
+             * allocator hands out powers of two, so a request that is not one is rounded
+             * up to the next -- 5 KiB becomes 8, and the service is given 8. */
+            uint32_t kib = 0;
+            if (value.length == 0 || value.length > 6) {
+                failure_line = number;
+                failure = "memory_kib is a decimal number of KiB";
+                return false;
+            }
+            for (uint32_t d = 0; d < value.length; ++d) {
+                if (value.data[d] < '0' || value.data[d] > '9') {
+                    failure_line = number;
+                    failure = "memory_kib is a decimal number of KiB";
+                    return false;
+                }
+                kib = kib * 10 + static_cast<uint32_t>(value.data[d] - '0');
+            }
+            if (kib == 0) {
+                failure_line = number;
+                failure = "memory_kib of zero asks for nothing; leave the key out";
+                return false;
+            }
+            uint32_t rounded = 1;
+            while (rounded < kib && rounded < (1u << 20)) {
+                rounded <<= 1;
+            }
+            current->memory_kib = rounded;
+            return true;
         }
 
         if (equals(key, "device_id")) {

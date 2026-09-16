@@ -48,6 +48,11 @@ authority = system
 account   = system
 needs     = log.main
 device_id = 2
+# Memory to lay a virtqueue out in. A driver needs some: the queue's descriptor entries
+# carry *physical* addresses the device reads, and a service cannot find out where its own
+# memory is -- so director carves a region, says where it is, and hands over the
+# capability (specs/services.md, specs/authority.md).
+memory_kib = 4
 restart   = always
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static

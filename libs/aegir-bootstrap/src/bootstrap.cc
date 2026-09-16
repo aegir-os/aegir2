@@ -108,7 +108,7 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
             return nullptr;
         }
         room -= ports[i].name_length;
-        block->entries[6 + i] =
+        block->entries[7 + i] =
             Entry{EntryKind::Capability, ports[i].name_length, ports[i].slot,
                   static_cast<uint32_t>(next_offset), ports[i].size_bits};
         next_offset += ports[i].name_length;

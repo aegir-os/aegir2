@@ -61,6 +61,13 @@ struct Entry {
      * /libsel4vmmplatsupport/include/.../drivers/virtio.h). Zero means none: the
      * service is not about a device. */
     uint32_t device_id;
+    /* Memory this service is given to retype objects out of, in KiB, or zero for none.
+     * A driver needs it: a virtqueue's descriptor entries carry *physical* addresses, so
+     * the service must own memory whose base the spawner can tell it -- and a service
+     * cannot ask the kernel where its own memory is (specs/services.md,
+     * specs/authority.md). A power of two, because a region that is carved is a power of
+     * two wide; a request that is not one is rounded up when it is parsed. */
+    uint32_t memory_kib;
     uint32_t line; /* the line the section started on, for messages */
 };
 

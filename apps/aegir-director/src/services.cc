@@ -106,22 +106,57 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
          * graph; it is installed the way a port is -- by name, which is how the child
          * finds it, and by slot, which is the layout's business and not the caller's
          * (specs/authority.md). The slots come after the service's own ports. */
-        if (entry.device_manager && extra_count > 0) {
+        /* Memory the service asked for. It is carved here because the allocator is here and
+         * the *address* is what matters: a region's physical base is the one thing a service
+         * cannot find out for itself and a device has to be told, since a virtqueue's
+         * descriptor entries are guest-physical addresses (specs/services.md,
+         * specs/authority.md). */
+        uint64_t memory_physical = 0;
+        uint32_t memory_bits = 0;
+        seL4_CPtr memory_cap = 0;
+        if (entry.memory_kib > 0) {
+            memory_bits = 10;
+            while ((1u << (memory_bits - 10)) < entry.memory_kib) {
+                ++memory_bits;
+            }
+            seL4_Error memory_error = seL4_NoError;
+            memory_cap =
+                allocator_.carve_untyped(memory_bits, account, &memory_error, &memory_physical);
+            if (memory_cap == 0) {
+                boot.problem = "no memory for a service that asked for some";
+                return;
+            }
+        }
+        if ((entry.device_manager && extra_count > 0) || memory_cap != 0) {
+            uint32_t const added =
+                (entry.device_manager && extra_count > 0 ? extra_count : 0) + (memory_cap != 0 ? 1 : 0);
             auto *merged = static_cast<spawn::PortGrant *>(
-                arena_.allocate(sizeof(spawn::PortGrant) * (grant_count + extra_count)));
+                arena_.allocate(sizeof(spawn::PortGrant) * (grant_count + added)));
             if (merged == nullptr) {
                 boot.problem = "no room to merge what a service is given";
                 return;
             }
+            uint32_t at = 0;
             for (uint32_t g = 0; g < grant_count; ++g) {
-                merged[g] = grants[g];
+                merged[at++] = grants[g];
             }
-            for (uint32_t g = 0; g < extra_count; ++g) {
-                merged[grant_count + g] = extra[g];
-                merged[grant_count + g].slot = bootstrap::kSlotFirstDeclared + grant_count + g;
+            if (entry.device_manager && extra_count > 0) {
+                for (uint32_t g = 0; g < extra_count; ++g) {
+                    merged[at] = extra[g];
+                    merged[at].slot = bootstrap::kSlotFirstDeclared + at;
+                    ++at;
+                }
+            }
+            if (memory_cap != 0) {
+                /* Named `untyped`, which is what the service looks it up by, and given the
+                 * size in bits with it: a port has no size and there is no invocation that
+                 * reads an untyped's, so it has to be told (PortGrant::size_bits). */
+                merged[at] = spawn::PortGrant{"untyped", 7, bootstrap::kSlotFirstDeclared + at,
+                                              memory_cap, seL4_AllRights, 0, memory_bits};
+                ++at;
             }
             grants = merged;
-            grant_count += extra_count;
+            grant_count += added;
         }
         request.ports = grants;
         request.port_count = grant_count;
@@ -147,6 +182,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.device_frame = mine != nullptr ? mine->frame : 0;
         request.device_bytes = mine != nullptr ? 4096u : 0;
         request.device_physical = mine != nullptr ? mine->address : 0;
+        request.untyped_physical = memory_physical;
+        request.untyped_bits = memory_bits;
         request.fault_endpoint = fault_endpoint_;
         /* Badges count from one so that zero keeps meaning "nobody in
          * particular" -- which is what director itself looks like. */
