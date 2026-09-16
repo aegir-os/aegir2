@@ -51,6 +51,11 @@ struct Entry {
     View priority;
     View args;
     Authority authority;
+    /* The service the machine's devices are given to, and its description of them.
+     * A device is a capability, so it goes to exactly one service -- the one that
+     * says so here, because that is where composition is declared
+     * (specs/services.md). */
+    bool device_manager;
     uint32_t line; /* the line the section started on, for messages */
 };
 

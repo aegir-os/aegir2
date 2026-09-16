@@ -29,6 +29,9 @@ authority = system
 account   = system
 needs     = log.main
 restart   = always
+# The machine's devices are given to this service and to no other: a device is a
+# capability, so it cannot be handed out to everyone who might want one.
+device_manager = true
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process

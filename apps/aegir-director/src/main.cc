@@ -765,14 +765,17 @@ int main(int argc, char *argv[])
          * copy carries a mapping; if it succeeds, it is the child's VSpace the map
          * rejects. The probe's mapping is removed immediately -- leaving it would cause
          * the very failure it is testing for. */
+        /* A copy of the device frame, not the frame: a capability can be mapped into
+         * one VSpace only, and ours has read it (kernel/manual/parts/vspace.tex,
+         * "Sharing Memory"; the frame is unmapped by the survey as it reads, so the
+         * copy starts clean). The copy is what the spawner maps into the device
+         * manager -- the one service that declares itself the device manager. */
         seL4_CPtr device_grant = 0;
         if (device_frame != 0) {
             device_grant = allocator.alloc_slot();
             if (device_grant == 0) {
                 problem("no slot for the device manager's device");
             } else {
-                /* No unmap here: the survey leaves the frame unmapped, which is the
-                 * only state a capability can be handed to another address space in. */
                 seL4_Error const copied =
                     seL4_CNode_Copy(seL4_CapInitThreadCNode, device_grant, seL4_WordBits,
                                     seL4_CapInitThreadCNode, device_frame, seL4_WordBits,
@@ -780,42 +783,15 @@ int main(int argc, char *argv[])
                 if (copied != seL4_NoError) {
                     problem("the device frame could not be duplicated");
                     device_grant = 0;
-                } else {
-                    void *probe = scratch.map(device_grant);
-                    if (probe == nullptr) {
-                        write("  FAIL the copy of the device frame cannot be mapped here\n");
-                        device_grant = 0;
-                    } else {
-                        scratch.unmap(device_grant);
-                        write("  device probe: the copy maps into our own space, so the child\
-'s is what refuses\n");
-                    }
                 }
             }
         }
-        /* Still refused at the same place, with every mapping in this path unmapped
-         * before handover, so the next experiment is to remove the probe as well: hand
-         * the survey's frame over with nothing having mapped it after the survey read
-         * it. If that is refused too, the address space the frame belongs to is being
-         * set somewhere outside this path (specs/services.md). */
-        /* The kernel instrument said frame_asid=2, asid=3: the frame belongs to
-         * *our* address space (2) and the child's is 3. So it is mapped in ours at
-         * handover even though every mapping in this path is unmapped -- survey pages
-         * as they are read, and the probe's copy immediately after it maps. The next
-         * instrument is therefore on the other side: a print inside
-         * performPageInvocationUnmap (kernel/src/arch/riscv/kernel/vspace.c) to see
-         * whether it runs for each unmap and which capability it clears
-         * (specs/services.md). */
-        /* The device is a *capability*, so it goes to exactly one service -- and
-         * `devices`/`device_bytes` is passed to every spawn, which is why the frame
-         * ends up in the first service spawned. That is the bug the unmap log showed:
-         * the frame is unmapped in ASID 1 (ours, twice), and the kernel's remap check
-         * saw frame_asid=2 -- the *first* child -- when the device manager, ASID 3,
-         * was given it. The fix is a manifest field saying which service is given
-         * which device, the same gap the device *tree* has (specs/services.md). */
-        static_cast<void>(device_grant);
+        /* The device goes to the one service that declares itself the device
+         * manager (manifests/services.manifest, `device_manager`), which is the
+         * thing that was missing when every spawn was handed the same frame.
+         */
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
-                               device_tree_bytes, 0, 0);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
+                               device_tree_bytes, device_grant, 1u << seL4_PageBits);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);
     }
 

@@ -101,10 +101,14 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.priority = priority_for(entry);
         request.ports = graph_.grants(i);
         request.port_count = graph_.grant_count(i);
-        request.devices = devices;
-        request.devices_bytes = devices_bytes;
-        request.device_frame = device_frame;
-        request.device_bytes = device_bytes;
+        /* A device is a capability, and its description is only useful with it, so
+         * both go to the service that declares itself the device manager and to no
+         * one else. Handing the frame to every service is what made the first child
+         * claim it and every later one be refused (specs/services.md). */
+        request.devices = entry.device_manager ? devices : nullptr;
+        request.devices_bytes = entry.device_manager ? devices_bytes : 0;
+        request.device_frame = entry.device_manager ? device_frame : 0;
+        request.device_bytes = entry.device_manager ? device_bytes : 0;
         request.fault_endpoint = fault_endpoint_;
         /* Badges count from one so that zero keeps meaning "nobody in
          * particular" -- which is what director itself looks like. */

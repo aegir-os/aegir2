@@ -492,58 +492,26 @@ and saying which half exists is the point of writing it down:
   (projects/seL4_libs/libsel4platsupport/src/common.c:86-113) -- and sel4test gives a
   device frame to a *child* process by copying the capability
   (projects/sel4test/apps/sel4test-driver/src/testtypes.c:241-243).
-- **a device is not yet given to a service**: the pieces are in place and compiled --
-  a `Device` block entry (address and size, separate from the `Devices` blob), a
-  `Request` field the spawner maps above the blob, and the device manager reading its
-  own device's magic and device id -- but the mapping into the child comes back
-  `seL4_InvalidCapability`, and the kernel says which branch: its console line is
-  `decodeRISCVFrameInvocation/871` -- `RISCVPageMap: Attempting to remap a frame that
-  does not belong to the passed address space` -- which is
-  kernel/src/arch/riscv/kernel/vspace.c:871, the check that the frame's
-  `capFMappedASID` equals the VSpace's ASID. So the frame still carries a valid ASID
-  at the moment the child's VSpace is given it.
+- **a service reads its own device**: the device manager is given the device's
+  registers and reads them itself, which is the first time anything but the root task
+  touches hardware:
 
-  Measured, and this is the part that narrows it: **the copy of the device frame maps
-  into our own VSpace** (`device probe: the copy maps into our own space, so the
-  child's is what refuses`), and the probe's mapping is removed immediately afterwards
-  so it cannot cause the failure it tests for. The copy is therefore fine and the
-  child's map is what refuses -- which does *not* mean the child's VSpace is broken,
-  because every RAM frame maps into it.
+      device at 0x10008000: magic 0x74726976, device id 4          (director's survey)
+      devicemgr running at 0x1016a, badge 2
+          my device at 0x25000: magic 0x74726976, device id 4  (virtio: the magic reads)
+      devicemgr ready
+          my device: none was given                                 (hello, which is not)
 
-  What `performPageInvocationUnmap` does is now known
-  (kernel/src/arch/riscv/kernel/vspace.c): it clears `capFMappedASID` **on the
-  capability the unmap is invoked on**, and unmaps the page-table entry only when that
-  capability says it is mapped. It does *not* clear other capabilities to the same
-  object, and it does not refuse when there is more than one.
-
-  With that known, the survey now unmaps each page as soon as it has read it, so
-  nothing in this path leaves a mapping behind -- and the child's map is *still*
-  refused at vspace.c:871. A temporary print in that branch (reverted) said exactly
-  which side is which:
-
-      [aegir] remap: frame_asid=2 asid=3 asidInvalid=0
-
-  A second temporary print, in `performPageInvocationUnmap`, closed it, by showing
-  which unmaps happened and in whose address space:
-
-      [aegir] unmap: asid=1 addr=0xc6000 paddr=0xffffffc010008000   (the survey, ours)
-      device at 0x10008000: magic 0x74726976, device id 4
-      [aegir] unmap: asid=1 addr=0xc9000 paddr=0xffffffc010008000   (the probe, ours)
-
-  Both unmaps are ours (ASID 1) and both clear the frame -- yet the kernel's remap
-  check then saw `frame_asid=2`. So the frame was mapped *between* them, into the
-  first child, which is ASID 2. **The spawner hands the device frame to every service**:
-  `Services::boot` takes one `devices`/`devices_bytes` pair and one device frame, and
-  passes them to each spawn, so the first service to start maps it and every later one
-  is refused with `seL4_InvalidCapability`. The device *tree* blob has the same problem
-  harmlessly (it is data); a device frame is a capability, and a capability has to be
-  given to exactly the service it is for.
-
-  **The fix**, and it is the manifest's job: a field saying which service is given
-  which device, the same gap already noted for the device tree. Until it exists, no
-  device is handed over.
-
-- **next**: the bus -> device -> service map inside the device manager, and
+  Three things make it work, and each was wrong first: the frame is reached by keeping
+  the pages before it (a dropped frame goes back to its untyped); the retype's depth is
+  `seL4_WordBits` (the root CNode has a guard); and the device goes to **exactly one
+  service**, because a device is a capability and mailing it to every spawn lets the
+  first service take it and refuses the rest -- which is what `seL4_InvalidCapability`
+  meant all along, "a frame that does not belong to the passed address space". Which
+  service that is comes from the manifest's `device_manager` field, because that is
+  where composition is declared; the device *tree* is given to the same service for
+  the same reason, and it was being over-shared in exactly the same way.
+- **next**: the bus -> device -> service map inside the device manager, and- **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
   machine; what it does not have yet is anything to *serve*, which is why it owns

@@ -200,6 +200,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool format_seen = false;
     Entry *current = nullptr;
     bool authority_seen = false;
+    bool device_manager_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
 
@@ -285,6 +286,26 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 current->*(binding.field) = value;
                 return true;
             }
+        }
+
+        if (equals(key, "device_manager")) {
+            if (device_manager_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            device_manager_seen = true;
+            if (equals(value, "true")) {
+                current->device_manager = true;
+                return true;
+            }
+            if (equals(value, "false")) {
+                current->device_manager = false;
+                return true;
+            }
+            failure_line = number;
+            failure = "device_manager is either `true` or `false`";
+            return false;
         }
 
         if (equals(key, "authority")) {
