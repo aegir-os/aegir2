@@ -269,31 +269,30 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * retyped it out of the machine's device memory (specs/services.md). */
     uint64_t device_address = 0;
     if (request.device_frame != 0 && request.device_bytes > 0) {
-        if (request.device_bytes > kPage) {
-            /* One frame is one page of registers, and the transports are 4 KiB
-             * each. A wider window would need one frame per page and the caller to
-             * say which; refusing is honest. */
-            return fail("a device window wider than one page is not handled yet");
+        if ((request.device_bytes % kPage) != 0) {
+            return fail("a device window that is not a whole number of pages");
         }
+        /* One frame per page, mapped consecutively, so a service's window is as
+         * contiguous as the machine's memory is and an offset into one is an offset
+         * into the other. The frames are the caller's and they sit in consecutive
+         * slots -- which is how the allocator hands slots out (libs/aegir-mem) -- so
+         * page `i` of the window is the capability `device_frame + i`. */
+        uint32_t const pages = request.device_bytes / static_cast<uint32_t>(kPage);
         uintptr_t const at = align_up(static_cast<uintptr_t>(devices_end), kPage);
-        seL4_Error mapped = seL4_NoError;
-        if (!vspace.map_page(at, request.device_frame, true, account, &mapped)) {
-            /* The kernel's own answer, because "it did not work" has several and
-             * they mean different things (kernel/manual/parts/vspace.tex, and the
-             * branches in kernel/src/arch/riscv/kernel/vspace.c). */
-            switch (mapped) {
-            case seL4_InvalidCapability:
-                return fail("the device frame does not belong to the child's address space");
-            case seL4_FailedLookup:
-                return fail("the page tables above the device's address could not be made");
-            case seL4_InvalidArgument:
-                return fail("a child cannot map the device at that address");
-            case seL4_AlignmentError:
-                return fail("the device's address is not page aligned");
-            case seL4_DeleteFirst:
-                return fail("something is already mapped at the device's address");
-            default:
-                return fail("the device's registers could not be mapped into the child");
+        for (uint32_t i = 0; i < pages; ++i) {
+            seL4_Error mapped = seL4_NoError;
+            if (!vspace.map_page(at + i * kPage, request.device_frame + i, true, account, &mapped)) {
+                /* The kernel's own answer, because "it did not work" has several and
+                 * they mean different things (kernel/manual/parts/vspace.tex, and the
+                 * branches in kernel/src/arch/riscv/kernel/vspace.c). */
+                switch (mapped) {
+                case seL4_InvalidCapability:
+                    return fail("a device frame does not belong to the child's address space");
+                case seL4_FailedLookup:
+                    return fail("the page tables above a device's address could not be made");
+                default:
+                    return fail("a device frame could not be mapped into the child");
+                }
             }
         }
         device_address = at;

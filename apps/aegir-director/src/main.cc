@@ -219,9 +219,10 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
  *  transport, which is what makes reading them safe. */
 unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &allocator,
                         aegir::mem::Scratch &scratch, uint64_t untyped_base, uint64_t first,
-                        uint64_t last, seL4_CPtr *frame_out,
+                        uint64_t last, seL4_CPtr *frame_out, uint32_t *count_out,
                         uint64_t *physical_out) noexcept {
     *frame_out = 0;
+    *count_out = 0;
     *physical_out = 0;
     seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
     for (seL4_Word i = 0; i < count; ++i) {
@@ -237,25 +238,24 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
         }
         unsigned const pages = static_cast<unsigned>((end - untyped_base) >> seL4_PageBits);
         unsigned busy = 0;
+        /* The window comes from the library in one call, and the first capability it
+         * hands back is what the loop indexes from -- so it is read *once*, into a
+         * local. The survey used to overwrite it with each busy page's slot, which is
+         * how `first + page` ended up naming a slot nobody had retyped. */
+        seL4_Error window_error = seL4_NoError;
+        seL4_CPtr window_first = 0;
+        if (!allocator.device_window(untyped_base, pages, &window_first, &window_error)) {
+            aegir::debug_write("  FAIL the device window could not be taken (seL4 error ");
+            aegir::debug_write_unsigned(static_cast<uint64_t>(window_error));
+            aegir::debug_write(")\n");
+            return 1;
+        }
+        *frame_out = window_first;
+        *physical_out = untyped_base;
+        *count_out = pages;
         for (unsigned page = 0; page < pages; ++page) {
             uint64_t const address = untyped_base + (static_cast<uint64_t>(page) << seL4_PageBits);
-            seL4_CPtr const slot = allocator.alloc_slot();
-            if (slot == 0) {
-                aegir::debug_write("  FAIL out of slots while surveying transports\n");
-                return 1;
-            }
-            /* The depth is the whole word: the root task's CNode has a guard, so
-             * anything less comes back as seL4_FailedLookup. */
-            seL4_Error const error =
-                seL4_Untyped_Retype(bootinfo->untyped.start + i, seL4_RISCV_4K_Page,
-                                    seL4_PageBits, seL4_CapInitThreadCNode,
-                                    seL4_CapInitThreadCNode, seL4_WordBits, slot, 1);
-            if (error != seL4_NoError) {
-                aegir::debug_write("  FAIL retype (seL4 error ");
-                aegir::debug_write_unsigned(static_cast<uint64_t>(error));
-                aegir::debug_write(")\n");
-                return 1;
-            }
+            seL4_CPtr const slot = window_first + page;
             if (address < first) {
                 /* A page the tree names no transport at: taken to advance the
                  * cursor, and not read, because nothing says what is behind it. */
@@ -263,7 +263,13 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
             }
             auto *registers = static_cast<volatile uint32_t *>(scratch.map(slot));
             if (registers == nullptr) {
-                aegir::debug_write("  FAIL the transport could not be mapped\n");
+                aegir::debug_write("  FAIL the transport could not be mapped: cap ");
+                aegir::debug_write_unsigned(slot);
+                aegir::debug_write(" of ");
+                aegir::debug_write_unsigned(window_first);
+                aegir::debug_write(" + ");
+                aegir::debug_write_unsigned(page);
+                aegir::debug_write("\n");
                 return 1;
             }
             uint32_t const magic = registers[0x00 / 4];
@@ -279,8 +285,10 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
                 continue;
             }
             ++busy;
-            /* Kept, not just reported: this frame is what a driver is given, and the
-             * pages before it had to be taken anyway (specs/services.md). */
+            /* What a service is given is *this* device: its own frame, and where it sits in
+             * the machine -- identical transports answer identically to every register read, so
+             * position is the only thing that says which one it holds. The whole window is kept
+             * as well; giving a service *all* of them is the series work (specs/services.md). */
             *frame_out = slot;
             *physical_out = address;
             aegir::debug_write("  device at ");
@@ -690,13 +698,14 @@ int main(int argc, char *argv[])
     uint64_t first_transport = 0;
     uint64_t last_transport = 0;
     seL4_CPtr device_frame = 0;
+    uint32_t device_frame_count = 0;
     uint64_t device_physical = 0;
     failures += report_device_memory(bootinfo, device_tree, device_tree_bytes, &device_untyped,
                                     &first_transport, &last_transport);
     if (device_untyped != 0 && last_transport != 0) {
         failures += survey_devices(bootinfo, allocator, scratch, device_untyped,
                                    first_transport, last_transport, &device_frame,
-                                   &device_physical);
+                                   &device_frame_count, &device_physical);
     }
 
     /* Everything boot allocates is charged to the system account
@@ -799,6 +808,12 @@ int main(int argc, char *argv[])
          * "Sharing Memory"; the frame is unmapped by the survey as it reads, so the
          * copy starts clean). The copy is what the spawner maps into the device
          * manager -- the one service that declares itself the device manager. */
+        /* The window's length is one page for now: handing the series over makes the
+         * supervisor receive an *invocation* at the shared fault endpoint (`label 35`,
+         * length 3, badge 0 -- measured), which is not a fault from any service and is
+         * not yet explained. The survey keeps every frame either way, so the series is
+         * ready when that is settled (specs/services.md). */
+        static_cast<void>(device_frame_count);
         seL4_CPtr device_grant = 0;
         if (device_frame != 0) {
             device_grant = allocator.alloc_slot();
