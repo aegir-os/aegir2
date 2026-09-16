@@ -454,17 +454,19 @@ and saying which half exists is the point of writing it down:
   the answer is a property of the machine and not of the code. Note that the tree
   lists the transports in *descending* order, so "the first the tree names" is the
   highest address and a driver will want them the other way up.
-- **taking a device frame needs the full depth, and does not yet read as registers**:
-  addressing the root task's CNode for a retype is not `initThreadCNodeSizeBits` --
-  the CNode has a guard, so `seL4_Untyped_Retype` wants `seL4_WordBits`, and less
-  than that comes back as `seL4_FailedLookup` (the allocator's own `kRootCNodeDepth`
-  is `seL4_WordBits` for the same reason). With that fixed, the frame at
-  `0x10008000` is eight retypes away, one per page before it. It is *not* yet
-  readable: a device frame taken that way and mapped with `Scratch::map` faults on
-  the first read rather than reading as registers, so the last link -- "we hold the
-  frame" to "we can read the device" -- is still open. Next: the fault's address and
-  the mapping's attributes, and whether a device mapping needs non-cacheable
-  attributes (`seL4_Default_VMAttributes`) on this port.
+- **a device frame can be taken, but reading it reads the wrong thing**: the frame
+  at `0x10008000` is nine retypes away, one per page before it, and the retype's
+  depth must be `seL4_WordBits` -- the root task's CNode has a guard, so anything
+  less comes back as `seL4_FailedLookup` (the allocator's `kRootCNodeDepth` is
+  `seL4_WordBits` for the same reason). The frame then maps *successfully* through
+  the scratch window and the mapping answers -- but not as the device: offset `0x00`
+  reads `0` where the virtio magic (`0x74726976`) has to be, and offset `0x08` faults
+  (`vm fault on data at ... with status 0x5`, a load access fault). So the frame in
+  hand is not the transport's registers. Next is the frame's *identity*, not the
+  mapping's attributes: take the frame at the untyped's own base (`0x10000000`) and
+  read it, which says whether the retype cursor really starts where
+  `seL4_UntypedDesc.paddr` says it does. Written down because every one of these
+  looked like "the mapping failed", and none of them was.
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
