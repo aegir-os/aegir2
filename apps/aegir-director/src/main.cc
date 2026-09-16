@@ -824,13 +824,24 @@ int main(int argc, char *argv[])
          * child finds it -- the slot is the spawner's to choose (specs/authority.md).
          * The list holds one capability today, which is the whole of what there is to
          * delegate rather than a limit on what can be. */
+        /* And the memory to make objects of its own: an untyped is what a page table
+         * is retyped from, and a page is exactly enough for the first one. More is
+         * delegated when something needs more (specs/authority.md). */
+        seL4_Error untyped_error = seL4_NoError;
+        seL4_CPtr const delegated_untyped =
+            allocator.carve_untyped(seL4_PageTableBits, system, &untyped_error);
+        if (delegated_untyped == 0) {
+            problem("no untyped memory to delegate to the device manager");
+        }
         static char const kAsidPoolName[] = "asid-pool";
+        static char const kUntypedName[] = "untyped";
         aegir::spawn::PortGrant const delegated[] = {
             {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0},
+            {kUntypedName, sizeof(kUntypedName) - 1, 0, delegated_untyped, seL4_AllRights, 0},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, device_grant, 1u << seL4_PageBits,
-                               device_physical, delegated, 1);
+                               device_physical, delegated, 2);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread

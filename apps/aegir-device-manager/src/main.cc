@@ -140,6 +140,46 @@ int main(int argc, char *argv[])
     aegir::debug_write_unsigned(report.with_region);
     aegir::debug_write(" with a register window\n");
 
+    /* The authority director delegates to a service that will start processes of its
+     * own: an ASID pool to take an address space id from, and an untyped to retype a
+     * root page table out of (specs/authority.md). This is the first thing in Aegir a
+     * service does with delegated authority rather than with what it was given to
+     * read, so it says what happened. */
+    uint64_t pool_slot = 0;
+    uint64_t untyped_slot = 0;
+    aegir::bootstrap::Block const *block = aegir::bootstrap::find();
+    uint32_t named = 0;
+    for (uint32_t e = 0; block != nullptr && e < block->entry_count; ++e) {
+        if (block->entries[e].kind == aegir::bootstrap::EntryKind::Capability) {
+            ++named;
+        }
+    }
+    if (!aegir::bootstrap::capability("untyped", 7, &untyped_slot) ||
+        !aegir::bootstrap::capability("asid-pool", 9, &pool_slot)) {
+        write_line("authority", "no pool and no memory were given");
+    } else {
+        /* The first slot after the ones the block names is ours to use: the block is
+         * the map of what was given, and the layout past it is nobody else's business
+         * (specs/services.md). */
+        seL4_CPtr const table = aegir::bootstrap::kSlotFirstDeclared + named;
+        seL4_Error const retyped =
+            seL4_Untyped_Retype(untyped_slot, seL4_RISCV_PageTableObject, seL4_PageTableBits,
+                                seL4_CapInitThreadCNode, seL4_CapInitThreadCNode, seL4_WordBits,
+                                table, 1);
+        if (retyped != seL4_NoError) {
+            write_line("FAIL", "the untyped could not be made into a page table");
+        } else {
+            seL4_Error const assigned = seL4_RISCV_ASIDPool_Assign(pool_slot, table);
+            if (assigned != seL4_NoError) {
+                write_line("FAIL", "no address space id from the pool");
+            } else {
+                aegir::debug_write("      my own address space: page table at cap ");
+                aegir::debug_write_unsigned(table);
+                aegir::debug_write(", with an address space id of my own\n");
+            }
+        }
+    }
+
     /* Ready: whoever spawned us can carry on, and the supervisor can tell
      * everyone else apart from us (specs/director.md). */
     seL4_Signal(aegir::bootstrap::kSlotSupervision);

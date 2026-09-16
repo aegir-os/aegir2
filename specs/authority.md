@@ -253,3 +253,19 @@ pool, and hold an address space of its own. That is the point at which "the devi
 manager launches a driver" becomes a statement about the device manager rather than
 about director, and the remaining pieces -- the child's CSpace, its TCB, and the
 binaries from the initrd -- are the same ones director already assembles.
+
+### The destination of a retype, open
+
+The device manager now holds a pool and an untyped and tries to use them:
+
+    [seL4(CPU 0) [decodeUntypedInvocation/119 ... "devicemgr"]:
+        Untyped Retype: Invalid destination address.]
+
+So the *destination* of the retype is wrong, and that is the one thing to settle
+before this works. Director's own retypes pass `seL4_CapInitThreadCNode` for both the
+`root` and the `node_index` argument and `seL4_WordBits` for the depth, and land in the
+slots they ask for -- but director's root CNode is the kernel's (8192 slots, a 51-bit
+guard) while a spawned service's is 1024 slots with a 54-bit guard, and the number of
+guard bits is exactly what a depth has to agree with. The next move is the source, not a
+guess: `kernel/src/object/untyped.c`, the line the kernel named, and what it does with
+`node_index`, `node_depth` and `node_offset` when a guard is in the way.
