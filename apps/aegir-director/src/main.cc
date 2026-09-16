@@ -806,6 +806,13 @@ int main(int argc, char *argv[])
          * performPageInvocationUnmap (kernel/src/arch/riscv/kernel/vspace.c) to see
          * whether it runs for each unmap and which capability it clears
          * (specs/services.md). */
+        /* The device is a *capability*, so it goes to exactly one service -- and
+         * `devices`/`device_bytes` is passed to every spawn, which is why the frame
+         * ends up in the first service spawned. That is the bug the unmap log showed:
+         * the frame is unmapped in ASID 1 (ours, twice), and the kernel's remap check
+         * saw frame_asid=2 -- the *first* child -- when the device manager, ASID 3,
+         * was given it. The fix is a manifest field saying which service is given
+         * which device, the same gap the device *tree* has (specs/services.md). */
         static_cast<void>(device_grant);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,

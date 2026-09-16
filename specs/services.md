@@ -523,12 +523,25 @@ and saying which half exists is the point of writing it down:
 
       [aegir] remap: frame_asid=2 asid=3 asidInvalid=0
 
-  Director is ASID 2 and the child is ASID 3, so the frame belongs to *our* address
-  space at handover, with every unmap in this path having been called. The next
-  instrument is therefore on the other side of the unmap: a print inside
-  `performPageInvocationUnmap`, to see whether it is reached for each of those unmaps
-  and which capability it clears. That is the last thing between here and a service
-  reading its own device.
+  A second temporary print, in `performPageInvocationUnmap`, closed it, by showing
+  which unmaps happened and in whose address space:
+
+      [aegir] unmap: asid=1 addr=0xc6000 paddr=0xffffffc010008000   (the survey, ours)
+      device at 0x10008000: magic 0x74726976, device id 4
+      [aegir] unmap: asid=1 addr=0xc9000 paddr=0xffffffc010008000   (the probe, ours)
+
+  Both unmaps are ours (ASID 1) and both clear the frame -- yet the kernel's remap
+  check then saw `frame_asid=2`. So the frame was mapped *between* them, into the
+  first child, which is ASID 2. **The spawner hands the device frame to every service**:
+  `Services::boot` takes one `devices`/`devices_bytes` pair and one device frame, and
+  passes them to each spawn, so the first service to start maps it and every later one
+  is refused with `seL4_InvalidCapability`. The device *tree* blob has the same problem
+  harmlessly (it is data); a device frame is a capability, and a capability has to be
+  given to exactly the service it is for.
+
+  **The fix**, and it is the manifest's job: a field saying which service is given
+  which device, the same gap already noted for the device tree. Until it exists, no
+  device is handed over.
 
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
