@@ -107,6 +107,7 @@ void *Scratch::map(seL4_CPtr frame) noexcept
                                     seL4_RISCV_Default_VMAttributes);
     }
     if (error != seL4_NoError) {
+        last_error_ = error;
         return nullptr;
     }
     last_cap_ = frame;

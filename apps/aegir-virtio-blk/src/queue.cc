@@ -115,7 +115,7 @@ void set_up(Registers const &registers, uint64_t physical, uint32_t num,
 }
 
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
-                       uint64_t sector, uint8_t *data_out) noexcept
+                       uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept
 {
     ReadResult result{false, 0, 0, 0, 0, 0, 0};
 
@@ -144,7 +144,7 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
             flags = static_cast<uint16_t>(kDescNext);
             next = 1;
         } else if (i == 1) {
-            addr = physical + kDataOffset;
+            addr = data_physical;
             len = kSectorBytes;
             flags = static_cast<uint16_t>(kDescNext | kDescWrite);
             next = 2;

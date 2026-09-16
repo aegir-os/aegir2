@@ -75,7 +75,7 @@ constexpr uint32_t kCNodeBits = 10;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 3;
+constexpr uint32_t kVersion = 4;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -131,7 +131,14 @@ enum class EntryKind : uint32_t {
      *  service maps the frame through its own window when it wants to read the
      *  registers, and hands it to a driver when it starts one -- which is what a
      *  device manager is *for* (specs/services.md). */
-    DeviceCapability = 11,
+     DeviceCapability = 11,
+    /** The shared window a device's port serves through (aegir/block.h): mapped
+     *  into the child, so `data_offset` is where the child reads and writes it,
+     *  `length` its byte count, and `number` its *physical* base -- a driver
+     *  points virtqueue descriptors at it, and a device reads by physical
+     *  address. The window travels with the service port because a request's
+     *  data crosses there, not in the message. */
+    SharedWindow = 12,
 };
 
 struct Entry {
@@ -204,6 +211,9 @@ struct Contents {
     uint32_t window_bytes;
     DeviceCapEntry const *device_caps;
     uint32_t device_cap_count;
+    uint64_t shared_window_address;
+    uint32_t shared_window_bytes;
+    uint64_t shared_window_physical;
 };
 
 /** Build a block in memory we can write: `storage` is a page that will be
@@ -255,6 +265,11 @@ bool window(uint64_t *base, uint32_t *bytes) noexcept;
  *  there is no such entry. */
 bool device_capability(uint32_t index, uint64_t *physical, uint32_t *bytes,
                        uint64_t *slot) noexcept;
+
+/** The shared window this process's service port serves through, when it has
+ *  one: where it is mapped, how big it is, and its physical base. False when
+ *  there is none -- which is every process that does not serve a data port. */
+bool shared_window(uint64_t *address, uint32_t *bytes, uint64_t *physical) noexcept;
 
 }  // namespace aegir::bootstrap
 

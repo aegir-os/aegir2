@@ -144,8 +144,13 @@ void set_up(Registers const &registers, uint64_t physical, uint32_t num,
             QueueReport *report) noexcept;
 
 /** Publish a read of `sector` and wait for the device to say it is done. The queue must be
- *  set up and DRIVER_OK written first. */
+ *  set up and DRIVER_OK written first. The device writes the sector to `data_physical` --
+ *  which does not have to be the queue page's own data area: the shared window a block
+ *  port serves through is a physical address the driver knows, and a read that lands
+ *  there needs no copy (aegir/block.h). `data_out`, when given, is filled from
+ *  the queue page's own data area -- so it is for reads whose `data_physical`
+ *  *is* that area, and nullptr for reads that landed somewhere else. */
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
-                       uint64_t sector, uint8_t *data_out) noexcept;
+                       uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept;
 
 }  // namespace aegir::virtio

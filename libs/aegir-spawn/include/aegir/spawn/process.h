@@ -105,6 +105,16 @@ struct Request {
      * be mapped at `memory_address`, and the child is told the physical base separately. */
     seL4_CPtr memory_frame = 0;
     uint32_t memory_bytes = 0;
+    /* The shared window this child's service port serves through, when it has
+     * one: frames the caller carved, mapped into the child right after its
+     * memory, with the physical base recorded so a driver can point virtqueue
+     * descriptors at it. Every client of the port maps the same frames at its
+     * own spawn, because a service cannot map into its own address space; a
+     * call is synchronous, so one window serializes itself rather than needing
+     * a lock (aegir/block.h, specs/services.md). */
+    seL4_CPtr window_frame = 0;
+    uint32_t window_bytes = 0;
+    uint64_t window_physical = 0;
     /* A copy of the flat initrd, mapped read-only, for a process that starts
      * processes of its own: the binaries are the one part of spawning that cannot
      * be delegated as a capability, so they travel as bytes (specs/services.md).

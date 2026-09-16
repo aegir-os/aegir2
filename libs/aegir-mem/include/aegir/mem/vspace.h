@@ -47,6 +47,10 @@ public:
      *  nullptr when the window is exhausted or the mapping is refused. */
     void *map(seL4_CPtr frame) noexcept;
 
+    /** The kernel's answer to the last map that failed, because "the mapping
+     *  was refused" has several causes and they mean different things. */
+    uint64_t last_error() const noexcept { return static_cast<uint64_t>(last_error_); }
+
     /** Remove one mapping. The frame cap stays ours. Unmapping the *most recently*
      *  mapped frame hands its window page back: filling frames is a strict
      *  map-write-unmap rhythm (child_vspace.cc's populate), and a window that
@@ -73,6 +77,7 @@ private:
     uint64_t mapped_bytes_;
     /* The most recent mapping, so unmap can give its page back (see unmap). */
     seL4_CPtr last_cap_ = 0;
+    seL4_Error last_error_ = seL4_NoError;
 };
 
 }  // namespace aegir::mem

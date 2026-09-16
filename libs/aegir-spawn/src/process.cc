@@ -362,12 +362,18 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * expression would put it on top of them, and the kernel refuses a second mapping at one
      * address. */
     uintptr_t const memory_at = align_up(binaries_end, kPage);
-    /* Everything above the memory is the child's, when it is trusted with its own
-     * VSpace root: addresses cost nothing, so the window is generous, and the
-     * spawner -- not the child -- is what chose it. */
+    /* The shared window a data port serves through goes right after the memory,
+     * where the spawner knows both ends, and the child's own VSpace window
+     * starts past it -- a service that maps for itself still has its port's
+     * window placed for it, because the window is part of the port. */
+    uintptr_t const shared_window_at = memory_at + request.memory_bytes;
+    /* Everything above the memory and the shared window is the child's, when it
+     * is trusted with its own VSpace root: addresses cost nothing, so the
+     * window is generous, and the spawner -- not the child -- is what chose
+     * it. */
     constexpr uint64_t kWindowBytes = 1ull << 30;
     uint64_t const window_base =
-        request.give_vspace ? memory_at + request.memory_bytes : 0;
+        request.give_vspace ? shared_window_at + request.window_bytes : 0;
 
     auto *device_cap_entries =
         static_cast<bootstrap::DeviceCapEntry *>(arena_.allocate(
@@ -381,6 +387,10 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
                                                           device_slot_base + i};
     }
 
+    /* The window exists in the block only when the caller gave frames for it:
+     * an address of zero is how "no shared window" is written down. */
+    uint64_t const shared_window_address =
+        request.window_frame != 0 && request.window_bytes > 0 ? shared_window_at : 0;
     bootstrap::Contents const contents{
         request.name,       request.name_length,   request.account, request.account_length,
         port_entries,       port_count,            devices_address, request.devices_bytes,
@@ -388,6 +398,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         request.untyped_physical, request.untyped_bits, memory_at,
         binaries_address,   request.binaries_bytes, window_base,    kWindowBytes,
         device_cap_entries, request.device_grant_count,
+        shared_window_address, request.window_bytes, request.window_physical,
     };
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");
@@ -406,6 +417,23 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             if (!vspace.map_page(memory_at + i * kPage, request.memory_frame + i, true, account,
                                  &mapped)) {
                 return fail("the memory a service asked for could not be mapped into it");
+            }
+        }
+    }
+    /* And the shared window follows the memory, the same shape: frames the
+     * caller carved, sitting in consecutive slots, mapped -- not given -- so
+     * both sides of the port hold the same pages at their own spawn times. */
+    if (shared_window_address != 0) {
+        if ((request.window_bytes % kPage) != 0) {
+            return fail("a shared window that is not a whole number of pages");
+        }
+        uint32_t const pages = request.window_bytes / static_cast<uint32_t>(kPage);
+        for (uint32_t i = 0; i < pages; ++i) {
+            seL4_Error mapped = seL4_NoError;
+            if (!vspace.map_page(shared_window_at + i * kPage, request.window_frame + i, true,
+                                 account, &mapped)) {
+                return fail("the shared window a port serves through could not be mapped "
+                            "into the child");
             }
         }
     }
@@ -552,7 +580,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     process.stack_top = stack_top;
     process.block = block_at;
     process.vspace_root = vspace.root();
-    process.mapped_end = memory_at + request.memory_bytes;
+    process.mapped_end = shared_window_at + request.window_bytes;
     return true;
 }
 

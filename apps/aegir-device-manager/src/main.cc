@@ -19,6 +19,7 @@
  * spawned.
  */
 
+#include <aegir/block.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/descriptor.h>
@@ -664,11 +665,92 @@ int main(int argc, char *argv[])
                     continue;
                 }
 
+                /* The shared window the driver's port serves through: carved the
+                 * same way as the queue, mapped into the child beside its
+                 * memory, and mapped into each client the port is later
+                 * delegated to -- what a request moves is in the window, not
+                 * the message (aegir/block.h, specs/services.md). */
+                seL4_Error window_error = seL4_NoError;
+                uint64_t window_physical = 0;
+                seL4_CPtr const window_untyped =
+                    g_objects.carve_untyped(driver->window_bits, child_account,
+                                            &window_error, &window_physical);
+                if (window_untyped == 0) {
+                    write_line("FAIL", "no memory for a driver's shared window");
+                    continue;
+                }
+                seL4_CPtr window_frame = 0;
+                uint32_t const window_pages = (1u << driver->window_bits) / 4096u;
+                bool window_paged = true;
+                for (uint32_t p = 0; p < window_pages; ++p) {
+                    seL4_Error page_error = seL4_NoError;
+                    seL4_CPtr const frame = g_objects.carve_page(window_untyped, child_account,
+                                                                 &page_error);
+                    if (frame == 0) {
+                        window_paged = false;
+                        break;
+                    }
+                    if (p == 0) {
+                        window_frame = frame;
+                    }
+                }
+                if (!window_paged) {
+                    write_line("FAIL", "a driver's shared window could not be turned into pages");
+                    continue;
+                }
+                /* A frame's first mapping pins it to that address space: the
+                 * mapped ASID lives in the *capability*
+                 * (kernel/src/arch/riscv/kernel/vspace.c:869-878), so one cap
+                 * can never serve two VSpaces -- while a copy made before any
+                 * mapping carries no ASID yet and may be mapped into another.
+                 * The window's consumers each need their own set of caps: the
+                 * originals go to the child, and one copy set stays with us,
+                 * for the smoke below and for whatever client the port is
+                 * later delegated to. Made now, because a copy made after the
+                 * child maps would inherit the child's ASID and be useless. */
+                seL4_CPtr window_copy = 0;
+                bool copied = true;
+                for (uint32_t p = 0; p < window_pages; ++p) {
+                    seL4_CPtr const slot = g_objects.alloc_slot();
+                    if (slot == 0 ||
+                        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
+                                        aegir::bootstrap::kCNodeBits,
+                                        aegir::bootstrap::kSlotOwnCNode, window_frame + p,
+                                        aegir::bootstrap::kCNodeBits, seL4_AllRights,
+                                        0) != seL4_NoError) {
+                        copied = false;
+                        break;
+                    }
+                    if (p == 0) {
+                        window_copy = slot;
+                    }
+                }
+                if (!copied) {
+                    write_line("FAIL", "the shared window's frames could not be copied");
+                    continue;
+                }
+                /* The port the driver serves: one endpoint per device, made
+                 * here because the endpoint is the spawner's to make -- the
+                 * child gets the owner half, we keep the caller half. */
+                seL4_Error port_error = seL4_NoError;
+                seL4_CPtr const block_port =
+                    g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                           child_account, &port_error);
+                if (block_port == 0) {
+                    write_line("FAIL", "no memory for a driver's port");
+                    continue;
+                }
+
                 aegir::spawn::PortGrant const ports[] = {
                     {aegir::log::kPortName, aegir::log::kPortNameLength,
                      aegir::bootstrap::kSlotFirstDeclared,
                      static_cast<seL4_CPtr>(log_slot), seL4_CapRights_new(1, 0, 0, 1),
                      256u + b, 0},
+                    /* The driver owns this port: it receives, so Read is the
+                     * whole grant -- the caller half never leaves us
+                     * (specs/services.md). */
+                    {"port", 4, aegir::bootstrap::kSlotFirstDeclared + 1, block_port,
+                     seL4_CapRights_new(0, 0, 1, 0), 0, 0},
                 };
                 aegir::spawn::DeviceGrant const devices[] = {
                     {binding.base, binding.bytes, binding.frame},
@@ -685,7 +767,7 @@ int main(int argc, char *argv[])
                  * is within what we hold. */
                 request.priority = seL4_MaxPrio - 1;
                 request.ports = ports;
-                request.port_count = 1;
+                request.port_count = 2;
                 request.device_frame = binding.frame;
                 request.device_bytes = binding.bytes;
                 request.device_physical = binding.base;
@@ -693,6 +775,9 @@ int main(int argc, char *argv[])
                 request.device_grant_count = 1;
                 request.memory_frame = memory_frame;
                 request.memory_bytes = 1u << driver->memory_bits;
+                request.window_frame = window_frame;
+                request.window_bytes = 1u << driver->window_bits;
+                request.window_physical = window_physical;
                 /* The queue's descriptors carry physical addresses the device
                  * reads, and a capability does not say where it is -- so the
                  * physical base travels beside the frames, the way director's
@@ -745,6 +830,68 @@ int main(int argc, char *argv[])
                  * process does not know who spawned it (specs/director.md). */
                 seL4_Word ready_badge = 0;
                 seL4_Wait(process.supervision, &ready_badge);
+
+                /* Smoke: use the port the way a client will. Identify fills the
+                 * window with who the device says it is -- "BD0" is the driver's
+                 * own name for itself, not something we assigned (aegir/block.h,
+                 * specs/services.md) -- and a read of sector 0 lands in the same
+                 * window without a byte crossing the message. We hold the caller
+                 * half because we made the endpoint; the window's frames stay
+                 * ours as well, and are what a later client maps. */
+                auto *shared = static_cast<uint8_t *>(g_scratch.map(window_copy));
+                if (shared == nullptr) {
+                    uint64_t const window_map_error = g_scratch.last_error();
+                    aegir::debug_write("      FAIL the shared window (slot ");
+                    aegir::debug_write_unsigned(window_copy);
+                    aegir::debug_write(") could not be mapped for the smoke read (seL4 error ");
+                    aegir::debug_write_unsigned(window_map_error);
+                    aegir::debug_write(")\n");
+                    continue;
+                }
+                aegir::ipc::Consumer const block_caller(block_port);
+                aegir::ipc::Reply const identity =
+                    block_caller.call(aegir::block::kMethodIdentify, 0);
+                if (identity.error != 0 || identity.word != sizeof(aegir::block::Identify)) {
+                    write_line("FAIL", "the block port would not identify");
+                    g_scratch.unmap(window_copy);
+                    continue;
+                }
+                auto const *who = reinterpret_cast<aegir::block::Identify const *>(shared);
+                uint32_t name_length = 0;
+                while (name_length < sizeof(who->name) && who->name[name_length] != '\0') {
+                    ++name_length;
+                }
+                /* The window belongs to the call, not to us: the read below
+                 * overwrites the identify answer, so the name is kept out of
+                 * it. */
+                char device_name[sizeof(who->name)];
+                for (uint32_t i = 0; i < name_length; ++i) {
+                    device_name[i] = who->name[i];
+                }
+                aegir::debug_write("      ");
+                aegir::debug_write(device_name, name_length);
+                aegir::debug_write(": ");
+                aegir::debug_write_unsigned(who->sector_count);
+                aegir::debug_write(" sectors of ");
+                aegir::debug_write_unsigned(who->sector_size);
+                aegir::debug_write(" bytes, window holds ");
+                aegir::debug_write_unsigned(who->window_sectors);
+                aegir::debug_write("\n");
+                aegir::ipc::Reply const smoke =
+                    block_caller.call(aegir::block::kMethodRead, aegir::block::pack_read(0, 1));
+                if (smoke.error != 0 || smoke.word != 1) {
+                    write_line("FAIL", "the block port would not read sector 0");
+                } else {
+                    aegir::debug_write("      ");
+                    aegir::debug_write(device_name, name_length);
+                    aegir::debug_write(" read sector 0 through the window, first 16: ");
+                    for (unsigned i = 0; i < 16; ++i) {
+                        aegir::debug_write_hex(shared[i]);
+                        aegir::debug_write(" ");
+                    }
+                    aegir::debug_write("\n");
+                }
+                g_scratch.unmap(window_copy);
             }
         }
     }

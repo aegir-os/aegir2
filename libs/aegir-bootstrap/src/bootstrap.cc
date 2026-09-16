@@ -48,12 +48,12 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
 
-    /* Nine fixed entries -- size, name, account, page bits, devices, device, untyped,
-     * binaries, window -- then one per device capability, then one per port,
-     * because what a process is given is part of who it is. Growing the
+    /* Ten fixed entries -- size, name, account, page bits, devices, device, untyped,
+     * binaries, window, shared window -- then one per device capability, then one
+     * per port, because what a process is given is part of who it is. Growing the
      * block means bumping the version rather than gambling on a layout, and
      * `entry_count` is what makes that safe for readers that know less. */
-    uint32_t const entries = 9 + contents.device_cap_count + contents.port_count;
+    uint32_t const entries = 10 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(contents.name_length) + contents.account_length;
     for (uint32_t i = 0; i < contents.port_count; ++i) {
@@ -109,9 +109,18 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     block->entries[8] = Entry{EntryKind::Window,
                               contents.window_base == 0 ? 0 : contents.window_bytes,
                               contents.window_base, 0, 0};
+    /* The same shape as the untyped: an address the spawner mapped and the
+     * child cannot work out for itself, plus the physical base a device (or a
+     * virtqueue descriptor) needs. Present only when the child serves a data
+     * port. */
+    block->entries[9] = Entry{EntryKind::SharedWindow,
+                              contents.shared_window_address == 0 ? 0
+                                                                  : contents.shared_window_bytes,
+                              contents.shared_window_physical,
+                              static_cast<uint32_t>(contents.shared_window_address), 0};
 
     for (uint32_t i = 0; i < contents.device_cap_count; ++i) {
-        block->entries[9 + i] =
+        block->entries[10 + i] =
             Entry{EntryKind::DeviceCapability, contents.device_caps[i].bytes,
                   contents.device_caps[i].physical, 0,
                   static_cast<uint32_t>(contents.device_caps[i].slot)};
@@ -128,7 +137,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
             return nullptr;
         }
         room -= contents.ports[i].name_length;
-        block->entries[9 + contents.device_cap_count + i] =
+        block->entries[10 + contents.device_cap_count + i] =
             Entry{EntryKind::Capability, contents.ports[i].name_length,
                   contents.ports[i].slot, static_cast<uint32_t>(next_offset),
                   contents.ports[i].size_bits};
@@ -310,6 +319,30 @@ bool window(uint64_t *base, uint32_t *bytes) noexcept
             }
             if (bytes != nullptr) {
                 *bytes = entry.length;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool shared_window(uint64_t *address, uint32_t *bytes, uint64_t *physical) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind == EntryKind::SharedWindow && entry.number != 0) {
+            if (address != nullptr) {
+                *address = entry.data_offset;
+            }
+            if (bytes != nullptr) {
+                *bytes = entry.length;
+            }
+            if (physical != nullptr) {
+                *physical = entry.number;
             }
             return true;
         }

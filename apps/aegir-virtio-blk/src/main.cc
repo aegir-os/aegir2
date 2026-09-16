@@ -20,6 +20,7 @@
 #include "queue.h"
 #include "virtio_mmio.h"
 
+#include <aegir/block.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
@@ -271,49 +272,99 @@ int main(int argc, char *argv[])
                     aegir::virtio::kStatusAcknowledge | aegir::virtio::kStatusDriver |
                         aegir::virtio::kStatusFeaturesOk | aegir::virtio::kStatusDriverOk);
 
-    /* Read sector 0, and see what comes back. Everything above exists for this: the page the
-     * spawner mapped is written here, and the *physical* address of that same page goes into
-     * the queue registers, because the device reads by physical address and the driver writes
-     * by virtual one. The disk was given to QEMU as a file, so what sector 0 holds is not
-     * 512 zero bytes -- and if it is, nothing actually happened. */
-    uint8_t sector_data[aegir::virtio::kSectorBytes];
-    aegir::virtio::ReadResult const read =
-        aegir::virtio::read_sector(registers, queue_page, memory_physical, 0, sector_data);
-    if (!read.completed) {
-        aegir::debug_write("      nothing came back: status ");
-        aegir::debug_write_unsigned(read.status);
-        aegir::debug_write(", used flags ");
-        aegir::debug_write_unsigned(read.used_flags);
-        aegir::debug_write(", idx ");
-        aegir::debug_write_unsigned(read.used_idx);
-        aegir::debug_write(", len ");
-        aegir::debug_write_unsigned(read.used_bytes);
-        aegir::debug_write(", device status ");
-        aegir::debug_write_unsigned(read.device_status);
-        aegir::debug_write(" (needs-reset is ");
-        aegir::debug_write_unsigned(0x40u);
-        aegir::debug_write("), interrupt status ");
-        aegir::debug_write_unsigned(read.interrupt_status);
-        aegir::debug_write("\n");
-        write_line("FAIL", "the device never answered the read");
-    } else {
-        aegir::debug_write("      read sector 0: status ");
-        aegir::debug_write_unsigned(read.status);
-        aegir::debug_write(" (0 is ok), ");
-        aegir::debug_write_unsigned(read.used_bytes);
-        aegir::debug_write(" bytes used, first 16: ");
-        for (unsigned i = 0; i < 16; ++i) {
-            aegir::debug_write_hex(sector_data[i]);
-            aegir::debug_write(" ");
-        }
-        aegir::debug_write("\n");
+    /* The port this driver serves, and the shared window its answers cross
+     * through: the spawner made both, and the block says where they are
+     * (aegir/block.h). */
+    aegir::ipc::Owner port = aegir::ipc::Owner::find("port", 4);
+    if (!port.valid()) {
+        write_line("FAIL", "no port was given to me");
+        return 0;
     }
+    uint64_t window_address = 0;
+    uint32_t window_bytes = 0;
+    uint64_t window_physical = 0;
+    if (!aegir::bootstrap::shared_window(&window_address, &window_bytes, &window_physical)) {
+        write_line("FAIL", "no shared window was given to me");
+        return 0;
+    }
+
+    /* Who this device is, said by the driver rather than assigned: the unit is
+     * the number in the instance name -- blk.virtio0 is unit 0 -- and the
+     * public block-device name is "BD" with that unit (specs/services.md). */
+    aegir::block::Identify identify{};
+    identify.name[0] = 'B';
+    identify.name[1] = 'D';
+    identify.name[2] = '0';
+    {
+        uint32_t instance_length = 0;
+        char const *instance = aegir::bootstrap::name(&instance_length);
+        if (instance != nullptr) {
+            uint32_t start = instance_length;
+            while (start > 0 && instance[start - 1] >= '0' && instance[start - 1] <= '9') {
+                --start;
+            }
+            uint32_t const digits = instance_length - start;
+            if (digits > 0 && digits <= sizeof(identify.name) - 2) {
+                for (uint32_t i = 0; i < digits; ++i) {
+                    identify.name[2 + i] = instance[start + i];
+                }
+            }
+        }
+    }
+    identify.sector_count = capacity;
+    identify.sector_size = aegir::virtio::kSectorBytes;
+    identify.window_sectors = window_bytes / aegir::virtio::kSectorBytes;
+    uint32_t bd_length = 0;
+    while (bd_length < sizeof(identify.name) && identify.name[bd_length] != '\0') {
+        ++bd_length;
+    }
+    aegir::debug_write("      I am ");
+    aegir::debug_write(identify.name, bd_length);
+    aegir::debug_write(": window of ");
+    aegir::debug_write_unsigned(window_bytes / 1024);
+    aegir::debug_write(" KiB at ");
+    aegir::debug_write_hex(window_address);
+    aegir::debug_write(" (physical ");
+    aegir::debug_write_hex(window_physical);
+    aegir::debug_write(")\n");
 
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("virtio-blk", "ready");
-    /* A request needs a virtqueue and an interrupt or a poll loop, neither of which exists
-     * yet; when there is a port to serve, this is where the loop goes. director's boot
-     * thread stops waiting at the marker the same way it stops for every other service. */
-    aegir::halt();
-    return 0;
+
+    /* The serve loop. A request arrives as a method and one word; its data
+     * crosses through the window -- identify writes its answer there, and a
+     * read DMAs straight into it, because the window's physical base is an
+     * address the device can be pointed at. Calls serialize at the endpoint,
+     * so one window is all the protocol needs (aegir/block.h). */
+    for (;;) {
+        uint64_t word = 0;
+        seL4_Word badge = 0;
+        uint32_t const method = port.receive(&word, &badge);
+        if (method == aegir::block::kMethodIdentify) {
+            *reinterpret_cast<aegir::block::Identify *>(window_address) = identify;
+            port.reply(sizeof(aegir::block::Identify));
+        } else if (method == aegir::block::kMethodRead) {
+            uint64_t const first = aegir::block::read_first(word);
+            uint32_t const count = aegir::block::read_count(word);
+            uint32_t done = 0;
+            if (count <= identify.window_sectors && first + count <= capacity) {
+                for (uint32_t i = 0; i < count; ++i) {
+                    aegir::virtio::ReadResult const result = aegir::virtio::read_sector(
+                        registers, queue_page, memory_physical, first + i,
+                        window_physical +
+                            static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes,
+                        nullptr);
+                    if (!result.completed || result.status != 0) {
+                        break;
+                    }
+                    ++done;
+                }
+            }
+            port.reply(done);
+        } else {
+            /* A method we do not know is a protocol version we do not speak:
+             * the reply says so by saying nothing. */
+            port.reply(0);
+        }
+    }
 }
