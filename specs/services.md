@@ -166,10 +166,21 @@ because both sides of every port depend on them:
 - **Director creates every port the manifest declares**, holding the endpoint so
   that both sides get a capability to the same object without either having to
   hand the other anything. A service never grants access to itself.
-- **Rights are per side.** The owner gets read (receive) and write (reply); a
-  consumer gets write (send, and call) and nothing else. A consumer cannot be
-  reached *through* the port it calls, which is what makes the direction of a
-  port a property of the system rather than a convention.
+- **Rights are per side, and they are what make a port's direction real.** The
+  owner gets Read: it receives, and a *reply* needs nothing from the endpoint,
+  because the kernel hands the callee a reply capability instead. A consumer gets
+  Write -- and, if it *calls*, whatever else the kernel requires of a callable
+  capability. That last part is not a free choice: the kernel states the rule for
+  fault endpoints as "both Write rights and either Grant or GrantReply"
+  (`out/aegir/libsel4/include/interfaces/sel4_client.h:1202`), and the exact
+  minimal set for a caller is confirmed when `libs/aegir-ipc` is written and
+  checked at boot, so that it cannot quietly rot.
+  The narrowness is the point: **any Read holder can receive**. A consumer with
+  Read could take a call meant for the owner, because the kernel hands a message
+  to whichever receiver arrives first. Direction is therefore a capability fact
+  rather than a convention -- and it is why the owner does not get Write either: a
+  port that only its consumers may send to is a simpler thing to reason about
+  than one that anyone holding a capability may.
 - **Slots are declared, not discovered.** A service's ports -- the ones it owns and
   the ones it needs -- start at `kSlotFirstDeclared` and go upward in manifest
   order, so the layout is a reading of the manifest (`specs/director.md`).
@@ -335,6 +346,14 @@ registration. The names are different because the mechanisms are.
   by class (`blk.*`). Classes save a manifest edit per device and need a matching
   rule; exact names are unambiguous and make a new device type a manifest change.
   Proposal: class patterns, matched literally up to the `*`.
+- **May ports carry capabilities?** `Grant` and `GrantReply` are what let a
+  capability travel inside a message or a reply, and Aegir's ancestry — message
+  ports as the thing you hand someone — suggests they eventually should. For now
+  the answer is no: the device manager's grants happen at *spawn*, by installing
+  capabilities into a driver's CSpace the way director does for its children, and
+  nothing yet needs to hand a capability to a process that is already running.
+  Making it a property of individual ports, when hot-plug needs it, is the shape
+  to design then, rather than granting it to every port now.
 - **Who registers `Initrd:`** — proposal: director, the moment the VFS is up.
 - **Hot-plug** (a device appearing later) and **device removal** are unmodelled;
   both end up as registry updates plus spawn/stop requests.
