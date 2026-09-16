@@ -704,10 +704,17 @@ and answers "who owns this device?" for everyone else.
   taught). It probes each granted frame for the virtio id in the device's registers,
   carves the driver's queue memory, mints it a log port, and waits for its ready before
   its own.
-- **next**: the rest of the bus -> device -> service map -- recognising devices from the
-  tree rather than a table of one row -- and each driver's interrupt. What the service
-  still does not have is anything to *serve*, which is why it owns no port and why its
-  report goes to the console.
+- **done**: the bus -> device -> service map is real. A static registry says which
+  driver handles which compatible string -- and, on a virtio transport, which probed
+  device id -- and the map is derived from the device tree at runtime, joined with the
+  frames director granted: a device the tree describes but nobody granted is reported,
+  not driven. Bound devices get instance names (`blk.virtio0`, not `blkdriver`), built
+  when the join succeeds, and the map is sized by two walks of the tree so it grows
+  with the machine. Adding a driver is adding a registry row.
+- **next**: each driver's interrupt -- the tree already says it (`blk.virtio0 ... irq 7`),
+  what is missing is IRQControl custody and the handler cap -- and a port for the
+  device manager itself, so the map is something other services can ask about rather
+  than something the console prints.
 
 Devices are given to a driver the way everything else here is given: capabilities
 for the device's register frames (retyped from the device's own untyped memory --
