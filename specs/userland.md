@@ -145,3 +145,45 @@ in it.
 So: anything in the tens of kilobytes belongs in **static storage**, and a service's
 stack budget is part of what it can be asked to do. `apps/aegir-device-manager` keeps its
 allocator at file scope for this reason, with the reason written next to it.
+
+## The rules live in the libraries
+
+Every constraint in this file was learned by breaking it, and every one is a rule a
+*user-space program* should never have to know. That is what Aegir's libraries are for: a
+caller says what it wants, and the library does the thing that is legal. **Anything
+discovered here belongs in a library before it belongs in a program -- and director is a
+program.**
+
+Where the rules stand today is mostly good: `apps/aegir-director/src/ports.cc` and
+`services.cc` contain *no* raw seL4 invocations at all. Every leak is in one file,
+`main.cc`, and there are three of them -- `Untyped_Retype`, the `untypedList` walk, and
+`CNode_Copy`. That is the whole list, which is why it fits in a table.
+
+| the rule | the library that owns it | what a caller sees |
+|---|---|---|
+| a slot cursor advances only when the install succeeds | `aegir-mem`, `Allocator` | `alloc_slot()` and a failure path that gives the slot back -- today it advances unconditionally, so a failed install burns one |
+| a capability installed into another CSpace is named by a path: root, slot, depth | `aegir-spawn` | a path handed out per object. Never arithmetic on slots: `device_frame + i` is adjacency reasoning, and adjacency holds by accident |
+| retyping into *our own* CSpace means depth zero; into another, its size | `aegir-mem`, `Allocator` and `adopt_slots` | `adopt_slots` is told the depth once, and no caller sees the rule |
+| a frame maps into one VSpace; sharing means duplicating the capability and mapping the copy | `aegir-mem`, `ChildVSpace` | one call that copies and maps in the right order -- today `main.cc` does it by hand |
+| a device frame comes from the device untyped covering its address, and the retype cursor only moves forwards | `aegir-mem`, `Allocator` | `device_frame(paddr)`, one call -- today `main.cc` walks `untypedList` and retypes by hand |
+| an untyped that has been split cannot be given away until its halves are dealt with | `aegir-mem`, `carve_untyped` | a capability that *can* be passed on, with the splitting work done inside |
+| starting a process takes a CSpace, a TCB, an address space, a stack and a binary | `aegir-spawn`, `Spawner` | one call, over a bootinfo for the root task and over *delegated authority* for a service |
+| a service's stack is what the spawner gives it, and a library object can be tens of kilobytes | `aegir-spawn` | the stack size is a spawn parameter and the block says what it was, so a service can make its own choice |
+
+**The measure of success is that a program contains none of the sentences in the left
+column.** When a rule shows up in an application, that is a library that is missing
+something rather than an application that is doing it wrong -- and the fix is to move it,
+not to document it again.
+
+**The order worth doing them in**, cheapest first:
+
+1. `Allocator::alloc_slot` and its failure path -- ours, three lines, and it is the bug
+   shape behind `seL4_DeleteFirst`.
+2. `Allocator::device_frame(paddr)` -- the device walk in `main.cc` becomes one call, and
+   the retype-cursor behaviour stops being something a caller has to know.
+3. `ChildVSpace` gaining a map-and-share call -- the `CNode_Copy` in `main.cc` goes away.
+4. `Spawner` over delegated authority -- the pieces exist (`adopt_untyped`, `adopt_slots`,
+   `Allocator::make_asid_pool`); what is missing is a `Spawner` constructor that takes
+   them instead of a bootinfo, and it is what a device manager needs to start a driver.
+5. Frames as a *list* through the spawn path, replacing the inferred range -- which is
+   where the current work on handing a service a window of devices stopped.
