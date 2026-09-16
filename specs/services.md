@@ -430,9 +430,6 @@ The **device manager** is a service that owns that report and acts on it: it is
 the process that holds the map, launches the drivers for the devices it finds,
 and answers "who owns this device?" for everyone else.
 
-The device manager is not spawned yet; this milestone is the foundation it needs,
-and saying which half exists is the point of writing it down:
-
 - **exists**: director maps the device tree and hands it to the device manager
   through the bootstrap block (a `Devices` entry: the blob's address in the child's
   own address space, and its size). The device manager reads it with our own reader
@@ -525,6 +522,16 @@ and saying which half exists is the point of writing it down:
   device's physical address -- identical transports are told apart only by where they
   are, so a service that drives one has to be told *which* -- and `data_offset` is
   where in its own address space it can read them.
+- **where a driver's shared parts go, and why nothing moved yet**: the first driver,
+  virtio-blk, has a register window and a status handshake that every virtio device on the
+  bus shares -- the layout is the same ABI for all of them (virtio 1.x, 4.2.2), and the
+  handshake is: reset, ACKNOWLEDGE, DRIVER, features, FEATURES_OK, verify, DRIVER_OK --
+  while only the config space and the request queue are the device's own. Those shared parts
+  live in one header, `apps/aegir-virtio-blk/src/virtio_mmio.h`, marked as the seam rather
+  than split into a library in advance of the evidence that says where the split belongs.
+  The second driver is what turns that comment into a library, and the queue is the third
+  thing to look at, because a virtqueue is the same shape for every device too. Naming the
+  library early would be a guess about the seam; the second driver makes it a measurement.
 - **next, and designed**: give the device manager the *series* of transport frames, so
   it can inspect every transport rather than only its own. The shape:
   - the survey already retypes and keeps every page of the series, one slot per page;
