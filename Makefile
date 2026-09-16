@@ -7,6 +7,10 @@
 SHELL := /bin/bash
 PYTHON ?= python3
 
+# Which target make build/run act on. The others are the rest of the
+# memory/cores envelope (scripts/targets.py); `make envelope` walks them.
+TARGET ?= aegir
+
 # Wall-clock limits. Generous, but finite.
 TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800
@@ -14,7 +18,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check build run test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check build run envelope test clean distclean
 
 all: help
 
@@ -46,10 +50,16 @@ deps-check: ## verify vendored trees match their pins, patches and licenses
 	$(PYTHON) scripts/check_pins.py
 
 build: ## configure and build Aegir's own root task
-	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target aegir --build-only
+	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only
 
 run: ## boot Aegir under QEMU, stopping once it reports online
-	timeout $(BOOT_TIMEOUT) $(PYTHON) scripts/run_target.py --target aegir
+	timeout $(BOOT_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET)
+
+envelope: ## build and boot every target in the memory/cores envelope
+	@for target in aegir aegir-2g-smp2 aegir-2g-smp4 aegir-8g-smp4; do \
+		echo "== $$target"; \
+		timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $$target || exit 1; \
+	done
 
 test: ## build and boot the seL4 test suite on qemu-riscv-virt (acceptance test)
 	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_target.py --target sel4test

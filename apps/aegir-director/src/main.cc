@@ -80,7 +80,16 @@ void heading(char const *text) noexcept
 void report_size(uint64_t bytes) noexcept
 {
     if (bytes >= (1ull << 30)) {
+        /* Fractional, because whole-GiB truncation turns 2044 MiB into "1 GiB"
+         * and 3069 MiB into "2 GiB" -- a report that rounds by a gigabyte is
+         * worse than no report. */
         number(bytes >> 30);
+        write(".");
+        uint64_t hundredths = ((bytes & ((1ull << 30) - 1)) * 100) >> 30;
+        if (hundredths < 10) {
+            write("0");
+        }
+        number(hundredths);
         write(" GiB");
     } else if (bytes >= (1ull << 20)) {
         number(bytes >> 20);

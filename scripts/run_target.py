@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -44,18 +45,58 @@ def bash(command: str, cwd: Path, timeout: int) -> None:
 def configure(target: Target, build_dir: Path, timeout: int) -> None:
     build_dir.mkdir(parents=True, exist_ok=True)
     flags = " ".join(target.configure_flags)
-    relative = os.path.relpath(ENV_SCRIPT.parent.parent, build_dir)
-    bash(f"{relative}/init-build.sh {flags}".strip(), build_dir, timeout)
+    root = ENV_SCRIPT.parent.parent
+    if target.source_dir == ".":
+        relative = os.path.relpath(root, build_dir)
+        bash(f"{relative}/init-build.sh {flags}".strip(), build_dir, timeout)
+        return
+
+    # A project inside the tree: the root's init-build.sh decides which project to
+    # configure by looking for a CMakeLists.txt next to itself
+    # (tools/seL4/cmake-tool/init-build.sh:41-54), and next to *our* root there is
+    # one -- so it would configure Aegir instead. Name the project directly, with
+    # the command init-build.sh's easy-settings path uses.
+    source = os.path.relpath(root / target.source_dir, build_dir)
+    cache = os.path.relpath(root / ".sel4_cache", build_dir)
+    bash(
+        f"cmake -G Ninja {flags} -DSEL4_CACHE_DIR={cache} "
+        f"-C {source}/settings.cmake {source}",
+        build_dir,
+        timeout,
+    )
 
 
 def build(target: Target, build_dir: Path, timeout: int) -> None:
     bash("ninja", build_dir, timeout)
 
 
+def configured_flags(build_dir: Path) -> str:
+    """The configure flags a build directory was last configured with.
+
+    The memory and core count a target asks for are configure-time values (the
+    device tree is dumped with them, scripts/targets.py), so a build directory
+    that was configured for a different machine has to be reconfigured rather
+    than reused -- ninja alone would happily keep building the old one.
+    """
+    stamp = build_dir / ".aegir-configure"
+    return stamp.read_text(encoding="utf-8") if stamp.is_file() else ""
+
+
+def record_flags(build_dir: Path, flags: str) -> None:
+    (build_dir / ".aegir-configure").write_text(flags, encoding="utf-8")
+
+
 def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, str]:
     """Boot the image, streaming the console until the marker appears."""
+    # The target's extra arguments belong to QEMU, not to the simulate script, so
+    # they go through --extra-qemu-args as one string -- attached with `=` rather
+    # than passed as a separate argument, because the value starts with `-bios`
+    # and the script's argparse refuses a value that looks like an option (and
+    # would read a loose `-bios` as its own `-b`).
+    extra = " ".join(target.qemu_args)
+    command = "./simulate --extra-qemu-args=" + shlex.quote(extra)
     process = subprocess.Popen(
-        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec ./simulate"],
+        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec {command}"],
         cwd=str(build_dir),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -113,9 +154,22 @@ def main(argv: list[str]) -> int:
     target = TARGETS[arguments.target]
     build_dir = pins.ROOT / target.build_dir
 
+    wanted_flags = " ".join(target.configure_flags)
     try:
-        if arguments.reconfigure or not (build_dir / "build.ninja").is_file():
+        stamp = configured_flags(build_dir)
+        if (
+            arguments.reconfigure
+            or not (build_dir / "build.ninja").is_file()
+            or (stamp != "" and stamp != wanted_flags)
+        ):
+            print(f"INFO  (re)configuring {target.name} as: {wanted_flags or 'defaults'}", flush=True)
             configure(target, build_dir, arguments.timeout)
+            record_flags(build_dir, wanted_flags)
+        elif stamp == "":
+            # An existing build directory from before this record existed: adopt
+            # it as configured with what the target now asks for, so a later
+            # change is still noticed.
+            record_flags(build_dir, wanted_flags)
         build(target, build_dir, arguments.timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         pins.report(False, f"{target.name} build failed", str(exc))

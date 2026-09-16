@@ -27,6 +27,22 @@ set(CROSS_COMPILER_PREFIX "riscv64-unknown-elf-" CACHE STRING "Cross compiler pr
 # (see specs/build.md), and the simulate script runs QEMU with -bios none.
 set(SIMULATION ON CACHE BOOL "Build for simulation")
 
+# The machine this build is for: RAM and cores. Both are baked in at *configure*
+# time, because QEMU is run once with `-m` and `-smp` to dump the device tree
+# that the kernel, the ELF loader and the image flow all read
+# (kernel/src/plat/qemu-riscv-virt/config.cmake:83-132). A change here is
+# therefore a new target and a new build directory, not a run-time flag
+# (scripts/targets.py). The values below are the floor of the envelope Aegir
+# designs to -- 2 GiB and one core (specs/aegir.md) -- and a target that widens
+# it passes -DQEMU_MEMORY=... / -DKernelMaxNumNodes=... on the configure line,
+# which wins: the platform config only sets these when they are not already
+# defined, and these are plain CACHE sets without FORCE.
+set(QEMU_MEMORY "2048" CACHE STRING "RAM the kernel is built for, in MiB")
+# More than one turns on ENABLE_SMP_SUPPORT (kernel/config.cmake:153-157) and
+# dumps the device tree with `-smp N`, so the run side has to offer QEMU the same
+# number of harts or the kernel looks for cores that are not there.
+set(KernelMaxNumNodes 1 CACHE STRING "CPU cores the kernel is built for")
+
 # Development target: kernel debug syscalls (seL4_DebugPutChar, used by the
 # hello root task) and kernel assertions.
 set(KernelDebugBuild ON CACHE BOOL "Kernel debug build")

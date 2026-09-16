@@ -164,6 +164,16 @@ configuration claim (`specs/build.md` deliberately trades that already, for the
 default RISC-V ABI) plus a change to priority and scheduling semantics across
 every service. It is an open decision, not a deferred default.
 
+**Placement is a separate decision from budget.** With more than one core
+(`specs/build.md`'s envelope), which core a service runs on is a resource
+decision of its own: the kernel brings the other harts up and then leaves them
+idle, and a thread runs where it was told to (`seL4_TCB_SetAffinity`). Director
+currently gives everything to the core it started on, which is the honest default
+while there is one service — and the manifest is the obvious place to declare
+placement when there are more, because it is already where a service's authority
+is declared. Not designed yet; recorded so the first multi-core service is not
+the thing that discovers it.
+
 ## Multiuser
 
 What multiuser means here, concretely:

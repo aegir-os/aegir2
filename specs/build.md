@@ -32,6 +32,43 @@ pinned source rather than assumed:
 All architecture-specific detail lives in `configs/` and the CMake glue so that
 application code stays portable across the targets above (project rule).
 
+### The machine, not the architecture
+
+Two of the values a target fixes are not architecture at all -- RAM and cores --
+and both are **configure-time**. For `qemu-riscv-virt` the platform config runs
+QEMU once with `-m` and `-smp` to dump the device tree
+(`kernel/src/plat/qemu-riscv-virt/config.cmake:83-132`), and the kernel, the ELF
+loader and the image flow all read that DTB. A different RAM size or core count is
+therefore a different build directory rather than a run-time flag, and the
+simulate side has to offer QEMU the same number of harts or the kernel looks for
+cores that are not there.
+
+The envelope Aegir designs to is in `specs/aegir.md`: 2 GiB and one core at the
+floor, 4-8 GiB and more cores expected. The QEMU matrix we build and boot:
+
+| Target | RAM | Cores |
+| --- | --- | --- |
+| `aegir` -- the default, and the floor | 2048 MiB | 1 |
+| `aegir-2g-smp2` | 2048 MiB | 2 |
+| `aegir-2g-smp4` | 2048 MiB | 4 |
+| `aegir-8g-smp4` | 8192 MiB | 4 |
+
+`make envelope` builds and boots all four, because they are four kernels;
+`make build` and `make run` act on `$(TARGET)`, which defaults to `aegir`. The
+numbers are data -- defaults in `configs/riscv64-qemu-virt.cmake`, overridden per
+target in `scripts/targets.py`, which also carries the `-smp` the simulate script
+has no concept of -- so a new point in the matrix is an entry, not a code change.
+
+SMP is a deliberate step further from the verified configuration: more than one
+core sets `KernelMaxNumNodes`, which turns on `ENABLE_SMP_SUPPORT`
+(`kernel/config.cmake:150-157`), and the configuration seL4 verifies for RISC-V is
+single-core. The verification claim was already traded away for the default
+`lp64d` ABI earlier in this file; this is the same kind of trade, recorded rather
+than assumed. What the kernel guarantees is that the other harts come up and
+idle. *Placing* work on them is userland's -- `seL4_TCB_SetAffinity`
+(`out/aegir/libsel4/include/interfaces/sel4_client.h:1727`) -- and director does
+not do that yet (`specs/authority.md`).
+
 ## Toolchain
 
 One toolchain builds everything — kernel, `libsel4`, the seL4 libraries and
@@ -198,8 +235,9 @@ built from source. Everything else is fetched on demand:
 ```sh
 make deps         # fetch vendored sources at their pinned revisions
 make deps-check   # verify pins, patches and license files
-make build        # configure + build the default target
-make run          # boot the image under QEMU
+make build        # configure + build $(TARGET) (default: aegir)
+make run          # boot $(TARGET) under QEMU
+make envelope     # build + boot every machine in the envelope above
 make test         # build + boot sel4test, check for the success marker
 make clean
 ```

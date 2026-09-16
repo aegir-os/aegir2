@@ -3,11 +3,19 @@
 Data, not logic: `scripts/run_target.py` does the work. Adding a target here is
 how a new machine or configuration becomes runnable, and the architecture
 specific values themselves live in configs/.
+
+Two of the values a target carries are *not* run-time flags: the amount of RAM
+and the number of CPU cores are baked in at configure time, because the device
+tree is dumped from QEMU with them and everything downstream reads that
+(kernel/src/plat/qemu-riscv-virt/config.cmake:83-132). A different pair of
+numbers is therefore a different build directory, which is why they appear as
+configure flags here and as `-smp` in the simulate arguments -- and why the two
+have to agree (specs/build.md).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -15,21 +23,45 @@ class Target:
     name: str
     description: str
     build_dir: str
-    # Flags passed to init-build.sh. Aegir's own target needs none: our pins
-    # live in settings.cmake and configs/. Upstream targets have to be told,
-    # which is a useful reminder that their defaults are not our decisions.
+    # Flags passed to init-build.sh. Aegir's own targets need none beyond the
+    # machine they are for: our pins live in settings.cmake and configs/.
+    # Upstream targets have to be told, which is a useful reminder that their
+    # defaults are not our decisions.
     configure_flags: tuple[str, ...]
     marker: str
+    # The project this target configures, relative to the repository root. Our
+    # own targets configure the root project; an upstream project inside the tree
+    # (projects/sel4test) has to be named, because the root's init-build.sh would
+    # configure *our* root and the cached source directory would not match.
+    source_dir: str = "."
+    # Extra arguments handed to QEMU through the simulate script. The script has
+    # no concept of cores, so `-smp` comes through here, and `-bios none` is its
+    # own default repeated because passing anything replaces that default rather
+    # than adding to it.
+    qemu_args: tuple[str, ...] = field(default_factory=lambda: ("-bios none",))
+
+
+def _aegir(memory_mib: int, cores: int, name: str) -> Target:
+    """One point in the memory/cores envelope Aegir designs to (specs/aegir.md)."""
+    return Target(
+        name=name,
+        description=f"Aegir's own root task -- {memory_mib} MiB, {cores} core(s)",
+        build_dir=f"out/{name}",
+        configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}"),
+        marker="AEGIR_BOOT_OK",
+        qemu_args=("-bios none", f"-smp {cores}"),
+    )
 
 
 TARGETS: dict[str, Target] = {
-    "aegir": Target(
-        name="aegir",
-        description="Aegir's own root task",
-        build_dir="out/aegir",
-        configure_flags=(),
-        marker="AEGIR_BOOT_OK",
-    ),
+    # The floor of the envelope: the smallest machine Aegir supports, and where
+    # capacity problems are meant to show up first.
+    "aegir": _aegir(2048, 1, "aegir"),
+    # The rest of the QEMU matrix we care about, at the floor's memory and at the
+    # upper end of the expected range.
+    "aegir-2g-smp2": _aegir(2048, 2, "aegir-2g-smp2"),
+    "aegir-2g-smp4": _aegir(2048, 4, "aegir-2g-smp4"),
+    "aegir-8g-smp4": _aegir(8192, 4, "aegir-8g-smp4"),
     "sel4test": Target(
         name="sel4test",
         description="upstream seL4 test suite (acceptance test for the vendored kernel)",
@@ -41,5 +73,10 @@ TARGETS: dict[str, Target] = {
             "-DSIMULATION=ON",
         ),
         marker="All is well in the universe",
+        source_dir="projects/sel4test",
     ),
 }
+
+# The envelope, in the order it is worth trying: the floor first, then the same
+# machine with more cores, then the upper end of the expected memory range.
+ENVELOPE: tuple[str, ...] = ("aegir", "aegir-2g-smp2", "aegir-2g-smp4", "aegir-8g-smp4")

@@ -40,8 +40,13 @@ make deps        # fetch the vendored seL4 tree at its pinned revisions
 make deps-check  # verify every vendored tree matches its pin
 make build       # configure + build Aegir's root task
 make run         # boot it under QEMU (stops once it reports online)
+make envelope    # boot every machine in the RAM/cores envelope we support
 make test        # build + boot the seL4 test suite (kernel acceptance test)
 ```
+
+`make build` and `make run` act on `TARGET`, which defaults to `aegir` -- the
+floor of the envelope (2 GiB, one core). `make run TARGET=aegir-8g-smp4` boots
+the upper end; `scripts/targets.py` holds the list.
 
 `make tools` and `make deps` need network access and happen once; after that the
 build is offline. Every step is pinned: revisions in `manifests/`, tool versions

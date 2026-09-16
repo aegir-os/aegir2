@@ -11,6 +11,19 @@ in the future.
 
 Initial target will be qemu virt machine on RISC-V 64 (qemu-system-riscv64).
 
+The machine envelope Aegir designs for, which everything capacity-shaped has to
+survive:
+
+| | Floor | Expected |
+| --- | --- | --- |
+| RAM | **2 GiB** | 4-8 GiB |
+| Cores | 1 | more on real boards; QEMU targets are 1, 2 and 4 |
+
+The floor is what `make run` boots by default, deliberately: a system that only
+works on a big machine has a capacity problem that nobody has met yet. The rest
+of the matrix is data in `scripts/targets.py` and one `make envelope` away
+(`specs/build.md`).
+
 ## Specifications
 
 - `specs/director.md` — the root task: the services it starts, the authority it
