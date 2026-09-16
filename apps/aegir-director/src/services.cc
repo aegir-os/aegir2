@@ -56,7 +56,8 @@ bool Services::prepare(mem::Account &account) noexcept
 
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
                     Boot &boot, Supervisor *supervisor, void const *devices,
-              uint32_t devices_bytes) noexcept
+              uint32_t devices_bytes, seL4_CPtr device_frame,
+              uint32_t device_bytes) noexcept
 {
     boot.declared = manifest.size();
     boot.started = 0;
@@ -102,6 +103,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.port_count = graph_.grant_count(i);
         request.devices = devices;
         request.devices_bytes = devices_bytes;
+        request.device_frame = device_frame;
+        request.device_bytes = device_bytes;
         request.fault_endpoint = fault_endpoint_;
         /* Badges count from one so that zero keeps meaning "nobody in
          * particular" -- which is what director itself looks like. */

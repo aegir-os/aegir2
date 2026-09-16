@@ -111,6 +111,27 @@ int main(int argc, char *argv[])
     aegir::debug_write_unsigned(report.with_region);
     aegir::debug_write(" with a register window\n");
 
+    /* The device this service is for, if it was given one. A driver's first line is
+     * reading its device's identity: the magic says a real transport is there and the
+     * device id says whether anything is behind it (virtio 1.x, 4.2.2). */
+    uint64_t device_address = 0;
+    uint32_t device_bytes = 0;
+    if (!aegir::bootstrap::device(&device_address, &device_bytes)) {
+        write_line("my device", "none was given");
+    } else {
+        auto *registers = reinterpret_cast<volatile uint32_t *>(device_address);
+        uint32_t const magic = registers[0x00 / 4];
+        uint32_t const device_id = registers[0x08 / 4];
+        aegir::debug_write("      my device at ");
+        aegir::debug_write_hex(device_address);
+        aegir::debug_write(": magic ");
+        aegir::debug_write_hex(magic);
+        aegir::debug_write(", device id ");
+        aegir::debug_write_unsigned(device_id);
+        aegir::debug_write(magic == 0x74726976u ? "  (virtio: the magic reads)\n"
+                                               : "  (not a virtio transport)\n");
+    }
+
     /* Ready: whoever spawned us can carry on, and the supervisor can tell
      * everyone else apart from us (specs/director.md). */
     seL4_Signal(aegir::bootstrap::kSlotSupervision);

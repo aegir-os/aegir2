@@ -65,6 +65,11 @@ struct Request {
      *  hardware by its spawner. Null for a child that is given no such thing. */
     void const *devices = nullptr;
     uint32_t devices_bytes = 0;
+    /* A device's register window to map into the child, for a service that drives
+     *  one. Zero when the child is given no device. The capability stays the
+     *  caller's: a mapping is what the child needs, not the frame. */
+    seL4_CPtr device_frame = 0;
+    uint32_t device_bytes = 0;
     char const *name;
     uint32_t name_length;
     char const *binary;

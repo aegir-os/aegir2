@@ -217,7 +217,8 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
  *  transport, which is what makes reading them safe. */
 unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &allocator,
                         aegir::mem::Scratch &scratch, uint64_t untyped_base, uint64_t first,
-                        uint64_t last) noexcept {
+                        uint64_t last, seL4_CPtr *frame_out) noexcept {
+    *frame_out = 0;
     seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
     for (seL4_Word i = 0; i < count; ++i) {
         seL4_UntypedDesc const &desc = bootinfo->untypedList[i];
@@ -267,6 +268,9 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
                 continue;
             }
             ++busy;
+            /* Kept, not just reported: this frame is what a driver is given, and the
+             * pages before it had to be taken anyway (specs/services.md). */
+            *frame_out = slot;
             aegir::debug_write("  device at ");
             aegir::debug_write_hex(address);
             aegir::debug_write(": magic ");
@@ -516,7 +520,8 @@ void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
 bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest const &manifest,
                    aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                    aegir::mem::Arena &arena, aegir::mem::Account &account,
-                  void const *devices, uint32_t devices_bytes) noexcept
+                  void const *devices, uint32_t devices_bytes, seL4_CPtr device_frame,
+                  uint32_t device_bytes) noexcept
 {
     auto *started =
         static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
@@ -547,7 +552,7 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     }
 
     Boot boot{};
-    services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes);
+    services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes, device_frame, device_bytes);
 
     heading("boot set");
     write("  ");
@@ -670,11 +675,12 @@ int main(int argc, char *argv[])
     uint64_t device_untyped = 0;
     uint64_t first_transport = 0;
     uint64_t last_transport = 0;
+    seL4_CPtr device_frame = 0;
     failures += report_device_memory(bootinfo, device_tree, device_tree_bytes, &device_untyped,
                                     &first_transport, &last_transport);
     if (device_untyped != 0 && last_transport != 0) {
-        failures +=
-            survey_devices(bootinfo, allocator, scratch, device_untyped, first_transport, last_transport);
+        failures += survey_devices(bootinfo, allocator, scratch, device_untyped,
+                                   first_transport, last_transport, &device_frame);
     }
 
     /* Everything boot allocates is charged to the system account
@@ -735,7 +741,13 @@ int main(int argc, char *argv[])
 
     bool booted = false;
     if (initrd_ok && manifest_ok) {
-        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree, device_tree_bytes);
+        /* No device is handed over yet: the spawner's mapping of a device frame is
+         * refused (see specs/services.md), and the boot says "none was given" rather
+         * than failing. The frame the survey kept is the one to pass on the day that
+         * works. */
+        static_cast<void>(device_frame);
+        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
+                               device_tree_bytes, 0, 0);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread

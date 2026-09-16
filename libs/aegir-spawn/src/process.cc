@@ -251,6 +251,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * manager. It goes above the stack so a bigger program cannot collide with it,
      * and the child reads it in place. */
     uint64_t devices_address = 0;
+    uint64_t devices_end = stack_top;
     if (request.devices != nullptr && request.devices_bytes > 0) {
         uint64_t const pages = (request.devices_bytes + kPage - 1) / kPage;
         if (!vspace.populate(stack_top, static_cast<unsigned>(pages), request.devices,
@@ -258,10 +259,31 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             return fail("the blob the child was to be given could not be mapped");
         }
         devices_address = stack_top;
+        devices_end = stack_top + pages * kPage;
+    }
+
+    /* A device's registers, if the caller gave one: mapped above everything else, so
+     * it cannot collide with the image or the blob, and recorded in the block. The
+     * frame is *mapped* rather than given -- the capability stays with whoever
+     * retyped it out of the machine's device memory (specs/services.md). */
+    uint64_t device_address = 0;
+    if (request.device_frame != 0 && request.device_bytes > 0) {
+        if (request.device_bytes > kPage) {
+            /* One frame is one page of registers, and the transports are 4 KiB
+             * each. A wider window would need one frame per page and the caller to
+             * say which; refusing is honest. */
+            return fail("a device window wider than one page is not handled yet");
+        }
+        uintptr_t const at = align_up(static_cast<uintptr_t>(devices_end), kPage);
+        if (!vspace.map_page(at, request.device_frame, true, account)) {
+            return fail("the device's registers could not be mapped into the child");
+        }
+        device_address = at;
     }
     if (bootstrap::write(block_storage, kBlockBytes, request.name, request.name_length,
                          request.account, request.account_length, port_entries,
-                         request.port_count, devices_address, request.devices_bytes) == nullptr) {
+                         request.port_count, devices_address, request.devices_bytes,
+                         device_address, request.device_bytes) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {

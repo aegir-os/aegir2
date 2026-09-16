@@ -473,6 +473,15 @@ and saying which half exists is the point of writing it down:
   them from the bottom up was wrong, and acting on it made director prefer the one
   transport with *no* device behind it. The boot no longer claims to know which
   transport is busy; the survey reads, and says.
+- **a device is not yet given to a service**: the pieces are in place and compiled --
+  a `Device` block entry (address and size, separate from the `Devices` blob), a
+  `Request` field the spawner maps above the blob, and the device manager reading its
+  own device's magic and device id -- but the spawner's `ChildVSpace::map_page`
+  refuses the device frame, so nothing is passed and the device manager says "my
+  device: none was given". Next is to find out why: whether `map_page` creates the
+  page tables for an address above the image at all, whether it wants the frame as
+  the caller's capability or a copy, and whether a device frame can be mapped
+  writable. The frame the survey keeps is the one to hand over when it works.
 
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
