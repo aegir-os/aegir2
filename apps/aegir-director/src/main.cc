@@ -220,10 +220,12 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
 unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &allocator,
                         aegir::mem::Scratch &scratch, uint64_t untyped_base, uint64_t first,
                         uint64_t last, seL4_CPtr *frame_out, uint32_t *count_out,
-                        uint64_t *physical_out) noexcept {
+                        uint64_t *physical_out, aegir::director::Device *found, uint32_t capacity,
+                        uint32_t *device_count) noexcept {
     *frame_out = 0;
     *count_out = 0;
     *physical_out = 0;
+    *device_count = 0;
     seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
     for (seL4_Word i = 0; i < count; ++i) {
         seL4_UntypedDesc const &desc = bootinfo->untypedList[i];
@@ -285,10 +287,16 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
                 continue;
             }
             ++busy;
-            /* What a service is given is *this* device: its own frame, and where it sits in
-             * the machine -- identical transports answer identically to every register read, so
-             * position is the only thing that says which one it holds. The whole window is kept
-             * as well; giving a service *all* of them is the series work (specs/services.md). */
+            /* The survey's list: one entry per device the machine has behind a transport, in
+             * the order the tree names them. A service is given the device its section names
+             * by id, and identical transports answer identically to every register read, so
+             * the id and the position together are what say which device it holds
+             * (specs/services.md). The two outputs below keep reporting the last device for
+             * the report that follows; the list is what a service is given. */
+            if (*device_count < capacity) {
+                found[*device_count] = aegir::director::Device{address, device_id, slot};
+            }
+            ++(*device_count);
             *frame_out = slot;
             *physical_out = address;
             aegir::debug_write("  device at ");
@@ -697,21 +705,31 @@ int main(int argc, char *argv[])
     uint64_t device_untyped = 0;
     uint64_t first_transport = 0;
     uint64_t last_transport = 0;
+    /* Everything boot allocates is charged to the system account (specs/authority.md), and
+     * its capacity grows on demand; there is no ceiling chosen here. Both the account and
+     * the arena are built here, above the survey, because the survey's list of devices
+     * lives in the arena. */
+    aegir::mem::Account system{"system", 0, 0, 0};
+    aegir::mem::Arena arena(allocator, scratch, system);
     seL4_CPtr device_frame = 0;
     uint32_t device_frame_count = 0;
     uint64_t device_physical = 0;
     failures += report_device_memory(bootinfo, device_tree, device_tree_bytes, &device_untyped,
                                     &first_transport, &last_transport);
+    /* One entry per device the machine has behind a transport, in the arena. The span the
+     * tree names is the bound: a page can hold at most one device (specs/services.md). */
+    uint32_t const bus_slots =
+        static_cast<uint32_t>(((last_transport - first_transport) / 4096) + 2);
+    aegir::director::Device *bus = static_cast<aegir::director::Device *>(
+        arena.allocate(sizeof(aegir::director::Device) * bus_slots));
+    uint32_t bus_count = 0;
     if (device_untyped != 0 && last_transport != 0) {
         failures += survey_devices(bootinfo, allocator, scratch, device_untyped,
                                    first_transport, last_transport, &device_frame,
-                                   &device_frame_count, &device_physical);
+                                   &device_frame_count, &device_physical, bus, bus_slots,
+                                   &bus_count);
     }
 
-    /* Everything boot allocates is charged to the system account
-     * (specs/authority.md). Its capacity grows on demand; there is no ceiling
-     * chosen here. */
-    aegir::mem::Account system{"system", 0, 0, 0};
     /* Spawn rights begin here. A service that makes address spaces needs address space
      * ids of its own, and the kernel makes an ASID pool from an *untyped* rather than
      * by retyping (seL4_ARCH_ASIDControl_MakePool; sel4test does the same in
@@ -731,8 +749,6 @@ int main(int argc, char *argv[])
         number(asid_pool);
         write("\n");
     }
-
-    aegir::mem::Arena arena(allocator, scratch, system);
 
     heading("memory");
     write("  untyped: ");
