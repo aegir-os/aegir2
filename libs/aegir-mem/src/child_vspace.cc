@@ -42,9 +42,15 @@ bool ChildVSpace::create(Account &account) noexcept
 }
 
 bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
-                           Account &account) noexcept
+                           Account &account, seL4_Error *error_out) noexcept
 {
+    if (error_out != nullptr) {
+        *error_out = seL4_NoError;
+    }
     if (root_ == 0 || frame == 0) {
+        if (error_out != nullptr) {
+            *error_out = seL4_InvalidCapability;
+        }
         return false;
     }
     seL4_CapRights_t const rights = writable ? seL4_AllRights : seL4_CanRead;
@@ -77,6 +83,9 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
         error = seL4_RISCV_Page_Map(frame, root_, address, rights, seL4_RISCV_Default_VMAttributes);
     }
     if (error != seL4_NoError) {
+        if (error_out != nullptr) {
+            *error_out = error;
+        }
         return false;
     }
     ++mapped_pages_;

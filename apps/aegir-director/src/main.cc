@@ -741,12 +741,18 @@ int main(int argc, char *argv[])
 
     bool booted = false;
     if (initrd_ok && manifest_ok) {
-        /* No device is handed over yet: the spawner's mapping of a device frame is
-         * refused (see specs/services.md), and the boot says "none was given" rather
-         * than failing. The frame the survey kept is the one to pass on the day that
-         * works. */
+        /* No device is handed over yet. The kernel's answer to the attempt was
+         * seL4_InvalidCapability -- "a frame that does not belong to the passed
+         * address space" (kernel/src/arch/riscv/kernel/vspace.c:867-875) -- which
+         * means the frame still counts as mapped even after unmapping it from our
+         * window and after copying it, so what holds it is not yet known. Both
+         * variants were tried (unmap-then-map-the-frame, and unmap-then-copy-and-map-
+         * the-copy); the next one is the manual's rule read more carefully, since the
+         * copy is what the manual prescribes (kernel/manual/parts/vspace.tex:367-373).
+         * The survey's frame is the one to hand over when it works. */
         static_cast<void>(device_frame);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
+                               device_tree_bytes, 0, 0);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);
     }
 

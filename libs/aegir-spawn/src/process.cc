@@ -275,8 +275,25 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             return fail("a device window wider than one page is not handled yet");
         }
         uintptr_t const at = align_up(static_cast<uintptr_t>(devices_end), kPage);
-        if (!vspace.map_page(at, request.device_frame, true, account)) {
-            return fail("the device's registers could not be mapped into the child");
+        seL4_Error mapped = seL4_NoError;
+        if (!vspace.map_page(at, request.device_frame, true, account, &mapped)) {
+            /* The kernel's own answer, because "it did not work" has several and
+             * they mean different things (kernel/manual/parts/vspace.tex, and the
+             * branches in kernel/src/arch/riscv/kernel/vspace.c). */
+            switch (mapped) {
+            case seL4_InvalidCapability:
+                return fail("the device frame does not belong to the child's address space");
+            case seL4_FailedLookup:
+                return fail("the page tables above the device's address could not be made");
+            case seL4_InvalidArgument:
+                return fail("a child cannot map the device at that address");
+            case seL4_AlignmentError:
+                return fail("the device's address is not page aligned");
+            case seL4_DeleteFirst:
+                return fail("something is already mapped at the device's address");
+            default:
+                return fail("the device's registers could not be mapped into the child");
+            }
         }
         device_address = at;
     }

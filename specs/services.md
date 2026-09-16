@@ -473,15 +473,39 @@ and saying which half exists is the point of writing it down:
   them from the bottom up was wrong, and acting on it made director prefer the one
   transport with *no* device behind it. The boot no longer claims to know which
   transport is busy; the survey reads, and says.
+- **what seL4 requires to map a device frame, from the manual and the kernel**: nothing
+  device-specific. On RISC-V the only attribute bit is `seL4_RISCV_ExecuteNever` and
+  `seL4_ARCH_Uncached_VMAttributes` is *aliased to zero*
+  (projects/seL4_libs/libsel4vspace/arch_include/riscv/vspace/arch/page.h:38), the map
+  decoder has no device test at all
+  (kernel/src/arch/riscv/kernel/vspace.c:801-931, `decodeRISCVFrameInvocation`), and
+  rights are only ever masked against the capability's own
+  (`vspace.c:899`, `maskVMRights` at `:634-652`) -- so a device frame maps like any
+  other, writable, with `seL4_Default_VMAttributes`. What *does* constrain it is the
+  rule in the manual: **a frame capability can be mapped into one VSpace only**, and
+  sharing a page means duplicating the capability with `seL4_CNode_Copy` and mapping
+  the copy (kernel/manual/parts/vspace.tex:367-373; the checks are `vspace.c:867-881`,
+  returning `seL4_InvalidCapability` for another address space and
+  `seL4_InvalidArgument` for a second address in the same one). Upstream maps its
+  serial device exactly this way -- a device frame, `seL4_AllRights`, attribute zero,
+  into the root task's *own* VSpace
+  (projects/seL4_libs/libsel4platsupport/src/common.c:86-113) -- and sel4test gives a
+  device frame to a *child* process by copying the capability
+  (projects/sel4test/apps/sel4test-driver/src/testtypes.c:241-243).
 - **a device is not yet given to a service**: the pieces are in place and compiled --
   a `Device` block entry (address and size, separate from the `Devices` blob), a
   `Request` field the spawner maps above the blob, and the device manager reading its
-  own device's magic and device id -- but the spawner's `ChildVSpace::map_page`
-  refuses the device frame, so nothing is passed and the device manager says "my
-  device: none was given". Next is to find out why: whether `map_page` creates the
-  page tables for an address above the image at all, whether it wants the frame as
-  the caller's capability or a copy, and whether a device frame can be mapped
-  writable. The frame the survey keeps is the one to hand over when it works.
+  own device's magic and device id -- but the mapping into the child comes back
+  `seL4_InvalidCapability`, which for this call means the frame belongs to another
+  address space (`vspace.c:867-875`). Two variants were tried and both were refused:
+  unmapping the frame from our own window first, and unmapping *then* copying the
+  capability and mapping the copy. So the frame still counts as mapped somewhere and
+  the next thing to establish is where -- whether `seL4_RISCV_Page_Unmap` on a frame
+  capability really clears its address space, what `seL4_CNode_Copy` does with a
+  frame's mapping state, and whether the *survey's* other eight mappings (the pages
+  before it, which it keeps) matter. `ChildVSpace::map_page` now reports the kernel's
+  own error rather than swallowing it, so the next attempt says which branch it hit
+  instead of "could not be mapped".
 
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the

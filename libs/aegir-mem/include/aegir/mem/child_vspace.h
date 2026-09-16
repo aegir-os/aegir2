@@ -52,7 +52,12 @@ public:
                   seL4_CPtr *first_frame = nullptr) noexcept;
 
     /** Map one page, creating whatever page tables the kernel says are missing. */
-    bool map_page(uintptr_t address, seL4_CPtr frame, bool writable, Account &account) noexcept;
+    /** Map `frame` at `address`, creating the page tables above it if they are
+     *  missing. `error`, when given, is why it did not work -- the kernel's own
+     *  answer, because "it did not work" has several of them and they mean
+     *  different things (kernel/manual/parts/vspace.tex). */
+    bool map_page(uintptr_t address, seL4_CPtr frame, bool writable, Account &account,
+                  seL4_Error *error = nullptr) noexcept;
 
     seL4_CPtr root() const noexcept { return root_; }
     unsigned mapped_pages() const noexcept { return mapped_pages_; }
