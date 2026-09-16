@@ -21,8 +21,12 @@
 #include <aegir/debug.h>
 #include <aegir/devtree.h>
 #include <aegir/mem/allocator.h>
+#include <aegir/mem/arena.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/spawn/initrd.h>
+#include <aegir/spawn/process.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -74,6 +78,11 @@ public:
 
 namespace {
 aegir::mem::Allocator g_objects(nullptr);
+/* The window and the arena a spawner works through: static for the same reason
+ *  the allocator is -- a spawned process has two pages of stack, and these
+ *  tables do not fit on it (specs/userland.md). */
+aegir::mem::Scratch g_scratch(nullptr);
+aegir::mem::Account g_account{"devicemgr", 0, 0, 0};
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -245,10 +254,11 @@ int main(int argc, char *argv[])
      * (specs/services.md). Reporting them is what proves the grant arrived the way
      * the block said it would. */
     uint64_t vspace_slot = 0;
-    if (aegir::bootstrap::capability("vspace", 6, &vspace_slot)) {
-        uint64_t window_base = 0;
-        uint32_t window_bytes = 0;
-        static_cast<void>(aegir::bootstrap::window(&window_base, &window_bytes));
+    uint64_t window_base = 0;
+    uint32_t window_bytes = 0;
+    bool const given_vspace = aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+                              aegir::bootstrap::window(&window_base, &window_bytes);
+    if (given_vspace) {
         aegir::debug_write("      my own address space's root: cap ");
         aegir::debug_write_unsigned(vspace_slot);
         aegir::debug_write(", with a window of my own from ");
@@ -281,6 +291,214 @@ int main(int argc, char *argv[])
         aegir::debug_write(" bytes, frame at cap ");
         aegir::debug_write_unsigned(grant_slot);
         aegir::debug_write("\n");
+    }
+
+    /* Spawning: what this service was given the authority for (specs/services.md).
+     * The bus map's first row says which driver answers to which virtio device id;
+     * probing the granted frames is how a row meets a device, because a frame
+     * arrives as a capability and the id lives in the device's registers. */
+    struct DriverChoice {
+        uint32_t device_id;   /* the virtio id it answers to */
+        char const *name;     /* who the process is */
+        uint32_t name_length;
+        char const *binary;   /* the initrd entry it starts from */
+        uint32_t binary_length;
+        uint32_t memory_bits; /* the virtqueue it lays out */
+    };
+    static DriverChoice const kDrivers[] = {
+        {2u, "blkdriver", 9u, "aegir-virtio-blk", 16u, 13u},
+    };
+
+    bool const can_spawn = given_vspace && untyped_slot != 0 && pool_slot != 0 &&
+                           binaries_address != 0 && binaries_bytes != 0;
+    if (!can_spawn) {
+        write_line("spawning", "not everything it takes was given");
+    } else if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
+                                static_cast<uintptr_t>(window_base),
+                                static_cast<uintptr_t>(window_base + window_bytes),
+                                &g_objects)) {
+        write_line("FAIL", "the window I was given could not be adopted");
+    } else {
+        aegir::mem::Arena arena(g_objects, g_scratch, g_account);
+        aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(binaries_address),
+                                          binaries_bytes);
+        if (!initrd.valid()) {
+            write_line("FAIL", "the initrd copy I was given cannot be read");
+        } else {
+            /* Our own CNode, at its own depth: a service's own-CNode cap is a raw
+             * copy with guard 0 and radix kCNodeBits, so the spawner must address
+             * mint sources through it -- seL4_CapInitThreadCNode is the *root
+             * task's* name for its CSpace, and this is not the root task
+             * (aegir/bootstrap.h). */
+            aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd,
+                                          static_cast<seL4_CPtr>(pool_slot),
+                                          static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                          aegir::bootstrap::kCNodeBits);
+            /* Badges for the processes we start count from 256: the low badges are
+             * director's boot set, and until the badge space is a designed thing,
+             * a spawning service's children live in a range of their own
+             * (specs/services.md). */
+            for (uint32_t d = 0;; ++d) {
+                uint64_t grant_physical = 0;
+                uint32_t grant_bytes = 0;
+                uint64_t grant_slot = 0;
+                if (!aegir::bootstrap::device_capability(d, &grant_physical, &grant_bytes,
+                                                         &grant_slot)) {
+                    break;
+                }
+                static_cast<void>(grant_physical);
+                static_cast<void>(grant_bytes);
+                auto const *registers = static_cast<volatile uint32_t const *>(
+                    g_scratch.map(static_cast<seL4_CPtr>(grant_slot)));
+                if (registers == nullptr) {
+                    write_line("FAIL", "a device frame could not be mapped for probing");
+                    continue;
+                }
+                uint32_t const probed_magic = registers[0x00 / 4];
+                uint32_t const probed_id = registers[0x08 / 4];
+                g_scratch.unmap(static_cast<seL4_CPtr>(grant_slot));
+                if (probed_magic != 0x74726976u) {
+                    write_line("spawning", "a granted frame is not a virtio transport");
+                    continue;
+                }
+                DriverChoice const *driver = nullptr;
+                for (uint32_t k = 0; k < sizeof(kDrivers) / sizeof(kDrivers[0]); ++k) {
+                    if (kDrivers[k].device_id == probed_id) {
+                        driver = &kDrivers[k];
+                        break;
+                    }
+                }
+                if (driver == nullptr) {
+                    aegir::debug_write("      spawning: no driver for virtio device ");
+                    aegir::debug_write_unsigned(probed_id);
+                    aegir::debug_write("\n");
+                    continue;
+                }
+
+                /* The cap the child calls is minted from the *delegatable* copy:
+                 * our own log.main is already badged with who we are, and a badged
+                 * endpoint cap cannot be minted again -- so director grants the
+                 * ports a spawning service's children need under a "spawn:" name,
+                 * unbadged, for exactly this (specs/services.md). */
+                uint64_t log_slot = 0;
+                if (!aegir::bootstrap::capability("spawn:log.main", 14, &log_slot)) {
+                    write_line("FAIL", "no delegatable log.main was given");
+                    continue;
+                }
+                /* The queue's memory: carved from our untyped, paged, and handed to
+                 * the child as frames to map -- the same shape director gives a
+                 * service that declares memory (specs/authority.md). */
+                aegir::mem::Account child_account{driver->name, 0, 0, 0};
+                seL4_Error queue_error = seL4_NoError;
+                uint64_t queue_physical = 0;
+                seL4_CPtr const queue = g_objects.carve_untyped(driver->memory_bits,
+                                                                child_account, &queue_error,
+                                                                &queue_physical);
+                if (queue == 0) {
+                    write_line("FAIL", "no memory for a driver's virtqueue");
+                    continue;
+                }
+                seL4_CPtr memory_frame = 0;
+                uint32_t const pages = (1u << driver->memory_bits) / 4096u;
+                bool paged = true;
+                for (uint32_t p = 0; p < pages; ++p) {
+                    seL4_Error page_error = seL4_NoError;
+                    seL4_CPtr const frame = g_objects.carve_page(queue, child_account,
+                                                                 &page_error);
+                    if (frame == 0) {
+                        paged = false;
+                        break;
+                    }
+                    if (p == 0) {
+                        memory_frame = frame;
+                    }
+                }
+                if (!paged) {
+                    write_line("FAIL", "a driver's virtqueue could not be turned into pages");
+                    continue;
+                }
+
+                aegir::spawn::PortGrant const ports[] = {
+                    {aegir::log::kPortName, aegir::log::kPortNameLength,
+                     aegir::bootstrap::kSlotFirstDeclared,
+                     static_cast<seL4_CPtr>(log_slot), seL4_CapRights_new(1, 0, 0, 1),
+                     256u + d, 0},
+                };
+                aegir::spawn::DeviceGrant const devices[] = {
+                    {grant_physical, grant_bytes, static_cast<seL4_CPtr>(grant_slot)},
+                };
+                aegir::spawn::Request request{};
+                request.name = driver->name;
+                request.name_length = driver->name_length;
+                request.binary = driver->binary;
+                request.binary_length = driver->binary_length;
+                request.account = "system";
+                request.account_length = 6;
+                /* The priority the manifest would have said: the one just below
+                 * ours, which is also the MCP we were given -- so conferring it
+                 * is within what we hold. */
+                request.priority = seL4_MaxPrio - 1;
+                request.ports = ports;
+                request.port_count = 1;
+                request.device_frame = static_cast<seL4_CPtr>(grant_slot);
+                request.device_bytes = grant_bytes;
+                request.device_physical = grant_physical;
+                request.device_grants = devices;
+                request.device_grant_count = 1;
+                request.memory_frame = memory_frame;
+                request.memory_bytes = 1u << driver->memory_bits;
+                /* The queue's descriptors carry physical addresses the device
+                 * reads, and a capability does not say where it is -- so the
+                 * physical base travels beside the frames, the way director's
+                 * carve does (specs/authority.md). */
+                request.untyped_physical = queue_physical;
+                request.untyped_bits = driver->memory_bits;
+                /* Its faults come to whoever it was spawned from -- that is what
+                 * a supervisor *is*. The endpoint is one we make, not the one we
+                 * were given: ours is badged with who *we* are, and a badged
+                 * endpoint cap cannot be minted again for the child's badge (the
+                 * kernel's own words: "Mutated cap would be invalid"). */
+                seL4_Error fault_error = seL4_NoError;
+                seL4_CPtr const fault_endpoint =
+                    g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                           child_account, &fault_error);
+                if (fault_endpoint == 0) {
+                    write_line("FAIL", "no memory for a child's fault endpoint");
+                    continue;
+                }
+                request.fault_endpoint = fault_endpoint;
+                request.badge = 256u + d;
+
+                aegir::spawn::Process process{};
+                if (!spawner.spawn(request, child_account, process)) {
+                    aegir::debug_write("      FAIL spawning ");
+                    aegir::debug_write(driver->name);
+                    aegir::debug_write(": ");
+                    aegir::debug_write(spawner.problem());
+                    if (spawner.detail()[0] != '\0') {
+                        aegir::debug_write(" (");
+                        aegir::debug_write(spawner.detail());
+                        aegir::debug_write(", seL4 error ");
+                        aegir::debug_write_unsigned(spawner.error());
+                        aegir::debug_write(")");
+                    }
+                    aegir::debug_write("\n");
+                    continue;
+                }
+                aegir::debug_write("      spawned ");
+                aegir::debug_write(driver->name);
+                aegir::debug_write(" for virtio device ");
+                aegir::debug_write_unsigned(probed_id);
+                aegir::debug_write(", badge ");
+                aegir::debug_write_unsigned(request.badge);
+                aegir::debug_write("\n");
+                /* Ready is a signal on the supervision notification, badged with who
+                 * it is -- the same protocol director's boot uses, because a spawned
+                 * process does not know who spawned it (specs/director.md). */
+                seL4_Word ready_badge = 0;
+                seL4_Wait(process.supervision, &ready_badge);
+            }
+        }
     }
 
     /* Ready: whoever spawned us can carry on, and the supervisor can tell

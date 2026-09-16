@@ -158,17 +158,33 @@ struct Process {
 class Spawner {
 public:
     /** A spawner over the authority it was given: the allocator holding its
-     *  memory, the window it fills frames through, and the ASID pool its
-     *  children's address spaces come from -- director's own initial pool, or
-     *  the one a service was delegated for exactly this (specs/authority.md). */
+     *  memory, the window it fills frames through, the ASID pool its children's
+     *  address spaces come from -- director's own initial pool, or the one a
+     *  service was delegated for exactly this (specs/authority.md) -- and the
+     *  depth at which the spawner's own CSpace resolves plain slot numbers as a
+     *  mint source. That is seL4_WordBits for the root task, whose initial
+     *  CNode cap carries a guard over the high bits, and bootstrap::kCNodeBits
+     *  for a service, whose own-CNode cap is a raw copy with guard 0 and radix
+     *  kCNodeBits (kernel/src/kernel/cspace.c:126-193). The kernel offers no
+     *  invocation to ask which; the spawner knows which it is. */
     Spawner(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
-            Initrd const &initrd, seL4_CPtr asid_pool) noexcept;
+            Initrd const &initrd, seL4_CPtr asid_pool, seL4_CPtr source_root,
+            seL4_Word source_depth) noexcept;
 
     /** Create, load and start the process a manifest entry describes. */
     bool spawn(Request const &request, mem::Account &account, Process &process) noexcept;
 
     /** Why the last spawn failed: for the boot report, which is read by people. */
     char const *problem() const noexcept { return problem_; }
+
+    /** Which step of the failing operation failed, when it reported one --
+     *  "the bootstrap block could not be mapped" has three very different causes
+     *  and the report is only useful if it says which. */
+    char const *detail() const noexcept { return detail_; }
+
+    /** The kernel's own answer to the last failed capability operation, when one
+     *  was involved: seL4_NoError when the failure was not the kernel's. */
+    uint64_t error() const noexcept { return static_cast<uint64_t>(error_); }
 
 private:
     bool fail(char const *what) noexcept;
@@ -185,7 +201,11 @@ private:
     mem::Arena &arena_;
     Initrd const &initrd_;
     seL4_CPtr asid_pool_;
+    seL4_CPtr source_root_;
+    seL4_Word source_depth_;
     char const *problem_;
+    char const *detail_;
+    seL4_Error error_;
 };
 
 }  // namespace aegir::spawn

@@ -49,10 +49,14 @@ public:
      *
      * `first_frame`, when given, receives the first page's capability: the IPC
      * buffer needs exactly that to be handed to a TCB.
+     *
+     * `why`, when given, is what failed -- "it did not work" has three causes
+     * here (the argument check, the frame, the map) and the spawner's report is
+     * only useful if it says which.
      */
     bool populate(uintptr_t address, unsigned pages, void const *source, uint64_t bytes,
                   uint64_t leading, bool writable, Account &account,
-                  seL4_CPtr *first_frame = nullptr) noexcept;
+                  seL4_CPtr *first_frame = nullptr, char const **why = nullptr) noexcept;
 
     /** Map one page, creating whatever page tables the kernel says are missing. */
     /** Map `frame` at `address`, creating the page tables above it if they are

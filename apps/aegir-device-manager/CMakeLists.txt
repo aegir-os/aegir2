@@ -21,5 +21,5 @@ target_compile_options(aegir-device-manager PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-device-manager PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-devtree
-                              aegir-ipc aegir-log sel4 muslc sel4runtime
+                              aegir-ipc aegir-log aegir-spawn sel4 muslc sel4runtime
 )

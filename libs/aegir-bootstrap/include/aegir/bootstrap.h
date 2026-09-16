@@ -56,6 +56,17 @@ constexpr uint64_t kSlotSupervision = 4;
 /** First slot the manifest's own declarations may use. */
 constexpr uint64_t kSlotFirstDeclared = 8;
 
+/* The size of the CSpace every Aegir process is given, in slots-bits: 2^10
+ *  slots. It is part of the layout rather than a detail of the spawner, because
+ *  two things depend on it: the guard a process's TCB is configured with
+ *  (seL4_WordBits - kCNodeBits, so plain slot numbers resolve at full depth),
+ *  and how a *service* addresses its own CSpace as a mint source -- its
+ *  own-CNode cap at kSlotOwnCNode is a raw copy with guard 0 and radix
+ *  kCNodeBits, so its slots resolve as plain numbers at depth kCNodeBits, not
+ *  at seL4_WordBits (kernel/src/kernel/cspace.c:126-193: with no guard, the
+ *  index is read MSB-first). */
+constexpr uint32_t kCNodeBits = 10;
+
 /* --- the block ------------------------------------------------------------- */
 
 /** Our auxv tag. Standard and seL4 tags occupy 0-72

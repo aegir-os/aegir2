@@ -815,11 +815,12 @@ int main(int argc, char *argv[])
          * slots a child is given (2^(kCNodeBits + seL4_SlotBits), which is 16 KiB
          * for the 1024 slots aegir-spawn builds), a TCB, the page tables of an
          * address space, the frames of the image, stack and bootstrap block, and
-         * the 8 KiB the driver's virtqueue takes. Those come to a little under
-         * 64 KiB, and untyped memory is power-of-two, so this is the smallest
-         * untyped that covers them. More is delegated when something needs more
+         * the 8 KiB the driver's virtqueue takes. The image alone maps about
+         * 172 KiB of frames -- the driver keeps its queues in static storage --
+         * so 64 KiB and 128 KiB were both measured too small, and untyped
+         * memory is power-of-two. More is delegated when something needs more
          * (specs/authority.md). */
-        constexpr uint32_t kDelegatedUntypedBits = 16;
+        constexpr uint32_t kDelegatedUntypedBits = 18;
         seL4_Error untyped_error = seL4_NoError;
         /* The physical base comes with the capability: there is no invocation that
          * reads an untyped's address, so a region a driver will one day point a

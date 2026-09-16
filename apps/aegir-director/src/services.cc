@@ -46,7 +46,8 @@ Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena 
       /* Director's own pool is the boot set's: delegation hands a service a pool
        * of its own, so only director-spawned address spaces come from the
        * initial one (specs/authority.md). */
-      spawner_(allocator, scratch, arena, initrd, seL4_CapInitThreadASIDPool)
+      spawner_(allocator, scratch, arena, initrd, seL4_CapInitThreadASIDPool,
+               seL4_CapInitThreadCNode, seL4_WordBits)
 {
 }
 
@@ -122,6 +123,30 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
     for (uint32_t step = 0; step < manifest.size(); ++step) {
         uint32_t const i = graph_.order()[step];
         manifest::Entry const &entry = manifest[i];
+        /* A service another entry spawns is not director's to start: the device
+         * manager starts its driver when it gets to it (specs/services.md), and
+         * starting it twice is not a philosophical problem -- the second copy
+         * would be given the device the first one already drives. */
+        bool spawned_by_another = false;
+        for (uint32_t j = 0; j < manifest.size() && !spawned_by_another; ++j) {
+            manifest::Entry const &parent = manifest[j];
+            if (parent.spawns.length != entry.name.length) {
+                continue;
+            }
+            bool same = true;
+            for (uint32_t k = 0; k < entry.name.length; ++k) {
+                if (parent.spawns.data[k] != entry.name.data[k]) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                spawned_by_another = true;
+            }
+        }
+        if (spawned_by_another) {
+            continue;
+        }
         spawn::Request request{};
         request.name = entry.name.data;
         request.name_length = entry.name.length;
@@ -180,9 +205,44 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             }
         }
         if ((entry.device_manager && extra_count > 0) || memory_cap != 0) {
-            uint32_t const added = entry.device_manager && extra_count > 0 ? extra_count : 0;
+            uint32_t added = entry.device_manager && extra_count > 0 ? extra_count : 0;
+            /* A spawning service also gets an *unbadged* copy of every port its
+             * children need to call: a badged endpoint cap cannot be minted again
+             * (deriveCap refuses it -- that is what "a port could not be installed"
+             * with seL4_IllegalOperation meant), so a service that hands a port on
+             * must be given one it may badge itself. The name carries a "spawn:"
+             * prefix, because which copy is which is not something the block should
+             * make a reader guess. */
+            uint32_t spawn_needs = 0;
+            uint32_t spawned = manifest.size();
+            if (entry.device_manager && entry.spawns.length > 0) {
+                for (uint32_t j = 0; j < manifest.size(); ++j) {
+                    manifest::Entry const &other = manifest[j];
+                    if (other.name.length != entry.spawns.length) {
+                        continue;
+                    }
+                    bool same = true;
+                    for (uint32_t k = 0; k < entry.spawns.length; ++k) {
+                        if (other.name.data[k] != entry.spawns.data[k]) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if (same) {
+                        spawned = j;
+                        break;
+                    }
+                }
+            }
+            if (spawned < manifest.size()) {
+                for (uint32_t g = 0; g < graph_.grant_count(spawned); ++g) {
+                    if (graph_.grants(spawned)[g].badge != 0) {
+                        ++spawn_needs;
+                    }
+                }
+            }
             auto *merged = static_cast<spawn::PortGrant *>(
-                arena_.allocate(sizeof(spawn::PortGrant) * (grant_count + added)));
+                arena_.allocate(sizeof(spawn::PortGrant) * (grant_count + added + spawn_needs)));
             if (merged == nullptr) {
                 boot.problem = "no room to merge what a service is given";
                 return;
@@ -198,8 +258,35 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     ++at;
                 }
             }
+            if (spawned < manifest.size() && spawn_needs > 0) {
+                static char const kSpawnPrefix[] = "spawn:";
+                for (uint32_t g = 0; g < graph_.grant_count(spawned); ++g) {
+                    spawn::PortGrant const &need = graph_.grants(spawned)[g];
+                    if (need.badge == 0) {
+                        continue;
+                    }
+                    auto *named = static_cast<char *>(
+                        arena_.allocate(sizeof(kSpawnPrefix) - 1 + need.name_length));
+                    if (named == nullptr) {
+                        boot.problem = "no room to name a delegatable port";
+                        return;
+                    }
+                    for (uint32_t c = 0; c < sizeof(kSpawnPrefix) - 1; ++c) {
+                        named[c] = kSpawnPrefix[c];
+                    }
+                    for (uint32_t c = 0; c < need.name_length; ++c) {
+                        named[sizeof(kSpawnPrefix) - 1 + c] = need.name[c];
+                    }
+                    merged[at] = spawn::PortGrant{
+                        named,
+                        static_cast<uint32_t>(sizeof(kSpawnPrefix) - 1) + need.name_length,
+                        bootstrap::kSlotFirstDeclared + at,
+                        need.capability, need.rights, 0, 0};
+                    ++at;
+                }
+            }
             grants = merged;
-            grant_count += added;
+            grant_count = at;
         }
         request.ports = grants;
         request.port_count = grant_count;

@@ -95,9 +95,15 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
 
 bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source, uint64_t bytes,
                            uint64_t leading, bool writable, Account &account,
-                           seL4_CPtr *first_frame) noexcept
+                           seL4_CPtr *first_frame, char const **why) noexcept
 {
+    if (why != nullptr) {
+        *why = "";
+    }
     if (leading >= kPage || bytes + leading > static_cast<uint64_t>(pages) * kPage) {
+        if (why != nullptr) {
+            *why = "the bytes do not fit the pages";
+        }
         return false;
     }
 
@@ -109,6 +115,9 @@ bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source
         seL4_CPtr frame =
             allocator_.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account, &error);
         if (frame == 0) {
+            if (why != nullptr) {
+                *why = "no memory for a frame";
+            }
             return false;
         }
         if (page == 0 && first_frame != nullptr) {
@@ -119,6 +128,9 @@ bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source
          * child there is no way for us to reach it. */
         void *window = scratch_.map(frame);
         if (window == nullptr) {
+            if (why != nullptr) {
+                *why = "the window the frame is filled through is full";
+            }
             return false;
         }
         auto *destination = static_cast<unsigned char *>(window);
@@ -134,6 +146,9 @@ bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source
         scratch_.unmap(frame);
 
         if (!map_page(address + static_cast<uintptr_t>(page) * kPage, frame, writable, account)) {
+            if (why != nullptr) {
+                *why = "a page could not be mapped into the child";
+            }
             return false;
         }
         input += chunk;

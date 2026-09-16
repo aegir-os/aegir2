@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <aegir/bootstrap.h>
 #include <aegir/spawn/process.h>
 
 #include <sel4runtime/auxv.h>
@@ -17,8 +18,10 @@ constexpr uint64_t kPage = 1ull << seL4_PageBits;
 
 /* What a service starts with. Both of these are capacities, so both belong in the
  * manifest rather than in a header (specs/services.md): until a service declares
- * them, these are the sizes for one whose only job is to exist and say so. */
-constexpr uint32_t kCNodeBits = 10;   /* 2^10 slots of CSpace */
+ * them, these are the sizes for one whose only job is to exist and say so. The
+ * CSpace size is layout, not a default: a service that itself spawns addresses
+ * its own CNode through it, so it lives with the other block layout constants in
+ * aegir/bootstrap.h (kCNodeBits). */
 constexpr unsigned kStackPages = 2;   /* 8 KiB of stack */
 constexpr uint64_t kBlockBytes = 512; /* the bootstrap block, in its own page */
 
@@ -54,9 +57,11 @@ void write_auxv(uint8_t *stack, uintptr_t stack_lo, uintptr_t address, int type,
 }  // namespace
 
 Spawner::Spawner(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
-                 Initrd const &initrd, seL4_CPtr asid_pool) noexcept
+                 Initrd const &initrd, seL4_CPtr asid_pool, seL4_CPtr source_root,
+                 seL4_Word source_depth) noexcept
     : allocator_(allocator), scratch_(scratch), arena_(arena), initrd_(initrd),
-      asid_pool_(asid_pool), problem_("no problem")
+      asid_pool_(asid_pool), source_root_(source_root), source_depth_(source_depth),
+      problem_("no problem"), detail_(""), error_(seL4_NoError)
 {
 }
 
@@ -71,14 +76,27 @@ bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
 {
     /* The destination is a single-level CNode with no guard, so a slot is
      * addressed by index at the node's own depth; the source is a slot in our
-     * root CNode, which is addressed at the full word depth
-     * (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440).
+     * own root CNode, whose addressing is the caller's business -- the root
+     * task's initial CNode cap carries a guard over the high bits, so plain
+     * slots resolve at full word depth
+     * (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440), while a
+     * service's own-CNode cap is a raw copy with guard 0 and radix kCNodeBits,
+     * and resolves plain slots at that depth instead
+     * (kernel/src/kernel/cspace.c:126-193). The kernel offers no invocation to
+     * ask which of these the caller is, so the caller says.
      *
      * Minting rather than copying, even when the badge is zero: the badge is how
      * a child is identified to whoever it talks to, and it has to come from the
      * cap it uses rather than from anything it says about itself. */
-    return seL4_CNode_Mint(into_cspace, slot, kCNodeBits, seL4_CapInitThreadCNode, source,
-                           seL4_WordBits, rights, badge) == seL4_NoError;
+    seL4_Error const mint_error =
+        seL4_CNode_Mint(into_cspace, slot, bootstrap::kCNodeBits, source_root_, source,
+                        source_depth_, rights, badge);
+    if (mint_error != seL4_NoError) {
+        detail_ = "installing a capability into the child's CSpace";
+        error_ = mint_error;
+        return false;
+    }
+    return true;
 }
 
 uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
@@ -163,6 +181,9 @@ uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintpt
 bool Spawner::spawn(Request const &request, mem::Account &account, Process &process) noexcept
 {
     problem_ = "no problem";
+    detail_ = "";
+    error_ = seL4_NoError;
+    char const *why = nullptr;
 
     uint64_t elf_size = 0;
     void const *image = initrd_.find(request.binary, request.binary_length, &elf_size);
@@ -180,7 +201,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * (kernel/src/object/objecttype.c:45-46) and creates the CNode with exactly
      * the number passed (":557-563"). Passing the sum asks for 32x the memory
      * and gets "Insufficient memory" for a CSpace that would have fit. */
-    process.cspace = allocator_.alloc_object(seL4_CapTableObject, kCNodeBits, account, &error);
+    process.cspace = allocator_.alloc_object(seL4_CapTableObject, bootstrap::kCNodeBits, account,
+                                             &error);
     if (process.cspace == 0) {
         return fail("no memory for the child's CSpace");
     }
@@ -215,7 +237,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             return fail("two loadable segments share a page, which is not handled yet");
         }
         if (!vspace.populate(page_base, static_cast<unsigned>(pages), elf.segment_bytes(header),
-                             header.filesz, leading, true, account)) {
+                             header.filesz, leading, true, account, nullptr, &why)) {
+            detail_ = why;
             return fail("a segment of the program could not be mapped");
         }
         mapped_until = page_base + static_cast<uintptr_t>(pages) * kPage;
@@ -269,7 +292,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (request.devices != nullptr && request.devices_bytes > 0) {
         uint64_t const pages = (request.devices_bytes + kPage - 1) / kPage;
         if (!vspace.populate(stack_top, static_cast<unsigned>(pages), request.devices,
-                             request.devices_bytes, 0, false, account)) {
+                             request.devices_bytes, 0, false, account, nullptr, &why)) {
+            detail_ = why;
             return fail("the blob the child was to be given could not be mapped");
         }
         devices_address = stack_top;
@@ -321,7 +345,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         }
         uint64_t const pages = (request.binaries_bytes + kPage - 1) / kPage;
         if (!vspace.populate(after_device, static_cast<unsigned>(pages), request.binaries,
-                             request.binaries_bytes, 0, false, account)) {
+                             request.binaries_bytes, 0, false, account, nullptr, &why)) {
+            detail_ = why;
             return uintptr_t{0};
         }
         binaries_address = after_device;
@@ -367,7 +392,9 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
-    if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account)) {
+    if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account, nullptr,
+                         &why)) {
+        detail_ = why;
         return fail("the bootstrap block could not be mapped");
     }
 
@@ -386,7 +413,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     /* The IPC buffer's frame capability is part of the TCB configuration, so it
      * comes back out of the mapping. */
     seL4_CPtr ipc_frame = 0;
-    if (!vspace.populate(ipc_at, 1, nullptr, 0, 0, true, account, &ipc_frame)) {
+    if (!vspace.populate(ipc_at, 1, nullptr, 0, 0, true, account, &ipc_frame, &why)) {
+        detail_ = why;
         return fail("no memory for the child's IPC buffer");
     }
 
@@ -399,7 +427,9 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (sp == 0) {
         return fail("the startup frame does not fit on the child's stack");
     }
-    if (!vspace.populate(stack_lo, kStackPages, stack, stack_bytes, 0, true, account)) {
+    if (!vspace.populate(stack_lo, kStackPages, stack, stack_bytes, 0, true, account, nullptr,
+                         &why)) {
+        detail_ = why;
         return fail("the child's stack could not be mapped");
     }
 
@@ -486,11 +516,20 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * tries to name itself with a capability the kernel cannot resolve, and is
      * stopped with "cap is not a TCB" before main ever runs. */
     seL4_Word const cspace_guard =
-        seL4_CNode_CapData_new(0, seL4_WordBits - kCNodeBits).words[0];
+        seL4_CNode_CapData_new(0, seL4_WordBits - bootstrap::kCNodeBits).words[0];
     error = seL4_TCB_Configure(process.tcb, bootstrap::kSlotFaultEndpoint, process.cspace,
                                cspace_guard, vspace.root(), 0, ipc_at, ipc_frame);
     if (error != seL4_NoError) {
         return fail("the child's TCB could not be configured");
+    }
+    /* A fresh TCB's maximum controlled priority is zero
+     * (kernel/src/object/objecttype.c:525 sets only what differs from zero), and
+     * SetPriority refuses a priority above the MCP the authority cap may confer
+     * (kernel/src/object/tcb.c:1236) -- so the child's own priority would be
+     * unsettable by anyone but the root task. Raise its MCP first. */
+    error = seL4_TCB_SetMCPriority(process.tcb, seL4_CapInitThreadTCB, request.priority);
+    if (error != seL4_NoError) {
+        return fail("the child's maximum priority could not be set");
     }
     error = seL4_TCB_SetPriority(process.tcb, seL4_CapInitThreadTCB, request.priority);
     if (error != seL4_NoError) {
