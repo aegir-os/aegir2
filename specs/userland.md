@@ -167,6 +167,7 @@ Where the rules stand today is mostly good: `apps/aegir-director/src/ports.cc` a
 | a frame maps into one VSpace; sharing means duplicating the capability and mapping the copy | `aegir-mem`, `ChildVSpace` | one call that copies and maps in the right order -- today `main.cc` does it by hand |
 | a device frame comes from the device untyped covering its address, and the retype cursor only moves forwards | `aegir-mem`, `Allocator` | `device_frame(paddr)`, one call -- today `main.cc` walks `untypedList` and retypes by hand |
 | an untyped that has been split cannot be given away until its halves are dealt with | `aegir-mem`, `carve_untyped` | a capability that *can* be passed on, with the splitting work done inside |
+| a split untyped's free memory sits at its *far* end, not at the region's base -- the kernel carves children from the free index upward (kernel/src/object/untyped.c:225-232) | `aegir-mem`, `Allocator` | `carve_untyped` reports the physical address the memory actually has; getting this wrong is invisible until a device does DMA to it |
 | starting a process takes a CSpace, a TCB, an address space, a stack and a binary | `aegir-spawn`, `Spawner` | one call, over a bootinfo for the root task and over *delegated authority* for a service |
 | a service's stack is what the spawner gives it, and a library object can be tens of kilobytes | `aegir-spawn` | the stack size is a spawn parameter and the block says what it was, so a service can make its own choice |
 

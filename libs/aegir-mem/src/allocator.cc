@@ -155,22 +155,27 @@ bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
         if (slot == 0) {
             return false;
         }
-        /* Retyping an untyped out of an untyped is how a region is halved: the
-         * parent keeps the low half and the new cap holds the high half, so
-         * nothing is wasted and no size is rounded up. */
+        /* Retyping an untyped out of an untyped carves the child from the LOW end of
+         * what is left: the kernel creates the new object at the untyped's free index
+         * and advances the index past it (kernel/src/object/untyped.c:225-232 aligns
+         * the free pointer, :294-302 retypes there and moves capFreeIndex). So the
+         * child sits at this entry's recorded physical base, and the remainder -- the
+         * cap this entry keeps -- begins one half higher. Bookkeeping that says
+         * otherwise hands a caller a physical address its memory does not have: a
+         * device given it reads an empty ring out of somebody else's RAM, forever. */
         seL4_Error error =
             seL4_Untyped_Retype(untyped_[index].cap, seL4_UntypedObject, half,
                                 seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
                                 cnode_depth_, slot, 1);
         if (error != seL4_NoError) {
-        slot_failed(slot);
+            slot_failed(slot);
             return false;
         }
-        if (!remember(slot, half, false,
-                      untyped_[index].physical == 0
-                          ? 0
-                          : untyped_[index].physical + (1ull << half))) {
+        if (!remember(slot, half, false, untyped_[index].physical)) {
             return false;
+        }
+        if (untyped_[index].physical != 0) {
+            untyped_[index].physical += 1ull << half;
         }
         untyped_[index].size_bits = static_cast<uint8_t>(half);
     }
@@ -292,9 +297,11 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    /* Splitting halves a region and leaves the low half at exactly `size_bits`, so
-     * the capability to hand out is the one that is left. Its record is marked used
-     * rather than freed: the caller is taking it away. */
+    /* Splitting leaves exactly `size_bits` of the region free, and the capability
+     * to hand out is the one that is left. Its recorded physical base is where the
+     * free part actually sits -- the far end of the splits, not the region's start
+     * (see split_to). The record is marked used rather than freed: the caller is
+     * taking it away. */
     seL4_CPtr const cap = untyped_[index].cap;
     if (physical_out != nullptr) {
         *physical_out = untyped_[index].physical;

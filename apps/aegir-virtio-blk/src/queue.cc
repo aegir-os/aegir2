@@ -187,7 +187,7 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
     result.status = *byte_at(page, kStatusOffset);
     result.used_flags = used[0];
     result.used_idx = used[1];
-    result.used_bytes = word_at(page, kUsedOffset + 8)[1];
+    result.used_bytes = word_at(page, kUsedOffset + 8)[0];
     result.device_status = registers.read(kStatus);
     result.interrupt_status = registers.read(kInterruptStatus);
     if (used[1] == 0) {

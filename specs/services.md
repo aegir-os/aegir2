@@ -545,11 +545,11 @@ and answers "who owns this device?" for everyone else.
   manager already has -- an untyped to retype frames from, whose physical base director knows
   -- plus a way to be told that base. That is the next piece, and it is a change to the spawn
   path rather than to the driver: the manifest asks for memory the way it now asks for a device.
-- **a virtqueue is written and the device does not answer yet**: the driver lays out a queue -
+- **a virtqueue is written, and the device answers**: the driver lays out a queue -
   descriptor table, available ring, used ring, request header, one sector of data, a status
-  byte, all in the one page the spawner mapped - publishes a read of sector 0, notifies, and
-  polls the used ring. The device never publishes a used entry. What that has established so
-  far, each by measurement rather than assumption:
+  byte, in the two pages the spawner mapped - publishes a read of sector 0, notifies, and
+  polls the used ring. The device publishes a used entry. Getting there took a chain of
+  measurements, each one replacing an assumption:
 
   - `VIRTIO_F_VERSION_1` (feature bit 32) has to be negotiated once the device offers the
     modern register layout; offering no features at all leaves a queue set up and ignored.
@@ -582,6 +582,27 @@ and answers "who owns this device?" for everyone else.
   - **a request that is ignored leaves no trace at all**, which is worth more than a wrong
     answer would be: seeding a byte with a value the device must overwrite turns "the read did
     not complete" into "the device did not look", and those are different searches.
+  - **the device was never looking at the driver's memory.** Every hypothesis above was about
+    what the driver told the device; the answer was in what the driver was *told*. The kernel
+    carves an untyped's children from the low end of what is left and advances its free index
+    (`kernel/src/object/untyped.c:225-232`, `:294-302`), so after a region is split down, the
+    piece that remains -- the one `carve_untyped` hands out -- sits at the region's *far* end,
+    not at its base. The allocator's bookkeeping said the opposite, so the driver wrote its
+    rings into one page and gave the device the physical address of another: an all-zero avail
+    ring is a ring with nothing to do, which is a device that never answers, with no error and
+    no interrupt. Nothing else could see it because the recorded physical address has exactly
+    one consumer -- a device doing DMA; everything else only retypes objects, which is correct
+    regardless. The fix is in `split_to` (libs/aegir-mem/src/allocator.cc), and the boot after
+    it reads:
+
+        my memory: 8192 bytes at 0x24000 (physical 0xffff0000)
+        queue: num 0 of 1024, ready 0, desc 0x0, legacy, pfn 0xffff0 (was 0x0)
+        read sector 0: status 0 (0 is ok), 513 bytes used, first 16: 0x0 ...
+
+    513 is the whole device-writable length of the chain -- 512 bytes of sector plus the status
+    byte -- and the zeros are the disk image's real content (a sparse megabyte,
+    scripts/run_target.py). The read of sector 0 completes: the device was talked to correctly
+    end to end, and the thing it could not do before was find the queue.
 - **a service cannot map into its own address space, so its spawner maps for it**: the spawner
   retypes the child's root page table, assigns it to an ASID pool, and keeps the capability.
   What a child is *given* is its TCB, its CNode, the fault endpoint, the supervision
