@@ -46,7 +46,7 @@ target_compile_options(aegir-director PRIVATE -Wall -Wextra -Werror)
 # cpio is util_libs' reader for the initrd above; everything else is ours.
 target_link_libraries(
   aegir-director
-  PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-ipc aegir-log
+  PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-devtree aegir-ipc aegir-log
           aegir-manifest aegir-spawn sel4 muslc sel4runtime cpio
 )
 

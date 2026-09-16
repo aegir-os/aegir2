@@ -20,6 +20,7 @@
  */
 
 #include <aegir/debug.h>
+#include <aegir/devtree.h>
 #include <aegir/manifest.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
@@ -126,6 +127,129 @@ void write_name(char const *name, unsigned length) noexcept
     for (unsigned i = 0; i < length; ++i) {
         seL4_DebugPutChar(name[i]);
     }
+}
+
+/** What the device tree says the machine has. */
+class DeviceReport : public aegir::devtree::Tree::Visitor {
+public:
+    bool device(aegir::devtree::Device const &device) override {
+        if (!device.has_region) {
+            return true;
+        }
+        ++with_region;
+        if (same_string(device.compatible, device.compatible_length, "virtio,mmio")) {
+            ++virtio_mmio;
+            aegir::debug_write("    ");
+            aegir::debug_write_hex(device.base);
+            if (device.has_interrupt) {
+                aegir::debug_write(" irq ");
+                aegir::debug_write_unsigned(device.interrupt);
+            } else {
+                aegir::debug_write(" (no interrupt)");
+            }
+            aegir::debug_write("\n");
+        }
+        return true;
+    }
+
+    unsigned with_region = 0;
+    unsigned virtio_mmio = 0;
+
+    static bool same_string(char const *text, uint32_t length, char const *wanted) noexcept {
+        for (uint32_t i = 0; i < length; ++i) {
+            if (text[i] != wanted[i]) {
+                return false;
+            }
+            if (wanted[i] == '\0') {
+                return true;
+            }
+        }
+        return wanted[length] == '\0';
+    }
+};
+
+/** Count the devices the tree describes, and report the buses in it.
+ *
+ *  The blob lives in the extra bootinfo pages, whose frame capabilities the kernel
+ *  put in our CSpace, and it is read in place: the scratch window only ever hands
+ *  out the next page, so mapping them in order gives one contiguous window, and
+ *  nothing is unmapped while the tree points into it. Where the blob *starts* in
+ *  those pages is not something we assume -- the magic says so.
+ *
+ *  This is all of Aegir's device discovery for now: the device manager, which owns
+ *  the bus -> device -> service map, is not spawned yet (specs/services.md). */
+unsigned report_devices(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scratch) noexcept {
+    uint32_t const pages =
+        static_cast<uint32_t>(bootinfo->extraBIPages.end - bootinfo->extraBIPages.start);
+    if (pages == 0) {
+        aegir::debug_write("  FAIL the kernel gave us no pages for a device tree\n");
+        return 1;
+    }
+
+    uint8_t const *blob = nullptr;
+    uint64_t mapped = 0;
+    for (seL4_CPtr cap = bootinfo->extraBIPages.start; cap < bootinfo->extraBIPages.end; ++cap) {
+        /* These frames are already mapped: the kernel puts the extra bootinfo
+         * pages -- which is where the device tree lives -- into the root task's
+         * address space, and a frame cannot be mapped at two addresses
+         * ("RISCVPageMap: attempting to map frame into multiple addresses"). So
+         * move each one into the scratch window, because the tree is read in place
+         * and needs its pages to be contiguous to be walked. */
+        seL4_RISCV_Page_Unmap(cap);
+        auto *page = static_cast<uint8_t *>(scratch->map(cap));
+        if (page == nullptr) {
+            aegir::debug_write("  FAIL the device tree could not be mapped\n");
+            return 1;
+        }
+        if (blob == nullptr) {
+            blob = page;
+        }
+        mapped += 4096;
+    }
+
+    uint64_t offset = 0;
+    aegir::devtree::Tree tree;
+    bool adopted = false;
+    while (offset + 40 <= mapped) {
+        if (blob[offset] == 0xd0 && blob[offset + 1] == 0x0d && blob[offset + 2] == 0xfe &&
+            blob[offset + 3] == 0xed) {
+            if (tree.adopt(blob + offset, mapped - offset)) {
+                adopted = true;
+                break;
+            }
+        }
+        offset += 4;
+    }
+    if (!adopted) {
+        aegir::debug_write("  FAIL no device tree in the bootinfo pages\n");
+        return 1;
+    }
+
+    aegir::debug_write("  device tree: version ");
+    aegir::debug_write_unsigned(tree.version());
+    aegir::debug_write(", ");
+    aegir::debug_write_unsigned(tree.total_size() / 1024);
+    aegir::debug_write(" KiB of it, ");
+    aegir::debug_write_unsigned(tree.reserved_entries());
+    aegir::debug_write(" reserved regions\n");
+
+    DeviceReport report;
+    if (!tree.walk(report)) {
+        aegir::debug_write("  FAIL the device tree could not be read: stopped ");
+        aegir::debug_write_unsigned(tree.failure_offset());
+        aegir::debug_write(" of ");
+        aegir::debug_write_unsigned(tree.struct_size());
+        aegir::debug_write(" struct bytes, ");
+        aegir::debug_write_unsigned(tree.strings_size());
+        aegir::debug_write(" string bytes\n");
+        return 1;
+    }
+    aegir::debug_write("  devices: ");
+    aegir::debug_write_unsigned(report.with_region);
+    aegir::debug_write(" with a register window, of which ");
+    aegir::debug_write_unsigned(report.virtio_mmio);
+    aegir::debug_write(" are virtio transports\n");
+    return 0;
 }
 
 void report_bootinfo(seL4_BootInfo const *bootinfo) noexcept
@@ -394,6 +518,11 @@ int main(int argc, char *argv[])
     if (!scratch.initialise()) {
         problem("the address space window could not be worked out");
     }
+
+    /* The device tree, before anything is spawned: it is what the device manager
+     * will own, and it is the only place Aegir learns what the machine is
+     * (specs/services.md). */
+    failures += report_devices(bootinfo, &scratch);
 
     /* Everything boot allocates is charged to the system account
      * (specs/authority.md). Its capacity grows on demand; there is no ceiling

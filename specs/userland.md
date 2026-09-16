@@ -115,6 +115,13 @@ The boot thread's `gp` can legitimately be zero, so read it from the running thr
 rather than assuming (`mv %0, gp`); the two registers are then whatever the process
 already uses, which is exactly right for a thread in the same address space.
 
+**A virtual destructor costs a symbol we do not have.** Giving a base class a
+virtual destructor makes the compiler emit a deleting destructor, which needs
+`operator delete` -- and a freestanding program has none, so the link fails
+(`libs/aegir-devtree`'s `Tree::Visitor` is the example). An interface with a pure
+virtual function and no virtual destructor is the shape that works; nothing here
+deletes through a base pointer anyway.
+
 sel4runtime's helpers are not usable from C++ (its header is C-only, and
 `sel4runtime_set_tls_variable` is a macro using `typeof`), so director declares the
 two functions it needs and writes the IPC buffer pointer with

@@ -59,6 +59,7 @@ target_compile_options(
 )
 
 add_subdirectory(libs/aegir-runtime)
+add_subdirectory(libs/aegir-devtree)
 add_subdirectory(libs/aegir-mem)
 add_subdirectory(libs/aegir-bootstrap)
 add_subdirectory(libs/aegir-ipc)

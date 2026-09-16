@@ -388,3 +388,66 @@ registration. The names are different because the mechanisms are.
   both end up as registry updates plus spawn/stop requests.
 - **What a session is made of** — the services an interactive user actually gets
   — is a later spec.
+
+
+## The device manager
+
+The boot set has a logger because something has to be first. It has a device
+manager because **something has to know what the machine is**, and because that
+knowledge is what lets Aegir start a driver without a human telling it which
+irq belongs to which disk.
+
+The shape is the one the requirements ask for: the device manager holds a
+**bus -> device id -> service** map. A bus is a way of naming devices (memory-
+mapped virtio transports, later PCI), a device id is how that bus names one of
+them, and the map says which service is responsible for it. Devices arrive from
+somewhere and services are launched for them, so the map is what turns "there is
+a virtio block device at `0x10003000`, interrupt 4" into "the virtio-blk driver
+now owns that".
+
+### The device tree is the bus report
+
+Nothing has to be discovered by poking at hardware to begin with: the firmware
+told us. The device tree blob is where the machine's devices, their register
+windows and their interrupts are written down, and the kernel hands it to us --
+the elfloader places it in the extra bootinfo pages and the kernel retypes those
+pages into frame capabilities in the root task's CSpace
+(`seL4_BootInfo::extraBIPages`, kernel/libsel4/include/sel4/bootinfo_types.h:68).
+
+So the first thing Aegir does with a device is *read* it: director maps those
+pages with the scratch window (libs/aegir-mem, `Scratch::map`, which exists for
+exactly this -- mapping a frame we hold a capability for), finds the blob's
+magic, and reads it with our own device tree reader (libs/aegir-devtree). No
+hardware is touched, and a device the tree does not mention is a device we do not
+have.
+
+### What director does, and what the device manager will do
+
+Director reads the tree because it is the only task that can: it holds the
+capabilities for those pages, and it is the one that creates services. What it
+finds it reports (`device tree: ...`, one line per device the tree describes).
+The **device manager** is a service that owns that report and acts on it: it is
+the process that holds the map, launches the drivers for the devices it finds,
+and answers "who owns this device?" for everyone else.
+
+The device manager is not spawned yet; this milestone is the foundation it needs,
+and saying which half exists is the point of writing it down:
+
+- **exists**: director maps the device tree, reads it with our own reader
+  (libs/aegir-devtree), and reports the devices it describes;
+  the tree must be *moved* into the scratch window rather than mapped there, because
+  the kernel has already mapped the extra bootinfo pages into the root task and a
+  frame cannot be mapped at two addresses -- the kernel says so out loud
+  (`RISCVPageMap: attempting to map frame into multiple addresses`);
+- **next**: the device manager service, given that report at spawn and holding
+  the bus -> device -> service map, spawning drivers (virtio-blk first) and
+  giving each the device's register window and interrupt.
+
+Devices are given to a driver the way everything else here is given: capabilities
+for the device's register frames (retyped from the device's own untyped memory --
+device frames cannot be retyped into anything else,
+`kernel/src/object/untyped.c` refuses a non-page type on a device untyped) and an
+interrupt handler (`seL4_IRQControl_Get`, `seL4_IRQHandler_SetNotification`,
+`seL4_IRQHandler_Ack`) whose notification the driver waits on. A driver therefore
+does not need to be told about the machine -- it needs to be told about *its*
+device, and the map is what works out which is which.
