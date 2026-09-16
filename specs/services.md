@@ -545,6 +545,18 @@ and answers "who owns this device?" for everyone else.
   manager already has -- an untyped to retype frames from, whose physical base director knows
   -- plus a way to be told that base. That is the next piece, and it is a change to the spawn
   path rather than to the driver: the manifest asks for memory the way it now asks for a device.
+- **a service cannot map into its own address space, so its spawner maps for it**: the spawner
+  retypes the child's root page table, assigns it to an ASID pool, and keeps the capability.
+  What a child is *given* is its TCB, its CNode, the fault endpoint, the supervision
+  notification and its ports -- and not its VSpace root
+  (libs/aegir-spawn/src/process.cc:351-380; `ChildVSpace` maps through the `root_` the spawner
+  holds). Two consequences: `Scratch` cannot help a service, because it derives its window from
+  a bootinfo a child does not have; and a service that retypes a frame from its own untyped
+  cannot then map it. **The spawner maps for the child**, which is what `Request.device_frame`
+  already does for a device window -- so a driver's virtqueue page is the same shape of
+  request: director retypes the page from the system account, maps it into the child, and says
+  its physical address. The untyped a service is given stays useful for authority -- what it
+  may make -- but the mapping of what it makes has to come from the spawner.
 - **a service can be given memory and told where it is**: `memory_kib` in a manifest section
   makes director carve an untyped from the system account, hand over the capability, and say
   the region's *physical* base, because a virtqueue's descriptor entries are guest-physical
