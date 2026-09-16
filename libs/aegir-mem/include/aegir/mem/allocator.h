@@ -69,6 +69,27 @@ public:
                            seL4_Error *error) noexcept;
 
     /**
+     * A window of device memory: `pages` frames, for the device registers at
+     * `base_paddr` and the pages after it.
+     *
+     * A device frame can only be retyped from the device untyped that covers its
+     * address, and a retype takes no interior offset -- it carves from the untyped's own
+     * cursor, which only moves forwards (kernel/src/object/untyped.c,
+     * `decodeUntypedInvocation`). So reaching a device's page means retyping every page
+     * before it, and the pages along the way are **kept**: a frame that is dropped goes
+     * back to its untyped and the next retype carves it again, which is how asking for a
+     * device's page and getting the untyped's first page instead became a bug that
+     * looked like "the device answers zeros".
+     *
+     * `*first_out` is the first of `pages` consecutive capabilities, one per page. This
+     * is the *delegator's* call -- it needs the bootinfo's untyped descriptions, which a
+     * service does not have -- so a service is given a window rather than asked to find
+     * one (specs/services.md).
+     */
+    bool device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *first_out,
+                       seL4_Error *error) noexcept;
+
+    /**
      * A raw untyped capability of exactly `size_bits`, carved out and given away.
      *
      * Retyping *objects* is what the rest of this class does; this is for the ones

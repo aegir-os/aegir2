@@ -179,8 +179,15 @@ not to document it again.
 
 1. `Allocator::alloc_slot` and its failure path -- ours, three lines, and it is the bug
    shape behind `seL4_DeleteFirst`.
-2. `Allocator::device_frame(paddr)` -- the device walk in `main.cc` becomes one call, and
-   the retype-cursor behaviour stops being something a caller has to know.
+2. ~~`Allocator::device_window`~~ -- **written**, and `main.cc` no longer walks
+   `untypedList` or retypes by hand (its raw seL4 calls went from three to two). Turning the
+   survey over to it is *not* done: the survey then failed to map one page of the window,
+   and the kernel said why -- `Attempted to invoke a null cap #277`, so a slot the library
+   had just retyped a frame into was empty when the caller looked at it. The library
+   guarantees its frames are `pages` consecutive capabilities starting at `*first_out`; the
+   next attempt should print the slot numbers it hands out and the ones it retypes into,
+   which is the same measurement the window work needed, and now has a kernel message
+   pointing at it.
 3. `ChildVSpace` gaining a map-and-share call -- the `CNode_Copy` in `main.cc` goes away.
 4. `Spawner` over delegated authority -- the pieces exist (`adopt_untyped`, `adopt_slots`,
    `Allocator::make_asid_pool`); what is missing is a `Spawner` constructor that takes

@@ -212,6 +212,54 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     return slot;
 }
 
+bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *first_out,
+                              seL4_Error *error) noexcept
+{
+    *first_out = 0;
+    *error = seL4_NoError;
+    if (bootinfo_ == nullptr || pages == 0) {
+        *error = seL4_InvalidArgument;
+        return false;
+    }
+    /* The untyped the kernel described as device memory *and* that covers the address
+     * asked for: device memory arrives as untypeds like any other, marked as device
+     * (seL4_UntypedDesc::isDevice), and a device frame can come from nowhere else. */
+    seL4_Word const count = bootinfo_->untyped.end - bootinfo_->untyped.start;
+    for (seL4_Word i = 0; i < count; ++i) {
+        seL4_UntypedDesc const &desc = bootinfo_->untypedList[i];
+        if (desc.isDevice == 0) {
+            continue;
+        }
+        uint64_t const base = desc.paddr;
+        uint64_t const need = static_cast<uint64_t>(pages) << seL4_PageBits;
+        if (base_paddr < base || base_paddr - base + need > (1ull << desc.sizeBits)) {
+            continue;
+        }
+        for (unsigned page = 0; page < pages; ++page) {
+            seL4_CPtr const slot = alloc_slot();
+            if (slot == 0) {
+                *error = seL4_NotEnoughMemory;
+                return false;
+            }
+            seL4_Error const retyped =
+                seL4_Untyped_Retype(bootinfo_->untyped.start + i, seL4_RISCV_4K_Page,
+                                    seL4_PageBits, seL4_CapInitThreadCNode,
+                                    seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
+            if (retyped != seL4_NoError) {
+                slot_failed(slot);
+                *error = retyped;
+                return false;
+            }
+            if (page == 0) {
+                *first_out = slot;
+            }
+        }
+        return true;
+    }
+    *error = seL4_InvalidArgument;
+    return false;
+}
+
 bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits) noexcept
 {
     return remember(cap, size_bits, false);
