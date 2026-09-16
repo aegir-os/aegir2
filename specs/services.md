@@ -496,16 +496,28 @@ and saying which half exists is the point of writing it down:
   a `Device` block entry (address and size, separate from the `Devices` blob), a
   `Request` field the spawner maps above the blob, and the device manager reading its
   own device's magic and device id -- but the mapping into the child comes back
-  `seL4_InvalidCapability`, which for this call means the frame belongs to another
-  address space (`vspace.c:867-875`). Two variants were tried and both were refused:
-  unmapping the frame from our own window first, and unmapping *then* copying the
-  capability and mapping the copy. So the frame still counts as mapped somewhere and
-  the next thing to establish is where -- whether `seL4_RISCV_Page_Unmap` on a frame
-  capability really clears its address space, what `seL4_CNode_Copy` does with a
-  frame's mapping state, and whether the *survey's* other eight mappings (the pages
-  before it, which it keeps) matter. `ChildVSpace::map_page` now reports the kernel's
-  own error rather than swallowing it, so the next attempt says which branch it hit
-  instead of "could not be mapped".
+  `seL4_InvalidCapability`, and the kernel says which branch: its console line is
+  `decodeRISCVFrameInvocation/871` -- `RISCVPageMap: Attempting to remap a frame that
+  does not belong to the passed address space` -- which is
+  kernel/src/arch/riscv/kernel/vspace.c:871, the check that the frame's
+  `capFMappedASID` equals the VSpace's ASID. So the frame still carries a valid ASID
+  at the moment the child's VSpace is given it.
+
+  Measured, and this is the part that narrows it: **the copy of the device frame maps
+  into our own VSpace** (`device probe: the copy maps into our own space, so the
+  child's is what refuses`), and the probe's mapping is removed immediately afterwards
+  so it cannot cause the failure it tests for. The copy is therefore fine and the
+  child's map is what refuses -- which does *not* mean the child's VSpace is broken,
+  because every RAM frame maps into it.
+
+  Next, in order: read `performPageInvocationUnmap`
+  (kernel/src/arch/riscv/kernel/vspace.c, the body of `RISCVPageUnmap`) and establish
+  what it clears -- the invoked capability's ASID, or the object's -- and whether it
+  refuses when more than one capability to the object exists, the way `PageTableUnmap`
+  does ("cannot unmap if more than once cap exists", vspace.c:688). We hold *two*
+  capabilities to this frame by then: the survey's, and the copy made for the child.
+  That is the specific thing to check, and the kernel's console line names the branch
+  to confirm it against.
 
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the

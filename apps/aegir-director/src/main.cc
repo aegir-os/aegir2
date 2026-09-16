@@ -750,7 +750,42 @@ int main(int argc, char *argv[])
          * the-copy); the next one is the manual's rule read more carefully, since the
          * copy is what the manual prescribes (kernel/manual/parts/vspace.tex:367-373).
          * The survey's frame is the one to hand over when it works. */
-        static_cast<void>(device_frame);
+        /* The manual's rule (kernel/manual/parts/vspace.tex, "Sharing Memory"): a page
+         * capability maps into one VSpace, so sharing means duplicating the capability
+         * with seL4_CNode_Copy and mapping the copy. The last attempt did that and was
+         * still refused with seL4_InvalidCapability, so this one measures which side is
+         * at fault: map the copy into *our* VSpace first. If that is refused too, the
+         * copy carries a mapping; if it succeeds, it is the child's VSpace the map
+         * rejects. The probe's mapping is removed immediately -- leaving it would cause
+         * the very failure it is testing for. */
+        seL4_CPtr device_grant = 0;
+        if (device_frame != 0) {
+            scratch.unmap(device_frame);
+            device_grant = allocator.alloc_slot();
+            if (device_grant == 0) {
+                problem("no slot for the device manager's device");
+            } else {
+                seL4_Error const copied =
+                    seL4_CNode_Copy(seL4_CapInitThreadCNode, device_grant, seL4_WordBits,
+                                    seL4_CapInitThreadCNode, device_frame, seL4_WordBits,
+                                    seL4_AllRights);
+                if (copied != seL4_NoError) {
+                    problem("the device frame could not be duplicated");
+                    device_grant = 0;
+                } else {
+                    void *probe = scratch.map(device_grant);
+                    if (probe == nullptr) {
+                        write("  FAIL the copy of the device frame cannot be mapped here\n");
+                        device_grant = 0;
+                    } else {
+                        scratch.unmap(device_grant);
+                        write("  device probe: the copy maps into our own space, so the child\
+'s is what refuses\n");
+                    }
+                }
+            }
+        }
+        static_cast<void>(device_grant);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);        booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, 0, 0);
