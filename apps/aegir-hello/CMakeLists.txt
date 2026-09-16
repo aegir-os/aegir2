@@ -20,4 +20,7 @@ target_compile_options(aegir-hello PRIVATE -Wall -Wextra -Werror)
 
 # aegir-cxx-policy carries the freestanding C++ flags; aegir-runtime provides
 # the pieces every binary needs (see libs/aegir-runtime).
-target_link_libraries(aegir-hello PRIVATE aegir-cxx-policy aegir-runtime sel4 muslc sel4runtime)
+# aegir-bootstrap is how it learns who it is (specs/director.md).
+target_link_libraries(
+  aegir-hello PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap sel4 muslc sel4runtime
+)

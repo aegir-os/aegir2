@@ -11,7 +11,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-mem CXX)
 
-add_library(aegir-mem STATIC src/allocator.cc src/arena.cc src/vspace.cc)
+add_library(aegir-mem STATIC src/allocator.cc src/arena.cc src/child_vspace.cc src/vspace.cc)
 
 target_include_directories(aegir-mem PUBLIC include)
 # sel4runtime brings the kernel's generated configuration headers (it links

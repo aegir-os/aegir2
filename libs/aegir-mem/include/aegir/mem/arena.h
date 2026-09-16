@@ -33,7 +33,9 @@ public:
     uint64_t pages() const noexcept { return pages_; }
 
 private:
-    bool grow() noexcept;
+    /** Take a fresh contiguous run of pages, for a request the current one cannot
+     *  hold. Returns false when the window or the memory runs out. */
+    bool start_region(uint64_t bytes) noexcept;
 
     Allocator &allocator_;
     Scratch &scratch_;

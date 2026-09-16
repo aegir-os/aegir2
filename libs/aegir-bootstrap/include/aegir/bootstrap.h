@@ -1,0 +1,127 @@
+/*
+ * The Aegir bootstrap block and the slots a spawned process starts with.
+ *
+ * Copyright (c) 2026 Robert Roland
+ * SPDX-License-Identifier: MIT
+ *
+ * This is the ABI between whoever creates a process and the process itself
+ * (specs/director.md). It has two halves:
+ *
+ *   - the CSpace slots every Aegir process is given, so a child can name itself
+ *     and its supervisor without being told where to look;
+ *   - one page, mapped read-only, describing who the child is and what it was
+ *     granted, found through an auxv entry rather than through a convention of
+ *     memory layout.
+ *
+ * The auxv route works because sel4runtime reads the entries it knows and
+ * ignores the rest (`projects/sel4runtime/src/env.c:316-317`), and because it
+ * exposes the vector it was started with (`sel4runtime_auxv`,
+ * `projects/sel4runtime/include/sel4runtime.h:44`). So Aegir adds a tag instead
+ * of patching the runtime.
+ *
+ * The block is versioned and counted: a reader that knows less than the writer
+ * skips what it does not understand, which is what keeps this from being a
+ * one-way door.
+ */
+
+#ifndef AEGIR_BOOTSTRAP_H
+#define AEGIR_BOOTSTRAP_H
+
+#include <stdint.h>
+
+namespace aegir::bootstrap {
+
+/* --- the slots every Aegir process starts with (specs/director.md) --------- */
+
+/** Left null on purpose: a null capability must fail, not do something. */
+constexpr uint64_t kSlotNull = 0;
+/* The next two are seL4's own convention, not ours to choose:
+ * seL4_CapInitThreadTCB is 1 and seL4_CapInitThreadCNode is 2
+ * (kernel/libsel4/include/sel4/bootinfo_types.h:17-18), and the runtime and the
+ * kernel's debugging paths address a thread's TCB there by name -- a child whose
+ * slot 1 held something else is stopped by the kernel with "cap is not a TCB"
+ * the moment it names itself (projects/sel4runtime/src/env.c:185). Our layout
+ * therefore *extends* seL4's initial slots instead of rearranging them. */
+/** The child's own TCB, so it can set its own priority and affinity. */
+constexpr uint64_t kSlotOwnTcb = 1;
+/** The child's own root CNode, so it can name capabilities it creates. */
+constexpr uint64_t kSlotOwnCNode = 2;
+/** The endpoint its faults are delivered to. It lives in *our* CSpace and in
+ *  the child's, because seL4 requires the fault endpoint to be addressable from
+ *  the thread being configured (out/aegir/libsel4/include/interfaces/sel4_client.h:876). */
+constexpr uint64_t kSlotFaultEndpoint = 3;
+/** The notification a child signals to say it has finished starting, which is
+ *  what its supervisor waits on. One way, unforgeable, and cheap. */
+constexpr uint64_t kSlotSupervision = 4;
+/** First slot the manifest's own declarations may use. */
+constexpr uint64_t kSlotFirstDeclared = 8;
+
+/* --- the block ------------------------------------------------------------- */
+
+/** Our auxv tag. Standard and seL4 tags occupy 0-72
+ *  (projects/sel4runtime/include/sel4runtime/auxv.h:9-29), so Aegir's start
+ *  above them. */
+constexpr int kAuxvTag = 80;
+
+constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
+constexpr uint32_t kVersion = 1;
+
+/** What a block entry describes. Unknown kinds are the reader's problem to
+ *  skip, not an error. */
+enum class EntryKind : uint32_t {
+    /** The block's own byte size, so a reader can trust the count. */
+    Size = 1,
+    /** A NUL-free string: the child's service name. */
+    Name = 2,
+    /** The account the child is charged to. */
+    Account = 3,
+    /** A capability the child was given: `slot`, `value` and a name in `data`. */
+    Capability = 4,
+    /** The page size the child's mappings use, for anything that has to agree. */
+    PageBits = 5,
+};
+
+struct Entry {
+    EntryKind kind;
+    uint32_t length;      /* bytes of this entry's data */
+    uint64_t number;      /* what `number` means depends on `kind` */
+    /* Where the data is, as a byte offset from the block's own start -- not a
+     * pointer. The block is written in the writer's address space and read in
+     * the child's, at a different address, so a pointer in here would be a
+     * number that means nothing to whoever reads it. */
+    uint32_t data_offset;
+    uint32_t reserved;
+};
+
+struct Block {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t entry_count;
+    uint32_t reserved;
+    Entry entries[];
+};
+
+/* --- writing (director) ---------------------------------------------------- */
+
+/** Build a block in memory we can write: `storage` is a page that will be
+ *  mapped into the child. Returns the block, or nullptr when it does not fit.
+ *  `name` and `account` must outlive the call (they are copied in). */
+Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
+             char const *account, uint32_t account_length) noexcept;
+
+/* --- reading (a spawned process) ------------------------------------------- */
+
+/** The block this process was started with, or nullptr when there is none --
+ *  which is the case for the root task, so callers have to handle it. */
+Block const *find() noexcept;
+
+/** The child's service name, or the empty string. */
+char const *name(uint32_t *length) noexcept;
+
+/** Look up one string entry by kind. The pointer is into the block, so it is
+ *  valid for as long as the block is. */
+char const *string(EntryKind kind, uint32_t *length) noexcept;
+
+}  // namespace aegir::bootstrap
+
+#endif  // AEGIR_BOOTSTRAP_H

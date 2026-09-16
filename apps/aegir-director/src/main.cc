@@ -24,8 +24,11 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/spawn/initrd.h>
 
 #include <sel4/sel4.h>
+
+#include "services.h"
 
 /* util_libs' cpio header has no extern "C" guard, so from C++ its prototypes
  * would be mangled and the link would fail on names the library does not define
@@ -51,9 +54,14 @@ seL4_BootInfo *sel4runtime_bootinfo(void);
 
 namespace {
 
+using aegir::director::Boot;
+using aegir::director::Services;
+using aegir::director::Started;
+
 /* The name director looks its manifest up by: the flat name the archive uses,
  * which is the file's basename. */
-constexpr char const *kManifestEntry = "services.manifest";
+constexpr char const kManifestEntry[] = "services.manifest";
+constexpr uint32_t kManifestEntryLength = sizeof(kManifestEntry) - 1;
 
 int failures = 0;
 
@@ -111,38 +119,11 @@ void problem(char const *what) noexcept
     ++failures;
 }
 
-/* Names in a newc archive sit in the header's name field, which is NUL
- * terminated (its length includes the NUL). The API hands back a pointer without
- * the length, so this is how the length is recovered -- bounded by the archive's
- * longest name. */
-unsigned name_length(char const *name, unsigned limit) noexcept
-{
-    unsigned length = 0;
-    while (length < limit && name[length] != '\0') {
-        ++length;
-    }
-    return length;
-}
-
 void write_name(char const *name, unsigned length) noexcept
 {
     for (unsigned i = 0; i < length; ++i) {
         seL4_DebugPutChar(name[i]);
     }
-}
-
-bool same_name(char const *left, unsigned left_length, char const *right,
-               unsigned right_length) noexcept
-{
-    if (left_length != right_length) {
-        return false;
-    }
-    for (unsigned i = 0; i < left_length; ++i) {
-        if (left[i] != right[i]) {
-            return false;
-        }
-    }
-    return true;
 }
 
 void report_bootinfo(seL4_BootInfo const *bootinfo) noexcept
@@ -197,49 +178,35 @@ bool self_test(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
  * the same name would shadow silently -- cpio_get_file returns the first match
  * -- so a duplicate is a boot failure rather than a surprise later
  * (specs/services.md). */
-bool read_initrd(char const *&manifest, unsigned long &manifest_size) noexcept
+bool read_initrd(aegir::spawn::Initrd const &initrd, char const *&manifest,
+                 unsigned long &manifest_size) noexcept
 {
-    auto const *archive = static_cast<void const *>(_cpio_archive);
-    unsigned long const length = static_cast<unsigned long>(_cpio_archive_end - _cpio_archive);
-
-    struct cpio_info info {};
-    if (cpio_info(archive, length, &info) != 0) {
+    if (!initrd.valid()) {
         problem("the initrd could not be read");
         return false;
     }
 
     heading("initrd (flat: names are identities, there are no paths)");
-    bool duplicate = false;
-    for (unsigned int i = 0; i < info.file_count; ++i) {
-        char const *name = nullptr;
-        unsigned long size = 0;
-        if (cpio_get_entry(archive, length, static_cast<int>(i), &name, &size) == nullptr) {
+    for (unsigned i = 0; i < initrd.entries(); ++i) {
+        unsigned name_size = 0;
+        char const *entry_name = initrd.name(i, &name_size);
+        if (entry_name == nullptr) {
             problem("an initrd entry could not be read");
             return false;
         }
-        unsigned const name_size = name_length(name, info.max_path_sz);
-        for (unsigned int j = 0; j < i && !duplicate; ++j) {
-            char const *other_name = nullptr;
-            unsigned long other_size = 0;
-            if (cpio_get_entry(archive, length, static_cast<int>(j), &other_name, &other_size) ==
-                nullptr) {
-                continue;
-            }
-            duplicate = same_name(name, name_size, other_name, name_length(other_name, info.max_path_sz));
-        }
         write("  ");
-        write_name(name, name_size);
-        write("  ");
-        number(size);
-        write(" bytes\n");
+        write_name(entry_name, name_size);
+        write("\n");
     }
-    if (duplicate) {
+    /* Two entries sharing a name would shadow silently: a lookup returns the
+     * first match (specs/services.md). */
+    if (initrd.has_duplicate_names()) {
         problem("two initrd entries share a name, so one of them shadows the other");
         return false;
     }
 
-    auto *found = static_cast<char const *>(
-        cpio_get_file(archive, length, kManifestEntry, &manifest_size));
+    uint64_t size = 0;
+    void const *found = initrd.find(kManifestEntry, kManifestEntryLength, &size);
     if (found == nullptr) {
         write("  FAIL no entry named ");
         write(kManifestEntry);
@@ -247,40 +214,90 @@ bool read_initrd(char const *&manifest, unsigned long &manifest_size) noexcept
         ++failures;
         return false;
     }
-    manifest = found;
+    manifest = static_cast<char const *>(found);
+    manifest_size = static_cast<unsigned long>(size);
     return true;
 }
 
-bool report_manifest(char const *text, unsigned long length, aegir::mem::Arena &arena,
-                     aegir::mem::Account &account) noexcept
+void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
 {
-    aegir::manifest::Manifest manifest(arena, account);
-    if (!manifest.parse(text, length)) {
-        aegir::manifest::Manifest::Problem found = manifest.problem();
-        write("  FAIL line ");
-        number(found.line);
-        write(": ");
-        write(found.message);
-        write("\n");
-        ++failures;
-        return false;
-    }
+    using aegir::manifest::Authority;
+    using aegir::manifest::Entry;
 
     heading("boot manifest");
     write("  ");
     number(manifest.size());
     write(" service(s) declared\n");
     for (uint32_t i = 0; i < manifest.size(); ++i) {
-        aegir::manifest::Entry const &entry = manifest[i];
+        Entry const &entry = manifest[i];
         write("  ");
         write_name(entry.name.data, entry.name.length);
         write(": binary ");
         write_name(entry.binary.data, entry.binary.length);
         write(", authority ");
-        write(entry.authority == aegir::manifest::Authority::System ? "system" : "user");
+        write(entry.authority == Authority::System ? "system" : "user");
         write(", account ");
         write_name(entry.account.data, entry.account.length);
         write("\n");
+    }
+}
+
+/* Create the boot set and wait for it to say it is ready. Supervision is the
+ * spawner's other half (specs/director.md): every process gets a notification,
+ * and a service that never signals is a boot that does not finish -- which is the
+ * honest outcome while there is no timer to time out on. */
+bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest const &manifest,
+                   aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
+                   aegir::mem::Arena &arena, aegir::mem::Account &account) noexcept
+{
+    auto *started =
+        static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
+    if (started == nullptr) {
+        problem("no memory for the boot set's records");
+        return false;
+    }
+
+    Services services(allocator, scratch, arena, initrd);
+    Boot boot{};
+    services.boot(manifest, account, started, boot);
+
+    heading("boot set");
+    write("  ");
+    number(boot.declared);
+    write(" declared, ");
+    number(boot.started);
+    write(" started\n");
+    for (unsigned i = 0; i < boot.started; ++i) {
+        write("  ");
+        write_name(started[i].name, started[i].name_length);
+        write(" running at ");
+        aegir::debug_write_hex(started[i].entry);
+        write("\n");
+    }
+    if (boot.problem[0] != '\0') {
+        problem(boot.problem);
+        write("  allocator: ");
+        number(allocator.untyped_free());
+        write(" untyped free, largest 2^");
+        number(allocator.largest_free_bits());
+        write("; last request 2^");
+        number(allocator.last_request_bits());
+        write(" from a 2^");
+        number(allocator.last_candidate_bits());
+        write(" candidate\n");
+        return false;
+    }
+    if (boot.started == 0) {
+        problem("the manifest declares no service to start");
+        return false;
+    }
+
+    for (unsigned i = 0; i < boot.started; ++i) {
+        seL4_Word badge = 0;
+        seL4_Wait(started[i].supervision, &badge);
+        write("  ");
+        write_name(started[i].name, started[i].name_length);
+        write(" ready\n");
     }
     return true;
 }
@@ -345,16 +362,35 @@ int main(int argc, char *argv[])
     number(system.objects);
     write(" objects\n");
 
+    aegir::spawn::Initrd initrd(static_cast<void const *>(_cpio_archive),
+                                static_cast<uint64_t>(_cpio_archive_end - _cpio_archive));
     char const *manifest_text = nullptr;
     unsigned long manifest_size = 0;
-    bool const initrd_ok = read_initrd(manifest_text, manifest_size);
+    bool const initrd_ok = read_initrd(initrd, manifest_text, manifest_size);
 
+    aegir::manifest::Manifest manifest(arena, system);
     bool manifest_ok = false;
     if (initrd_ok) {
-        manifest_ok = report_manifest(manifest_text, manifest_size, arena, system);
+        if (!manifest.parse(manifest_text, static_cast<uint32_t>(manifest_size))) {
+            aegir::manifest::Manifest::Problem found = manifest.problem();
+            write("  FAIL line ");
+            number(found.line);
+            write(": ");
+            write(found.message);
+            write("\n");
+            ++failures;
+        } else {
+            report_manifest(manifest);
+            manifest_ok = true;
+        }
     }
 
-    if (failures == 0 && memory_ok && initrd_ok && manifest_ok) {
+    bool booted = false;
+    if (initrd_ok && manifest_ok) {
+        booted = boot_services(initrd, manifest, allocator, scratch, arena, system);
+    }
+
+    if (failures == 0 && memory_ok && initrd_ok && manifest_ok && booted) {
         write("\nAEGIR_BOOT_OK\n");
     } else {
         write("\nAEGIR_BOOT_INCOMPLETE\n");

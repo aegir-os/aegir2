@@ -48,6 +48,7 @@ struct Entry {
     View grants;
     View spawns;
     View restart;
+    View priority;
     View args;
     Authority authority;
     uint32_t line; /* the line the section started on, for messages */

@@ -24,7 +24,7 @@ constexpr seL4_Word kRootCNodeDepth = seL4_WordBits;
 Allocator::Allocator(seL4_BootInfo *bootinfo) noexcept
     : bootinfo_(bootinfo), untyped_count_(0), cnode_size_bits_(0), slots_first_(0),
       slots_next_(0), slots_end_(0), slots_used_(0), normal_bytes_(0), device_bytes_(0),
-      allocated_bytes_(0)
+      allocated_bytes_(0), last_request_bits_(0), last_candidate_bits_(0)
 {
     for (auto &entry : untyped_) {
         entry = Untyped{0, 0, 0, 0};
@@ -47,7 +47,9 @@ bool Allocator::initialise() noexcept
     }
     for (seL4_Word i = 0; i < untyped_caps; ++i) {
         seL4_UntypedDesc const &desc = bootinfo_->untypedList[i];
-        remember(bootinfo_->untyped.start + i, desc.sizeBits, desc.isDevice != 0);
+        if (!remember(bootinfo_->untyped.start + i, desc.sizeBits, desc.isDevice != 0)) {
+            return false;
+        }
         if (desc.isDevice != 0) {
             device_bytes_ += 1ull << desc.sizeBits;
         } else {
@@ -63,16 +65,19 @@ bool Allocator::initialise() noexcept
     return true;
 }
 
-void Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device) noexcept
+bool Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device) noexcept
 {
-    if (untyped_count_ >= static_cast<unsigned>(CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS)) {
-        return;
+    /* Never silently: an untyped this allocator cannot remember is memory it
+     * would hand out twice or lose, and both are worse than failing. */
+    if (untyped_count_ >= static_cast<unsigned>(CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS) * 8) {
+        return false;
     }
     untyped_[untyped_count_].cap = cap;
     untyped_[untyped_count_].size_bits = static_cast<uint8_t>(size_bits);
     untyped_[untyped_count_].device = device ? 1 : 0;
     untyped_[untyped_count_].used = 0;
     ++untyped_count_;
+    return true;
 }
 
 seL4_CPtr Allocator::alloc_slot() noexcept
@@ -95,13 +100,33 @@ unsigned Allocator::untyped_free() const noexcept
     return free;
 }
 
-int Allocator::find_untyped(seL4_Word size_bits) const noexcept
+unsigned Allocator::object_bits(seL4_Word type, seL4_Word size_bits) noexcept
+{
+    if (type == seL4_CapTableObject) {
+        return static_cast<unsigned>(size_bits + seL4_SlotBits);
+    }
+    return static_cast<unsigned>(size_bits);
+}
+
+unsigned Allocator::largest_free_bits() const noexcept
+{
+    unsigned largest = 0;
+    for (unsigned i = 0; i < untyped_count_; ++i) {
+        if (untyped_[i].used == 0 && untyped_[i].device == 0 && untyped_[i].size_bits > largest) {
+            largest = untyped_[i].size_bits;
+        }
+    }
+    return largest;
+}
+
+/* `memory_bits` is always the memory an object costs (see object_bits). */
+int Allocator::find_untyped(seL4_Word memory_bits) const noexcept
 {
     int best = -1;
     for (unsigned i = 0; i < untyped_count_; ++i) {
         Untyped const &entry = untyped_[i];
         if (entry.used != 0 || entry.device != 0 ||
-            static_cast<seL4_Word>(entry.size_bits) < size_bits) {
+            static_cast<seL4_Word>(entry.size_bits) < memory_bits) {
             continue;
         }
         if (best < 0 || entry.size_bits < untyped_[best].size_bits) {
@@ -112,9 +137,9 @@ int Allocator::find_untyped(seL4_Word size_bits) const noexcept
     return best;
 }
 
-bool Allocator::split_to(int index, seL4_Word size_bits) noexcept
+bool Allocator::split_to(int index, seL4_Word memory_bits) noexcept
 {
-    while (static_cast<seL4_Word>(untyped_[index].size_bits) > size_bits) {
+    while (static_cast<seL4_Word>(untyped_[index].size_bits) > memory_bits) {
         seL4_Word half = untyped_[index].size_bits - 1;
         seL4_CPtr slot = alloc_slot();
         if (slot == 0) {
@@ -130,7 +155,9 @@ bool Allocator::split_to(int index, seL4_Word size_bits) noexcept
         if (error != seL4_NoError) {
             return false;
         }
-        remember(slot, half, false);
+        if (!remember(slot, half, false)) {
+            return false;
+        }
         untyped_[index].size_bits = static_cast<uint8_t>(half);
     }
     return true;
@@ -140,12 +167,16 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
                                   seL4_Error *error) noexcept
 {
     *error = seL4_NoError;
-    int index = find_untyped(size_bits);
+    unsigned const wanted = object_bits(type, size_bits);
+    last_request_bits_ = static_cast<unsigned>(size_bits);
+    last_candidate_bits_ = 0;
+    int index = find_untyped(wanted);
     if (index < 0) {
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    if (!split_to(index, size_bits)) {
+    last_candidate_bits_ = untyped_[index].size_bits;
+    if (!split_to(index, wanted)) {
         *error = seL4_NotEnoughMemory;
         return 0;
     }
@@ -162,11 +193,12 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
         return 0;
     }
 
-    /* The untyped was split to exactly this size, so the object consumed it. */
+    /* The untyped was split to exactly the memory the object costs, so the
+     * object consumed it. */
     untyped_[index].used = 1;
-    account.bytes += 1ull << size_bits;
+    account.bytes += 1ull << wanted;
     account.objects += 1;
-    allocated_bytes_ += 1ull << size_bits;
+    allocated_bytes_ += 1ull << wanted;
     return slot;
 }
 

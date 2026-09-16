@@ -34,14 +34,15 @@ endif()
 include(cpio)
 MakeCPIO(director_initrd.o "${aegir_initrd_files}" DEPENDS aegir-hello)
 
-add_executable(aegir-director src/main.cc director_initrd.o)
+add_executable(aegir-director src/main.cc src/services.cc director_initrd.o)
 
 target_compile_options(aegir-director PRIVATE -Wall -Wextra -Werror)
 
 # cpio is util_libs' reader for the initrd above; everything else is ours.
 target_link_libraries(
   aegir-director
-  PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-manifest sel4 muslc sel4runtime cpio
+  PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-manifest aegir-spawn
+          sel4 muslc sel4runtime cpio
 )
 
 include(rootserver)
