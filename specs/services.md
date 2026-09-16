@@ -546,6 +546,27 @@ and saying which half exists is the point of writing it down:
   entry kinds. Editing one without the other makes the device manager walk a wrong
   pointer and fault -- which is exactly what happened, and why this is written down
   rather than left to the diff.
+- **the series of transport frames, in progress**: a service that drives a device needs
+  the *window* the machine's transports sit in, not one page of it -- the whole span from
+  the untyped's base, so an address in the device tree is an offset into the window. The
+  shape is settled and partly built (the survey retypes and keeps every page; the block's
+  `Device` entry already carries the window's base in `number` and its length in
+  `length`; the spawner maps one frame per page, page `i` being capability
+  `device_frame + i`). Three things are known now and one is not:
+  - **each page must ask for its own slot** even though they come out consecutive:
+    reserving one and reaching past it leaves the allocator's cursor behind the slots in
+    use, and the next allocation lands on a frame -- which the kernel reports as
+    `seL4_DeleteFirst`, "the destination slot is occupied" (error 8, and that is the name
+    to read it by).
+  - **the window's first page is not a transport.** The untyped starts at `0x10000000`
+    and the transports begin one page later, so a service handed the whole window must
+    find its devices by *offset from the base* -- reading offset `0x08` of the first page
+    faults (there is nothing there, which the survey already knew).
+  - **not yet explained**: with the window handed over, the supervisor reports
+    `service 0 faulted (kind 35)` -- badge 0, which is director's own voice rather than a
+    child's, and a kind that is not a fault type. Something sent the shared fault endpoint
+    a message it could not have made itself, and the first candidate is the device manager
+    reading a page that is not a transport. That is where the next attempt starts.
 - **next**: the bus -> device -> service map inside the device manager, and- **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
