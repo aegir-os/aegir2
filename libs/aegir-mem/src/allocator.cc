@@ -148,7 +148,8 @@ int Allocator::find_untyped(seL4_Word memory_bits) const noexcept
     return best;
 }
 
-bool Allocator::split_to(int index, seL4_Word memory_bits, seL4_CPtr *last_child) noexcept
+bool Allocator::split_to(int index, seL4_Word memory_bits, seL4_CPtr *last_child,
+                         seL4_Error *error) noexcept
 {
     if (last_child != nullptr) {
         *last_child = 0;
@@ -157,6 +158,9 @@ bool Allocator::split_to(int index, seL4_Word memory_bits, seL4_CPtr *last_child
         seL4_Word half = untyped_[index].size_bits - 1;
         seL4_CPtr slot = alloc_slot();
         if (slot == 0) {
+            if (error != nullptr) {
+                *error = seL4_NotEnoughMemory;
+            }
             return false;
         }
         /* Retyping an untyped out of an untyped carves the child from the LOW end of
@@ -167,12 +171,15 @@ bool Allocator::split_to(int index, seL4_Word memory_bits, seL4_CPtr *last_child
          * cap this entry keeps -- begins one half higher. Bookkeeping that says
          * otherwise hands a caller a physical address its memory does not have: a
          * device given it reads an empty ring out of somebody else's RAM, forever. */
-        seL4_Error error =
+        seL4_Error retyped =
             seL4_Untyped_Retype(untyped_[index].cap, seL4_UntypedObject, half,
                                 seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
                                 cnode_depth_, slot, 1);
-        if (error != seL4_NoError) {
+        if (retyped != seL4_NoError) {
             slot_failed(slot);
+            if (error != nullptr) {
+                *error = retyped;
+            }
             return false;
         }
         if (!remember(slot, half, false, untyped_[index].physical)) {
@@ -203,8 +210,7 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
         return 0;
     }
     last_candidate_bits_ = untyped_[index].size_bits;
-    if (!split_to(index, wanted)) {
-        *error = seL4_NotEnoughMemory;
+    if (!split_to(index, wanted, nullptr, error)) {
         return 0;
     }
 
@@ -319,8 +325,7 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
         }
     }
     seL4_CPtr leaf = 0;
-    if (!split_to(index, size_bits, &leaf)) {
-        *error = seL4_NotEnoughMemory;
+    if (!split_to(index, size_bits, &leaf, error)) {
         return 0;
     }
     /* What is handed out must be a capability the kernel will let the caller copy:

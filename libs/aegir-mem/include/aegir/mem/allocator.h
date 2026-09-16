@@ -220,8 +220,11 @@ private:
      *  `last_child`, when given, receives the capability of the last leaf the
      *  halving made -- or 0 when nothing had to be split. The leaf is the piece a
      *  caller may give away: the remainder has children and the kernel refuses to
-     *  copy a capability that does (`seL4_RevokeFirst`). */
-    bool split_to(int index, seL4_Word size_bits, seL4_CPtr *last_child = nullptr) noexcept;
+     *  copy a capability that does (`seL4_RevokeFirst`). On failure, `error` says
+     *  what the kernel said -- a caller that overwrites it with its own guess is
+     *  inventing an answer the kernel already gave. */
+    bool split_to(int index, seL4_Word size_bits, seL4_CPtr *last_child = nullptr,
+                  seL4_Error *error = nullptr) noexcept;
 
     bool remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept;
 
