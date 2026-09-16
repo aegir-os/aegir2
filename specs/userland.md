@@ -91,12 +91,29 @@ gets for free, and the symptoms of missing them point somewhere else entirely:
   variable `__sel4_ipc_buffer` (kernel/libsel4/include/sel4/functions.h:13), so a
   thread with `tp = 0` faults on its first syscall -- including the first
   `seL4_DebugPutChar`, which looks like "the thread never ran". Give it a TLS
-  block of its own (the process's image copied in, plus *its* IPC buffer pointer)
-  and set the base with `seL4_TCB_SetTLSBase`; upstream's thread setup is the
-  reference (projects/seL4_libs/libsel4utils/src/thread.c:169-177).
-- **A global pointer (`gp`).** The crt computes it from `__global_pointer$`.
+  block of its own (the process's image copied in, plus *its* IPC buffer pointer);
+  upstream's thread setup is the reference
+  (projects/seL4_libs/libsel4utils/src/thread.c:169-177).
+- **A global pointer (`gp`).** The crt computes it from `__global_pointer$`, and
+  code compiled the way ours is does use it: the first global access is what
+  faults, at whatever address the globals would have been. `seL4_TCB_SetTLSBase`
+  is *not* how either of these reaches the thread's context -- see below.
 - **A stack that does not overlap the TLS block**: the block sits at the top of the
   thread's stack pages and the stack pointer starts below it.
+
+**Set `tp` and `gp` in the user context, not beside it.** `seL4_TCB_WriteRegisters`
+writes the *whole* user context. Calling `seL4_TCB_SetTLSBase` first and then
+`WriteRegisters` with a zeroed context undoes it: the thread is left with `tp = 0`,
+and its first access to the IPC buffer is a fault at address zero -- which reads
+like a supervisor that received nothing and simply stopped. The `seL4_UserContext`
+field is the one that wins:
+
+    context.gp = <the making thread's gp>;
+    context.tp = thread_pointer;         /* from sel4runtime_write_tls_image */
+
+The boot thread's `gp` can legitimately be zero, so read it from the running thread
+rather than assuming (`mv %0, gp`); the two registers are then whatever the process
+already uses, which is exactly right for a thread in the same address space.
 
 sel4runtime's helpers are not usable from C++ (its header is C-only, and
 `sel4runtime_set_tls_variable` is a macro using `typeof`), so director declares the

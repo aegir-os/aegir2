@@ -269,6 +269,12 @@ bool Supervisor::start(seL4_CPtr fault_endpoint, Supervised *table, uint32_t cap
     seL4_Word gp = 0;
     asm volatile("mv %0, gp" : "=r"(gp));
     context.gp = gp;
+    /* And the thread pointer, in the same context rather than only through
+     * seL4_TCB_SetTLSBase below: WriteRegisters writes the whole user context, so
+     * a zero here would overwrite the base that call had just set, leaving the
+     * thread with no TLS -- which is a fault at address zero on its first access
+     * to the IPC buffer (kernel/libsel4/include/sel4/functions.h:13). */
+    context.tp = thread_pointer;
     context.pc = reinterpret_cast<seL4_Word>(&aegir_supervisor_entry);
     /* The stack pointer starts below the TLS block, not at the top of the stack:
      * that memory belongs to the thread's TLS now. */

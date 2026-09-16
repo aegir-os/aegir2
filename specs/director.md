@@ -298,61 +298,60 @@ also keeps the M4 evidence alive in the tree.
   "free memory" and "unassigned memory" are the same thing.
 
 
-### Where supervision stands (open)
+### Where supervision stands
 
-Two facts from the boot, one of them the thing that was wrong for three attempts:
+Supervision works, and the boot now exercises it on every run. `aegir-hello` dies
+on purpose before reporting ready -- it is the one service in the boot set whose
+job is to fail, because a supervision path nobody walks is not a path -- and the
+transcript shows the whole chain:
 
-- **A thread this process starts itself has no thread pointer and no global
-  pointer.** A process gets both from its crt: sel4runtime builds the TLS block
-  from PT_TLS and sets `tp`, and the entry code computes `gp` from
-  `__global_pointer$`. A thread started the way the supervisor is gets neither,
-  and the failure is not where you would look for it: libsel4 finds the IPC
-  buffer through the TLS variable `__sel4_ipc_buffer`
-  (kernel/libsel4/include/sel4/functions.h:13), so with `tp` zero the thread's
-  **first syscall** faults. The supervisor is given a TLS block of its own at the
-  top of its stack, its own IPC buffer pointer written into that copy
-  (`seL4_TCB_SetTLSBase`), the making thread's `gp`, and a stack pointer starting
-  *below* the TLS block -- which is what upstream does for threads
-  (projects/seL4_libs/libsel4utils/src/thread.c:169-177). Verified: the supervisor
-  reports that it is listening.
-- **A fault does not reach the supervisor, although a send does.** A child's
-  `seL4_Send` to the fault endpoint is received (a blocking send only completes
-  when a receiver takes it), so the endpoint, the minted copy in the child's
-  CSpace, the capability the supervisor waits on (director's slot 201), and the
-  supervisor's `Recv` are all working. The same child storing to an unmapped
-  address does *not* produce a message there, and after receiving the send the
-  supervisor printed nothing more. Next probe, in order: a bare
-  `seL4_DebugPutChar` immediately after `Recv` returns, which separates "Recv
-  returned" from "the print path still works" without a function call or a string
-  literal in between; then the fault's own delivery, with the faulting thread's
-  capability badge checked against `faulthandler.c:41`.
+    supervisor: service 2 (hello) faulted on a memory access
+    hello did not report ready: it faulted
+    1 ready, 1 faulted
+    AEGIR_BOOT_OK
+
+That is the design working end to end. The kernel delivered the fault to the one
+shared endpoint carrying the *offender's* badge (2, from the capability the child
+was given, `kernel/src/kernel/faulthandler.c:83-96`); the supervisor was waiting on
+it there, named the service from the table, and signalled the dead service's own
+readiness notification -- which is how the boot thread tells a "ready" (the
+service's own badge) from a "died" (director's badge, which no service can produce
+for itself). The boot then finishes with one service faulted instead of hanging.
+
+Two things had to be right for that to be observable, and both looked like
+something else while they were wrong:
 
 - **The root task must block when boot is done, not spin.** It runs at
-  `seL4_MaxPrio`; a spinning boot thread starves every service below it, including
-  the supervisor that is supposed to report faults. Director now blocks on a
-  notification of its own -- which is also where restarts and the elevation path
-  will arrive, so the root task should be asleep until something needs it.
-  Instrumenting this is what showed the two are different questions: "the
-  supervisor is receiving" and "the supervisor ever runs" had been one assumption.
-  Note that `make run` stops the machine at `AEGIR_BOOT_OK`, so nothing after the
-  last readiness wait is observable in a run: the case that *is* observable is a
-  service dying before it reports ready, because the boot thread is still waiting
-  then.
+  `seL4_MaxPrio`, so a spinning boot thread starves every service below it,
+  including the supervisor that is supposed to report faults. Director now blocks
+  on a notification of its own -- which is also where restarts and the elevation
+  path will arrive. And note that `make run` stops the machine at `AEGIR_BOOT_OK`,
+  so nothing after the last readiness wait is observable in a run: the case that
+  *is* observable is a service dying before it reports ready, which is the case
+  supervision exists for, since the boot thread is still waiting then.
+- **A thread started by hand needs `gp` and `tp` in its user context**
+  (specs/userland.md). With them zero the supervisor received the fault, faulted
+  itself at address zero on its first IPC-buffer access, and blocked on its own
+  fault -- indistinguishable from "the fault never arrived".
 
-Until the fault path is closed, nothing may die on purpose at boot: the boot
-thread waits for a readiness signal that a dead child never sends, so a deliberate
-fault hangs the boot rather than reporting.
+The whole delivery chain was checked by reading before the cause was found, which
+is worth recording because it ruled out the right things: the spawner installs the
+fault endpoint into the child's CSpace *before* `seL4_TCB_Configure`, with the
+rights the kernel requires and the child's badge
+(libs/aegir-spawn/src/process.cc:283-315); `Configure` gets the child's CSpace guard
+and the CPtr `3`, and its error is checked
+(libs/aegir-spawn/src/process.cc:349); the director hands the children the same
+endpoint the supervisor receives on
+(apps/aegir-director/src/services.cc:52,102); and the child's capability is a mint
+of it, so both sides name one endpoint object.
 
-**Where to look next, since the whole chain reads correct.** Every link in it was
-checked by reading: the spawner installs the fault endpoint into the child's
-CSpace *before* `seL4_TCB_Configure`, with the rights the kernel requires and the
-child's badge (libs/aegir-spawn/src/process.cc:283-315); `Configure` is given the
-child's CSpace guard and the CPtr `3`, and its error is checked; the director
-hands the children the same endpoint the supervisor waits on
-(apps/aegir-director/src/services.cc:52,102); and the fault endpoint's object is a
-mint of the one the supervisor receives on, so both sides name the same endpoint.
-Nothing in that chain explains a fault that never arrives, so the next probe is on
-the kernel side rather than in userland: a temporary print where the kernel sends
-fault IPC (`projects/seL4/src/kernel/.../faulthandler.c`), which is a vendored
-dependency, so as a temporary local edit reverted afterwards or as an entry under
-`third_party/patches/`.
+**Open, in the order worth doing them:**
+
+- The manifest's `restart` policy is not applied: `restart = always` on the logger
+  means nothing yet, and the supervisor reports and suspends rather than restarting.
+- Fault detail stops at "a memory access": the address and access type are in the
+  fault message and are not decoded.
+- The supervisor speaks on the console. Director has no port of its own yet, and
+  the fault report is deliberately *not* an event in the logger's protocol: any
+  holder of a port could announce someone else's death and the logger could not
+  tell (specs/services.md).

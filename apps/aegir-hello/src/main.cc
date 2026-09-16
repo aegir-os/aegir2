@@ -220,28 +220,25 @@ int main(int argc, char *argv[])
                                      : (answer.word == aegir::log::kRecorded ? "recorded" : "answered"));
     }
 
-    /* Tell the supervisor we got here. A notification signal is one word and
-     * cannot be forged into saying someone else finished, and it carries this
-     * service's badge, which is how the supervisor knows who is speaking
-     * (specs/director.md).
+    /* Die on purpose, without reporting ready.
      *
-     * A deliberate fault used to live here, to walk the supervision path at boot.
-     * It hung the boot instead: the supervisor is not receiving faults yet, so the
-     * boot thread waited for a "ready" that never came. Until that is diagnosed,
-     * supervision is machinery that has not been exercised -- which is worth
-     * saying out loud rather than testing a path that eats the boot. */
-    /* Ready first, then the send. Ordering it this way means a send that blocks
-     * can never keep the boot from finishing: the marker depends on readiness, and
-     * readiness is already reported by the time the send happens. */
-    if (supervised) {
-        write_line("supervision", "signalling ready");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-    }
-    aegir::debug_write("AEGIR_CLIENT_OK\n");
+     * Supervision is a path nobody walks until something crashes, so this client
+     * walks it on every boot: it is the one service in the boot set whose job is to
+     * fail. Dying *before* saying "ready" is the case that matters, because a
+     * service that never reports leaves whoever waits for it waiting forever --
+     * that is exactly what the boot thread does, so it only continues if the
+     * supervisor tells it what happened (specs/director.md). The address is one
+     * nothing is mapped at in this process.
+     *
+     * Its readiness notification is therefore never signalled by this client, and
+     * that is the point: the supervisor signals it on the dead service's behalf,
+     * which is how the boot thread tells "ready" (the service's own badge) from
+     * "died" (director's badge, which no service can produce for itself). */
+    (void)supervised;
+    aegir::debug_write("AEGIR_CLIENT_FAULTING_ON_PURPOSE\n");
+    *reinterpret_cast<volatile uint64_t *>(0x1000000ull) = 1;
 
-    /* Nothing here dies on purpose yet. A deliberate fault was the way to walk
-     * supervision at boot, and it cannot come back until a fault reaches the
-     * supervisor at all: meanwhile it hangs the boot instead of reporting
-     * (specs/director.md, "Where supervision stands"). */
+    // Not reached, and that is the point.
+    aegir::debug_write("AEGIR_CLIENT_SURVIVED\n");
     aegir::halt();
 }
