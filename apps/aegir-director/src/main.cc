@@ -808,23 +808,25 @@ int main(int argc, char *argv[])
          * child finds it -- the slot is the spawner's to choose (specs/authority.md).
          * The list holds one capability today, which is the whole of what there is to
          * delegate rather than a limit on what can be. */
-        /* And the memory to make objects of its own: an untyped is what a page table
-         * is retyped from, and a page is exactly enough for the first one. More is
-         * delegated when something needs more (specs/authority.md). */
-        /* How much memory to hand over is a policy choice -- how much authority the
-         * device manager is trusted with -- and it has to cover what starting a process
-         * costs: a CSpace with the slots a child is given (2^(kCNodeBits +
-         * seL4_SlotBits), which is 16 KiB for the 1024 slots aegir-spawn builds), its
-         * TCB, and the page tables for its first pages. Those come to a little over
-         * 16 KiB, and untyped memory is power-of-two, so this is the smallest untyped
-         * that covers them. */
+        /* And the memory to make objects of its own: an untyped is what everything
+         * a process is made of is retyped from. How much to hand over is a policy
+         * choice -- how much authority the device manager is trusted with -- and it
+         * has to cover what starting the block driver costs: a CSpace with the
+         * slots a child is given (2^(kCNodeBits + seL4_SlotBits), which is 16 KiB
+         * for the 1024 slots aegir-spawn builds), a TCB, the page tables of an
+         * address space, the frames of the image, stack and bootstrap block, and
+         * the 8 KiB the driver's virtqueue takes. Those come to a little under
+         * 64 KiB, and untyped memory is power-of-two, so this is the smallest
+         * untyped that covers them. More is delegated when something needs more
+         * (specs/authority.md). */
+        constexpr uint32_t kDelegatedUntypedBits = 16;
         seL4_Error untyped_error = seL4_NoError;
         /* The physical base comes with the capability: there is no invocation that
          * reads an untyped's address, so a region a driver will one day point a
          * device at has to arrive with its address attached (specs/services.md). */
         uint64_t delegated_physical = 0;
         seL4_CPtr const delegated_untyped =
-            allocator.carve_untyped(seL4_PageTableBits, system, &untyped_error,
+            allocator.carve_untyped(kDelegatedUntypedBits, system, &untyped_error,
                                     &delegated_physical);
         if (delegated_untyped == 0) {
             problem("no untyped memory to delegate to the device manager");
@@ -834,7 +836,7 @@ int main(int argc, char *argv[])
         aegir::spawn::PortGrant const delegated[] = {
             {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0, 0},
             {kUntypedName, sizeof(kUntypedName) - 1, 0, delegated_untyped, seL4_AllRights, 0,
-             seL4_PageTableBits},
+             kDelegatedUntypedBits},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, bus, bus_count, delegated, 2,

@@ -41,6 +41,12 @@ public:
     /** Look one up by name. nullptr when the archive has no such entry. */
     void const *find(char const *name, unsigned length, uint64_t *size) const noexcept;
 
+    /** The whole archive, as bytes: a service that starts processes of its own is
+     *  given a copy, because the binaries are the one part of spawning that cannot
+     *  travel as a capability (specs/services.md). */
+    void const *blob() const noexcept { return archive_; }
+    uint64_t blob_size() const noexcept { return size_; }
+
 private:
     void const *archive_;
     uint64_t size_;

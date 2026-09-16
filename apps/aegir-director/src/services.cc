@@ -83,6 +83,32 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             boot.problem = "a boot service cannot be declared as a user service";
             return;
         }
+        /* A `spawns` name that resolves to nothing is a typo that would only
+         * surface as a driver that never starts, so it is checked here, where
+         * the whole set is at hand (specs/services.md). */
+        if (entry.spawns.length > 0) {
+            bool resolves = false;
+            for (uint32_t j = 0; j < manifest.size(); ++j) {
+                manifest::Entry const &other = manifest[j];
+                if (other.name.length == entry.spawns.length) {
+                    bool same = true;
+                    for (uint32_t k = 0; k < entry.spawns.length; ++k) {
+                        if (other.name.data[k] != entry.spawns.data[k]) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if (same) {
+                        resolves = true;
+                        break;
+                    }
+                }
+            }
+            if (!resolves) {
+                boot.problem = "a service spawns a name the manifest does not declare";
+                return;
+            }
+        }
     }
 
     /* The ports first: who owns what, who may call it, and the order that makes
@@ -212,6 +238,48 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     request.untyped_bits = extra[g].size_bits;
                 }
             }
+        }
+        /* A service that spawns is given what spawning takes (specs/services.md,
+         * specs/authority.md): its own VSpace root (the spawner grants a window of
+         * free addresses with it), a copy of the initrd to read images out of, and
+         * the devices its children are for -- as *capabilities* rather than
+         * mappings, because a device manager's job is to hand them on. */
+        if (entry.device_manager && entry.spawns.length > 0) {
+            request.give_vspace = true;
+            request.binaries = initrd_.blob();
+            request.binaries_bytes = static_cast<uint32_t>(initrd_.blob_size());
+            auto *device_grants = static_cast<spawn::DeviceGrant *>(
+                arena_.allocate(sizeof(spawn::DeviceGrant) * 2));
+            if (device_grants == nullptr) {
+                boot.problem = "no room to list what a spawning service is given";
+                return;
+            }
+            uint32_t device_grant_count = 0;
+            for (uint32_t j = 0; j < manifest.size(); ++j) {
+                manifest::Entry const &child = manifest[j];
+                if (child.name.length != entry.spawns.length) {
+                    continue;
+                }
+                bool same = true;
+                for (uint32_t k = 0; k < entry.spawns.length; ++k) {
+                    if (child.name.data[k] != entry.spawns.data[k]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (!same || child.device_id == 0) {
+                    continue;
+                }
+                for (uint32_t d = 0; d < bus_count; ++d) {
+                    if (bus[d].id == child.device_id) {
+                        device_grants[device_grant_count++] =
+                            spawn::DeviceGrant{bus[d].address, 4096u, bus[d].frame};
+                        break;
+                    }
+                }
+            }
+            request.device_grants = device_grants;
+            request.device_grant_count = device_grant_count;
         }
         request.memory_frame = memory_frame;
         request.memory_bytes = memory_frame != 0 ? (1u << memory_bits) : 0;

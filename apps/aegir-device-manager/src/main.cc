@@ -153,25 +153,35 @@ int main(int argc, char *argv[])
     uint64_t pool_slot = 0;
     uint64_t untyped_slot = 0;
     aegir::bootstrap::Block const *block = aegir::bootstrap::find();
-    uint32_t named = 0;
     /* Static, not local, and that is not a style choice: an Allocator carries the table
      * of untyped memory it knows about -- room for the kernel's whole list, plus the
      * halves splitting creates -- which is tens of kilobytes. The root task has a large
      * initial stack and can keep one on `main`'s; a spawned process has two pages, and
      * putting one there overflows the stack into unmapped memory (specs/userland.md). */
     uint64_t untyped_bits = 0;
+    /* The first slot past everything the block names is where our own capabilities
+     * may go -- and *everything* the block names: a DeviceCapability carries its
+     * slot in `reserved` rather than `number`, so counting only Capability entries
+     * starts the cursor on top of a frame the spawner installed (the kernel's
+     * answer is seL4_DeleteFirst, "the destination slot is occupied"). */
+    uint64_t first_free = aegir::bootstrap::kSlotFirstDeclared;
     for (uint32_t e = 0; block != nullptr && e < block->entry_count; ++e) {
-        if (block->entries[e].kind != aegir::bootstrap::EntryKind::Capability) {
-            continue;
-        }
-        ++named;
-        /* The size of what a capability is, when it has one. It is in the block rather
-         * than asked of the kernel, because there is no invocation that reads an
-         * untyped's size (specs/authority.md). */
-        auto const *name = reinterpret_cast<char const *>(block) + block->entries[e].data_offset;
-        if (block->entries[e].length == 7 && name[0] == 'u' && name[1] == 'n' && name[2] == 't' &&
-            name[3] == 'y' && name[4] == 'p' && name[5] == 'e' && name[6] == 'd') {
-            untyped_bits = block->entries[e].reserved;
+        aegir::bootstrap::Entry const &entry = block->entries[e];
+        if (entry.kind == aegir::bootstrap::EntryKind::Capability) {
+            /* The size of what a capability is, when it has one. It is in the block rather
+             * than asked of the kernel, because there is no invocation that reads an
+             * untyped's size (specs/authority.md). */
+            auto const *name = reinterpret_cast<char const *>(block) + entry.data_offset;
+            if (entry.length == 7 && name[0] == 'u' && name[1] == 'n' && name[2] == 't' &&
+                name[3] == 'y' && name[4] == 'p' && name[5] == 'e' && name[6] == 'd') {
+                untyped_bits = entry.reserved;
+            }
+            if (entry.number + 1 > first_free) {
+                first_free = entry.number + 1;
+            }
+        } else if (entry.kind == aegir::bootstrap::EntryKind::DeviceCapability &&
+                   entry.reserved + 1 > first_free) {
+            first_free = entry.reserved + 1;
         }
     }
     if (!aegir::bootstrap::capability("untyped", 7, &untyped_slot) ||
@@ -186,9 +196,6 @@ int main(int argc, char *argv[])
         uint64_t untyped_address = 0;
         static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &entry_bits,
                                                     &untyped_address));
-        /* The first slot after the ones the block names is ours to use: the block is
-         * the map of what was given, and the layout past it is nobody else's business
-         * (specs/services.md). */
         /* Through the allocator, not a raw retype: the memory and the slots this
          * service may put capabilities in were handed to it, so its allocator is
          * adopted rather than discovered -- which is what makes the spawner usable by
@@ -200,11 +207,19 @@ int main(int argc, char *argv[])
         if (!g_objects.adopt_untyped(untyped_slot, untyped_bits, untyped_physical)) {
             write_line("FAIL", "no room to remember the memory I was given");
         } else {
-            g_objects.adopt_slots(aegir::bootstrap::kSlotFirstDeclared + named, 1, 0);
+            /* Every slot past the ones the block names is ours to use: the block is
+             * the map of what was given, and the layout past it is nobody else's
+             * business (specs/services.md). Splitting the untyped down to a page
+             * table takes a slot per half it leaves behind, so one slot is not a
+             * service's working set -- the rest of the CSpace is. The size is the
+             * one the spawner builds (kCNodeBits in libs/aegir-spawn/src/process.cc). */
+            g_objects.adopt_slots(first_free, (1u << 10) - first_free, 0);
             seL4_Error error = seL4_NoError;
             table = g_objects.alloc_object(seL4_RISCV_PageTableObject, seL4_PageTableBits, me, &error);
             if (table == 0) {
-                write_line("FAIL", "the untyped could not be made into a page table");
+                aegir::debug_write("      FAIL the untyped could not be made into a page table (seL4 error ");
+                aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+                aegir::debug_write(")\n");
             }
         }
         if (table != 0) {
@@ -222,6 +237,50 @@ int main(int argc, char *argv[])
                 aegir::debug_write(", with an address space id of my own\n");
             }
         }
+    }
+
+    /* What a spawning service is given besides memory: its own VSpace root with a
+     * window of free addresses, a copy of the initrd to read images out of, and
+     * the devices its children are for as capabilities to hand on
+     * (specs/services.md). Reporting them is what proves the grant arrived the way
+     * the block said it would. */
+    uint64_t vspace_slot = 0;
+    if (aegir::bootstrap::capability("vspace", 6, &vspace_slot)) {
+        uint64_t window_base = 0;
+        uint32_t window_bytes = 0;
+        static_cast<void>(aegir::bootstrap::window(&window_base, &window_bytes));
+        aegir::debug_write("      my own address space's root: cap ");
+        aegir::debug_write_unsigned(vspace_slot);
+        aegir::debug_write(", with a window of my own from ");
+        aegir::debug_write_hex(window_base);
+        aegir::debug_write(", ");
+        aegir::debug_write_unsigned(window_bytes / 1024 / 1024);
+        aegir::debug_write(" MiB of it\n");
+    }
+    uint64_t binaries_address = 0;
+    uint32_t binaries_bytes = 0;
+    if (aegir::bootstrap::binaries(&binaries_address, &binaries_bytes)) {
+        aegir::debug_write("      the initrd: ");
+        aegir::debug_write_unsigned(binaries_bytes / 1024);
+        aegir::debug_write(" KiB at ");
+        aegir::debug_write_hex(binaries_address);
+        aegir::debug_write(", to start processes from\n");
+    }
+    for (uint32_t d = 0;; ++d) {
+        uint64_t grant_physical = 0;
+        uint32_t grant_bytes = 0;
+        uint64_t grant_slot = 0;
+        if (!aegir::bootstrap::device_capability(d, &grant_physical, &grant_bytes,
+                                                 &grant_slot)) {
+            break;
+        }
+        aegir::debug_write("      a device to hand on: physical ");
+        aegir::debug_write_hex(grant_physical);
+        aegir::debug_write(", ");
+        aegir::debug_write_unsigned(grant_bytes);
+        aegir::debug_write(" bytes, frame at cap ");
+        aegir::debug_write_unsigned(grant_slot);
+        aegir::debug_write("\n");
     }
 
     /* Ready: whoever spawned us can carry on, and the supervisor can tell
