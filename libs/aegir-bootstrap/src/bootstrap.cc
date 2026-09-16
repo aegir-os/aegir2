@@ -39,7 +39,7 @@ uint32_t copy(char *destination, char const *source, uint32_t length, uint32_t r
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
              char const *account, uint32_t account_length, PortEntry const *ports,
              uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
-             uint64_t device_address, uint32_t device_bytes) noexcept
+             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical) noexcept
 {
     if (storage == nullptr || name == nullptr || account == nullptr) {
         return nullptr;
@@ -91,8 +91,9 @@ Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t na
     block->entries[3] = Entry{EntryKind::PageBits, 0, seL4_PageBits, 0, 0};
     block->entries[4] =
         Entry{EntryKind::Devices, devices_address == 0 ? 0 : devices_bytes, devices_address, 0, 0};
-    block->entries[5] =
-        Entry{EntryKind::Device, device_address == 0 ? 0 : device_bytes, device_address, 0, 0};
+    block->entries[5] = Entry{EntryKind::Device, device_address == 0 ? 0 : device_bytes,
+                              device_physical,
+                              static_cast<uint32_t>(device_address), 0};
 
     uint64_t next_offset = static_cast<uint64_t>(header_size) + name_length + account_length;
     for (uint32_t i = 0; i < port_count; ++i) {
@@ -150,7 +151,7 @@ bool devices(uint64_t *address, uint32_t *length) noexcept
     return false;
 }
 
-bool device(uint64_t *address, uint32_t *length) noexcept
+bool device(uint64_t *address, uint32_t *length, uint64_t *physical) noexcept
 {
     Block const *block = find();
     if (block == nullptr) {
@@ -161,10 +162,13 @@ bool device(uint64_t *address, uint32_t *length) noexcept
             continue;
         }
         if (address != nullptr) {
-            *address = block->entries[i].number;
+            *address = block->entries[i].data_offset;
         }
         if (length != nullptr) {
             *length = block->entries[i].length;
+        }
+        if (physical != nullptr) {
+            *physical = block->entries[i].number;
         }
         return true;
     }

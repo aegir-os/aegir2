@@ -90,6 +90,10 @@ enum class EntryKind : uint32_t {
      *  description of itself, because a device is not a description -- a driver is
      *  given the one its service is for (specs/services.md). */
     Device = 7,
+    /*  A device's registers are described by two addresses, and both are needed:
+     *  `number` is the device's *physical* address -- which device it is, since
+     *  identical transports are told apart only by where they are -- and
+     *  `data_offset` is where the child can read them. `length` is the size. */
 };
 
 struct Entry {
@@ -130,7 +134,7 @@ struct PortEntry {
 Block *write(void *storage, uint64_t storage_size, char const *name, uint32_t name_length,
              char const *account, uint32_t account_length, PortEntry const *ports,
              uint32_t port_count, uint64_t devices_address, uint32_t devices_bytes,
-             uint64_t device_address, uint32_t device_bytes) noexcept;
+             uint64_t device_address, uint32_t device_bytes, uint64_t device_physical) noexcept;
 
 /* --- reading (a spawned process) ------------------------------------------- */
 
@@ -154,7 +158,7 @@ bool devices(uint64_t *address, uint32_t *length) noexcept;
 
 /** A device's registers the process was given, and where they are. False when this
  *  process was given no device. */
-bool device(uint64_t *address, uint32_t *length) noexcept;
+bool device(uint64_t *address, uint32_t *length, uint64_t *physical) noexcept;
 
 }  // namespace aegir::bootstrap
 

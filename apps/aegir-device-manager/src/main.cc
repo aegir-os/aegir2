@@ -53,6 +53,9 @@ public:
         aegir::debug_write(device.compatible);
         aegir::debug_write(" ");
         aegir::debug_write_hex(device.base);
+        if (device.base == mine) {
+            aegir::debug_write("  <- mine");
+        }
         if (device.has_interrupt) {
             aegir::debug_write(" irq ");
             aegir::debug_write_unsigned(device.interrupt);
@@ -63,6 +66,7 @@ public:
 
     unsigned total = 0;
     unsigned with_region = 0;
+    uint64_t mine = 0;
 };
 
 }  // namespace
@@ -99,24 +103,15 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    BusReport report;
-    if (!tree.walk(report)) {
-        write_line("FAIL", "the device tree could not be read");
-        return 0;
-    }
-
-    aegir::debug_write("      tree: ");
-    aegir::debug_write_unsigned(report.total);
-    aegir::debug_write(" devices, ");
-    aegir::debug_write_unsigned(report.with_region);
-    aegir::debug_write(" with a register window\n");
-
     /* The device this service is for, if it was given one. A driver's first line is
-     * reading its device's identity: the magic says a real transport is there and the
-     * device id says whether anything is behind it (virtio 1.x, 4.2.2). */
+     * reading its device's identity: the magic says a real transport is there, and the
+     * device id says whether anything is behind it (virtio 1.x, 4.2.2). Read before
+     * the walk, because the map below marks which device is ours -- and identical
+     * transports are told apart only by where they are. */
     uint64_t device_address = 0;
     uint32_t device_bytes = 0;
-    if (!aegir::bootstrap::device(&device_address, &device_bytes)) {
+    uint64_t device_physical = 0;
+    if (!aegir::bootstrap::device(&device_address, &device_bytes, &device_physical)) {
         write_line("my device", "none was given");
     } else {
         auto *registers = reinterpret_cast<volatile uint32_t *>(device_address);
@@ -131,6 +126,19 @@ int main(int argc, char *argv[])
         aegir::debug_write(magic == 0x74726976u ? "  (virtio: the magic reads)\n"
                                                : "  (not a virtio transport)\n");
     }
+
+    BusReport report;
+    report.mine = device_physical;
+    if (!tree.walk(report)) {
+        write_line("FAIL", "the device tree could not be read");
+        return 0;
+    }
+
+    aegir::debug_write("      tree: ");
+    aegir::debug_write_unsigned(report.total);
+    aegir::debug_write(" devices, ");
+    aegir::debug_write_unsigned(report.with_region);
+    aegir::debug_write(" with a register window\n");
 
     /* Ready: whoever spawned us can carry on, and the supervisor can tell
      * everyone else apart from us (specs/director.md). */

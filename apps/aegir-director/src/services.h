@@ -75,7 +75,7 @@ public:
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
               Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, seL4_CPtr device_frame,
-              uint32_t device_bytes) noexcept;
+              uint32_t device_bytes, uint64_t device_physical) noexcept;
 
     seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
 

@@ -511,6 +511,20 @@ and saying which half exists is the point of writing it down:
   service that is comes from the manifest's `device_manager` field, because that is
   where composition is declared; the device *tree* is given to the same service for
   the same reason, and it was being over-shared in exactly the same way.
+- **the map's first content, said by the service that owns it**: the device manager
+  names every transport the tree describes and marks the one it was given:
+
+      devicemgr running at 0x1016a, badge 2
+          my device at 0x25000: magic 0x74726976, device id 4  (virtio: the magic reads)
+            virtio,mmio 0x10008000  <- mine irq 8
+            virtio,mmio 0x10007000 irq 7
+            ... all eight the tree names ...
+      devicemgr ready
+
+  Which is why the `Device` block entry carries *two* addresses: `number` is the
+  device's physical address -- identical transports are told apart only by where they
+  are, so a service that drives one has to be told *which* -- and `data_offset` is
+  where in its own address space it can read them.
 - **next**: the bus -> device -> service map inside the device manager, and- **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the

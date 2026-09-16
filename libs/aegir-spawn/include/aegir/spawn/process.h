@@ -70,6 +70,10 @@ struct Request {
      *  caller's: a mapping is what the child needs, not the frame. */
     seL4_CPtr device_frame = 0;
     uint32_t device_bytes = 0;
+    /* Where that device's registers are in the machine's memory. Identical
+     *  transports are told apart only by this, so a service that drives one needs
+     *  it to know which one it was given. */
+    uint64_t device_physical = 0;
     char const *name;
     uint32_t name_length;
     char const *binary;
