@@ -53,7 +53,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         # needs no backing file. Without a device, the transports the tree describes
         # are empty and answer nothing, which cannot show that a driver can read its
         # device at all (specs/services.md).
-        qemu_args=("-bios none", f"-smp {cores}", "-device virtio-rng-device"),
+        # Two real virtio devices, so the transports the tree describes are not all
+        # empty: an entropy source (which needs no backing file) and a block device
+        # (which does -- the path is relative because QEMU runs with the build
+        # directory as its working directory, and the runner puts a disk there).
+        qemu_args=(
+            "-bios none",
+            f"-smp {cores}",
+            "-device virtio-rng-device",
+            "-drive file=disk.img,if=none,format=raw,id=hd",
+            "-device virtio-blk-device,drive=hd",
+        ),
     )
 
 

@@ -93,6 +93,16 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # than passed as a separate argument, because the value starts with `-bios`
     # and the script's argparse refuses a value that looks like an option (and
     # would read a loose `-bios` as its own `-b`).
+    # The machine's block device needs a disk to be a block device *of*. It is a
+    # sparse megabyte in the build directory -- 2048 sectors, which is a size the
+    # driver can be seen reporting -- and it is created once and left alone, because
+    # a disk that changes between runs is not something to depend on. It lives in
+    # the build output rather than the repository, where scratch belongs.
+    disk = build_dir / "disk.img"
+    if not disk.exists():
+        with disk.open("wb") as handle:
+            handle.truncate(1 << 20)
+
     extra = " ".join(target.qemu_args)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)
     process = subprocess.Popen(
