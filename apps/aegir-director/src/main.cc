@@ -202,13 +202,13 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
     return 0;
 }
 
-/** The first device the tree describes on a bus we care about. One is enough to
+/** The first device the tree describes on a bus we care about. 
  *  find out whether a device can be reached at all, before a service is given
  *  one. */
 class FirstVirtioTransport : public aegir::devtree::Tree::Visitor {
 public:
     bool device(aegir::devtree::Device const &device) override {
-        if (found || !device.has_region) {
+        if (!device.has_region) {
             return true;
         }
         static char const wanted[] = "virtio,mmio";
@@ -221,12 +221,16 @@ public:
                 return true;
             }
         }
+        /* The tree lists the transports in descending order and QEMU gives devices
+         * to them from the bottom up, so the transport with a device behind it is
+         * the lowest address: walk the whole tree and keep that one. */
+        if (!found || device.base < base) {
+            base = device.base;
+            size = device.size;
+            interrupt = device.interrupt;
+        }
         found = true;
-        base = device.base;
-        size = device.size;
-        interrupt = device.interrupt;
-        /* One is enough: stop the walk. */
-        return false;
+        return true;
     }
 
     bool found = false;
@@ -261,7 +265,7 @@ unsigned report_device_memory(seL4_BootInfo const *bootinfo, void const *blob,
         return 1;
     }
 
-    aegir::debug_write("  device memory: the first virtio transport is at ");
+    aegir::debug_write("  device memory: the transport with a device behind it is at ");
     aegir::debug_write_hex(first.base);
     aegir::debug_write(" (");
     aegir::debug_write_unsigned(first.size);

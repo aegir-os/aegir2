@@ -49,7 +49,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         build_dir=f"out/{name}",
         configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}"),
         marker="AEGIR_BOOT_OK",
-        qemu_args=("-bios none", f"-smp {cores}"),
+        # One real virtio device: an entropy source, the cheapest one because it
+        # needs no backing file. Without a device, the transports the tree describes
+        # are empty and answer nothing, which cannot show that a driver can read its
+        # device at all (specs/services.md).
+        qemu_args=("-bios none", f"-smp {cores}", "-device virtio-rng-device"),
     )
 
 
