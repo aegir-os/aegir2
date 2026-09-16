@@ -26,6 +26,8 @@
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/spawn/initrd.h>
+#include <aegir/spawn/process.h>
+#include <aegir/spawn/process.h>
 
 #include <sel4/sel4.h>
 
@@ -531,7 +533,8 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
                    aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                    aegir::mem::Arena &arena, aegir::mem::Account &account,
                   void const *devices, uint32_t devices_bytes, seL4_CPtr device_frame,
-                  uint32_t device_bytes, uint64_t device_physical) noexcept
+                  uint32_t device_bytes, uint64_t device_physical,
+                  aegir::spawn::PortGrant const *extra, uint32_t extra_count) noexcept
 {
     auto *started =
         static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
@@ -563,7 +566,7 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
 
     Boot boot{};
     services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes, device_frame,
-                  device_bytes, device_physical);
+                  device_bytes, device_physical, extra, extra_count);
 
     heading("boot set");
     write("  ");
@@ -816,9 +819,18 @@ int main(int argc, char *argv[])
          * manager (manifests/services.manifest, `device_manager`), which is the
          * thing that was missing when every spawn was handed the same frame.
          */
+        /* What director delegates to the service that starts processes of its own:
+         * an ASID pool is what making an address space needs, and the name is how the
+         * child finds it -- the slot is the spawner's to choose (specs/authority.md).
+         * The list holds one capability today, which is the whole of what there is to
+         * delegate rather than a limit on what can be. */
+        static char const kAsidPoolName[] = "asid-pool";
+        aegir::spawn::PortGrant const delegated[] = {
+            {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0},
+        };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, device_grant, 1u << seL4_PageBits,
-                               device_physical);
+                               device_physical, delegated, 1);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread

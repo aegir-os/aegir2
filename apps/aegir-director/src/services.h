@@ -75,7 +75,8 @@ public:
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
               Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, seL4_CPtr device_frame,
-              uint32_t device_bytes, uint64_t device_physical) noexcept;
+              uint32_t device_bytes, uint64_t device_physical,
+              spawn::PortGrant const *extra, uint32_t extra_count) noexcept;
 
     seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
 
@@ -84,6 +85,10 @@ public:
 
 private:
     mem::Allocator &allocator_;
+    /* Where the merged grant list for a service is built. A capability director
+     * delegates is not a port, so it is not in the manifest's port graph, and the
+     * list the spawner is given has to hold both (specs/authority.md). */
+    mem::Arena &arena_;
     spawn::Initrd const &initrd_;
     seL4_CPtr fault_endpoint_;
     PortGraph graph_;

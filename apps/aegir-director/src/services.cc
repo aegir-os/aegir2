@@ -41,8 +41,8 @@ bool declared_as_user(manifest::Entry const &entry) noexcept
 
 Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
                    spawn::Initrd const &initrd) noexcept
-    : allocator_(allocator), initrd_(initrd), fault_endpoint_(0), graph_(allocator, arena),
-      spawner_(allocator, scratch, arena, initrd)
+    : allocator_(allocator), arena_(arena), initrd_(initrd), fault_endpoint_(0),
+      graph_(allocator, arena), spawner_(allocator, scratch, arena, initrd)
 {
 }
 
@@ -57,7 +57,8 @@ bool Services::prepare(mem::Account &account) noexcept
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
                     Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, seL4_CPtr device_frame,
-              uint32_t device_bytes, uint64_t device_physical) noexcept
+              uint32_t device_bytes, uint64_t device_physical,
+              spawn::PortGrant const *extra, uint32_t extra_count) noexcept
 {
     boot.declared = manifest.size();
     boot.started = 0;
@@ -99,8 +100,32 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.account = entry.account.data;
         request.account_length = entry.account.length;
         request.priority = priority_for(entry);
-        request.ports = graph_.grants(i);
-        request.port_count = graph_.grant_count(i);
+        spawn::PortGrant const *grants = graph_.grants(i);
+        uint32_t grant_count = graph_.grant_count(i);
+        /* Capabilities director delegates to a service go in beside the ports the
+         * manifest declares. A pool is not a port and cannot come from the port
+         * graph; it is installed the way a port is -- by name, which is how the child
+         * finds it, and by slot, which is the layout's business and not the caller's
+         * (specs/authority.md). The slots come after the service's own ports. */
+        if (entry.device_manager && extra_count > 0) {
+            auto *merged = static_cast<spawn::PortGrant *>(
+                arena_.allocate(sizeof(spawn::PortGrant) * (grant_count + extra_count)));
+            if (merged == nullptr) {
+                boot.problem = "no room to merge what a service is given";
+                return;
+            }
+            for (uint32_t g = 0; g < grant_count; ++g) {
+                merged[g] = grants[g];
+            }
+            for (uint32_t g = 0; g < extra_count; ++g) {
+                merged[grant_count + g] = extra[g];
+                merged[grant_count + g].slot = bootstrap::kSlotFirstDeclared + grant_count + g;
+            }
+            grants = merged;
+            grant_count += extra_count;
+        }
+        request.ports = grants;
+        request.port_count = grant_count;
         /* A device is a capability, and its description is only useful with it, so
          * both go to the service that declares itself the device manager and to no
          * one else. Handing the frame to every service is what made the first child
