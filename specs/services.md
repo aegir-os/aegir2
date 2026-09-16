@@ -569,10 +569,19 @@ and answers "who owns this device?" for everyone else.
     side of it, which is what the in-tree legacy driver does around its own `avail->idx++`
     (projects/util_libs/libethdrivers/src/virtio_pci.c:286-289).
 
-  The last measured state: the queue's location is accepted (`legacy, pfn 0xfffee` for a page
-  at `0xfffee000`), while `QueueNum` and `QueueReady` read back 0 because those are modern
-  registers this device does not have. The request is still not processed, which leaves the
-  legacy interface's own queue rules to read as closely as the modern ones were.
+  - **the device offers no `VIRTIO_F_VERSION_1`, so it is the legacy interface.** Read back from
+    the device's own feature word: bit 32 is not offered, and writing it to the driver's word
+    does not make the device keep it. The earlier "1024" from 0x034 was the legacy `QueueNum`
+    reading its default, not a modern `QueueNumMax` answering. The handshake itself is right --
+    the status after it reads 11, ACKNOWLEDGE|DRIVER|FEATURES_OK.
+  - **the legacy shape does take, and the device still does nothing.** `QueuePFN` reads back as
+    the page frame of the physical address given, and the request is ignored completely: the
+    status byte is seeded with 0xff and comes back 0xff, the data buffer is untouched and no
+    used entry appears. So the queue's location is *accepted* without the device ever *reading*
+    the rings, and what is left is the legacy interface's own rules for when it will.
+  - **a request that is ignored leaves no trace at all**, which is worth more than a wrong
+    answer would be: seeding a byte with a value the device must overwrite turns "the read did
+    not complete" into "the device did not look", and those are different searches.
 - **a service cannot map into its own address space, so its spawner maps for it**: the spawner
   retypes the child's root page table, assigns it to an ASID pool, and keeps the capability.
   What a child is *given* is its TCB, its CNode, the fault endpoint, the supervision

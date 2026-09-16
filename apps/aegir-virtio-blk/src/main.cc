@@ -218,6 +218,21 @@ int main(int argc, char *argv[])
      * laid out with; a wrong offset would read 0 for both and say so here rather than in a
      * request that never comes back (virtio 1.x, 4.2.2, and the ring layout itself in
      * projects/util_libs/libvirtio/include/virtio/virtio_ring.h). */
+    /* What the device kept of the agreement. If bit 32 reads back set, the device took
+     * VIRTIO_F_VERSION_1 and the modern interface is available to the driver; if it did not,
+     * something about the feature registers themselves is wrong -- and which of those it is
+     * decides whether the modern queue registers are even worth writing. */
+    registers.write(aegir::virtio::kDeviceFeaturesSel, 1);
+    uint32_t const features_high_back = registers.read(aegir::virtio::kDeviceFeatures);
+    registers.write(aegir::virtio::kDriverFeaturesSel, 1);
+    uint32_t const driver_high_back = registers.read(aegir::virtio::kDriverFeatures);
+    registers.write(aegir::virtio::kDriverFeaturesSel, 0);
+    registers.write(aegir::virtio::kDeviceFeaturesSel, 0);
+    write_unsigned_line("features wanted: bit 32 of", 1);
+    write_unsigned_line("  device says it offers (high)", features_high_back);
+    write_unsigned_line("  driver features read back (high)", driver_high_back);
+    write_unsigned_line("status after the handshake", registers.read(aegir::virtio::kStatus));
+
     /* The queue is set up *before* DRIVER_OK: the status bit says everything is ready, and a
      * device told "go" before its queue exists may ignore the queue entirely (virtio 1.x,
      * 2.1.1 step 8). This is where the modern and legacy layouts are sorted out, and the
