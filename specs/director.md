@@ -227,6 +227,22 @@ and a session supervises what the user started. A service's death is reported to
 the process that made it — which is the only process that can make it again, and
 is why supervision is not a separate service.
 
+Two decisions make that work without a thread per child:
+
+- **A fault is badged with the offender**, because the message carries the badge
+  of the fault-endpoint capability the *faulting* thread holds
+  (`kernel/src/kernel/faulthandler.c:41`, `:92`). So director mints a distinct
+  badge per child — its service id — into the child's `kSlotFaultEndpoint`
+  (`libs/aegir-bootstrap/include/aegir/bootstrap.h`), and every child can share
+  *one* endpoint. Without a badge per child, identity would have to come from
+  having one endpoint per child, and a supervisor would need a thread for each.
+- **Director therefore runs two threads**: the boot thread, which waits for each
+  service to report ready, and a supervisor thread blocked in `seL4_Recv` on the
+  shared fault endpoint. seL4 cannot wait on two capabilities at once, and a
+  second thread is cheaper than a select that does not exist. The supervisor logs
+  the fault against the offending service and applies the manifest's restart
+  policy; the boot thread's readiness wait is untouched by it.
+
 Two boundaries are recorded rather than solved:
 
 - **Nothing supervises director.** If it dies, no service can be restarted and

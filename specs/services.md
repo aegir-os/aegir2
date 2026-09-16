@@ -157,6 +157,56 @@ capability with an owner, a name and a protocol.
   milestone. What is fixed here is the model: ports are owned, named, badged and
   versioned, and a capability is the only way to reach one.
 
+### Making a port exist
+
+The model above says what a port *is*; the spawn path has to make one, and these
+four choices are what that means. They are decisions, not implementation details,
+because both sides of every port depend on them:
+
+- **Director creates every port the manifest declares**, holding the endpoint so
+  that both sides get a capability to the same object without either having to
+  hand the other anything. A service never grants access to itself.
+- **Rights are per side.** The owner gets read (receive) and write (reply); a
+  consumer gets write (send, and call) and nothing else. A consumer cannot be
+  reached *through* the port it calls, which is what makes the direction of a
+  port a property of the system rather than a convention.
+- **Slots are declared, not discovered.** A service's ports -- the ones it owns and
+  the ones it needs -- start at `kSlotFirstDeclared` and go upward in manifest
+  order, so the layout is a reading of the manifest (`specs/director.md`).
+- **A child finds a port by name, through the bootstrap block.** The block carries
+  one `Capability` entry per port: the name, and the slot it was installed in.
+  That is what the entry kind was for, and it keeps the *name* the identity while
+  the slot stays an artifact of a layout the child did not choose.
+- **Creation order is the graph.** Services are created in `needs` order, so a
+  port's owner is always running before its first consumer. A consumer is never
+  handed a capability to something that does not exist yet -- and if the graph has
+  a cycle, nothing is created at all and the boot says so.
+
+### The boot set's protocols
+
+A port's wire format belongs to the service that owns it, so a service with a
+protocol worth specifying gets its own spec. The first one is small enough to fit
+here, and writing it down is the point: an ABI that lives only in the head of
+whoever wrote it is a bug waiting for a second caller.
+
+**`log.main`, version 1** -- owner `logger`.
+
+| | |
+| --- | --- |
+| Call | method `1` *event*: one argument, an event code |
+| Reply | one word: `0` recorded, non-zero otherwise |
+| Identity | the caller's badge, which the logger reports as the source of the line |
+
+Deliberately **words, not strings**. A line of text is an out-of-line buffer, and
+the buffer convention is worth designing once something needs to send one rather
+than invented by the first caller who wants to print. An event code plus the
+caller's badge is enough to say "this service reached this step", and it keeps the
+first protocol small enough to be right.
+
+Version 2 is where strings land. The method number is what makes that possible
+without a flag day: an owner that does not know a method replies with an error
+that the caller can read.
+
 ## The boot set
 
 | # | Service | Authority | Owns | Needs | Why it can start then |
