@@ -442,46 +442,38 @@ and saying which half exists is the point of writing it down:
   frame cannot be mapped at two addresses -- the kernel says so out loud
   (`RISCVPageMap: attempting to map frame into multiple addresses`);
 - **device memory, measured**: a device's registers are untyped like any other
-  memory, marked as device, and a device frame can only be retyped from one. But
-  `Untyped_Retype` takes no interior offset -- the kernel's own decoding is type,
-  sizeBits, nodeIndex, nodeDepth, nodeOffset, nodeWindow
-  (kernel/src/object/untyped.c, `decodeUntypedInvocation`) -- so it carves from the
-  untyped's own free position, and reaching a device means knowing how far into its
-  untyped it sits. On the QEMU virtual machine that is comfortable: the transports
-  are covered by one device untyped based at `0x10000000`, so `0x10001000` through
-  `0x10008000` are objects 1 to 8 of it. The boot report says so out loud
-  (`device memory: ...`, `covered by device untyped ... object N of it`), because
-  the answer is a property of the machine and not of the code. Note that the tree
-  lists the transports in *descending* order, so "the first the tree names" is the
-  highest address and a driver will want them the other way up.
-- **a device's registers can be read, and the machine says so every boot**:
+  memory, marked as device, and a device frame can only be retyped from one.
+  `Untyped_Retype` takes no interior offset, so it carves from the untyped's own free
+  position and a page is reached by retyping every page before it. On this machine the
+  device space begins where the devices do: one device untyped at `0x10000000`, so the
+  transports the tree names (`0x10001000` to `0x10008000`) are pages 1 to 8 of it, and
+  page 0 is not a transport at all. The retype's depth must be `seL4_WordBits` -- the
+  root task's CNode has a guard, so anything less comes back as `seL4_FailedLookup`
+  (the allocator's `kRootCNodeDepth` is `seL4_WordBits` for the same reason).
+- **a dropped frame goes back to its untyped, and the next retype carves it again**:
+  retyping in a loop into *one slot* and deleting between rounds yields the untyped's
+  first page every time. That mistake read as "the device answers zeros" for three
+  attempts. The pages along the way are kept, each in its own slot, and the boot says
+  how many retypes it took to reach the device.
+- **a device's registers read, and the boot says which transport has one**:
 
-      device memory: the transport with a device behind it is at 0x10001000 (4096 bytes, irq 1)
-      device 0x10001000: magic 0x74726976, version 1, device id 0, vendor 0x554d4551,
-        reached after 2 retypes  (virtio: the magic reads)
+      device memory: transports from 0x10001000 to 0x10008000, ...
+      device at 0x10008000: magic 0x74726976, device id 4
+      transports: 1 of 9 device pages have a device behind them
 
-  `0x74726976` is "virt" and `0x554d4551` is "QEMU", so this is a real virtio-mmio
-  transport being read through a frame retyped out of device untyped memory and
-  mapped into director's own address space. Two things make it work, and both were
-  wrong first:
-- **the retype's depth is the whole word**: the root task's CNode has a guard, so
-  `seL4_WordBits` is what addresses its slots and anything less comes back as
-  `seL4_FailedLookup` (the allocator's own `kRootCNodeDepth` is `seL4_WordBits` for
-  the same reason).
-- **a frame that is dropped goes back to its untyped, and the next retype carves it
-  again.** A retype has no interior offset, so reaching a transport's page means
-  retyping every page before it -- and doing that into *one slot*, deleting the frame
-  in between, yields the untyped's *first* page every time. That is what read as "the
-  device answers zeros" for three attempts. The pages along the way are kept, each in
-  its own slot, and the survey that found this is the reason the boot report now
-  prints how many retypes it took (`reached after 2 retypes`).
-- **an empty transport still answers**: magic, version 1, vendor, and **device id 0**.
-  So the magic proves the *transport* is reachable; the *device id* is what says
-  whether anything is behind it. The run gives the machine one device
-  (`-device virtio-rng-device`, scripts/targets.py, no backing file needed) precisely
-  so there is a transport with a non-zero device id to find -- and `0x10001000` is
-  not it, which is the next thing to look for: survey the transports for the one whose
-  device id is not zero, and that is the device a driver is given.
+  `0x74726976` is "virt", and the device id is what says whether anything is behind a
+  transport: an empty one answers the magic, version 1, vendor `0x554d4551` and
+  **device id 0**. Device id 4 is an entropy source, which is what the run gives the
+  machine with `-device virtio-rng-device` (scripts/targets.py; no backing file
+  needed). Only the pages between the two ends the tree names are read, and every page
+  in that span is a transport, which is what makes reading them safe.
+- **a device lands on the transport the tree names *first***, measured: the tree lists
+  the transports in descending order and QEMU creates them in that order, so the
+  device answers at `0x10008000` -- the *highest* address. The guess that QEMU fills
+  them from the bottom up was wrong, and acting on it made director prefer the one
+  transport with *no* device behind it. The boot no longer claims to know which
+  transport is busy; the survey reads, and says.
+
 - **next**: the bus -> device -> service map inside the device manager, and
   spawning drivers (virtio-blk first) for the devices it finds, giving each the
   device's register window and interrupt. The service exists and reports the
