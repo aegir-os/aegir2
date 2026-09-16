@@ -219,12 +219,8 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
  *  transport, which is what makes reading them safe. */
 unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &allocator,
                         aegir::mem::Scratch &scratch, uint64_t untyped_base, uint64_t first,
-                        uint64_t last, seL4_CPtr *frame_out, uint32_t *count_out,
-                        uint64_t *physical_out, aegir::director::Device *found, uint32_t capacity,
+                        uint64_t last, aegir::director::Device *found, uint32_t capacity,
                         uint32_t *device_count) noexcept {
-    *frame_out = 0;
-    *count_out = 0;
-    *physical_out = 0;
     *device_count = 0;
     seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
     for (seL4_Word i = 0; i < count; ++i) {
@@ -252,9 +248,6 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
             aegir::debug_write(")\n");
             return 1;
         }
-        *frame_out = window_first;
-        *physical_out = untyped_base;
-        *count_out = pages;
         for (unsigned page = 0; page < pages; ++page) {
             uint64_t const address = untyped_base + (static_cast<uint64_t>(page) << seL4_PageBits);
             seL4_CPtr const slot = window_first + page;
@@ -297,8 +290,6 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
                 found[*device_count] = aegir::director::Device{address, device_id, slot};
             }
             ++(*device_count);
-            *frame_out = slot;
-            *physical_out = address;
             aegir::debug_write("  device at ");
             aegir::debug_write_hex(address);
             aegir::debug_write(": magic ");
@@ -548,8 +539,8 @@ void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
 bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest const &manifest,
                    aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                    aegir::mem::Arena &arena, aegir::mem::Account &account,
-                  void const *devices, uint32_t devices_bytes, seL4_CPtr device_frame,
-                  uint32_t device_bytes, uint64_t device_physical,
+                  void const *devices, uint32_t devices_bytes,
+                  aegir::director::Device const *bus, uint32_t bus_count,
                   aegir::spawn::PortGrant const *extra, uint32_t extra_count) noexcept
 {
     auto *started =
@@ -581,8 +572,8 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     }
 
     Boot boot{};
-    services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes, device_frame,
-                  device_bytes, device_physical, extra, extra_count);
+    services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes, bus,
+                  bus_count, extra, extra_count);
 
     heading("boot set");
     write("  ");
@@ -711,9 +702,6 @@ int main(int argc, char *argv[])
      * lives in the arena. */
     aegir::mem::Account system{"system", 0, 0, 0};
     aegir::mem::Arena arena(allocator, scratch, system);
-    seL4_CPtr device_frame = 0;
-    uint32_t device_frame_count = 0;
-    uint64_t device_physical = 0;
     failures += report_device_memory(bootinfo, device_tree, device_tree_bytes, &device_untyped,
                                     &first_transport, &last_transport);
     /* One entry per device the machine has behind a transport, in the arena. The span the
@@ -725,8 +713,7 @@ int main(int argc, char *argv[])
     uint32_t bus_count = 0;
     if (device_untyped != 0 && last_transport != 0) {
         failures += survey_devices(bootinfo, allocator, scratch, device_untyped,
-                                   first_transport, last_transport, &device_frame,
-                                   &device_frame_count, &device_physical, bus, bus_slots,
+                                   first_transport, last_transport, bus, bus_slots,
                                    &bus_count);
     }
 
@@ -802,50 +789,10 @@ int main(int argc, char *argv[])
 
     bool booted = false;
     if (initrd_ok && manifest_ok) {
-        /* No device is handed over yet. The kernel's answer to the attempt was
-         * seL4_InvalidCapability -- "a frame that does not belong to the passed
-         * address space" (kernel/src/arch/riscv/kernel/vspace.c:867-875) -- which
-         * means the frame still counts as mapped even after unmapping it from our
-         * window and after copying it, so what holds it is not yet known. Both
-         * variants were tried (unmap-then-map-the-frame, and unmap-then-copy-and-map-
-         * the-copy); the next one is the manual's rule read more carefully, since the
-         * copy is what the manual prescribes (kernel/manual/parts/vspace.tex:367-373).
-         * The survey's frame is the one to hand over when it works. */
-        /* The manual's rule (kernel/manual/parts/vspace.tex, "Sharing Memory"): a page
-         * capability maps into one VSpace, so sharing means duplicating the capability
-         * with seL4_CNode_Copy and mapping the copy. The last attempt did that and was
-         * still refused with seL4_InvalidCapability, so this one measures which side is
-         * at fault: map the copy into *our* VSpace first. If that is refused too, the
-         * copy carries a mapping; if it succeeds, it is the child's VSpace the map
-         * rejects. The probe's mapping is removed immediately -- leaving it would cause
-         * the very failure it is testing for. */
-        /* A copy of the device frame, not the frame: a capability can be mapped into
-         * one VSpace only, and ours has read it (kernel/manual/parts/vspace.tex,
-         * "Sharing Memory"; the frame is unmapped by the survey as it reads, so the
-         * copy starts clean). The copy is what the spawner maps into the device
-         * manager -- the one service that declares itself the device manager. */
-        /* The window's length is one page for now: handing the series over makes the
-         * supervisor receive an *invocation* at the shared fault endpoint (`label 35`,
-         * length 3, badge 0 -- measured), which is not a fault from any service and is
-         * not yet explained. The survey keeps every frame either way, so the series is
-         * ready when that is settled (specs/services.md). */
-        static_cast<void>(device_frame_count);
-        seL4_CPtr device_grant = 0;
-        if (device_frame != 0) {
-            device_grant = allocator.alloc_slot();
-            if (device_grant == 0) {
-                problem("no slot for the device manager's device");
-            } else {
-                seL4_Error const copied =
-                    seL4_CNode_Copy(seL4_CapInitThreadCNode, device_grant, seL4_WordBits,
-                                    seL4_CapInitThreadCNode, device_frame, seL4_WordBits,
-                                    seL4_AllRights);
-                if (copied != seL4_NoError) {
-                    problem("the device frame could not be duplicated");
-                    device_grant = 0;
-                }
-            }
-        }
+        /* A device's frame goes into the service as it stands: the survey unmaps each one as
+         * it reads, so nothing holds a mapping of it and no copy is needed. Which device a
+         * service is given is its section's `device_id`, looked up in the survey's list by
+         * Services::boot (specs/services.md, specs/authority.md). */
         /* The device goes to the one service that declares itself the device
          * manager (manifests/services.manifest, `device_manager`), which is the
          * thing that was missing when every spawn was handed the same frame.
@@ -879,8 +826,7 @@ int main(int argc, char *argv[])
              seL4_PageTableBits},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
-                               device_tree_bytes, device_grant, 1u << seL4_PageBits,
-                               device_physical, delegated, 2);
+                               device_tree_bytes, bus, bus_count, delegated, 2);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread

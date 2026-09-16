@@ -56,8 +56,7 @@ bool Services::prepare(mem::Account &account) noexcept
 
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
                     Boot &boot, Supervisor *supervisor, void const *devices,
-              uint32_t devices_bytes, seL4_CPtr device_frame,
-              uint32_t device_bytes, uint64_t device_physical,
+              uint32_t devices_bytes, Device const *bus, uint32_t bus_count,
               spawn::PortGrant const *extra, uint32_t extra_count) noexcept
 {
     boot.declared = manifest.size();
@@ -132,9 +131,22 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
          * claim it and every later one be refused (specs/services.md). */
         request.devices = entry.device_manager ? devices : nullptr;
         request.devices_bytes = entry.device_manager ? devices_bytes : 0;
-        request.device_frame = entry.device_manager ? device_frame : 0;
-        request.device_bytes = entry.device_manager ? device_bytes : 0;
-        request.device_physical = entry.device_manager ? device_physical : 0;
+        /* The device this service is *for*: its section names a bus device id and the survey
+         * found the device that answers to it. Naming an id the bus does not have gets no
+         * device, which the boot report shows -- a service given nothing is easier to see
+         * than one given the wrong thing (specs/services.md). */
+        Device const *mine = nullptr;
+        if (entry.device_id != 0) {
+            for (uint32_t d = 0; d < bus_count; ++d) {
+                if (bus[d].id == entry.device_id) {
+                    mine = &bus[d];
+                    break;
+                }
+            }
+        }
+        request.device_frame = mine != nullptr ? mine->frame : 0;
+        request.device_bytes = mine != nullptr ? 4096u : 0;
+        request.device_physical = mine != nullptr ? mine->address : 0;
         request.fault_endpoint = fault_endpoint_;
         /* Badges count from one so that zero keeps meaning "nobody in
          * particular" -- which is what director itself looks like. */

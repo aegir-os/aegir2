@@ -86,8 +86,7 @@ public:
      *  is public information the device manager owns (specs/services.md). */
     void boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
               Boot &boot, Supervisor *supervisor, void const *devices,
-              uint32_t devices_bytes, seL4_CPtr device_frame,
-              uint32_t device_bytes, uint64_t device_physical,
+              uint32_t devices_bytes, Device const *bus, uint32_t bus_count,
               spawn::PortGrant const *extra, uint32_t extra_count) noexcept;
 
     seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
