@@ -18,11 +18,14 @@
  * page is the whole queue: one descriptor table, one pair of rings, one request, one sector
  * of data and one status byte, laid out so that a single 4 KiB page holds all of it.
  *
- * The queue is used by polling rather than by interrupt. virtio guarantees that a driver
- * which publishes a request makes progress without one, and an interrupt needs an IRQ
- * capability, a notification and an ack -- none of which exist yet. Polling is the honest
- * first version: it either works or it hangs, and a bound on the loop turns the second into
- * a report.
+ * The queue can be driven two ways. By interrupt, when the spawner paired one
+ * with the device (`use_interrupts`): the kick is followed by a wait on the
+ * notification, and the used ring has advanced when the wait returns. By
+ * polling, when it was not: virtio guarantees that a driver which publishes a
+ * request makes progress without an interrupt, so spinning on the used index
+ * is legal -- and the bound on the loop turns "it never answered" into a
+ * report rather than a hang. Interrupts are the default on a machine that
+ * has them; polling is the fallback a driver without a handler cap takes.
  */
 
 #pragma once
@@ -142,6 +145,12 @@ constexpr uint32_t kPageBytes = 4096;
  *  device that may ignore the queue entirely (virtio 1.x, 2.1.1 step 8). */
 void set_up(Registers const &registers, uint64_t physical, uint32_t num,
             QueueReport *report) noexcept;
+
+/** Pair an interrupt with the queue: a notification to wait on after the
+ *  kick, and the IRQ handler to ack after each signal. Called once, before
+ *  the first request; without it every request is completed by polling.
+ *  Slots travel as uint64_t, the way the bootstrap block hands them out. */
+void use_interrupts(uint64_t notification, uint64_t handler) noexcept;
 
 /** Publish a read of `sector` and wait for the device to say it is done. The queue must be
  *  set up and DRIVER_OK written first. The device writes the sector to `data_physical` --

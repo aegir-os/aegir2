@@ -328,6 +328,20 @@ int main(int argc, char *argv[])
     aegir::debug_write_hex(window_physical);
     aegir::debug_write(")\n");
 
+    /* The interrupt the spawner paired with the device, when it did: a
+     * notification to wait on after each kick, and the handler to ack after
+     * each signal. A driver that finds neither polls -- virtio promises
+     * progress without one, and the queue keeps its bound for that case. */
+    uint64_t irq_notification = 0;
+    uint64_t irq_handler = 0;
+    bool const has_irq =
+        aegir::bootstrap::capability("irq.notify", 10, &irq_notification) &&
+        aegir::bootstrap::capability("irq.handler", 11, &irq_handler);
+    if (has_irq) {
+        aegir::virtio::use_interrupts(irq_notification, irq_handler);
+    }
+    write_line("completion", has_irq ? "interrupt" : "polling");
+
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("virtio-blk", "ready");
 

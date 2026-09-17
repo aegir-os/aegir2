@@ -7,6 +7,8 @@
 
 #include "queue.h"
 
+#include <sel4/sel4.h>
+
 namespace aegir::virtio {
 
 namespace {
@@ -124,7 +126,19 @@ namespace {
 uint16_t next_avail = 0;
 uint16_t last_used = 0;
 
+/* The interrupt the queue was paired with, when it was: a notification to
+ * wait on and the handler to ack, both zero while the queue is driven by
+ * polling. */
+seL4_CPtr irq_notification = 0;
+seL4_CPtr irq_handler = 0;
+
 }  // namespace
+
+void use_interrupts(uint64_t notification, uint64_t handler) noexcept
+{
+    irq_notification = static_cast<seL4_CPtr>(notification);
+    irq_handler = static_cast<seL4_CPtr>(handler);
+}
 
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept
@@ -190,11 +204,24 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
 
     /* Wait for the device to say it is done -- for *this* request: the used
      * index advancing past what the driver has seen, not being nonzero, which
-     * the first request made true for ever. virtio promises progress without
-     * an interrupt, so this is a legal way to drive it -- and the bound keeps
-     * "it never answered" a report rather than a hang. */
+     * the first request made true for ever. With an interrupt paired, the
+     * signal says the device moved: reading the ISR status is what lowers its
+     * line (the legacy interface's only acknowledge), the handler's Ack lets
+     * the kernel raise the next one, and a signal that was not *this* request
+     * -- a config change is the other kind -- just waits again. Without one,
+     * virtio promises progress anyway, so polling is legal -- and the bound
+     * keeps "it never answered" a report rather than a hang. */
     volatile uint16_t *used = half_at(page, kUsedOffset);
-    for (unsigned spin = 0; spin < 200000000 && used[1] == last_used; ++spin) {
+    if (irq_notification != 0) {
+        while (used[1] == last_used) {
+            seL4_Word badge = 0;
+            seL4_Wait(irq_notification, &badge);
+            static_cast<void>(registers.read(kInterruptStatus));
+            seL4_IRQHandler_Ack(irq_handler);
+        }
+    } else {
+        for (unsigned spin = 0; spin < 200000000 && used[1] == last_used; ++spin) {
+        }
     }
     /* On a timeout the raw state is the evidence, not a summary: the used ring's own words,
      * and whether the device wrote the status byte at all. A request the device never looked

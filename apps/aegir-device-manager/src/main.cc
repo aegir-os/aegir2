@@ -776,6 +776,39 @@ int main(int argc, char *argv[])
                     write_line("FAIL", "no memory for a driver's port");
                     continue;
                 }
+                /* The driver's interrupt, when the tree says the device raises
+                 * one: one handler cap per IRQ is all the kernel issues (a
+                 * second Get is seL4_RevokeFirst), so it is made here, at the
+                 * binding, paired with a notification before the child exists,
+                 * and armed -- the first Ack is what lets signals in
+                 * (projects/sel4test/apps/sel4test-driver/src/main.c:555-582).
+                 * The child gets the pair: it waits on one and acks on the
+                 * other. */
+                seL4_CPtr irq_handler = 0;
+                seL4_CPtr irq_notification = 0;
+                if (binding.irq != 0 && irqcontrol_slot != 0) {
+                    irq_handler = g_objects.alloc_slot();
+                    seL4_Error const get_error =
+                        irq_handler == 0
+                            ? seL4_NotEnoughMemory
+                            : seL4_IRQControl_Get(
+                                  static_cast<seL4_IRQControl>(irqcontrol_slot),
+                                  binding.irq, aegir::bootstrap::kSlotOwnCNode,
+                                  irq_handler, aegir::bootstrap::kCNodeBits);
+                    seL4_Error notify_error = seL4_NoError;
+                    irq_notification =
+                        g_objects.alloc_object(seL4_NotificationObject,
+                                               seL4_NotificationBits, child_account,
+                                               &notify_error);
+                    if (get_error != seL4_NoError || irq_notification == 0 ||
+                        seL4_IRQHandler_SetNotification(irq_handler,
+                                                        irq_notification) !=
+                            seL4_NoError ||
+                        seL4_IRQHandler_Ack(irq_handler) != seL4_NoError) {
+                        write_line("FAIL", "a driver's interrupt could not be issued");
+                        continue;
+                    }
+                }
 
                 aegir::spawn::PortGrant const ports[] = {
                     {aegir::log::kPortName, aegir::log::kPortNameLength,
@@ -787,6 +820,14 @@ int main(int argc, char *argv[])
                      * (specs/services.md). */
                     {"port", 4, aegir::bootstrap::kSlotFirstDeclared + 1, block_port,
                      seL4_CapRights_new(0, 0, 1, 0), 0, 0},
+                    /* The interrupt pair: the driver waits on the notification
+                     * (Read is the whole grant) and acks on the handler after
+                     * each signal. Only present when the binding has an IRQ --
+                     * a driver that finds neither polls. */
+                    {"irq.notify", 10, aegir::bootstrap::kSlotFirstDeclared + 2,
+                     irq_notification, seL4_CapRights_new(0, 0, 1, 0), 0, 0},
+                    {"irq.handler", 11, aegir::bootstrap::kSlotFirstDeclared + 3,
+                     irq_handler, seL4_AllRights, 0, 0},
                 };
                 aegir::spawn::DeviceGrant const devices[] = {
                     {binding.base, binding.bytes, binding.frame},
@@ -803,7 +844,7 @@ int main(int argc, char *argv[])
                  * is within what we hold. */
                 request.priority = seL4_MaxPrio - 1;
                 request.ports = ports;
-                request.port_count = 2;
+                request.port_count = irq_handler != 0 ? 4 : 2;
                 request.device_frame = binding.frame;
                 request.device_bytes = binding.bytes;
                 request.device_physical = binding.base;
