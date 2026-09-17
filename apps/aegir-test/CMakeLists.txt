@@ -24,5 +24,5 @@ target_compile_options(aegir-test PRIVATE -Wall -Wextra -Werror)
 # at (specs/vfs.md).
 target_link_libraries(
   aegir-test PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
-                     aegir-namespace aegir-volume sel4 muslc sel4runtime
+                     aegir-authdb aegir-namespace aegir-volume sel4 muslc sel4runtime
 )

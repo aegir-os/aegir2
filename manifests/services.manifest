@@ -145,5 +145,5 @@ restart   = never
 binary    = aegir-test
 authority = system
 account   = boot
-needs     = log.main, vfs.namespace
+needs     = log.main, vfs.namespace, auth.login
 restart   = never

@@ -15,6 +15,7 @@
  * produce them (scripts/make_disk.py).
  */
 
+#include <aegir/authdb.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
@@ -132,6 +133,33 @@ bool read_and_check(seL4_CPtr port, char const *path, uint32_t path_length,
         }
     }
     return right && seen == expected_length;
+}
+
+/* A login ask: both halves of the credential, one word back -- and a word
+ * that is not 0 or 1 says the protocol itself broke, which is a different
+ * failure than a refused login. */
+uint64_t login(aegir::ipc::Consumer const &port, char const *name,
+               char const *secret) noexcept
+{
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words = aegir::nmspace::pack_string(out, name, text_length(name),
+                                                 aegir::authdb::kNameBytes);
+    if (words == 0) {
+        return ~0ULL;
+    }
+    uint32_t const secret_words = aegir::nmspace::pack_string(
+        out + words, secret, text_length(secret), aegir::authdb::kSecretBytes);
+    if (secret_words == 0) {
+        return ~0ULL;
+    }
+    words += secret_words;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(aegir::auth::kMethodLogin, out, words, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return ~0ULL;
+    }
+    return in[0];
 }
 
 }  // namespace
@@ -259,6 +287,30 @@ int main(int argc, char *argv[])
             write("  test: Initrd:services.manifest begins: ");
             write(bytes, 8);
             write("\n");
+        }
+    }
+
+    /* auth.login: the entry the build packed is the checksum -- accepted
+     * with its secret, and refused the same way for a wrong secret and an
+     * unknown name, because the port is not an oracle (specs/auth.md). */
+    aegir::ipc::Consumer const auth_login =
+        aegir::ipc::Consumer::find(aegir::auth::kPortName, aegir::auth::kPortNameLength);
+    if (!auth_login.valid()) {
+        write("  test: FAIL no auth.login\n");
+        ++failed;
+    } else {
+        if (login(auth_login, "rroland", "aegir") != 1) {
+            write("  test: FAIL the packed user was not authenticated\n");
+            ++failed;
+        } else if (login(auth_login, "rroland", "wrong") != 0) {
+            write("  test: FAIL a wrong secret was not refused\n");
+            ++failed;
+        } else if (login(auth_login, "nobody", "aegir") != 0) {
+            write("  test: FAIL an unknown name was not refused\n");
+            ++failed;
+        } else {
+            write("  test: auth.login accepts the packed user, refuses wrong "
+                  "secret and unknown name alike\n");
         }
     }
 
