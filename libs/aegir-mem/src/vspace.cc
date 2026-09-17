@@ -33,11 +33,13 @@ Scratch::Scratch(seL4_BootInfo *bootinfo) noexcept
 {
 }
 
-bool Scratch::initialise() noexcept
+bool Scratch::initialise(Allocator *tables) noexcept
 {
     if (bootinfo_ == nullptr) {
         return false;
     }
+    tables_ = tables;
+    may_grow_ = tables != nullptr;
 
     uintptr_t start = reinterpret_cast<uintptr_t>(_end);
     uintptr_t ipc_end = reinterpret_cast<uintptr_t>(bootinfo_->ipcBuffer) + kPage;
@@ -76,8 +78,16 @@ bool Scratch::adopt(seL4_CPtr vspace_root, uintptr_t base, uintptr_t limit,
 
 void *Scratch::map(seL4_CPtr frame) noexcept
 {
-    if (frame == 0 || next_ + kPage > limit_) {
+    if (frame == 0) {
         return nullptr;
+    }
+    /* A window that may grow does so a large page at a time; the missing
+     * page tables are created below, on the kernel's FailedLookup. */
+    while (next_ + kPage > limit_) {
+        if (!may_grow_) {
+            return nullptr;
+        }
+        limit_ += kLargePage;
     }
     uintptr_t address = next_;
     seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,

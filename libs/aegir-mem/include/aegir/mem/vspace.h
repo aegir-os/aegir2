@@ -31,8 +31,15 @@ class Scratch {
 public:
     explicit Scratch(seL4_BootInfo *bootinfo) noexcept;
 
-    /** Work out the window from the bootinfo. */
-    bool initialise() noexcept;
+    /** Work out the window from the bootinfo. `tables`, when given, lets the
+     *  window grow: past the first large page nothing is promised to be
+     *  mapped, so reaching the window's end extends it a large page at a time
+     *  and missing page tables are allocated as the kernel asks for them (the
+     *  same FailedLookup idiom as a service's adopted window). A boot set
+     *  that grows past one large page of scratch -- another service's image,
+     *  stack and arena pages -- is what makes this the root task's problem
+     *  and not only a service's. */
+    bool initialise(Allocator *tables) noexcept;
 
     /** Adopt a window in our own address space when we are a *service*: there is
      *  no bootinfo to derive one from, so the spawner that owns our VSpace says
@@ -67,10 +74,14 @@ private:
     /* The VSpace the window lives in: the kernel's name for the root task's, and
      *  a granted capability for a service's (adopt). */
     seL4_CPtr root_ = seL4_CapInitThreadVSpace;
-    /* Where missing page tables come from: null for the root task, whose window
-     *  sits where the tables already exist, and the service's own allocator
-     *  otherwise. */
+    /* Where missing page tables come from: for the root task, its allocator
+     *  when the window may grow past the tables the image already has
+     *  (initialise); for a service, its own allocator (adopt). */
     Allocator *tables_ = nullptr;
+    /* The root task's window may extend a large page at a time when it runs
+     *  out (initialise); a service's adopted window ends where its spawner
+     *  said it ends. */
+    bool may_grow_ = false;
     uintptr_t base_;
     uintptr_t next_;
     uintptr_t limit_;
