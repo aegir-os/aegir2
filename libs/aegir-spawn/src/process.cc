@@ -103,6 +103,24 @@ bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
     return true;
 }
 
+bool Spawner::install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept
+{
+    /* Move takes the capability as it stands -- no derive, so the caps a copy
+     *  reduces to nothing (IRQControl: kernel/src/object/objecttype.c:75-78)
+     *  cross whole, and the source slot is empty from then on. The addressing
+     *  is install()'s: a plain slot in the destination's own-depth CNode, the
+     *  caller's root and depth on the source side. */
+    seL4_Error const move_error =
+        seL4_CNode_Move(into_cspace, slot, bootstrap::kCNodeBits, source_root_, source,
+                        source_depth_);
+    if (move_error != seL4_NoError) {
+        detail_ = "moving a capability into the child's CSpace";
+        error_ = move_error;
+        return false;
+    }
+    return true;
+}
+
 uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
                                      Elf const &elf, Request const &request, uintptr_t block,
                                      uintptr_t ipc_buffer) noexcept
@@ -520,8 +538,10 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * so a wrong guess here is visible rather than silent. */
     for (uint32_t i = 0; i < request.port_count; ++i) {
         PortGrant const &grant = request.ports[i];
-        if (grant.capability == 0 || !install(process.cspace, grant.slot, grant.capability,
-                                              grant.rights, grant.badge)) {
+        if (grant.capability == 0 ||
+            (grant.move ? !install_moved(process.cspace, grant.slot, grant.capability)
+                        : !install(process.cspace, grant.slot, grant.capability, grant.rights,
+                                   grant.badge))) {
             return fail("a port could not be installed into the child");
         }
     }

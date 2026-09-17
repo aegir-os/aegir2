@@ -836,13 +836,22 @@ int main(int argc, char *argv[])
         }
         static char const kAsidPoolName[] = "asid-pool";
         static char const kUntypedName[] = "untyped";
+        static char const kIrqControlName[] = "irqcontrol";
         aegir::spawn::PortGrant const delegated[] = {
             {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0, 0},
             {kUntypedName, sizeof(kUntypedName) - 1, 0, delegated_untyped, seL4_AllRights, 0,
              kDelegatedUntypedBits},
+            /* Interrupt issue belongs to whoever turns the tree's devices into
+             * drivers: IRQControl is the kernel's one well of handler caps
+             * (manual, io.tex), and the device manager is that service. The
+             * cap moves rather than copies -- a copy derives to a *null* cap
+             * (kernel/src/object/objecttype.c:75-78) -- so custody changes
+             * hands whole, and the root task's slot is empty from here. */
+            {kIrqControlName, sizeof(kIrqControlName) - 1, 0, seL4_CapIRQControl,
+             seL4_AllRights, 0, 0, true},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
-                               device_tree_bytes, bus, bus_count, delegated, 2,
+                               device_tree_bytes, bus, bus_count, delegated, 3,
                                delegated_physical);
     }
 

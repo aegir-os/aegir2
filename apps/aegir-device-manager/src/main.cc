@@ -376,6 +376,17 @@ int main(int argc, char *argv[])
         aegir::debug_write("\n");
     }
 
+    /* Interrupt issue is the third thing director delegates: IRQControl is
+     * the kernel's one well of handler caps, and minting them belongs to
+     * whoever binds drivers to devices. Its absence is reported, not fatal --
+     * a driver without a handler polls. */
+    uint64_t irqcontrol_slot = 0;
+    if (aegir::bootstrap::capability("irqcontrol", 10, &irqcontrol_slot)) {
+        write_line("irqcontrol", "given");
+    } else {
+        write_line("irqcontrol", "not given -- drivers will poll");
+    }
+
     /* Spawning: what this service was given the authority for (specs/services.md).
      * The map is the join of three sources: the tree says which devices the
      * machine has, the registry says which driver handles which kind, and the

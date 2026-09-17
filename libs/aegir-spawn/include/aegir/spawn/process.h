@@ -60,6 +60,12 @@ struct PortGrant {
      *  Last member on purpose: the places that build ports by aggregate
      *  initialization are then unchanged, and mean zero. */
     uint32_t size_bits = 0;
+    /* Move the capability rather than minting a copy of it. There is exactly one
+     *  reason: IRQControl derives to a *null* cap (kernel/src/object/objecttype.c:
+     *  75-78), so the kernel's one well of handler caps cannot be copied -- custody
+     *  of it changes hands whole, and the giver's slot is empty afterwards. Rights
+     *  and badge do not apply to a move. Same placement rule as size_bits. */
+    bool move = false;
 };
 
 /** A device frame handed over as a *capability* rather than a mapping: the child
@@ -209,6 +215,8 @@ private:
     bool fail(char const *what) noexcept;
     bool install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
                  seL4_CapRights_t rights, uint64_t badge) noexcept;
+    /** Move rather than mint: for the caps a copy cannot carry (PortGrant.move). */
+    bool install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept;
     /** Lay out argc/argv/envp/auxv on the child's stack. Returns the stack
      *  pointer, or 0 when it does not fit. */
     uintptr_t build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
