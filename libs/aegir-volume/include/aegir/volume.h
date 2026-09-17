@@ -64,6 +64,12 @@ constexpr uint32_t kMethodClose = 5; /* in: handle; answer: 1, or 0 */
  * Answer: 1, or 0 -- a component that is a file, an invalid name, a
  * read-only or full volume. */
 constexpr uint32_t kMethodMkdir = 6; /* in: path words; answer: 1, or 0 */
+/* remove: a path. A file's chain is freed and its slot marked deleted; a
+ * directory only when it holds nothing but dot and dotdot -- a tree dies
+ * leaf-first. FAT has no link counts, so a file an open handle names is
+ * refused rather than unlinked under the writer. Answer: 1, or 0 -- not
+ * found, not empty, open, read-only, or the root. */
+constexpr uint32_t kMethodRemove = 7; /* in: path words; answer: 1, or 0 */
 
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */

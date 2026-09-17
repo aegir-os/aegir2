@@ -751,6 +751,99 @@ void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     port.reply_words(&made, 1);
 }
 
+/* A directory's chain holds nothing but "." and ".." -- the entries mmd
+ * makes, deleted slots and End aside. */
+bool dir_is_empty(uint32_t cluster) noexcept
+{
+    uint32_t c = cluster;
+    while (c >= 2 && c < aegir::fat::kEoc32) {
+        if (!read(aegir::fat::cluster_sector(g_volume, c),
+                  g_volume.sectors_per_cluster)) {
+            return false;
+        }
+        for (uint32_t i = 0; i < g_volume.sectors_per_cluster * kSectorBytes / 32; ++i) {
+            uint8_t const *raw = g_window + i * 32;
+            if (raw[0] == 0x00) {
+                return true; /* End: nothing past here is used */
+            }
+            aegir::fat::Dirent dirent;
+            if (aegir::fat::dirent(raw, &dirent) != aegir::fat::Entry::Used) {
+                continue;
+            }
+            if ((dirent.name_length == 1 && dirent.name[0] == '.') ||
+                (dirent.name_length == 2 && dirent.name[0] == '.' &&
+                 dirent.name[1] == '.')) {
+                continue;
+            }
+            return false;
+        }
+        uint64_t rel = 0;
+        if (!fat_load(c, &rel)) {
+            return false;
+        }
+        c = aegir::fat::next32(g_window, c % (kSectorBytes / 4));
+    }
+    return true;
+}
+
+/* True when some open handle's file is this dirent slot: FAT has no link
+ * counts, so removing a file a writer holds is refused rather than
+ * unlinked under it (specs/vfs.md). */
+bool handle_names(uint64_t dirent_sector, uint32_t dirent_index) noexcept
+{
+    if (g_memory == nullptr) {
+        return false;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial != 0 && rows[i].dirent_sector == dirent_sector &&
+            rows[i].dirent_index == dirent_index) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t removed = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(&removed, 1);
+        return;
+    }
+    /* The walk ends at the directory the name lives in; the last component
+     * is what dies. The empty path is the root, which is not removable. */
+    Dir dir;
+    char const *last = nullptr;
+    uint32_t last_length = 0;
+    aegir::fat::Dirent dirent;
+    uint64_t dirent_sector = 0;
+    uint32_t dirent_index = 0;
+    if (!g_writable || !g_volume.fat32 ||
+        !walk(path, path_length, false, &dir, &last, &last_length) ||
+        dir_slot(dir, last, last_length, &dirent, &dirent_sector, &dirent_index) !=
+            Slot::Found ||
+        (dirent.directory && !dir_is_empty(dirent.first_cluster)) ||
+        handle_names(dirent_sector, dirent_index)) {
+        port.reply_words(&removed, 1);
+        return;
+    }
+    /* The chain goes back to free, in every FAT copy, and the slot says
+     * deleted: 0xe5 in its first byte, the format's mark. */
+    if (chain_free(dirent.first_cluster) && read(dirent_sector, 1)) {
+        g_window[dirent_index * 32] = 0xe5;
+        if (write_back(dirent_sector, 1)) {
+            removed = 1;
+        }
+    }
+    port.reply_words(&removed, 1);
+}
+
 void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     char const *path = nullptr;
@@ -1201,6 +1294,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodMkdir:
             answer_mkdir(vol, words, count);
+            break;
+        case aegir::volume::kMethodRemove:
+            answer_remove(vol, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

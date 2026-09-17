@@ -218,6 +218,38 @@ uint64_t vol_mkdir(seL4_CPtr port, char const *path, uint32_t path_length) noexc
     return in[0];
 }
 
+/* remove: 1 removed, 0 refused -- not found, not empty, open, read-only,
+ * or the root. */
+uint64_t vol_remove(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodRemove, out, out_words, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
+/* One read, asking for refusal: true when the volume says no. */
+bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 3];
+    uint32_t out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    out[out_words++] = 0;
+    out[out_words++] = 1;
+    uint64_t in[aegir::volume::kReadHeaderWords + 1];
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::volume::kMethodRead, out, out_words, in, aegir::volume::kReadHeaderWords + 1);
+    return answer.error != 0 || answer.count < aegir::volume::kReadHeaderWords;
+}
+
 /* What the write test writes: a pattern the reader can recompute, so a byte
  * that landed in the wrong place is a byte that reads back wrong. */
 uint8_t pattern_at(uint64_t i) noexcept
@@ -616,6 +648,54 @@ int main(int argc, char *argv[])
         if (vol_mkdir(initrd_volume, "NEST", 4) != 0) {
             write("  test: FAIL the read-only volume took a mkdir\n");
             ++failed;
+        }
+    }
+
+    /* remove: a tree dies leaf-first. A file goes and its read is refused;
+     * a directory with contents is refused until it is empty; a file an
+     * open handle names is refused until the handle closes. */
+    {
+        static char const kGonePath[] = "NEST/DEEP/GONE.TXT";
+        static char const kFullDir[] = "NEST/FULL";
+        static char const kFullFile[] = "NEST/FULL/F.TXT";
+        static char const kHeldPath[] = "NEST/DEEP/HELD.TXT";
+        bool ok = true;
+        /* A file is made, then unmade, and its name stops resolving to
+         * bytes. */
+        uint64_t handle =
+            vol_open(scratch_volume, kGonePath, sizeof(kGonePath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        uint8_t const gone_byte = 'g';
+        ok = handle != 0 &&
+             vol_write(scratch_volume, handle, &gone_byte, 1) == 1 &&
+             vol_close(scratch_volume, handle) == 1 &&
+             vol_remove(scratch_volume, kGonePath, sizeof(kGonePath) - 1) == 1 &&
+             read_refused(scratch_volume, kGonePath, sizeof(kGonePath) - 1);
+        /* A non-empty directory refuses until it is empty. */
+        ok = ok && vol_mkdir(scratch_volume, kFullDir, sizeof(kFullDir) - 1) == 1;
+        handle = vol_open(scratch_volume, kFullFile, sizeof(kFullFile) - 1,
+                          aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        ok = ok && handle != 0 && vol_close(scratch_volume, handle) == 1 &&
+             vol_remove(scratch_volume, kFullDir, sizeof(kFullDir) - 1) == 0 &&
+             vol_remove(scratch_volume, kFullFile, sizeof(kFullFile) - 1) == 1 &&
+             vol_remove(scratch_volume, kFullDir, sizeof(kFullDir) - 1) == 1;
+        /* A file an open handle names is refused until the handle closes. */
+        handle = vol_open(scratch_volume, kHeldPath, sizeof(kHeldPath) - 1,
+                          aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        ok = ok && handle != 0 &&
+             vol_remove(scratch_volume, kHeldPath, sizeof(kHeldPath) - 1) == 0 &&
+             vol_close(scratch_volume, handle) == 1 &&
+             vol_remove(scratch_volume, kHeldPath, sizeof(kHeldPath) - 1) == 1;
+        /* What is not there is not removed, and the read-only volume keeps
+         * everything. */
+        ok = ok && vol_remove(scratch_volume, "NEST/DEEP/GONE.TXT",
+                              sizeof("NEST/DEEP/GONE.TXT") - 1) == 0 &&
+             vol_remove(initrd_volume, "services.manifest", 17) == 0;
+        if (!ok) {
+            write("  test: FAIL remove did not unmake, leaf-first\n");
+            ++failed;
+        } else {
+            write("  test: remove unmakes, leaf-first, and refuses what it must\n");
         }
     }
 
