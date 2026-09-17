@@ -713,10 +713,14 @@ and answers "who owns this device?" for everyone else.
   not driven. Bound devices get instance names (`blk.virtio0`, not `blkdriver`), built
   when the join succeeds, and the map is sized by two walks of the tree so it grows
   with the machine. Adding a driver is adding a registry row.
-- **next**: each driver's interrupt -- the tree already says it (`blk.virtio0 ... irq 7`),
-  what is missing is IRQControl custody and the handler cap -- and a port for the
-  device manager itself, so the map is something other services can ask about rather
-  than something the console prints.
+- **done**: each driver's interrupt. IRQControl custody moved to the device manager
+  (a copy derives to a null cap, so it *moved* -- specs/authority.md records the
+  kernel lines); the handler is minted at the binding, paired with a notification and
+  armed before the child starts, and the driver waits on it after each kick instead
+  of polling the used ring. A driver that finds no pair polls -- virtio promises
+  progress without one.
+- **next**: a port for the device manager itself, so the map is something other
+  services can ask about rather than something the console prints.
 
 Devices are given to a driver the way everything else here is given: capabilities
 for the device's register frames (retyped from the device's own untyped memory --
@@ -815,7 +819,6 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: each driver's interrupt (IRQControl custody
-and the handler cap), a port for the device manager itself so the map is something
-other services can ask, the VFS and the `Initrd:` volume, and range clamping by
-badge in the driver.
+Still open, in the order they arrive: a port for the device manager itself so the map
+is something other services can ask, the VFS and the `Initrd:` volume, and range
+clamping by badge in the driver.

@@ -403,6 +403,28 @@ useless -- the order is the whole mechanism. The partition manager is granted tw
 per port -- its own, and one reserved for the children it starts -- so a set it never
 maps can mint mappable windows for filesystem services without bound.
 
+### IRQControl cannot be copied; custody moves whole
+
+`deriveCap` on `cap_irq_control_cap` succeeds and produces a *null* cap
+(`kernel/src/object/objecttype.c:75-78`): a copy of IRQControl is nothing, and
+installing one fails the mint's own check ("Mutated cap would be invalid",
+`kernel/src/object/cnode.c:176-179`). So the kernel's one well of handler caps cannot
+be delegated the way the untyped and the ASID pool were. What crosses is custody:
+`seL4_CNode_Move` takes the cap as it stands (`kernel/src/object/cnode.c:155-161`),
+the device manager holds it outright, and the root task's slot is empty from then on.
+The spawner's `PortGrant` grew a `move` flag for exactly this; nothing else moves.
+
+That placement is the right shape for the kernel's other IRQ rule: one handler cap
+per IRQ, a second `seL4_IRQControl_Get` for the same number being
+`seL4_RevokeFirst`. The issuer is the service that knows which binding has which
+IRQ. What a driver receives is the pair, made at the binding and armed before the
+child starts -- the first `Ack` is what lets signals in
+(`projects/sel4test/apps/sel4test-driver/src/main.c:555-582`): a notification it
+waits on after each kick (Read is the whole grant), and the handler it acks after
+each signal. On RISC-V the Ack's work was already done by the claim in
+`getActiveIRQ` (`kernel/src/object/interrupt.c:136-143`), but the sequence is the
+portable one, and a driver that finds no pair polls.
+
 ### The sizes, measured
 
 - The delegation to the device manager is **2 MiB** (`kDelegatedUntypedBits = 21`):
