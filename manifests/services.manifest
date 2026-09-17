@@ -118,6 +118,19 @@ needs     = log.main, vfs.namespace
 initrd    = true
 restart   = always
 
+# auth owns the user database and the login port (specs/auth.md): it reads
+# the packed table from Initrd: through the namespace -- the first system
+# consumer of the VFS -- and serves auth.login from it. The table's backing
+# store is its memory grant; the table grows until that is gone.
+[auth]
+binary    = aegir-auth
+authority = system
+account   = system
+owns      = auth.login
+needs     = log.main, vfs.namespace
+memory_kib = 64
+restart   = always
+
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process
 # can call a port it was given.
