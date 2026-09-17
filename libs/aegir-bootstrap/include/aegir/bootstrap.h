@@ -53,6 +53,11 @@ constexpr uint64_t kSlotFaultEndpoint = 3;
 /** The notification a child signals to say it has finished starting, which is
  *  what its supervisor waits on. One way, unforgeable, and cheap. */
 constexpr uint64_t kSlotSupervision = 4;
+/** Where a capability transferred over IPC lands (specs/vfs.md): one scratch
+ *  slot, named with seL4_SetCapReceivePath before a call that expects a cap
+ *  back, and moved out of immediately -- a second transfer onto an occupied
+ *  slot fails. */
+constexpr uint64_t kSlotReceiveCap = 5;
 /** First slot the manifest's own declarations may use. */
 constexpr uint64_t kSlotFirstDeclared = 8;
 

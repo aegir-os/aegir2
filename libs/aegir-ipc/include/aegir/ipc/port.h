@@ -24,7 +24,13 @@
  * protocol that needs to send a string, and the ceiling on it is the kernel's
  * own -- the message registers there are (seL4_MsgMaxLength,
  * kernel/libsel4/include/sel4/constants.h:55), minus the method's word --
- * not a number this library chose.
+ * not a number this library chose. The transfer forms carry one capability
+ * beside the words (specs/vfs.md), and the rights that make that work are the
+ * kernel's rules, not options: the invoked capability needs Grant for
+ * anything to transfer at all (kernel/src/kernel/thread.c:212-218), and a
+ * reply that carries a cap needs it on the owner's receiving half, which the
+ * reply capability inherits (kernel/manual/parts/ipc.tex, "Calling and
+ * Replying").
  */
 
 #ifndef AEGIR_IPC_PORT_H
@@ -92,6 +98,17 @@ public:
     WordsReply call_words(uint32_t method, uint64_t const *out, uint32_t out_count,
                           uint64_t *in, uint32_t in_capacity) const noexcept;
 
+    /** The transfer form (specs/vfs.md): like call_words, plus one capability
+     *  each way, riding outside the words. `cap` of zero sends none. A cap the
+     *  owner replies with lands in the scratch receive slot
+     *  (aegir::bootstrap::kSlotReceiveCap) and `cap_received`, when given, says
+     *  whether one arrived -- the caller's to move out (take_received_cap)
+     *  before any next transfer, because a second one onto an occupied slot
+     *  fails. */
+    WordsReply call_transfer(uint32_t method, uint64_t const *out, uint32_t out_count,
+                             seL4_CPtr cap, uint64_t *in, uint32_t in_capacity,
+                             bool *cap_received) const noexcept;
+
 private:
     seL4_CPtr capability_;
 };
@@ -114,9 +131,11 @@ public:
     /** The multi-word form of receive(): the payload lands in `words` (up to
      *  `capacity`), and `count` says how many words *arrived* -- more than
      *  `capacity` is a protocol break the owner can see, not something
-     *  silently trimmed. */
+     *  silently trimmed. When the call carried a capability it is in the
+     *  scratch receive slot and `cap_arrived`, when given, says so -- the
+     *  owner's to move out (take_received_cap) before the next receive. */
     uint32_t receive_words(uint64_t *words, uint32_t capacity, uint32_t *count,
-                           seL4_Word *badge) noexcept;
+                           seL4_Word *badge, bool *cap_arrived = nullptr) noexcept;
 
     /** Answer, then wait for the next call. One call needs one reply, and
      *  replying before receiving again is what keeps the caller's `call` a single
@@ -128,9 +147,20 @@ public:
      *  it on, and a partial answer beats none. */
     void reply_words(uint64_t const *words, uint32_t count) noexcept;
 
+    /** The transfer form of reply(): words plus one capability. The owner's
+     *  receiving half needs Grant, because the reply capability inherits its
+     *  grant from it (kernel/manual/parts/ipc.tex, "Calling and Replying"). */
+    void reply_cap(uint64_t const *words, uint32_t count, seL4_CPtr cap) noexcept;
+
 private:
     seL4_CPtr capability_;
 };
+
+/** Move a capability out of the scratch receive slot into `target`, which
+ *  must be empty. False when the kernel refuses. What a transfer leaves in
+ *  the scratch slot is the receiver's to put somewhere before the next one
+ *  (aegir::bootstrap::kSlotReceiveCap). */
+bool take_received_cap(seL4_CPtr target) noexcept;
 
 }  // namespace aegir::ipc
 
