@@ -6,9 +6,11 @@
  *
  * A volume is what a filesystem registers with the VFS (specs/vfs.md); this
  * is the wire its clients then speak, on the capability resolve handed
- * them. Version one is stateless -- no handles, no per-client state: the
- * shape a system with many concurrent readers wants, and read-only
- * filesystems have nothing to synchronize.
+ * them. Reads and listings are stateless -- no handles, no per-client
+ * state: the shape a system with many concurrent readers wants. Writes are
+ * handles, because a usable userspace API is one: open with its mode flags,
+ * write at the cursor, close. The string wire shape is the namespace
+ * protocol's (aegir/nmspace.h): one shape for every string a port carries.
  *
  *   - `read`: a path (everything after the volume's colon), an offset, and
  *     how many bytes the caller will take. The answer is a byte count, an
@@ -19,6 +21,20 @@
  *   - `list`: a path and an index. The answer is one entry -- name, size,
  *     kind -- or nothing at the end of the directory. The cursor is the
  *     caller's index; the directory owes no stability across calls.
+ *   - `open`: a path and mode flags (create, truncate). The answer is one
+ *     word, the handle; zero is the refusal -- a bad path, an existing
+ *     name without create, a read-only volume. Truncate frees the file's
+ *     old chain the moment the open answers.
+ *   - `write`: a handle and bytes, packed after the count. The bytes land
+ *     at the cursor, the cursor advances, and the file extends when the
+ *     cursor crosses its end. The answer is the count written; less than
+ *     asked is the refusal.
+ *   - `close`: a handle. The answer is 1, or 0 when the handle was not
+ *     one; the row is freed and the serial is never reused.
+ *
+ * A handle is scoped to the caller's badge: resolve minted the client's
+ * copy of the volume port with it, so a handle named by any other badge is
+ * not one.
  *
  * Paths after the colon are the filesystem's to interpret, including the
  * Amiga `/`-is-parent convention and case sensitivity (specs/vfs.md). The
@@ -34,6 +50,23 @@ namespace aegir::volume {
 
 constexpr uint32_t kMethodRead = 1; /* in: path words, offset, max; answer: count, eof, bytes */
 constexpr uint32_t kMethodList = 2; /* in: path words, index; answer: name words, size, kind */
+
+/* The write side (specs/vfs.md): handles, the only per-client state a
+ * filesystem holds. A handle answers open, is scoped to the caller's badge
+ * -- a handle named by any other badge is not one -- and its serial is never
+ * reused. Zero is never a handle: it is open's refusal. */
+constexpr uint32_t kMethodOpen = 3;  /* in: path words, mode flags; answer: handle */
+constexpr uint32_t kMethodWrite = 4; /* in: handle, count, bytes; answer: written */
+constexpr uint32_t kMethodClose = 5; /* in: handle; answer: 1, or 0 */
+
+/** open's mode flags. */
+constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
+constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */
+
+/** The most data one write call carries: the envelope's words, less the
+ *  handle and the count, in bytes. The same bound as a read's answer, for
+ *  the same reason. */
+constexpr uint32_t kWriteMax = 117 * 8;
 
 /** Entry kinds a list answer reports. */
 constexpr uint64_t kKindFile = 1;
