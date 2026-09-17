@@ -61,6 +61,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-bios none",
             f"-smp {cores}",
             "-device virtio-rng-device",
+            # -snapshot: the disk answers writes through a throwaway overlay
+            # and the file on disk never changes -- a run's writes are real
+            # to the run and gone after it, which keeps the image's
+            # created-once invariant true now that filesystems write.
+            "-snapshot",
             "-drive file=disk.img,if=none,format=raw,id=hd",
             "-device virtio-blk-device,drive=hd",
         ),

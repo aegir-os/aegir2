@@ -94,10 +94,11 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # and the script's argparse refuses a value that looks like an option (and
     # would read a loose `-bios` as its own `-b`).
     # The machine's block device needs a disk to be a block device *of*. It is a
-    # GPT with one FAT partition holding a known file, built by make_disk.py in
-    # the build directory -- created once and left alone, because a disk that
-    # changes between runs is not something to depend on. It lives in the build
-    # output rather than the repository, where scratch belongs.
+    # GPT with three FAT partitions -- two holding a known file, one empty and
+    # writable -- built by make_disk.py in the build directory. Created once and
+    # left alone, and QEMU's -snapshot keeps even a writing run off it: a disk
+    # that changes between runs is not something to depend on. It lives in the
+    # build output rather than the repository, where scratch belongs.
     disk = build_dir / "disk.img"
     if not disk.exists():
         subprocess.run(

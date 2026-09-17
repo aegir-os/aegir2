@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""Build the test disk: a GPT with two FAT partitions, each holding a known file.
+"""Build the test disk: a GPT with three FAT partitions -- two holding a known
+file, one empty.
 
 Copyright (c) 2026 Robert Roland
 SPDX-License-Identifier: MIT
 
 The partition manager and the filesystem service need a disk worth reading:
 a GPT that names partitions, and a FAT volume in each whose root directory
-lists a file with content we can check for. Two partitions, not one, because
-the second is the proof that the range grant works: its BPB is nowhere near
-sector 0, and its service reads its own file out of its own window set.
-Building one needs no loop device and no root -- sgdisk writes the GPT into
-the file directly, and mtools works on a partition *inside* an image with
-its `image@@offset` syntax -- so the whole thing is tool invocations and a
-truncate.
+lists a file with content we can check for. Two partitions with files, not
+one, because the second is the proof that the range grant works: its BPB is
+nowhere near sector 0, and its service reads its own file out of its own
+window set. The third is empty and writable -- the write side's proving
+ground, where everything in the root directory is something the system put
+there. Building one needs no loop device and no root -- sgdisk writes the GPT
+into the file directly, and mtools works on a partition *inside* an image
+with its `image@@offset` syntax -- so the whole thing is tool invocations
+and a truncate.
 
-The image is created once and left alone (scripts/run_target.py): a disk
-that changes between runs is not something to depend on. Delete it to make
-a fresh one.
+The image is created once and left alone (scripts/run_target.py), and QEMU
+takes it read-only with `-snapshot`, so a run's writes land in a throwaway
+overlay: a disk that changes between runs is not something to depend on.
+Delete it to make a fresh one.
 """
 
 import argparse
@@ -37,8 +41,11 @@ DISK_BYTES = 16 << 20
 PARTITIONS = [
     ("AEGIR", 2048, 18431, "AEGIR.TXT",
      b"aegir read this file off a disk it enumerated itself\n"),
-    ("SECOND", 18432, None, "SECOND.TXT",
+    ("SECOND", 18432, 26623, "SECOND.TXT",
      b"a second volume, a second service, the same reader\n"),
+    # No file: the writable volume the write side proves itself on. An empty
+    # root directory is the point -- everything in it, the system put there.
+    ("SCRATCH", 26624, None, None, None),
 ]
 
 
@@ -55,7 +62,7 @@ def main() -> int:
     with args.image.open("wb") as handle:
         handle.truncate(DISK_BYTES)
 
-    # Two partitions typed Microsoft basic data -- the type a FAT volume on
+    # Three partitions typed Microsoft basic data -- the type a FAT volume on
     # GPT carries.
     sgdisk = ["sgdisk", "--clear"]
     for number, (name, first, last, _, _) in enumerate(PARTITIONS, start=1):
@@ -83,6 +90,8 @@ def main() -> int:
                 capture_output=True,
             )
 
+        if known_name is None:
+            continue
         with tempfile.TemporaryDirectory() as staging:
             source = Path(staging) / known_name
             source.write_bytes(known_content)
@@ -100,7 +109,8 @@ def main() -> int:
         if known_name.replace(".", "") not in "".join(listing.stdout.split()):
             print(f"make_disk: the file did not land:\n{listing.stdout}", file=sys.stderr)
             return 1
-    print(f"make_disk: {args.image}: GPT, two FAT partitions, one known file each")
+    print(f"make_disk: {args.image}: GPT, three FAT partitions, "
+          "two known files and one empty volume")
     return 0
 
 
