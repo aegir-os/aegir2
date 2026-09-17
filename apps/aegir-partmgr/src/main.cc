@@ -76,6 +76,30 @@ seL4_CPtr mint_window_set(uint32_t first_grant, uint32_t pages) noexcept
     return base;
 }
 
+namespace {
+
+void append_text(char *out, uint32_t *at, char const *text, uint32_t length) noexcept
+{
+    for (uint32_t i = 0; i < length; ++i) {
+        out[(*at)++] = text[i];
+    }
+}
+
+void append_number(char *out, uint32_t *at, uint64_t value) noexcept
+{
+    char digits[20];
+    uint32_t count = 0;
+    do {
+        digits[count++] = static_cast<char>('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (count > 0) {
+        out[(*at)++] = digits[--count];
+    }
+}
+
+}  // namespace
+
 /* Start the filesystem service for one partition: the caller half of the
  * block port badged with who it is, the window mapped at spawn time by us,
  * and the helper's image as bytes. Badges count from 512: our spawner's
@@ -83,7 +107,8 @@ seL4_CPtr mint_window_set(uint32_t first_grant, uint32_t pages) noexcept
  * their own until the badge space is a designed thing (specs/services.md). */
 void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                       char const *device_name, uint32_t device_name_length,
-                      uint32_t partition, seL4_CPtr block_port, uint32_t children_grant,
+                      uint32_t partition, uint64_t first_lba, uint64_t sector_count,
+                      seL4_CPtr block_port, uint32_t children_grant,
                       uint64_t window_physical, uint32_t window_pages,
                       void const *fs_image, uint32_t fs_image_bytes,
                       uint64_t badge) noexcept
@@ -116,6 +141,24 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     while (digit_count > 0) {
         name[name_length++] = digits[--digit_count];
     }
+
+    /* The range grant, as a descriptor row the child parses (the format is
+     * libs/aegir-descriptor's): the partition's first sector and length on
+     * the device, and the volume's public name. A grant the child reads
+     * rather than authority the kernel checks -- clamping by badge is the
+     * driver's business, and comes with the first writer
+     * (specs/services.md). The buffer must live until spawn has copied it,
+     * which this scope guarantees; its size is the format's own bound. */
+    char range[96];
+    uint32_t range_length = 0;
+    append_text(range, &range_length, "first=", 6);
+    append_number(range, &range_length, first_lba);
+    append_text(range, &range_length, " sectors=", 9);
+    append_number(range, &range_length, sector_count);
+    append_text(range, &range_length, " name=", 6);
+    /* The volume's name is the child's without the kind: BD0Part0. */
+    append_text(range, &range_length, name + 4, name_length - 4);
+    range[range_length++] = '\n';
 
     seL4_CPtr const window = mint_window_set(children_grant, window_pages);
     aegir::mem::Account child_account{"fs", 0, 0, 0};
@@ -151,6 +194,8 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
     request.port_count = 2;
+    request.devices = range;
+    request.devices_bytes = range_length;
     request.window_frame = window;
     request.window_bytes = window_pages * 4096u;
     request.window_physical = window_physical;
@@ -453,7 +498,8 @@ int main(int argc, char *argv[])
                                 children_grant, &window_physical, nullptr, nullptr));
                             start_filesystem(
                                 spawner, static_cast<seL4_CPtr>(spawn_log_slot),
-                                device_name, device_name_length, i,
+                                device_name, device_name_length, i, partition.first_lba,
+                                partition.last_lba - partition.first_lba + 1,
                                 static_cast<seL4_CPtr>(entry.number), children_grant,
                                 window_physical, pages_per_window,
                                 reinterpret_cast<void const *>(fs_image_address),
