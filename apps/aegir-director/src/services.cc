@@ -111,8 +111,7 @@ bool Services::prepare(mem::Account &account) noexcept
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
                     Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, Device const *bus, uint32_t bus_count,
-              spawn::PortGrant const *extra, uint32_t extra_count,
-              uint64_t extra_untyped_physical) noexcept
+              spawn::PortGrant const *extra, uint32_t extra_count) noexcept
 {
     boot.declared = manifest.size();
     boot.started = 0;
@@ -233,13 +232,40 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     boot.problem = "the memory a service asked for could not be turned into pages";
                     return;
                 }
-                if (i == 0) {
-                    memory_frame = frame;
-                }
-            }
-        }
-        if ((entry.device_manager && extra_count > 0) || memory_cap != 0) {
-            uint32_t added = entry.device_manager && extra_count > 0 ? extra_count : 0;
+                 if (i == 0) {
+                     memory_frame = frame;
+                 }
+             }
+         }
+         /* A service that spawns is delegated what spawning takes, whoever it is
+          * (specs/services.md, specs/authority.md): an untyped its children's
+          * objects come out of, and an ASID pool their address space ids come
+          * from. The kernel makes a pool from an *untyped* rather than by
+          * retyping (seL4_ARCH_ASIDControl_MakePool; sel4test does the same in
+          * projects/sel4test/apps/sel4test-tests/src/tests/vspace.c:141), so
+          * both are this service's to carve here. */
+         bool const spawner = entry.spawns.length > 0;
+         constexpr uint32_t kDelegatedUntypedBits = 21;
+         seL4_CPtr spawn_untyped = 0;
+         uint64_t spawn_untyped_physical = 0;
+         seL4_CPtr spawn_pool = 0;
+         if (spawner) {
+             seL4_Error kit_error = seL4_NoError;
+             spawn_untyped = allocator_.carve_untyped(kDelegatedUntypedBits, account,
+                                                      &kit_error, &spawn_untyped_physical);
+             if (spawn_untyped == 0) {
+                 boot.problem = "no untyped memory to delegate to a spawning service";
+                 return;
+             }
+             spawn_pool = allocator_.make_asid_pool(account, &kit_error);
+             if (spawn_pool == 0) {
+                 boot.problem = "no ASID pool for a spawning service";
+                 return;
+             }
+         }
+         if ((entry.device_manager && extra_count > 0) || memory_cap != 0 || spawner) {
+             uint32_t added = (entry.device_manager && extra_count > 0 ? extra_count : 0) +
+                              (spawner ? 2 : 0);
             /* A spawning service also gets an *unbadged* copy of every port its
              * children need to call: a badged endpoint cap cannot be minted again
              * (deriveCap refuses it -- that is what "a port could not be installed"
@@ -252,7 +278,7 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
              * case; duplicates are dropped at the fill, and `at` says how many
              * there really are. */
             uint32_t spawn_needs = 0;
-            if (entry.device_manager && entry.spawns.length > 0) {
+            if (spawner) {
                 for (uint32_t j = 0; j < manifest.size(); ++j) {
                     bool covered = false;
                     for_each_spawn(entry.spawns, [&](manifest::View item) {
@@ -286,6 +312,23 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     merged[at].slot = bootstrap::kSlotFirstDeclared + at;
                     ++at;
                 }
+            }
+            /* The spawn kit, by name, which is how the child finds it: the
+             * untyped carries its size, because a service cannot ask the kernel
+             * how large an untyped is (there is no invocation that reads it),
+             * so the grant has to say (specs/authority.md). */
+            if (spawner) {
+                static char const kUntypedGrant[] = "untyped";
+                merged[at] = spawn::PortGrant{kUntypedGrant, sizeof(kUntypedGrant) - 1,
+                                              bootstrap::kSlotFirstDeclared + at,
+                                              spawn_untyped, seL4_AllRights, 0,
+                                              kDelegatedUntypedBits};
+                ++at;
+                static char const kPoolGrant[] = "asid-pool";
+                merged[at] = spawn::PortGrant{kPoolGrant, sizeof(kPoolGrant) - 1,
+                                              bootstrap::kSlotFirstDeclared + at,
+                                              spawn_pool, seL4_AllRights, 0, 0};
+                ++at;
             }
             if (spawn_needs > 0) {
                 static char const kSpawnPrefix[] = "spawn:";
@@ -381,22 +424,19 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.untyped_bits = memory_bits;
         /* A delegated untyped says where it is the same way (specs/authority.md):
          * the block's `untyped` entry is how the service learns both the size and
-         * the physical base of the memory its objects come from. */
-        if (entry.device_manager && extra_untyped_physical != 0) {
-            request.untyped_physical = extra_untyped_physical;
-            request.untyped_bits = 0;
-            for (uint32_t g = 0; g < extra_count; ++g) {
-                if (extra[g].size_bits != 0) {
-                    request.untyped_bits = extra[g].size_bits;
-                }
-            }
+         * the physical base of the memory its objects come from. A spawner's
+         * memory *is* its delegated untyped -- the carve above -- so the entry
+         * describes it rather than any memory grant. */
+        if (spawner) {
+            request.untyped_physical = spawn_untyped_physical;
+            request.untyped_bits = kDelegatedUntypedBits;
         }
         /* A service that spawns is given what spawning takes (specs/services.md,
          * specs/authority.md): its own VSpace root (the spawner grants a window of
          * free addresses with it), a copy of the initrd to read images out of, and
          * the devices its children are for -- as *capabilities* rather than
          * mappings, because a device manager's job is to hand them on. */
-        if (entry.device_manager && entry.spawns.length > 0) {
+        if (spawner) {
             request.give_vspace = true;
             request.binaries = initrd_.blob();
             request.binaries_bytes = static_cast<uint32_t>(initrd_.blob_size());

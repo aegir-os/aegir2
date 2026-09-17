@@ -544,10 +544,9 @@ void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
 bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest const &manifest,
                    aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                    aegir::mem::Arena &arena, aegir::mem::Account &account,
-                  void const *devices, uint32_t devices_bytes,
-                  aegir::director::Device const *bus, uint32_t bus_count,
-                  aegir::spawn::PortGrant const *extra, uint32_t extra_count,
-                  uint64_t extra_untyped_physical) noexcept
+                   void const *devices, uint32_t devices_bytes,
+                   aegir::director::Device const *bus, uint32_t bus_count,
+                   aegir::spawn::PortGrant const *extra, uint32_t extra_count) noexcept
 {
     auto *started =
         static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
@@ -579,7 +578,7 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
 
     Boot boot{};
     services.boot(manifest, account, started, boot, &supervisor, devices, devices_bytes, bus,
-                  bus_count, extra, extra_count, extra_untyped_physical);
+                  bus_count, extra, extra_count);
 
     heading("boot set");
     write("  ");
@@ -723,26 +722,6 @@ int main(int argc, char *argv[])
                                    &bus_count);
     }
 
-    /* Spawn rights begin here. A service that makes address spaces needs address space
-     * ids of its own, and the kernel makes an ASID pool from an *untyped* rather than
-     * by retyping (seL4_ARCH_ASIDControl_MakePool; sel4test does the same in
-     * projects/sel4test/apps/sel4test-tests/src/tests/vspace.c:141). Director holds
-     * the authority and carves the memory, which is the shape specs/authority.md
-     * argues for -- and nothing is given away yet: this is the capability the device
-     * manager gets when it starts drivers of its own. */
-    seL4_Error pool_error = seL4_NoError;
-    seL4_CPtr const asid_pool = allocator.make_asid_pool(system, &pool_error);
-    if (asid_pool == 0) {
-        write("  FAIL no ASID pool for the device manager (seL4 error ");
-        number(static_cast<uint64_t>(pool_error));
-        write(")\n");
-        ++failures;
-    } else {
-        write("  device manager pool: made, cap ");
-        number(asid_pool);
-        write("\n");
-    }
-
     heading("memory");
     write("  untyped: ");
     number(allocator.untyped_count());
@@ -803,56 +782,21 @@ int main(int argc, char *argv[])
          * manager (manifests/services.manifest, `device_manager`), which is the
          * thing that was missing when every spawn was handed the same frame.
          */
-        /* What director delegates to the service that starts processes of its own:
-         * an ASID pool is what making an address space needs, and the name is how the
-         * child finds it -- the slot is the spawner's to choose (specs/authority.md).
-         * The list holds one capability today, which is the whole of what there is to
-         * delegate rather than a limit on what can be. */
-        /* And the memory to make objects of its own: an untyped is what everything
-         * a process is made of is retyped from. How much to hand over is a policy
-         * choice -- how much authority the device manager is trusted with -- and it
-         * has to cover what starting the block driver costs: a CSpace with the
-         * slots a child is given (2^(kCNodeBits + seL4_SlotBits), which is 16 KiB
-         * for the 1024 slots aegir-spawn builds), a TCB, the page tables of an
-         * address space, the frames of the image, stack and bootstrap block, and
-         * the 8 KiB the driver's virtqueue takes. The image alone maps about
-         * 172 KiB of frames -- the driver keeps its queues in static storage --
-         * and the shared window a block port serves through adds another
-         * 64 KiB; the partition manager's own image and the 1 MiB it is
-         * delegated for the filesystem services it starts take the total past
-         * 1 MiB, and untyped memory is power-of-two. More is delegated when
-         * something needs more (specs/authority.md). */
-        constexpr uint32_t kDelegatedUntypedBits = 21;
-        seL4_Error untyped_error = seL4_NoError;
-        /* The physical base comes with the capability: there is no invocation that
-         * reads an untyped's address, so a region a driver will one day point a
-         * device at has to arrive with its address attached (specs/services.md). */
-        uint64_t delegated_physical = 0;
-        seL4_CPtr const delegated_untyped =
-            allocator.carve_untyped(kDelegatedUntypedBits, system, &untyped_error,
-                                    &delegated_physical);
-        if (delegated_untyped == 0) {
-            problem("no untyped memory to delegate to the device manager");
-        }
-        static char const kAsidPoolName[] = "asid-pool";
-        static char const kUntypedName[] = "untyped";
+        /* What director delegates to the device manager beyond the kit every
+         * spawner is given (apps/aegir-director/src/services.cc): interrupt
+         * issue belongs to whoever turns the tree's devices into drivers.
+         * IRQControl is the kernel's one well of handler caps (manual, io.tex),
+         * and the device manager is that service. The cap moves rather than
+         * copies -- a copy derives to a *null* cap (kernel/src/object/
+         * objecttype.c:75-78) -- so custody changes hands whole, and the root
+         * task's slot is empty from here. */
         static char const kIrqControlName[] = "irqcontrol";
         aegir::spawn::PortGrant const delegated[] = {
-            {kAsidPoolName, sizeof(kAsidPoolName) - 1, 0, asid_pool, seL4_AllRights, 0, 0},
-            {kUntypedName, sizeof(kUntypedName) - 1, 0, delegated_untyped, seL4_AllRights, 0,
-             kDelegatedUntypedBits},
-            /* Interrupt issue belongs to whoever turns the tree's devices into
-             * drivers: IRQControl is the kernel's one well of handler caps
-             * (manual, io.tex), and the device manager is that service. The
-             * cap moves rather than copies -- a copy derives to a *null* cap
-             * (kernel/src/object/objecttype.c:75-78) -- so custody changes
-             * hands whole, and the root task's slot is empty from here. */
             {kIrqControlName, sizeof(kIrqControlName) - 1, 0, seL4_CapIRQControl,
              seL4_AllRights, 0, 0, true},
         };
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
-                               device_tree_bytes, bus, bus_count, delegated, 3,
-                               delegated_physical);
+                               device_tree_bytes, bus, bus_count, delegated, 1);
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread
