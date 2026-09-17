@@ -15,9 +15,24 @@ project(aegir-director CXX)
 # archives each input by its basename, and cpio_get_file returns the first match,
 # so two entries sharing a name would shadow silently (specs/services.md). The
 # check belongs here, where the collision would be created.
+# The user database, packed from its descriptor-row source into the binary
+# table auth parses (specs/auth.md): the text is for people, the table is
+# for the service.
+set(users_db "${CMAKE_CURRENT_BINARY_DIR}/users.db")
+add_custom_command(
+  OUTPUT "${users_db}"
+  COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/make_users.py"
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/users" "${users_db}"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/users"
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/make_users.py"
+  VERBATIM
+)
+add_custom_target(users_db_pack ALL DEPENDS "${users_db}")
+
 set(aegir_initrd_files
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/services.manifest"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/drivers.registry"
+    "${users_db}"
     "$<TARGET_FILE:aegir-hello>"
     "$<TARGET_FILE:aegir-logger>"
     "$<TARGET_FILE:aegir-device-manager>"
@@ -31,6 +46,7 @@ set(aegir_initrd_files
 set(aegir_initrd_names
     "services.manifest"
     "drivers.registry"
+    "users.db"
     "aegir-hello"
     "aegir-logger"
     "aegir-device-manager"

@@ -1,0 +1,8 @@
+# The people who may log in. scripts/make_users.py packs this into the
+# binary table auth serves from (specs/auth.md); the initrd carries the
+# table as users.db.
+#
+# One row per user: name, secret, account (defaults to the name). The
+# secret is the plain word, honestly interim until login becomes a
+# challenge -- this one is the development credential, not a real one.
+name=rroland secret=aegir account=rroland
