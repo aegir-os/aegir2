@@ -12,7 +12,10 @@
  * path, and the answer is a capability minted with this service's own
  * badge; read the file the disk was made with through it, and the contents
  * are the checksum -- a reader that walked the wrong sectors does not
- * produce them (scripts/make_disk.py).
+ * produce them (scripts/make_disk.py). The write side gets the same
+ * treatment on SCRATCH:, the partition that exists for it: create, write
+ * across a cluster boundary, read back the recomputed pattern, truncate,
+ * and the refusals.
  */
 
 #include <aegir/authdb.h>

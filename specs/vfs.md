@@ -17,9 +17,10 @@ travels across it, and who serves the first volume.
 - **Duplicate volume names get `_1`, `_2`, ... suffixes**, assigned by the VFS
   at registration — duplicates really only happen via filesystem labels, and
   the reply tells the registrant what name it actually got.
-- The namespace is **open until `auth` lands**: resolve checks no badges yet.
-  Every caller at this level is system authority. The badge chain below is
-  built anyway, because clamping will need it.
+- The namespace is **open until the ownership model lands**: auth runs
+  (`specs/auth.md`), but resolve checks no badges yet — sessions and system
+  processes alike resolve what they name. The badge chain below is built
+  anyway, because clamping will need it.
 
 ## A capability travels over IPC
 

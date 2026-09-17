@@ -761,13 +761,16 @@ end to end. The boot's own summary:
     I am BD0: window of 64 KiB at 0x26000 (physical 0xffde0000)
     spawned partmgr, badge 264
     BD0Part0: sectors 2048..18431, "AEGIR"
+    BD0Part1: sectors 18432..26623, "SECOND"
+    BD0Part2: sectors 26624..32734, "SCRATCH"
     spawned fat.BD0Part0, badge 512
-    fat.BD0Part0: FAT32, 1 sectors per cluster, data starts at sector 506
+    fat.BD0Part0: FAT32, 1 sectors per cluster, data starts at sector 506, writable
     fat.BD0Part0: AEGIR.TXT says: aegir read this file off a disk it enumerated itself
-    BD0Part1: sectors 18432..32734, "SECOND"
     spawned fat.BD0Part1, badge 513
-    fat.BD0Part1: FAT32, 1 sectors per cluster, data starts at sector 254
+    fat.BD0Part1: FAT32, 1 sectors per cluster, data starts at sector 254, writable
     fat.BD0Part1: SECOND.TXT says: a second volume, a second service, the same reader
+    spawned fat.BD0Part2, badge 514
+    fat.BD0Part2: FAT32, 1 sectors per cluster, data starts at sector 128, writable
 
 What was decided, and what it took:
 
@@ -820,15 +823,19 @@ What was decided, and what it took:
 - **The filesystem service's image travels as bytes** (`binary_image`), one
   helper at a time, because the whole initrd is 1.2 MiB and a copy per spawning
   service does not fit a service-sized delegation.
-- **fs.fat reads FAT16/32 read-only**: BPB, the root directory, and a file's
-  cluster chain -- the chain step is the one place the flavors differ (4-byte
-  entries and one end-of-chain floor on FAT32, 2-byte and another on FAT16,
-  and the file walk branches on both). The test disk is built host-side
-  without root (sgdisk writes the GPT, mtools fills each partition through
-  `image@@offset`; scripts/make_disk.py): two FAT partitions, one known file
-  each, because the second partition is the proof that the range grant works
+- **fs.fat reads FAT16/32 read-only and writes FAT32**: BPB, the root
+  directory, and a file's cluster chain -- the chain step is the one place
+  the flavors differ (4-byte entries and one end-of-chain floor on FAT32,
+  2-byte and another on FAT16, and the file walk branches on both). The
+  test disk is built host-side without root (sgdisk writes the GPT, mtools
+  fills each partition through `image@@offset`; scripts/make_disk.py):
+  three FAT32 partitions -- AEGIR and SECOND each carry one known file,
+  because the second partition is the proof that the range grant works
   -- its BPB is nowhere near sector 0 -- and each file's content is the
-  checksum.
+  checksum, and SCRATCH starts empty because it is the write test's
+  scratchpad: the test creates, writes, reads back, truncates, and lists
+  there, under QEMU's `-snapshot` overlay so the disk image itself stays
+  pristine.
 - **fs.fat writes FAT32**: the volume protocol's handle side
   (`specs/vfs.md`) -- open/create/truncate, write at the cursor with the
   chain extended through the free-cluster scan, close. A new cluster is
@@ -839,7 +846,11 @@ What was decided, and what it took:
   badge ranges as reads, so a partition's range stays its boundary. FAT16
   refuses writes until its write side lands; the writability of a volume is
   the partition manager's statement, carried to the filesystem in its
-  descriptor row and to the VFS at registration, one source.
+  descriptor row and to the VFS at registration, one source. The test
+  proves the round trip byte-exact: create, two writes across a cluster
+  boundary, close, read back the recomputed pattern, list, truncate small
+  again -- plus the refusals (an existing name without `create`, the
+  read-only initrd volume, a handle that is not one).
 - **Three latent limits broke on the way and are written down because they
   will not be the last.** The bootstrap block was capped at 512 bytes
   although it is mapped as a page, and a service with many grants (a window's
