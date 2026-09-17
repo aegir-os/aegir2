@@ -114,16 +114,11 @@ struct Binding {
     bool spawned; /* a driver is running for it -- what the registry reports */
 };
 
-/* Telling a call apart from a signal when both wake the same receive is the
- * badge, never the message length: a bound notification's delivery sets the
- * badge register and nothing else (kernel/src/object/notification.c:62-76),
- * so the length is whatever the last reply left behind -- and the badges
- * would collide, because a caller's badge and its signal's badge are the same
- * number (the service's own). The convention: a call to a port this service
- * owns carries the caller's badge with the top bit set, and a signal arrives
- * bare. Both sides of it are this service's to keep: it badges the caller
- * caps it hands out, and it checks. */
-constexpr seL4_Word kCallMark = 1ULL << 63;
+/* The convention a supervising server keeps -- a call carries the caller's
+ * badge with the top bit set, a signal arrives bare -- lives in aegir-ipc
+ * now that two services keep it (aegir/ipc/port.h's kCallMark, which says
+ * why the badge and never the message length). */
+constexpr seL4_Word kCallMark = aegir::ipc::kCallMark;
 
 bool compatible_is(aegir::devtree::Device const &device, DriverRow const &row) noexcept
 {

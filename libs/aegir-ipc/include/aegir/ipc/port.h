@@ -50,6 +50,17 @@ namespace aegir::ipc {
  *  versioned by refusing methods they do not know, so a caller can tell. */
 constexpr uint32_t kMethodEvent = 1;
 
+/** The convention a supervising server keeps (specs/vfs.md): a call to a port
+ *  it owns carries the caller's badge with this bit set, and a signal -- a
+ *  child's ready, delivered because the supervision notification is bound to
+ *  the serving thread -- arrives bare. The badge is what tells them apart,
+ *  never the message length: a bound notification's delivery sets the badge
+ *  register and nothing else (kernel/src/object/notification.c:62-76), so
+ *  the length is stale from the last reply -- and a caller's badge and its
+ *  signal's badge are the same number, the service's own. Both sides are the
+ *  owner's to keep: it badges the caller caps it hands out, and it checks. */
+constexpr seL4_Word kCallMark = 1ULL << 63;
+
 /** One word of payload, in each direction. Enough for the boot set's protocols;
  *  a protocol that needs more words is a change to this envelope, which is why
  *  it is here and not in a service. */
