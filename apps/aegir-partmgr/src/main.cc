@@ -180,7 +180,9 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
 
     /* The range grant, as a descriptor row the child parses (the format is
      * libs/aegir-descriptor's): the partition's first sector and length on
-     * the device, and the volume's public name. A grant the child reads
+     * the device, the volume's public name, and whether the volume takes
+     * writes -- the same statement the registration below makes to the VFS,
+     * one source. A grant the child reads
      * rather than authority the kernel checks -- clamping by badge is the
      * driver's business, and comes with the first writer
      * (specs/services.md). The buffer must live until spawn has copied it,
@@ -194,10 +196,26 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     append_text(range, &range_length, " name=", 6);
     /* The volume's name is the child's without the kind: BD0Part0. */
     append_text(range, &range_length, name + 4, name_length - 4);
+    append_text(range, &range_length, " writable=1", 11);
     range[range_length++] = '\n';
 
+    /* The handle table's room (specs/vfs.md): a page the child's open
+     * files live in, because a filesystem handed no memory has nowhere to
+     * remember who has what open. The bound is the grant -- the clamp
+     * table's shape, one service back -- and reaching it is a loud
+     * refusal. */
     seL4_CPtr const window = mint_window_set(children_grant, window_pages);
     aegir::mem::Account child_account{"fs", 0, 0, 0};
+    constexpr uint32_t kFsMemoryBits = 12; /* one page */
+    seL4_Error memory_error = seL4_NoError;
+    uint64_t memory_physical = 0;
+    seL4_CPtr const memory_untyped =
+        g_objects.carve_untyped(kFsMemoryBits, child_account, &memory_error,
+                                &memory_physical);
+    seL4_CPtr memory_frame = 0;
+    if (memory_untyped != 0) {
+        memory_frame = g_objects.carve_page(memory_untyped, child_account, &memory_error);
+    }
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
                                                    child_account, &fault_error);
@@ -212,10 +230,10 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
                         volume, aegir::bootstrap::kCNodeBits,
                         seL4_CapRights_new(1, 0, 0, 1), 0) == seL4_NoError;
-    if (window == 0 || fault == 0 || volume == 0 || !caller_minted) {
+    if (window == 0 || fault == 0 || volume == 0 || !caller_minted || memory_frame == 0) {
         aegir::debug_write("      FAIL starting ");
         aegir::debug_write(name, name_length);
-        aegir::debug_write(": no window set, fault endpoint, or volume port\n");
+        aegir::debug_write(": no window set, fault endpoint, volume port, or memory\n");
         return;
     }
 
@@ -257,6 +275,13 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.window_frame = window;
     request.window_bytes = window_pages * 4096u;
     request.window_physical = window_physical;
+    /* The handle-table page: where it lands and how big it is travel in the
+     * block's untyped entry, the way a driver's memory does (the child
+     * serves no DMA, so the physical base is information, not plumbing). */
+    request.memory_frame = memory_frame;
+    request.memory_bytes = 1u << kFsMemoryBits;
+    request.untyped_physical = memory_physical;
+    request.untyped_bits = kFsMemoryBits;
     request.fault_endpoint = fault;
     request.badge = badge;
 
@@ -339,7 +364,9 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
         uint64_t out[aegir::nmspace::kNameMax / 8 + 2];
         uint32_t out_words = aegir::nmspace::pack_string(out, label, label_length,
                                                          aegir::nmspace::kNameMax);
-        out[out_words++] = aegir::nmspace::kFlagReadOnly;
+        /* Writable: a FAT volume takes writes, which the descriptor row
+         * already told the child -- one statement, two hearers. */
+        out[out_words++] = 0;
         aegir::ipc::WordsReply const registered = nmspace.call_transfer(
             aegir::nmspace::kMethodRegister, out, out_words, volume_caller, in,
             aegir::nmspace::kNameMax / 8 + 1, nullptr);
