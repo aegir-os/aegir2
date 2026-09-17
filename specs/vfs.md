@@ -71,10 +71,9 @@ The registration table **grows on demand**; there is no fixed volume count.
 
 ## The volume protocol
 
-What a filesystem serves on its volume port. Version one is **stateless**:
-no handles, no per-client state — the shape a multi-user system with many
-concurrent readers wants, and FAT is read-only so there is nothing to
-synchronize.
+What a filesystem serves on its volume port. Reads and listings are
+**stateless**: no handles, no per-client state — the shape a multi-user
+system with many concurrent readers wants.
 
 - **read** — words: path (after the colon), offset. Reply: data words inline
   in the envelope, a byte count, and an end-of-file flag.
@@ -82,12 +81,38 @@ synchronize.
   end-of-directory. The cursor is the caller's index, the registry describe
   pattern again.
 
+Writes are a different shape, because a usable userspace API is one: a
+program opens a file and then streams, and asking it to re-walk the path and
+name the offset on every call is an API nobody writes against twice. So the
+write side has **handles** — the only per-client state a filesystem holds:
+
+- **open** — words: path, mode flags (`create`, `truncate`). Reply: one
+  word, the handle — zero is the refusal (a bad path, an existing name
+  without `create`, a read-only volume). A write-open with `truncate` frees
+  the file's old chain at once: what the file was is gone the moment the
+  open answers.
+- **write** — words: handle, inline bytes, bounded by the envelope like a
+  read's answer. The bytes land at the handle's cursor and the cursor
+  advances; a write that crosses the end of the file extends it. Reply: the
+  count written — less than asked is the refusal (a full volume, a broken
+  chain).
+- **close** — words: handle. Reply: 1, or 0 when the handle was not one.
+  The row is freed; the handle's serial is never reused.
+
+A handle row is **scoped to the caller's badge**: resolve minted the
+client's copy of the volume port with its badge, so the filesystem knows
+who is calling on every method, and a handle named by any other badge is
+not one. Handles are a service's only client state, so a client that exits
+without closing leaks rows until the session-reclaim arc reaches them —
+stated, not stumbled into (specs/auth.md records the same shape for the
+session's objects).
+
 Inline data bounds a call to what the envelope carries
 (`seL4_MsgMaxLength - 1` words). That is the right size for boot-time reads —
 configuration, the user database, service images. The recorded scaling path,
 when throughput matters: the client transfers a buffer capability at `open`,
-the filesystem DMAs into it, and `read` replies with a count. It needs no
-protocol change, only new methods — which is what method numbers are for.
+the filesystem DMAs into it, and `read`/`write` reply with a count. It needs
+no protocol change, only new methods — which is what method numbers are for.
 
 A filesystem that serves from a shared window (the block layer's) copies the
 data out into the reply inside the one call: the window's "content belongs to

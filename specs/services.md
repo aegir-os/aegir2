@@ -829,6 +829,17 @@ What was decided, and what it took:
   each, because the second partition is the proof that the range grant works
   -- its BPB is nowhere near sector 0 -- and each file's content is the
   checksum.
+- **fs.fat writes FAT32**: the volume protocol's handle side
+  (`specs/vfs.md`) -- open/create/truncate, write at the cursor with the
+  chain extended through the free-cluster scan, close. A new cluster is
+  zeroed before it joins a chain, because a multiuser system does not leak
+  one file's old sectors into another; both FAT copies are written, and the
+  FSInfo free count is marked unknown rather than maintained (the format
+  allows it, and the scan never trusted it). Writes are clamped by the same
+  badge ranges as reads, so a partition's range stays its boundary. FAT16
+  refuses writes until its write side lands; the writability of a volume is
+  the partition manager's statement, carried to the filesystem in its
+  descriptor row and to the VFS at registration, one source.
 - **Three latent limits broke on the way and are written down because they
   will not be the last.** The bootstrap block was capped at 512 bytes
   although it is mapped as a page, and a service with many grants (a window's
@@ -845,6 +856,6 @@ What was decided, and what it took:
 
 Still open, in the order they arrive: reclaiming an exited session's objects
 (`specs/auth.md` records the gap), an input path so a session can be a shell,
-home volumes once a filesystem writes, and resolve checks once volumes have an
-ownership model to check against. The badge space is designed now
+home volumes now that a filesystem writes, and resolve checks once volumes
+have an ownership model to check against. The badge space is designed now
 (`specs/authority.md`, Identity is a badge).
