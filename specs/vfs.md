@@ -82,7 +82,7 @@ filesystems have somewhere to register — `specs/services.md`).
 - **unbind** — words: a badge. Every binding the badge holds is dropped;
   the reply is how many. The trigger — auth calling it when a session
   exits — lands with the session-reclaim arc, beside the volume protocol's
-  `reap`; the mechanism is here because a test can reach it today.
+  `reap`; the mechanism is landed and tested.
 - **count / describe** — the volumes, one row per describe: name, flags,
   whether a filesystem is bound. The registry pattern
   (`libs/aegir-registry`) applied to names.
@@ -174,7 +174,7 @@ write side has **handles** — the only per-client state a filesystem holds:
 - **reap** — words: a badge. Every handle the badge holds is dropped, as
   though closed. The reply is how many. The trigger — auth calling it when
   a session exits — lands with the session-reclaim arc (`specs/auth.md`);
-  the mechanism is here because a test can reach it today.
+  the mechanism is landed and tested.
 
 On FAT, "the chain is freed when the last handle closes" simplifies: FAT
 has no link counts, so remove on an open file refuses while a handle names

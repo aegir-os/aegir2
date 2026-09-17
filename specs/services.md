@@ -772,15 +772,18 @@ end to end. The boot's own summary:
     spawned partmgr, badge 264
     BD0Part0: sectors 2048..18431, "AEGIR" -- the system volume
     BD0Part1: sectors 18432..26623, "SECOND"
-    BD0Part2: sectors 26624..32734, "SCRATCH"
-    spawned fat.BD0Part0, badge 512
-    fat.BD0Part0: FAT32, 1 sectors per cluster, data starts at sector 506, writable
-    fat.BD0Part0: AEGIR.TXT says: aegir read this file off a disk it enumerated itself
-    spawned fat.BD0Part1, badge 513
-    fat.BD0Part1: FAT32, 1 sectors per cluster, data starts at sector 254, writable
+    BD0Part2: sectors 26624..32766, "SCRATCH"
+    BD0Part3: sectors 32768..43007, "FAT16"
+    spawned fat.BD0Part3, badge 512
+    fat.BD0Part3: FAT16, 1 sectors per cluster, data starts at sector 287, writable
+    spawned fat.BD0Part2, badge 513
+    fat.BD0Part2: FAT32, 1 sectors per cluster, data starts at sector 632, writable
+    spawned fat.BD0Part1, badge 514
+    fat.BD0Part1: FAT32, 1 sectors per cluster, data starts at sector 758, writable
     fat.BD0Part1: SECOND.TXT says: a second volume, a second service, the same reader
-    spawned fat.BD0Part2, badge 514
-    fat.BD0Part2: FAT32, 1 sectors per cluster, data starts at sector 128, writable
+    spawned fat.BD0Part0, badge 515
+    fat.BD0Part0: FAT32, 1 sectors per cluster, data starts at sector 1010, writable
+    fat.BD0Part0: AEGIR.TXT says: aegir read this file off a disk it enumerated itself
 
 What was decided, and what it took:
 
@@ -833,13 +836,15 @@ What was decided, and what it took:
 - **The filesystem service's image travels as bytes** (`binary_image`), one
   helper at a time, because the whole initrd is 1.2 MiB and a copy per spawning
   service does not fit a service-sized delegation.
-- **fs.fat reads FAT16/32 read-only and writes FAT32**: BPB, the root
+- **fs.fat reads FAT16 and FAT32**: BPB, the root
   directory, and a file's cluster chain -- the chain step is the one place
   the flavors differ (4-byte entries and one end-of-chain floor on FAT32,
   2-byte and another on FAT16, and the file walk branches on both). The
   test disk is built host-side without root (sgdisk writes the GPT, mtools
   fills each partition through `image@@offset`; scripts/make_disk.py):
-  three FAT32 partitions -- AEGIR and SECOND each carry one known file,
+  four partitions, AEGIR and SECOND and SCRATCH on FAT32 and the fourth
+  FAT16 on purpose -- the write side's other flavor, exercised like the
+  first. AEGIR and SECOND each carry one known file,
   because the second partition is the proof that the range grant works
   -- its BPB is nowhere near sector 0 -- and each file's content is the
   checksum, and SCRATCH starts empty because it is the write test's
@@ -865,7 +870,10 @@ What was decided, and what it took:
   across a cluster boundary, close, read back the recomputed pattern, list,
   truncate small again, remove -- plus the refusals (an existing name
   without `create`, the read-only initrd volume, a handle that is not one,
-  a non-empty directory).
+  a non-empty directory). `reap` and `unbind`, the teardown mechanisms
+  (specs/vfs.md), are proven directly: the smoke session leaves one handle
+  open on purpose, and the test reaps the badge, removes the file the
+  handle was holding open, unbinds its Home:, and finds Sys: untouched.
 - **Three latent limits broke on the way and are written down because they
   will not be the last.** The bootstrap block was capped at 512 bytes
   although it is mapped as a page, and a service with many grants (a window's
