@@ -70,9 +70,10 @@ bool same_name(PortGraph::Name left, PortGraph::Name right) noexcept
  *    it (kernel/src/kernel/thread.c:212-218), and a reply that carries a cap
  *    inherits its grant from the owner's receiving half (kernel/manual/parts/
  *    ipc.tex, "Calling and Replying").
- *  - `vol.initrd` is *published* by its owner: fs.initrd registers the
- *    volume with the VFS itself, and minting the unbadged caller half that
- *    registration carries takes a source cap with at least those rights. */
+ *  - `vol.initrd` is *published* by its owner: the initrd service registers
+ *    the volume with the VFS itself, and minting the unbadged caller half
+ *    that registration carries takes a source cap with at least those
+ *    rights. */
 struct Rights {
     seL4_CapRights_t owner;
     seL4_CapRights_t caller;

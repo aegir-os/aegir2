@@ -263,9 +263,11 @@ that the caller can read.
 | 1 | `logger` | system | `log.main` | — | everything else logs; the only thing that keeps using the raw debug console after boot |
 | 2 | `device-manager` | system | `devmgr.registry` | `log.main` | holds `IRQControl` custody and the DTB copy; needs no filesystem; launches block drivers |
 | 3 | `vfs` | system | `vfs.namespace` | `log.main` | must exist before any filesystem, so filesystems have somewhere to register |
-| 4 | `partition-manager` | system | `partman.partitions` | `log.main`, `devmgr.registry` | needs block devices to exist; launches one filesystem per partition |
-| 5 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace` | needs the user database, which lives on a volume that only exists after 2-4 |
-| 6 | *sessions* | user | — | `log.main`, `auth.login` | not part of boot proper: `auth` asks director for one per authenticated user, and it starts with user authority |
+| 4 | `initrd` | system | `vol.initrd` | `log.main`, `vfs.namespace` | serves the boot image as `Initrd:`; needs somewhere to register, and nothing else |
+| 5 | `partition-manager` | system | `partman.partitions` | `log.main`, `vfs.namespace` | needs block devices to exist (the registry and their ports arrive as grants); launches one filesystem per partition |
+| 6 | `test` | system | — | `log.main`, `vfs.namespace` | the accumulating test bed; asks again until the volumes it checks exist |
+| 7 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace` | needs the user database, which lives on a volume that only exists once the filesystems serve |
+| 8 | *sessions* | user | — | `log.main`, `auth.login` | not part of boot proper: `auth` asks director for one per authenticated user, and it starts with user authority |
 
 Every `needs` above names a port that some row `owns` — which is what makes the
 table a valid manifest sketch rather than prose: a row consuming a port nobody
@@ -342,12 +344,12 @@ That map is the reason it exists, and everything else it does is in service of i
   service rather than a new OS.
 - The VFS owns the **namespace** — volume names, path resolution, who may look up
   what — and not the data. Files live in the filesystems; the VFS is the map.
-- **`Initrd:` is the first volume.** Director holds the flat archive already, so
-  it can register it as soon as `vfs.namespace` exists (order 3, before
-  partition-manager at 4) and every later service can read the boot image through
-  the namespace. That is what lets `auth` start with an initial user database from
-  the initrd and switch to the authoritative one on the root volume once it
-  appears.
+- **`Initrd:` is the first volume.** A tiny `initrd` service (binary
+  `aegir-fs-initrd`) holds the flat archive and registers it as soon as
+  `vfs.namespace` exists (order 4, right after the VFS at 3), and every later
+  service can read the boot image through the namespace. That is what lets
+  `auth` start with an initial user database from the initrd and switch to
+  the authoritative one on the root volume once it appears.
 
 Amiga ancestry, recorded as inspiration rather than mechanism: `expansion.library`
 and `BindDrivers` for a device manager that decides which driver binds to what,

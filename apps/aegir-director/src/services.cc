@@ -446,7 +446,7 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         }
         /* A service that reads the boot image itself gets the same read-only
          * mapping a spawner does, without the spawn authority: the archive
-         * is the volume fs.initrd serves (specs/vfs.md). */
+         * is the volume the initrd service serves (specs/vfs.md). */
         if (entry.initrd) {
             request.binaries = initrd_.blob();
             request.binaries_bytes = static_cast<uint32_t>(initrd_.blob_size());

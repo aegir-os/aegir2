@@ -383,6 +383,13 @@ manager grants the partition manager its own `spawn:log.main`, unbadged, because
 partition manager's `log.main` is badged with who *it* is and cannot be re-minted for
 the filesystem services it starts either.
 
+The same rule shapes how a volume capability reaches a client. A filesystem
+registers its volume port's caller half *unbadged* (the partition manager keeps the
+half it minted at the spawn; the initrd service mints one itself), and the VFS mints each
+resolver's own badge onto the copy a `resolve` hands out -- so the filesystem learns
+who is asking from the kernel, through a hand-off in the middle, and the identity
+chain is never broken by the map that made it (`specs/vfs.md`). A range or a
+permission that one day clamps by badge has the true caller to clamp by.
 ### A frame cap serves one address space; the copies come first
 
 A frame's *first* mapping pins it: the mapped ASID and address are written into the

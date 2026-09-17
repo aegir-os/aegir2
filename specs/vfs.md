@@ -96,36 +96,49 @@ clients.
 
 ## Who registers, who serves
 
-- **`Initrd:` is the first volume**, served by a tiny **`fs.initrd`** service
-  — not by director, which never serves. Director spawns it and hands it the
-  archive as a blob grant (the `binary_image` machinery); it registers itself
-  (`needs = vfs.namespace`, a manifest service can declare that) and serves
-  read/list from the archive with libcpio, which is already vendored.
+- **`Initrd:` is the first volume**, served by a tiny **initrd** service
+  (binary `aegir-fs-initrd`, manifest name `initrd` — `fs.*` is the
+  partition manager's spawn class, and a manifest service must not wear it)
+  — not by director, which never serves. Director spawns it with the
+  archive's location and the owner half of `vol.initrd`; it mints the caller
+  half itself, registers (`needs = vfs.namespace`, a manifest service can
+  declare that), and serves read/list from the archive with libcpio, which
+  is already vendored.
 - **The partition manager registers on behalf of the filesystems it spawns.**
   A dynamically-spawned filesystem is not in the manifest and cannot declare
   `needs`, so the callback is a call to the partition manager's own port —
-  `partman.partitions`, already named in the boot-set sketch: the filesystem
-  **announces** its volume label and its port's caller half, and the
-  partition manager registers both with `vfs.namespace`. A new filesystem
-  type then implements announce + the volume protocol, and nothing about the
-  VFS.
+  `partman.partitions`, already named in the boot-set sketch. The manager
+  creates each child's volume endpoint itself and keeps the caller half
+  (unbadged, for the resolve mints); the filesystem **announces** the one
+  thing the manager cannot know without asking — the volume's label, which
+  lives in the filesystem's own structures — and the manager registers the
+  label and the half it kept with `vfs.namespace`, answering with the name
+  the volume actually got. A new filesystem type then implements announce +
+  the volume protocol, and nothing about the VFS.
 - The partition manager's caller cap on `vfs.namespace` travels director →
-  device manager → partition manager, the way `devmgr.registry` already does.
+  device manager → partition manager, the way `devmgr.registry` already does:
+  the manifest grants it to the partition manager, and the unbadged
+  `spawn:`-prefixed copy flows down with the need-grant's rights.
 
-## The supervisor that serves, again
+## The supervisor that serves, without the demux
 
-The partition manager now waits for its filesystem children's ready signals
-*and* serves `partman.partitions`. That is the shape the device manager
-already has: the children's supervision notifications are bound to the
-serving thread, one receive sees both, and the `kCallMark` badge convention —
-calls carry the caller's badge with the top bit set, signals arrive bare —
-tells them apart (`specs/services.md`, the badge-space convention). The
-announce caller halves are badged marked; the ready signals are not.
+The partition manager's rhythm needs no badge mark at all. It walks every
+partition table *first* and spawns afterwards, because a serving child uses
+the same window frames the walk reads through — the walk's last read comes
+before the first spawn. Then, per child: spawn, receive the one announce
+(the child blocks in it until answered), register with the VFS, reply, and
+only then wait for the child's ready. The announce receive sees nothing but
+the one call it is waiting for, so there is nothing to tell apart. (The
+`kCallMark` convention — calls carry the caller's badge with the top bit
+set, signals arrive bare — remains the device manager's shape, where one
+receive genuinely sees both, and lives in `aegir/ipc/port.h`.)
 
 ## The test service
 
 `aegir-test` is the accumulating end-to-end test bed: a manifest service
 (`restart = never`) whose output is part of the boot evidence. This arc's
-test: resolve `AEGIR:AEGIR.TXT` and `Initrd:services`, read both through the
-minted caps, print the first line of each. Later arcs add their tests here.
+tests: resolve `AEGIR:AEGIR.TXT` and `SECOND:SECOND.TXT` and read both back
+byte for byte through the minted caps — the contents are the checksum,
+`scripts/make_disk.py` put them there — list a root, and read the manifest
+through `Initrd:` by its volume name. Later arcs add their tests here.
 `hello` stays the spawn-smoke client.
