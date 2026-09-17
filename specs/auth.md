@@ -41,18 +41,22 @@ The table, in full:
 | offset | field | width |
 | --- | --- | --- |
 | 0 | magic, `"AUDB"` | 4 |
-| 4 | format version, `1` | 4 |
+| 4 | format version, `2` | 4 |
 | 8 | user count | 4 |
 | 12 | reserved, zero | 4 |
-| 16 | rows, count of them | 80 each |
+| 16 | rows, count of them | 128 each |
 
-One row: `name[24]`, `account[24]`, `secret[32]` — each a NUL-terminated
-string inside its field. The widths are format decisions, the way FAT's 8.3
-is one: a name shares the system's name bound (`kNameMax`,
-`aegir/nmspace.h`), an account names what it says, and a v1 plain secret
-fits 32 bytes; the version field is how the format grows when any of those
-stops being true. A secret in the v1 table is the plain word itself (see
-Credentials, below).
+One row: `name[24]`, `account[24]`, `secret[32]`, `home[48]` — each a
+NUL-terminated string inside its field. The widths are format decisions,
+the way FAT's 8.3 is one: a name shares the system's name bound
+(`kNameMax`, `aegir/nmspace.h`), an account names what it says, a v1 plain
+secret fits 32 bytes, and a home is a full `Volume:rest` path —
+`Sys:Homes/` plus the longest name is 34, and the field rounds up with
+room for an explicit one. The version field is how the format grows; v1
+had no home, and v2 is the proof. The source row's `home=` says it,
+defaulting to `Sys:Homes/<name>` — a default FAT can carry only while the
+name is 8.3-clean, so a name that is not needs an explicit `home=`. A
+secret in the v1 table is the plain word itself (see Credentials, below).
 
 Lookup is by name, a linear scan: the table is small by definition (it is
 the list of people who may log in), and a table that grows on demand is
@@ -135,12 +139,12 @@ A successful login starts a session. The decisions, taken 2026-09:
   marked, signals bare) lands when they are not.
 - **The first session is a smoke, not a shell.** There is no input path --
   no keyboard, no serial input -- so an interactive session cannot exist
-  yet, and there is no home volume to give it (the filesystems are
-  read-only). The session proves the authority shape instead: it runs with
+  yet. The session proves the authority shape instead: it runs with
   the user's badge and account, it logs, it reads through the VFS, it
   exits. The evidence is the logger's own lines: the logger prints the
   caller's badge, so a session's lines carry a bit-62 badge, and the
-  identity chain is visible end to end.
+  identity chain is visible end to end. (Written when the filesystems were
+  read-only; the home arc below is what a session was waiting for.)
 - **Resolve stays open.** There is no volume-ownership model to check
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.
@@ -150,3 +154,28 @@ reclaimed.** Drivers and filesystems never exit, so this is the first
 process whose objects outlive it; repeated logins drain the spawn untyped
 until reclaim (authority.md's retained-copy path) extends to sessions. The
 bound is the grant, and reaching it is a loud refusal, never a quiet one.
+
+## Homes
+
+A login gives the session somewhere to be. The decisions:
+
+- **The user row carries the home**: the `home[48]` field above, the path
+  the session's `Home:` stands for, `Sys:Homes/<name>` by default. The
+  database is the record of who the users are; where they live is part of
+  who they are.
+- **auth ensures the home exists, then binds, then spawns.** On a
+  successful login: one `mkdir` of the row's home path through the
+  namespace (the volume protocol's `mmd` shape makes the whole chain one
+  call), one `bind` of the session's badge to `Home` → that path
+  (`specs/vfs.md`'s aliases), then the spawn as before. The order is the
+  point: the session never sees a `Home:` that does not resolve.
+- **A home that will not create does not stop the login.** The mkdir's
+  failure is logged, the bind is made anyway, and the failure surfaces
+  where it belongs: the session's first write into it is refused by the
+  filesystem. A read-only `Sys:` is a fact, not a reason to keep a user
+  out.
+- **The smoke proves it end to end.** The session resolves
+  `Home:WELCOME.TXT`, creates it, writes, closes, reads back — and
+  `aegir-test`, under its own system badge, reads the same bytes back
+  through `Sys:Homes/boot/WELCOME.TXT`. Two badges, two names, one file:
+  the alias is the namespace's, not the session's imagination.

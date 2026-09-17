@@ -337,6 +337,16 @@ That map is the reason it exists, and everything else it does is in service of i
   filesystem-agnostic job), and for each partition starts the filesystem service
   matching that partition's type — a spawn of its own, under the spawn right its
   manifest entry declares.
+- **One partition type GUID is ours**: `5cd58811-9bf5-4af3-8682-9b76edce3535`
+  names the Aegir system volume — the discovery shape of systemd's
+  Discoverable Partitions Specification, one GUID per role, the disk
+  describing itself rather than a name string or an attribute bit saying
+  it. The partition manager reads it from the entries it already walks, and
+  the volume it yields registers with the boot flag, which the VFS aliases
+  as `Sys:` (`specs/vfs.md`). `make_disk.py` types the first partition with
+  it (sgdisk `--typecode`); a disk with none has no `Sys:`. The GUID is a
+  statement about the *partition*, not the filesystem in it — FAT serves it
+  today, and BeFS inherits the alias the day it lands.
 - A filesystem service receives the block device's port and a *range* grant
   (offset and length), not the whole device. Least authority again.
 - **Filesystems register with the VFS.** `vfs.namespace` accepts a registration
