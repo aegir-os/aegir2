@@ -26,6 +26,7 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-fs-fat>"
     "$<TARGET_FILE:aegir-vfs>"
     "$<TARGET_FILE:aegir-fs-initrd>"
+    "$<TARGET_FILE:aegir-test>"
 )
 set(aegir_initrd_names
     "services.manifest"
@@ -38,6 +39,7 @@ set(aegir_initrd_names
     "aegir-fs-fat"
     "aegir-vfs"
     "aegir-fs-initrd"
+    "aegir-test"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)

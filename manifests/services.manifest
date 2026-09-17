@@ -127,3 +127,10 @@ authority = system
 account   = boot
 needs     = log.main
 restart   = never
+
+[test]
+binary    = aegir-test
+authority = system
+account   = boot
+needs     = log.main, vfs.namespace
+restart   = never
