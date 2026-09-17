@@ -1,9 +1,9 @@
 # auth: the user database and the login port
 
-Status: first slice and sessions v1 implemented (2026-09) — the database,
-the packer, the service, the login check, and a login that starts a session
-under the user's badge. Elevation, an input path, and session reclaim
-remain open.
+Status: first slice, sessions v1, and homes implemented (2026-09) — the
+database, the packer, the service, the login check, a login that starts a
+session under the user's badge, and the home the session lands in. An input
+path, elevation, and session reclaim remain open.
 
 `auth` owns two things: the record of who the users are, and the port that
 answers "is this them" — `auth.login` (boot-set row 7, `specs/services.md`).

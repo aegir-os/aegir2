@@ -770,7 +770,7 @@ end to end. The boot's own summary:
     spawned blk.virtio0 for virtio,mmio at 0x10007000, badge 257
     I am BD0: window of 64 KiB at 0x26000 (physical 0xffde0000)
     spawned partmgr, badge 264
-    BD0Part0: sectors 2048..18431, "AEGIR"
+    BD0Part0: sectors 2048..18431, "AEGIR" -- the system volume
     BD0Part1: sectors 18432..26623, "SECOND"
     BD0Part2: sectors 26624..32734, "SCRATCH"
     spawned fat.BD0Part0, badge 512
@@ -877,6 +877,8 @@ What was decided, and what it took:
 
 Still open, in the order they arrive: reclaiming an exited session's objects
 (`specs/auth.md` records the gap), an input path so a session can be a shell,
-home volumes now that a filesystem writes, and resolve checks once volumes
-have an ownership model to check against. The badge space is designed now
+and resolve checks once volumes have an ownership model to check against.
+Home volumes landed: the system volume announces itself by partition type
+GUID, the VFS aliases it `Sys:`, and a login makes and binds `Home:`
+(`specs/auth.md`). The badge space is designed now
 (`specs/authority.md`, Identity is a badge).
