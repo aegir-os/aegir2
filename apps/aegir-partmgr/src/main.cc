@@ -23,6 +23,7 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/registry.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
 #include <sel4/sel4.h>
@@ -362,6 +363,59 @@ int main(int argc, char *argv[])
     aegir::debug_write(" block ports, ");
     aegir::debug_write_unsigned(pages_per_window);
     aegir::debug_write(" window pages each\n");
+
+    /* The map, asked rather than printed: the device manager serves its
+     * registry on a port of its own, and the caller half was one of our
+     * grants. It answers from the moment we start -- it serves while it
+     * waits for our ready, so asking first is not the two of us waiting on
+     * each other (specs/services.md). This is a client asking, the shape
+     * every later consumer takes. */
+    aegir::ipc::Consumer const registry =
+        aegir::ipc::Consumer::find(aegir::registry::kPortName,
+                                   aegir::registry::kPortNameLength);
+    if (!registry.valid()) {
+        aegir::debug_write("      devmgr.registry: not given\n");
+    } else {
+        aegir::ipc::Reply const count = registry.call(aegir::registry::kMethodCount, 0);
+        if (count.error != 0) {
+            aegir::debug_write("      devmgr.registry: the count call was refused\n");
+        } else {
+            aegir::debug_write("      devmgr.registry, asked: ");
+            aegir::debug_write_unsigned(count.word);
+            aegir::debug_write(count.word == 1 ? " device\n" : " devices\n");
+            for (uint64_t i = 0; i < count.word; ++i) {
+                uint64_t words[aegir::registry::kRowWords];
+                aegir::ipc::WordsReply const answer =
+                    registry.call_words(aegir::registry::kMethodDescribe, &i, 1, words,
+                                        aegir::registry::kRowWords);
+                if (answer.error != 0 || answer.count != aegir::registry::kRowWords) {
+                    aegir::debug_write("      devmgr.registry: a describe was refused\n");
+                    break;
+                }
+                auto const *row = reinterpret_cast<aegir::registry::Row const *>(words);
+                aegir::debug_write("        [");
+                aegir::debug_write_unsigned(i);
+                aegir::debug_write("] ");
+                aegir::debug_write(row->instance[0] != '\0' ? row->instance : "(unbound)");
+                aegir::debug_write(": ");
+                aegir::debug_write(row->compatible);
+                aegir::debug_write(" at ");
+                aegir::debug_write_hex(row->base);
+                if (row->irq != 0) {
+                    aegir::debug_write(", irq ");
+                    aegir::debug_write_unsigned(row->irq);
+                }
+                aegir::debug_write(", window ");
+                aegir::debug_write_unsigned(row->window_bits);
+                aegir::debug_write(" bits");
+                if (row->bound != 0) {
+                    aegir::debug_write(", driven by ");
+                    aegir::debug_write(row->binary);
+                }
+                aegir::debug_write("\n");
+            }
+        }
+    }
 
     uint32_t port_index = 0;
     for (uint32_t e = 0; e < block->entry_count; ++e) {

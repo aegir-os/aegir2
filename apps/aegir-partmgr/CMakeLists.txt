@@ -21,5 +21,5 @@ target_compile_options(aegir-partmgr PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-partmgr PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block aegir-ipc
-                        aegir-log aegir-mem aegir-spawn sel4 muslc sel4runtime
+                        aegir-log aegir-mem aegir-registry aegir-spawn sel4 muslc sel4runtime
 )

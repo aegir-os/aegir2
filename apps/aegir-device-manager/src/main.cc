@@ -29,6 +29,7 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/registry.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
 #include <sel4/sel4.h>
@@ -110,7 +111,19 @@ struct Binding {
     seL4_CPtr frame;  /* the granted capability; 0 until the join */
     char const *name; /* the instance name, built at the join */
     uint32_t name_length;
+    bool spawned; /* a driver is running for it -- what the registry reports */
 };
+
+/* Telling a call apart from a signal when both wake the same receive is the
+ * badge, never the message length: a bound notification's delivery sets the
+ * badge register and nothing else (kernel/src/object/notification.c:62-76),
+ * so the length is whatever the last reply left behind -- and the badges
+ * would collide, because a caller's badge and its signal's badge are the same
+ * number (the service's own). The convention: a call to a port this service
+ * owns carries the caller's badge with the top bit set, and a signal arrives
+ * bare. Both sides of it are this service's to keep: it badges the caller
+ * caps it hands out, and it checks. */
+constexpr seL4_Word kCallMark = 1ULL << 63;
 
 bool compatible_is(aegir::devtree::Device const &device, DriverRow const &row) noexcept
 {
@@ -123,6 +136,34 @@ bool compatible_is(aegir::devtree::Device const &device, DriverRow const &row) n
         }
     }
     return true;
+}
+
+/* A map string into a Row field: bounded, and NUL-terminated whatever the
+ * source's length -- the registry's rows cross an IPC as words, and a reader
+ * that trusts a missing NUL reads into the next field. */
+void copy_out(char *out, uint32_t out_bytes, char const *in, uint32_t in_length) noexcept
+{
+    uint32_t at = 0;
+    while (in != nullptr && at + 1 < out_bytes && at < in_length) {
+        out[at] = in[at];
+        ++at;
+    }
+    out[at] = '\0';
+}
+
+/** One binding as the registry answers it. */
+void fill_row(Binding const &binding, aegir::registry::Row *row) noexcept
+{
+    copy_out(row->instance, sizeof(row->instance), binding.name, binding.name_length);
+    copy_out(row->compatible, sizeof(row->compatible), binding.row->compatible,
+             binding.row->compatible_length);
+    copy_out(row->binary, sizeof(row->binary), binding.row->binary,
+             binding.row->binary_length);
+    row->base = binding.base;
+    row->bytes = binding.bytes;
+    row->irq = binding.irq;
+    row->window_bits = binding.row->window_bits;
+    row->bound = binding.spawned ? 1 : 0;
 }
 
 /** The tree walk that builds the candidate list. Two passes over the same walk
@@ -142,7 +183,7 @@ public:
             if (fill != nullptr && count < capacity) {
                 fill[count] = Binding{&rows[r], device.base, 0,
                                       device.has_interrupt ? device.interrupt : 0, 0,
-                                      nullptr, 0};
+                                      nullptr, 0, false};
             }
             ++count;
             break;
@@ -656,8 +697,28 @@ int main(int argc, char *argv[])
             auto *bound = static_cast<BoundPort *>(arena.allocate(
                 sizeof(BoundPort) * (binding_count != 0 ? binding_count : 1)));
             uint32_t bound_count = 0;
+            /* The port the map is asked through: one endpoint, ours to receive
+             * on, served after everything is spawned. The caller half goes to
+             * the services the map is for -- the partition manager first
+             * (specs/services.md names it devmgr.registry and lists it among
+             * the partition manager's grants). */
+            seL4_Error registry_error = seL4_NoError;
+            seL4_CPtr const registry_endpoint =
+                g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                       g_account, &registry_error);
+            if (registry_endpoint == 0) {
+                write_line("FAIL", "no memory for the registry's port");
+            }
+            /* Set when the partition manager is up: its ready arrives on the
+             * supervision notification the spawn made for it -- our half of
+             * it, which we keep here, is the receiving half the serve loop
+             * binds. The badge is named here for the same reason: the serve
+             * loop matches a signal against it. */
+            bool partmgr_running = false;
+            seL4_CPtr partmgr_supervision = 0;
+            uint64_t const partmgr_badge = 256u + binding_count;
             for (uint32_t b = 0; have_log && b < binding_count; ++b) {
-                Binding const &binding = bindings[b];
+                Binding &binding = bindings[b];
                 if (binding.frame == 0) {
                     continue;
                 }
@@ -902,6 +963,7 @@ int main(int argc, char *argv[])
                 aegir::debug_write(", badge ");
                 aegir::debug_write_unsigned(request.badge);
                 aegir::debug_write("\n");
+                binding.spawned = true;
                 /* Ready is a signal on the supervision notification, badged with who
                  * it is -- the same protocol director's boot uses, because a spawned
                  * process does not know who spawned it (specs/director.md). */
@@ -994,7 +1056,6 @@ int main(int argc, char *argv[])
                  * copy, its objects, and a 64 KiB window set of its own, so
                  * two partitions already ask for most of a megabyte. */
                 constexpr uint32_t kPartmgrUntypedBits = 20;
-                uint64_t const partmgr_badge = 256u + binding_count;
                 aegir::mem::Account partmgr_account{"partmgr", 0, 0, 0};
                 seL4_Error untyped_error = seL4_NoError;
                 uint64_t partmgr_physical = 0;
@@ -1011,8 +1072,13 @@ int main(int argc, char *argv[])
                      * then the set reserved for the children it will start. */
                     window_grant_count += 2 * bound[i].window_pages;
                 }
+                /* The registry's caller half rides with the manager's grants
+                 * when the endpoint exists -- the map is for asking, and the
+                 * partition manager is the first service that asks. */
+                uint32_t const registry_rows = registry_endpoint != 0 ? 1 : 0;
                 auto *ports = static_cast<aegir::spawn::PortGrant *>(
-                    arena.allocate(sizeof(aegir::spawn::PortGrant) * (4 + bound_count)));
+                    arena.allocate(sizeof(aegir::spawn::PortGrant) *
+                                   (4 + registry_rows + bound_count)));
                 auto *frames = static_cast<aegir::spawn::DeviceGrant *>(arena.allocate(
                     sizeof(aegir::spawn::DeviceGrant) *
                     (window_grant_count != 0 ? window_grant_count : 1)));
@@ -1041,16 +1107,29 @@ int main(int argc, char *argv[])
                     ports[3] = {kSpawnLogGrant, sizeof(kSpawnLogGrant) - 1,
                                 aegir::bootstrap::kSlotFirstDeclared + 3,
                                 static_cast<seL4_CPtr>(log_slot), seL4_AllRights, 0, 0};
+                    if (registry_rows != 0) {
+                        /* The map, askable: the caller half, badged with who
+                         * the manager is -- with the top bit set, the mark
+                         * that tells a call apart from a signal when both
+                         * wake the same receive (the serve loop keeps the
+                         * convention). */
+                        ports[4] = {aegir::registry::kPortName,
+                                    aegir::registry::kPortNameLength,
+                                    aegir::bootstrap::kSlotFirstDeclared + 4,
+                                    registry_endpoint, seL4_CapRights_new(1, 0, 0, 1),
+                                    partmgr_badge | kCallMark, 0};
+                    }
                     /* Each block port arrives under the driver's instance name:
                      * the caller half, which is Write and GrantReply -- the
                      * kernel's own requirement of a capability that may be
                      * called (out/aegir/libsel4/include/interfaces/
                      * sel4_client.h:1202). The owner half stays here. */
                     for (uint32_t i = 0; i < bound_count; ++i) {
-                        ports[4 + i] = {bound[i].name, bound[i].name_length,
-                                        aegir::bootstrap::kSlotFirstDeclared + 4 + i,
-                                        bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
-                                        0};
+                        ports[4 + registry_rows + i] = {
+                            bound[i].name, bound[i].name_length,
+                            aegir::bootstrap::kSlotFirstDeclared + 4 + registry_rows + i,
+                            bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
+                            0};
                     }
                     /* The windows as frame capabilities, two groups per port in
                      * the ports' own order -- the manager's own pages, then the
@@ -1082,7 +1161,7 @@ int main(int argc, char *argv[])
                     request.account_length = 6;
                     request.priority = seL4_MaxPrio - 1;
                     request.ports = ports;
-                    request.port_count = 4 + bound_count;
+                    request.port_count = 4 + registry_rows + bound_count;
                     request.give_vspace = true;
                     /* The filesystem service's image, as bytes: the whole
                      * initrd is 1.2 MiB and does not fit a service-sized
@@ -1119,8 +1198,76 @@ int main(int argc, char *argv[])
                         aegir::debug_write("      spawned partmgr, badge ");
                         aegir::debug_write_unsigned(partmgr_badge);
                         aegir::debug_write("\n");
-                        seL4_Word ready_badge = 0;
-                        seL4_Wait(process.supervision, &ready_badge);
+                        /* Its ready is not waited on here any more: the serve
+                         * loop below receives it while answering the
+                         * registry, which is what lets the manager *ask*
+                         * before it reports. */
+                        partmgr_running = true;
+                        partmgr_supervision = process.supervision;
+                    }
+                }
+            }
+
+            /* The map is up and what it binds is running; from here the device
+             * manager answers for it. It also still waits for the partition
+             * manager's ready, and a blocked receive can wake for only one
+             * object -- so the child's supervision notification (our half is
+             * the receiving half; the child got the signaling half, Write
+             * only) is *bound* to this thread, and one receive sees both
+             * (kernel/manual/parts/notifications.tex:56-64).
+             * (kernel/manual/parts/notifications.tex:56-64). The badge mark
+             * that tells them apart is kCallMark, above. */
+            if (registry_endpoint != 0) {
+                seL4_Error bind_error = seL4_NoError;
+                if (partmgr_running) {
+                    bind_error = seL4_TCB_BindNotification(
+                        aegir::bootstrap::kSlotOwnTcb, partmgr_supervision);
+                }
+                if (bind_error != seL4_NoError) {
+                    write_line("FAIL", "the supervision notification would not bind");
+                } else {
+                    aegir::debug_write("      devmgr.registry: serving\n");
+                    aegir::ipc::Owner registry(registry_endpoint);
+                    /* Ready is owed to the director once the partition manager
+                     * reported its own -- or at once, when there is none. */
+                    bool waiting_for_partmgr = partmgr_running;
+                    if (!waiting_for_partmgr) {
+                        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+                        write_line("device manager", "ready");
+                    }
+                    for (;;) {
+                        seL4_Word badge = 0;
+                        seL4_MessageInfo_t const info =
+                            seL4_Recv(registry_endpoint, &badge);
+                        if ((badge & kCallMark) == 0) {
+                            /* A bare badge: a signal, not a call. */
+                            if (waiting_for_partmgr && (badge & partmgr_badge) != 0) {
+                                waiting_for_partmgr = false;
+                                seL4_Signal(aegir::bootstrap::kSlotSupervision);
+                                write_line("device manager", "ready");
+                            }
+                            continue;
+                        }
+                        uint32_t const length =
+                            static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
+                        uint32_t const method = static_cast<uint32_t>(seL4_GetMR(0));
+                        if (method == aegir::registry::kMethodCount) {
+                            registry.reply(binding_count);
+                        } else if (method == aegir::registry::kMethodDescribe &&
+                                   length == 2 &&
+                                   static_cast<uint64_t>(seL4_GetMR(1)) <
+                                       binding_count) {
+                            aegir::registry::Row row{};
+                            fill_row(bindings[seL4_GetMR(1)], &row);
+                            registry.reply_words(
+                                reinterpret_cast<uint64_t const *>(&row),
+                                aegir::registry::kRowWords);
+                        } else {
+                            /* A method we do not know, or an index past the
+                             * map: the answer says so by saying nothing
+                             * (aegir/registry.h). */
+                            registry.reply(0);
+                        }
                     }
                 }
             }
@@ -1128,13 +1275,11 @@ int main(int argc, char *argv[])
     }
 
     /* Ready: whoever spawned us can carry on, and the supervisor can tell
-     * everyone else apart from us (specs/director.md). */
+     * everyone else apart from us (specs/director.md). This is the path that
+     * never made it to serving -- no memory, no tree, no registry file, no
+     * endpoint -- and it stops rather than spins at somebody else's
+     * priority. */
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
-    write_line("device manager", "ready");
-
-    /* Nothing to serve yet. The map is built and the drivers it binds are
-     * running; what it still does not have is a port anyone can ask it, so
-     * until then it stops rather than spins at somebody else's priority. */
-    aegir::debug_write("      device manager: the map is up; a port to serve it comes next\n");
+    write_line("device manager", "ready (nothing to serve)");
     aegir::halt();
 }
