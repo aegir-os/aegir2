@@ -143,6 +143,16 @@ capability with an owner, a name and a protocol.
   capability is created (`seL4_CNode_Mint(..., badge)`,
   `out/aegir/libsel4/include/interfaces/sel4_client.h:2415`). "Who called me" is
   therefore answered by the kernel, not by a field a sender could lie about.
+  One convention the badge space has now grown: a server that also waits on a
+  bound notification (a supervisor that serves) cannot tell a call from a
+  signal by the message length — a bound notification's delivery sets the
+  badge register and nothing else
+  (`kernel/src/object/notification.c:62-76`), so the length is stale from the
+  last reply — and a caller's badge and its signal's badge are the same
+  number, the service's own. So a call to a port the supervising server owns
+  carries the caller's badge with the top bit set, and a signal arrives bare;
+  both sides of the convention are the owner's to keep, since it badges the
+  caller caps it hands out and it checks.
 - **Names.** `class.name` — `log.main`, `vfs.namespace`, `devmgr.registry`,
   `blk.virtio0`. The manifest binds names to owners, and at boot **that binding is
   the capability distribution**: no lookup service exists, because every
@@ -719,8 +729,15 @@ and answers "who owns this device?" for everyone else.
   armed before the child starts, and the driver waits on it after each kick instead
   of polling the used ring. A driver that finds no pair polls -- virtio promises
   progress without one.
-- **next**: a port for the device manager itself, so the map is something other
-  services can ask about rather than something the console prints.
+- **done**: the map is a port. `devmgr.registry` answers `count` and
+  `describe`: a row is instance, compatible, binary, base, bytes, irq, window
+  bits, and whether a driver is running (`libs/aegir-registry`). The partition
+  manager asks before its walk and prints the map: eight virtio-mmio slots,
+  one driven, seven reported unbound. The device manager serves it while still
+  waiting for the partition manager's ready -- the child's supervision
+  notification is bound to the serving thread, one receive sees both, and the
+  call/signal convention above is what tells them apart.
+- **next**: the VFS and the `Initrd:` volume.
 
 Devices are given to a driver the way everything else here is given: capabilities
 for the device's register frames (retyped from the device's own untyped memory --
@@ -819,6 +836,5 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: a port for the device manager itself so the map
-is something other services can ask, the VFS and the `Initrd:` volume, and range
+Still open, in the order they arrive: the VFS and the `Initrd:` volume, and range
 clamping by badge in the driver.
