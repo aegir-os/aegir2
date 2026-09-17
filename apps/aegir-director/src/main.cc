@@ -689,7 +689,7 @@ int main(int argc, char *argv[])
     }
 
     aegir::mem::Scratch scratch(bootinfo);
-    if (!scratch.initialise()) {
+    if (!scratch.initialise(&allocator)) {
         problem("the address space window could not be worked out");
     }
 

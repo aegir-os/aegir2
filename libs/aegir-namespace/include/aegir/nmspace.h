@@ -49,15 +49,19 @@ constexpr uint64_t kFlagReadOnly = 1;
  *  a filesystem label with a `_N` suffix. */
 constexpr uint32_t kNameMax = 24;
 
-/** A string on the wire: the byte count, then the bytes, packed into words.
- *  These helpers are the wire's one shape, shared by name, path and answer. */
-constexpr uint32_t kStringWords = 1 + (kNameMax + 7) / 8;
+/** The longest path a resolve may carry: what fits the envelope after the
+ *  length word (aegir/ipc's kMaxWords words, less one). A path longer than
+ *  that is a protocol that wants the buffer form, when it exists. */
+constexpr uint32_t kPathMax = 944;
 
-/** Pack `text`/`length` into `out` as {length, bytes...}. Returns the word
- *  count written, 0 when the string does not fit. */
-inline uint32_t pack_string(uint64_t *out, char const *text, uint32_t length) noexcept
+/** A string on the wire: the byte count, then the bytes, packed into words.
+ *  These helpers are the wire's one shape, shared by name, path and answer.
+ *  `max` is what the *field* allows -- kNameMax for a volume name, the
+ *  envelope's own room for a path -- and a string past it does not travel. */
+inline uint32_t pack_string(uint64_t *out, char const *text, uint32_t length,
+                            uint32_t max) noexcept
 {
-    if (length > kNameMax) {
+    if (length > max) {
         return 0;
     }
     out[0] = length;
@@ -74,11 +78,11 @@ inline uint32_t pack_string(uint64_t *out, char const *text, uint32_t length) no
 
 /** The reverse of pack_string: `in` holds {length, bytes...}; the view lands
  *  in `text`/`length`. False when the wire lies about its own length. */
-inline bool unpack_string(uint64_t const *in, uint32_t words, char const **text,
-                          uint32_t *length) noexcept
+inline bool unpack_string(uint64_t const *in, uint32_t words, uint32_t max,
+                          char const **text, uint32_t *length) noexcept
 {
     uint64_t const n = in[0];
-    if (n > kNameMax || words < 1 + (n + 7) / 8) {
+    if (n > max || words < 1 + (n + 7) / 8) {
         return false;
     }
     *text = reinterpret_cast<char const *>(in + 1);

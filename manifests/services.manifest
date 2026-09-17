@@ -87,6 +87,21 @@ account   = system
 needs     = log.main
 restart   = always
 
+# The VFS owns the namespace -- volume names, path resolution -- and not the
+# data (specs/vfs.md). It must exist before any filesystem, so filesystems
+# have somewhere to register. Its port carries capabilities, which the port
+# graph notes for the rights both halves need.
+[vfs]
+binary    = aegir-vfs
+authority = system
+account   = system
+owns      = vfs.namespace
+needs     = log.main
+# The registration table's backing store: the map grows until this is gone,
+# and reaching the end of it is a loud refusal, never a quiet overwrite.
+memory_kib = 16
+restart   = always
+
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process
 # can call a port it was given.

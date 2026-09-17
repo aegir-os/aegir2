@@ -24,6 +24,7 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-virtio-blk>"
     "$<TARGET_FILE:aegir-partmgr>"
     "$<TARGET_FILE:aegir-fs-fat>"
+    "$<TARGET_FILE:aegir-vfs>"
 )
 set(aegir_initrd_names
     "services.manifest"
@@ -34,6 +35,7 @@ set(aegir_initrd_names
     "aegir-virtio-blk"
     "aegir-partmgr"
     "aegir-fs-fat"
+    "aegir-vfs"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)
