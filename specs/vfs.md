@@ -79,6 +79,10 @@ filesystems have somewhere to register — `specs/services.md`).
   `specs/services.md`).
 - **bind** — words: a badge, an alias name, the path it stands for. Reply:
   1 bound, 0 refused. See Aliases.
+- **unbind** — words: a badge. Every binding the badge holds is dropped;
+  the reply is how many. The trigger — auth calling it when a session
+  exits — lands with the session-reclaim arc, beside the volume protocol's
+  `reap`; the mechanism is here because a test can reach it today.
 - **count / describe** — the volumes, one row per describe: name, flags,
   whether a filesystem is bound. The registry pattern
   (`libs/aegir-registry`) applied to names.
@@ -158,14 +162,31 @@ write side has **handles** — the only per-client state a filesystem holds:
   home exists" is the call a login makes, not a walk of its own. Existing
   components are fine. Reply: 1, or 0 — a component that is a file, a name
   that is not a valid one, a read-only volume, a full one.
+- **remove** — words: a path. Removes what the path names: a file's chain
+  is freed and its slot marked deleted; a directory only when it holds
+  nothing but `.` and `..` — a tree dies leaf-first, and a non-empty
+  directory is the refusal, not a recursive walk. Reply: 1, or 0 — not
+  found, a read-only volume, a directory with contents, the root (the empty
+  path names it, and it is not removable). A handle already open on the
+  file keeps its chain — removing is a name's death, not the file's; the
+  chain is freed when the last handle closes. (FAT's version of the rule:
+  see below.)
+- **reap** — words: a badge. Every handle the badge holds is dropped, as
+  though closed. The reply is how many. The trigger — auth calling it when
+  a session exits — lands with the session-reclaim arc (`specs/auth.md`);
+  the mechanism is here because a test can reach it today.
+
+On FAT, "the chain is freed when the last handle closes" simplifies: FAT
+has no link counts, so remove on an open file refuses while a handle names
+it. A future native filesystem is where the unlink-while-open rule gets its
+proper home.
 
 A handle row is **scoped to the caller's badge**: resolve minted the
 client's copy of the volume port with its badge, so the filesystem knows
 who is calling on every method, and a handle named by any other badge is
-not one. Handles are a service's only client state, so a client that exits
-without closing leaks rows until the session-reclaim arc reaches them —
-stated, not stumbled into (specs/auth.md records the same shape for the
-session's objects).
+not one. A client that exits without closing is reaped — `reap`, above —
+once the session arc can observe the exit (specs/auth.md records the same
+shape for the session's objects).
 
 Inline data bounds a call to what the envelope carries
 (`seL4_MsgMaxLength - 1` words). That is the right size for boot-time reads —

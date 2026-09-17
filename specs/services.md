@@ -846,21 +846,26 @@ What was decided, and what it took:
   scratchpad: the test creates, writes, reads back, truncates, and lists
   there, under QEMU's `-snapshot` overlay so the disk image itself stays
   pristine.
-- **fs.fat writes FAT32**: the volume protocol's handle side
+- **fs.fat writes FAT16 and FAT32**: the volume protocol's handle side
   (`specs/vfs.md`) -- open/create/truncate, write at the cursor with the
-  chain extended through the free-cluster scan, close. A new cluster is
+  chain extended through the free-cluster scan, close; mkdir and remove,
+  the tree growing and dying. A new cluster is
   zeroed before it joins a chain, because a multiuser system does not leak
-  one file's old sectors into another; both FAT copies are written, and the
-  FSInfo free count is marked unknown rather than maintained (the format
-  allows it, and the scan never trusted it). Writes are clamped by the same
-  badge ranges as reads, so a partition's range stays its boundary. FAT16
-  refuses writes until its write side lands; the writability of a volume is
+  one file's old sectors into another; both FAT copies are written, and on
+  FAT32 the FSInfo free count is marked unknown rather than maintained (the
+  format allows it, and the scan never trusted it). The flavors differ
+  where they always differ: 4-byte entries and a growable root chain on
+  FAT32, 2-byte entries and a fixed root region on FAT16 -- a full FAT16
+  root is full, and says so rather than growing. Writes are clamped by the same
+  badge ranges as reads, so a partition's range stays its boundary. The
+  writability of a volume is
   the partition manager's statement, carried to the filesystem in its
   descriptor row and to the VFS at registration, one source. The test
-  proves the round trip byte-exact: create, two writes across a cluster
-  boundary, close, read back the recomputed pattern, list, truncate small
-  again -- plus the refusals (an existing name without `create`, the
-  read-only initrd volume, a handle that is not one).
+  proves the round trip byte-exact on both flavors: create, two writes
+  across a cluster boundary, close, read back the recomputed pattern, list,
+  truncate small again, remove -- plus the refusals (an existing name
+  without `create`, the read-only initrd volume, a handle that is not one,
+  a non-empty directory).
 - **Three latent limits broke on the way and are written down because they
   will not be the last.** The bootstrap block was capped at 512 bytes
   although it is mapped as a page, and a service with many grants (a window's

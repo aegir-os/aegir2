@@ -154,6 +154,10 @@ reclaimed.** Drivers and filesystems never exit, so this is the first
 process whose objects outlive it; repeated logins drain the spawn untyped
 until reclaim (authority.md's retained-copy path) extends to sessions. The
 bound is the grant, and reaching it is a loud refusal, never a quiet one.
+When the arc lands, its notification is already served: `reap` on the
+volume protocol drops a badge's handles, `unbind` on the namespace drops
+its aliases (`specs/vfs.md`) -- the mechanisms exist, tested; what is
+missing is the caller who knows a session died.
 
 ## Homes
 
