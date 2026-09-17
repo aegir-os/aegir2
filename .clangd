@@ -1,0 +1,17 @@
+# clangd configuration for Aegir.
+#
+# The per-file compile flags come from the compilation database the CMake
+# build emits (CMAKE_EXPORT_COMPILE_COMMANDS in settings.cmake), not from
+# flags listed here -- so this file stays valid as the build evolves. It
+# points at the default target's build directory; flip it to another
+# out/<target>/ directory (see scripts/targets.py) if you are working
+# against a different machine configuration, and run `make build` first if
+# the directory does not exist yet.
+#
+# Resolving the cross toolchain's builtin headers (<stddef.h> and friends)
+# additionally needs clangd to be started with
+#   --query-driver=<repo>/third_party/toolchain/**/bin/riscv64-unknown-elf-*
+# which is a clangd command-line flag and cannot be set in this file. For
+# opencode that lives in the global ~/.config/opencode/opencode.jsonc.
+CompileFlags:
+  CompilationDatabase: out/aegir/

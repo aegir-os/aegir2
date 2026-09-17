@@ -23,6 +23,11 @@ list(APPEND CMAKE_MODULE_PATH
      ${project_modules})
 
 set(AEGIR_TARGET "riscv64-qemu-virt" CACHE STRING "Target configuration from configs/")
+
+# Emit compile_commands.json in every build directory: clangd (and anything
+# else that speaks the compilation-database format) reads it for the exact
+# per-file flags, and the .clangd at the repository root points at it.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Emit compile_commands.json for clangd")
 file(GLOB available_targets RELATIVE "${project_dir}/configs" "${project_dir}/configs/*.cmake")
 list(TRANSFORM available_targets REPLACE "^(.+)\\.cmake$" "\\1")
 set_property(CACHE AEGIR_TARGET PROPERTY STRINGS ${available_targets})
