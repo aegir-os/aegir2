@@ -622,6 +622,13 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     }
     if (boot.problem[0] != '\0') {
         problem(boot.problem);
+        if (boot.detail != nullptr && boot.detail[0] != '\0') {
+            write("  detail: ");
+            write(boot.detail);
+            write(" (seL4 error ");
+            number(boot.error);
+            write(")\n");
+        }
         write("  allocator: ");
         number(allocator.untyped_free());
         write(" untyped free, largest 2^");
@@ -630,7 +637,11 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
         number(allocator.last_request_bits());
         write(" from a 2^");
         number(allocator.last_candidate_bits());
-        write(" candidate\n");
+        write(" candidate; slots ");
+        number(allocator.slots_used());
+        write(" of ");
+        number(allocator.slots_total());
+        write("\n");
         return false;
     }
     if (boot.started == 0) {

@@ -19,8 +19,10 @@ target_compile_options(aegir-auth PRIVATE -Wall -Wextra -Werror)
 # aegir-cxx-policy carries the freestanding C++ flags; aegir-runtime provides
 # the pieces every binary needs (see libs/aegir-runtime). aegir-authdb is the
 # two formats it speaks; aegir-namespace and aegir-volume are how the
-# database reaches it (specs/auth.md).
+# database reaches it (specs/auth.md). aegir-mem is how it adopts the spawn
+# kit every spawner is delegated (specs/authority.md).
 target_link_libraries(
   aegir-auth PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
-                     aegir-authdb aegir-namespace aegir-volume sel4 muslc sel4runtime
+                     aegir-authdb aegir-mem aegir-namespace aegir-volume sel4 muslc
+                     sel4runtime
 )

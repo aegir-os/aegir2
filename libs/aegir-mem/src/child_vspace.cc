@@ -95,7 +95,8 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
 
 bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source, uint64_t bytes,
                            uint64_t leading, bool writable, Account &account,
-                           seL4_CPtr *first_frame, char const **why) noexcept
+                           seL4_CPtr *first_frame, char const **why,
+                           seL4_CPtr *frames_out) noexcept
 {
     if (why != nullptr) {
         *why = "";
@@ -122,6 +123,9 @@ bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source
         }
         if (page == 0 && first_frame != nullptr) {
             *first_frame = frame;
+        }
+        if (frames_out != nullptr) {
+            frames_out[page] = frame;
         }
 
         /* Fill it first, through our own window: once it is mapped into the

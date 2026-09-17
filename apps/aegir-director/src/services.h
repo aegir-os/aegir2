@@ -54,6 +54,11 @@ struct Boot {
     unsigned declared;
     unsigned started;
     char const *problem; /* the empty string when every entry started */
+    /** Which step of a failed spawn failed, and the kernel's answer to it --
+     *  "the bootstrap block could not be mapped" has three very different
+     *  causes, and the report is only useful if it says which. */
+    char const *detail;
+    uint64_t error;
 };
 
 /** One device the bus reported: where it is in the machine, what it is, and the frame its

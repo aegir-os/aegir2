@@ -120,15 +120,17 @@ restart   = always
 
 # auth owns the user database and the login port (specs/auth.md): it reads
 # the packed table from Initrd: through the namespace -- the first system
-# consumer of the VFS -- and serves auth.login from it. The table's backing
-# store is its memory grant; the table grows until that is gone.
+# consumer of the VFS -- and serves auth.login from it. It is also a
+# spawner: a successful login starts a session, so its memory is the
+# untyped it is delegated, and its table and its sessions both come out
+# of it.
 [auth]
 binary    = aegir-auth
 authority = system
 account   = system
 owns      = auth.login
 needs     = log.main, vfs.namespace
-memory_kib = 64
+spawns    = session.*
 restart   = always
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
@@ -146,4 +148,16 @@ binary    = aegir-test
 authority = system
 account   = boot
 needs     = log.main, vfs.namespace, auth.login
+restart   = never
+
+# The first session (specs/auth.md). Nothing starts it at boot -- auth
+# starts one when a login succeeds, with the user's badge and account,
+# and there is no input path yet, so the session is the smoke that
+# proves the shape. The entry is what declares a session's needs, which
+# is what drives the delegatable copies its spawner is given.
+[session.smoke]
+binary    = aegir-session-smoke
+authority = user
+account   = user
+needs     = log.main, vfs.namespace
 restart   = never

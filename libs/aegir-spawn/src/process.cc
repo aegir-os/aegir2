@@ -363,7 +363,11 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         device_address = at;
     }
     /* The initrd copy, for a child that starts processes of its own: mapped above
-     * the device window, read in place, and recorded in the block. */
+     * the device window, read in place, and recorded in the block. One set of
+     * frames serves every child the same blob goes to: the first spawn copies,
+     * later spawns map the same frames read-only -- a copy per spawner was the
+     * cost that filled the allocator's untyped table when the second spawner
+     * arrived (specs/services.md). */
     uint64_t binaries_address = 0;
     uintptr_t const after_device =
         align_up(static_cast<uintptr_t>(devices_end) + request.device_bytes, kPage);
@@ -372,11 +376,59 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             return after_device;
         }
         uint64_t const pages = (request.binaries_bytes + kPage - 1) / kPage;
+        if (shared_binaries_frames_ != nullptr) {
+            if (shared_binaries_ != request.binaries ||
+                shared_binaries_pages_ < pages) {
+                detail_ = "a second binaries blob is not the one the shared copy holds";
+                return uintptr_t{0};
+            }
+            /* A frame cap remembers the one address space it is mapped in
+             * (kernel/src/arch/riscv/kernel/vspace.c:867-875 refuses a
+             * second), and a *copy* of it is born pristine
+             * (kernel/src/arch/riscv/object/objecttype.c:34-37) -- so each
+             * later child gets a copy of the frame, mapped read-only. The
+             * sharing costs a slot per page, not the memory again. */
+            for (uint64_t page = 0; page < pages; ++page) {
+                seL4_CPtr const copy = allocator_.alloc_slot();
+                if (copy == 0) {
+                    detail_ = "no slot for a shared initrd frame's copy";
+                    return uintptr_t{0};
+                }
+                seL4_Error const copied =
+                    seL4_CNode_Copy(source_root_, copy, source_depth_, source_root_,
+                                    shared_binaries_frames_[page], source_depth_,
+                                    seL4_AllRights);
+                if (copied != seL4_NoError) {
+                    error_ = copied;
+                    detail_ = "a shared initrd frame could not be copied";
+                    return uintptr_t{0};
+                }
+                seL4_Error mapped = seL4_NoError;
+                if (!vspace.map_page(after_device + static_cast<uintptr_t>(page) * kPage,
+                                     copy, false, account, &mapped)) {
+                    error_ = mapped;
+                    detail_ = "a shared initrd frame could not be mapped into the child";
+                    return uintptr_t{0};
+                }
+            }
+            binaries_address = after_device;
+            return after_device + pages * kPage;
+        }
+        auto *frames = static_cast<seL4_CPtr *>(
+            arena_.allocate(sizeof(seL4_CPtr) * (pages != 0 ? pages : 1)));
+        if (frames == nullptr) {
+            detail_ = "no room to keep the shared initrd's frames";
+            return uintptr_t{0};
+        }
         if (!vspace.populate(after_device, static_cast<unsigned>(pages), request.binaries,
-                             request.binaries_bytes, 0, false, account, nullptr, &why)) {
+                             request.binaries_bytes, 0, false, account, nullptr, &why,
+                             frames)) {
             detail_ = why;
             return uintptr_t{0};
         }
+        shared_binaries_ = request.binaries;
+        shared_binaries_frames_ = frames;
+        shared_binaries_pages_ = static_cast<uint32_t>(pages);
         binaries_address = after_device;
         return after_device + pages * kPage;
     }();

@@ -127,10 +127,24 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             return;
         }
         if (declared_as_user(entry)) {
-            /* Nothing can be a user service at boot: there is no user yet, and
-             * sessions are created after authentication (specs/authority.md). */
-            boot.problem = "a boot service cannot be declared as a user service";
-            return;
+            /* Nothing can be a user service at *boot*: there is no user
+             * yet, and sessions are created after authentication
+             * (specs/authority.md). One another entry spawns -- a session,
+             * which auth starts when a login succeeds -- is not boot's to
+             * start, and its entry is what drives the delegatable copies
+             * its spawner is given (specs/services.md). */
+            bool covered = false;
+            for (uint32_t j = 0; j < manifest.size() && !covered; ++j) {
+                for_each_spawn(manifest[j].spawns, [&](manifest::View item) {
+                    if (spawn_covers(item, entry.name)) {
+                        covered = true;
+                    }
+                });
+            }
+            if (!covered) {
+                boot.problem = "a boot service cannot be declared as a user service";
+                return;
+            }
         }
         /* Every `spawns` item -- a name or a `prefix*` class -- must resolve to
          * at least one declared entry: a spawn right over nothing is a typo that
@@ -501,6 +515,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         spawn::Process process{};
         if (!spawner_.spawn(request, account, process)) {
             boot.problem = spawner_.problem();
+            boot.detail = spawner_.detail();
+            boot.error = spawner_.error();
             return;
         }
         started[boot.started].name = entry.name.data;

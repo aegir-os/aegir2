@@ -18,6 +18,9 @@
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/arena.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
@@ -25,24 +28,13 @@
 
 namespace {
 
-/* The table's backing store: the memory the manifest granted, used from the
- * front. The table grows until that memory is gone -- the bound is a grant,
- * declared in one place, and reaching it is a loud failure, never a quiet
- * overwrite. */
-uint8_t *g_arena = nullptr;
-uint64_t g_arena_left = 0;
-
-void *arena_take(uint64_t bytes) noexcept
-{
-    bytes = (bytes + 7) & ~7ULL;
-    if (bytes > g_arena_left) {
-        return nullptr;
-    }
-    void *taken = g_arena;
-    g_arena += bytes;
-    g_arena_left -= bytes;
-    return taken;
-}
+/* The kit every spawner is given (specs/authority.md): the untyped its
+ * objects -- and its sessions' -- come out of, its own VSpace root with a
+ * window to map through, and the slots past everything the bootstrap
+ * block names. The same adoption the partition manager does. */
+aegir::mem::Allocator g_objects(nullptr);
+aegir::mem::Scratch g_scratch(nullptr);
+aegir::mem::Account g_account{"auth", 0, 0, 0};
 
 aegir::authdb::Row const *g_rows = nullptr;
 uint32_t g_users = 0;
@@ -124,31 +116,80 @@ int main(int argc, char *argv[])
                                    aegir::nmspace::kPortNameLength);
     aegir::ipc::Owner port = aegir::ipc::Owner::find(aegir::auth::kPortName,
                                                      aegir::auth::kPortNameLength);
-    uint64_t memory_physical = 0;
-    uint32_t memory_bits = 0;
-    uint64_t memory_address = 0;
-    if (!nmspace.valid() || !port.valid() ||
-        !aegir::bootstrap::untyped(&memory_physical, &memory_bits, &memory_address)) {
-        write("      FAIL auth: no namespace, no port, or no memory\n");
+    if (!nmspace.valid() || !port.valid()) {
+        write("      FAIL auth: no namespace or no port\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    static_cast<void>(memory_physical);
-    g_arena = reinterpret_cast<uint8_t *>(memory_address);
-    g_arena_left = 1ULL << memory_bits;
 
-    /* The slot the database's capability moves into: past everything the
-     * bootstrap block names. */
-    uint64_t first_free = aegir::bootstrap::kSlotFirstDeclared;
+    /* The spawn kit, adopted the way the partition manager adopts its own
+     * (specs/authority.md): the untyped by name -- its size is the grant's,
+     * because a service cannot ask the kernel how large an untyped is --
+     * the physical base from the block's untyped entry, the VSpace root
+     * and the window with it, and the slots past everything the block
+     * names. A spawner's memory *is* its delegated untyped: the table and
+     * the sessions both come out of it (specs/auth.md). */
     aegir::bootstrap::Block const *block = aegir::bootstrap::find();
+    uint64_t untyped_slot = 0;
+    uint32_t untyped_bits = 0;
+    uint64_t first_free = aegir::bootstrap::kSlotFirstDeclared;
     if (block != nullptr) {
         for (uint32_t e = 0; e < block->entry_count; ++e) {
             aegir::bootstrap::Entry const &entry = block->entries[e];
-            if (entry.kind == aegir::bootstrap::EntryKind::Capability &&
-                entry.number + 1 > first_free) {
+            if (entry.kind != aegir::bootstrap::EntryKind::Capability) {
+                continue;
+            }
+            auto const *name = reinterpret_cast<char const *>(block) + entry.data_offset;
+            if (entry.length == 7 && name[0] == 'u' && name[1] == 'n' && name[2] == 't' &&
+                name[3] == 'y' && name[4] == 'p' && name[5] == 'e' && name[6] == 'd') {
+                untyped_slot = entry.number;
+                untyped_bits = entry.reserved;
+            }
+            if (entry.number + 1 > first_free) {
                 first_free = entry.number + 1;
             }
         }
+    }
+    uint64_t untyped_physical = 0;
+    uint64_t untyped_address = 0;
+    static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &untyped_bits,
+                                                &untyped_address));
+    uint64_t vspace_slot = 0;
+    uint64_t window_base = 0;
+    uint32_t window_bytes = 0;
+    bool const have_kit =
+        untyped_slot != 0 &&
+        aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+        aegir::bootstrap::window(&window_base, &window_bytes);
+    if (!have_kit ||
+        !g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
+                                 untyped_physical)) {
+        write("      FAIL auth: no untyped, vspace or window -- the spawn kit "
+              "did not arrive\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    /* The depth is zero because these are *our* slots: at depth zero the
+     * destination capability of a retype *is* the CNode
+     * (kernel/src/object/untyped.c). The size is the one the spawner builds
+     * (kCNodeBits in libs/aegir-spawn/src/process.cc). */
+    g_objects.adopt_slots(first_free, (1u << 10) - first_free, 0);
+    if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
+                         static_cast<uintptr_t>(window_base),
+                         static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
+        write("      FAIL auth: the window would not be adopted\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    aegir::mem::Arena arena(g_objects, g_scratch, g_account);
+
+    /* The slot the database's capability moves into: one of ours, now that
+     * the slots past the block are adopted. */
+    seL4_CPtr const db_slot = g_objects.alloc_slot();
+    if (db_slot == 0) {
+        write("      FAIL auth: no slot for the database's capability\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
     }
 
     /* Resolve Initrd:users.db, asking again until the volume exists -- the
@@ -168,8 +209,8 @@ int main(int argc, char *argv[])
             aegir::nmspace::kResolveWords, &cap_arrived);
         if (answer.error == 0 && answer.count == aegir::nmspace::kResolveWords &&
             cap_arrived && in[0] <= sizeof(kPath) - 1 &&
-            aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free))) {
-            volume = static_cast<seL4_CPtr>(first_free);
+            aegir::ipc::take_received_cap(db_slot)) {
+            volume = db_slot;
             rest = kPath + in[0];
             rest_length = sizeof(kPath) - 1 - static_cast<uint32_t>(in[0]);
         } else {
@@ -177,9 +218,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Read the whole table into the arena, one envelope at a time. The
-     * chunks land contiguously, so what the arena holds when the file ends
-     * is the table itself. */
+    /* Read the whole table, one envelope at a time. The first chunk carries
+     * the header, which says how many rows follow -- the file is the
+     * checksum of its own length -- so the table's room is allocated once,
+     * from the arena over the delegated untyped, and each chunk is copied
+     * in where it belongs. */
     aegir::ipc::Consumer db(volume);
     uint8_t *table = nullptr;
     uint64_t total = 0;
@@ -206,40 +249,48 @@ int main(int argc, char *argv[])
             read_ok = false;
             break;
         }
-        void *chunk = arena_take(count);
-        if (chunk == nullptr) {
+        char const *bytes =
+            reinterpret_cast<char const *>(in + aegir::volume::kReadHeaderWords);
+        if (offset == 0) {
+            /* The first chunk carries the header: magic, version, and the
+             * row count that says how long the whole file is. */
+            if (count < aegir::authdb::kHeaderBytes) {
+                read_ok = false;
+                break;
+            }
+            auto const *header = reinterpret_cast<uint32_t const *>(bytes);
+            if (header[0] != aegir::authdb::kMagic ||
+                header[1] != aegir::authdb::kVersion) {
+                read_ok = false;
+                break;
+            }
+            total = aegir::authdb::kHeaderBytes + header[2] * sizeof(aegir::authdb::Row);
+            table = static_cast<uint8_t *>(arena.allocate(total));
+            if (table == nullptr) {
+                read_ok = false;
+                break;
+            }
+        }
+        if (offset + count > total) {
             read_ok = false;
             break;
         }
-        if (table == nullptr) {
-            table = static_cast<uint8_t *>(chunk);
-        }
-        char const *bytes =
-            reinterpret_cast<char const *>(in + aegir::volume::kReadHeaderWords);
         for (uint64_t i = 0; i < count; ++i) {
-            static_cast<uint8_t *>(chunk)[i] = bytes[i];
+            table[offset + i] = static_cast<uint8_t>(bytes[i]);
         }
-        total += count;
         offset += count;
         if (eof != 0 || count == 0) {
             break;
         }
     }
 
-    /* The header says how many rows follow; the file is the checksum of its
-     * own length. */
-    if (read_ok && table != nullptr && total >= aegir::authdb::kHeaderBytes) {
-        auto const *header = reinterpret_cast<uint32_t const *>(table);
-        uint64_t const count = header[2];
-        if (header[0] != aegir::authdb::kMagic ||
-            header[1] != aegir::authdb::kVersion ||
-            total != aegir::authdb::kHeaderBytes + count * sizeof(aegir::authdb::Row)) {
-            read_ok = false;
-        } else {
-            g_rows = reinterpret_cast<aegir::authdb::Row const *>(table +
-                                                                  aegir::authdb::kHeaderBytes);
-            g_users = static_cast<uint32_t>(count);
-        }
+    /* What arrived is the table exactly when it is the length the header
+     * promised. */
+    if (read_ok && table != nullptr && offset == total) {
+        g_rows = reinterpret_cast<aegir::authdb::Row const *>(table +
+                                                              aegir::authdb::kHeaderBytes);
+        g_users = static_cast<uint32_t>((total - aegir::authdb::kHeaderBytes) /
+                                        sizeof(aegir::authdb::Row));
     } else {
         read_ok = false;
     }

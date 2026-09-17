@@ -230,6 +230,17 @@ private:
     seL4_CPtr asid_pool_;
     seL4_CPtr source_root_;
     seL4_Word source_depth_;
+    /* The one read-only copy of a `binaries` blob, shared by every child that
+     * is given it: the frames are made on the first spawn that asks and
+     * *mapped* -- not copied -- into each later one, because a copy per
+     * spawner is the cost that filled the allocator's untyped table when the
+     * second spawner arrived (specs/services.md). The blob's address is the
+     * identity: there is one initrd, and a spawn handed a *different* blob
+     * than the one the frames hold fails loudly rather than reading the
+     * wrong archive. */
+    void const *shared_binaries_ = nullptr;
+    seL4_CPtr *shared_binaries_frames_ = nullptr;
+    uint32_t shared_binaries_pages_ = 0;
     char const *problem_;
     char const *detail_;
     seL4_Error error_;
