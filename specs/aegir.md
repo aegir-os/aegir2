@@ -31,6 +31,8 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/services.md` — services, ports, the flat initrd and the boot manifest.
 - `specs/authority.md` — identity, the two classes of authority, the right to
   spawn, and accounts.
+- `specs/vfs.md` — the namespace, the volume protocol, and capabilities over
+  IPC.
 - `specs/build.md` — build environment, targets, and what our image is made of.
 - `specs/third_party.md` — how third-party code is pinned, fetched and patched.
 - `specs/userland.md` — what Aegir's userland is, and what it is not.
