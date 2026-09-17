@@ -4,8 +4,9 @@
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * v1, in full. A call carries a method in MR0 and one word in MR1; a reply is
- * one word. Bulk data never crosses the message: each device has a *shared
+ * v1, in full. A call carries a method in MR0 and words after it -- one for
+ * a read, three for a clamp; a reply is one word. Bulk data never crosses
+ * the message: each device has a *shared
  * window*, mapped into the driver and into whichever client is calling, and
  * what does not fit in a word -- the identify answer, the sectors a read asked
  * for -- is written there. One window per device is enough because a call is
@@ -33,6 +34,15 @@ namespace aegir::block {
 /* The methods. */
 constexpr uint32_t kMethodIdentify = 1;
 constexpr uint32_t kMethodRead = 2;
+/* A range grant, enforced: words are {badge, first sector, sector count}.
+ * Only the badge-0 caller may record one -- the device's manager, whose cap
+ * is the unbadged one -- once per badge, and before the child that will hold
+ * the badge exists. The reply is 1 for recorded, 0 for refused (a badge
+ * already clamped, a range off the device, a caller that is not the
+ * manager). Reads then clamp by badge: badge 0 is the whole device, any
+ * other badge reads only inside its recorded range, and an unrecorded badge
+ * reads nothing (specs/services.md). */
+constexpr uint32_t kMethodClamp = 3;
 
 /** The identify answer, written at offset 0 of the shared window. The device
  *  names *itself* -- "BD0" -- because the public block-device namespace is the

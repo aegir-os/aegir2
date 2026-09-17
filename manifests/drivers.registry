@@ -9,6 +9,7 @@
 #               compatible string alone decides)
 #   prefix,bus  instance names are prefix.busN: blk + virtio -> blk.virtio0
 #   binary      the initrd entry the driver starts from
-#   memory      the driver's virtqueue memory, in bits (2^n bytes)
+#   memory      the driver's virtqueue memory, in bits (2^n bytes) -- the
+#               queue takes the first 8 KiB, the clamp table grows past it
 #   window      the shared window its port serves through, in bits
-compatible=virtio,mmio id=2 prefix=blk bus=virtio binary=aegir-virtio-blk memory=13 window=16
+compatible=virtio,mmio id=2 prefix=blk bus=virtio binary=aegir-virtio-blk memory=14 window=16

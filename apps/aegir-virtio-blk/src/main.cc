@@ -48,6 +48,48 @@ void write_unsigned_line(char const *label, uint64_t value) noexcept
     aegir::debug_write("\n");
 }
 
+/* The clamp table: which badge may read which sectors, recorded once per
+ * badge by the badge-0 caller -- the device's manager -- before the child
+ * that will hold the badge exists (aegir/block.h). It grows into this
+ * service's own memory past the queue, on demand; when that memory is gone
+ * a clamp is refused, not silently capped. */
+struct Clamp {
+    uint64_t badge;
+    uint64_t first;
+    uint64_t sectors;
+    Clamp *next;
+};
+
+Clamp *g_clamps = nullptr;
+uint8_t *g_clamp_free = nullptr;
+uint8_t *g_clamp_end = nullptr;
+
+Clamp const *find_clamp(uint64_t badge) noexcept
+{
+    for (Clamp const *clamp = g_clamps; clamp != nullptr; clamp = clamp->next) {
+        if (clamp->badge == badge) {
+            return clamp;
+        }
+    }
+    return nullptr;
+}
+
+bool record_clamp(uint64_t badge, uint64_t first, uint64_t sectors) noexcept
+{
+    if (find_clamp(badge) != nullptr ||
+        g_clamp_free + sizeof(Clamp) > g_clamp_end) {
+        return false;
+    }
+    auto *clamp = reinterpret_cast<Clamp *>(g_clamp_free);
+    clamp->badge = badge;
+    clamp->first = first;
+    clamp->sectors = sectors;
+    clamp->next = g_clamps;
+    g_clamps = clamp;
+    g_clamp_free += sizeof(Clamp);
+    return true;
+}
+
 /** The status handshake (virtio 1.x, 2.1.1). The device is told, in order, that we have
  *  seen it, that we know how to drive it, and what features we will use; it then either
  *  accepts the feature set -- leaving FEATURES_OK set -- or clears the bit to say it will
@@ -246,6 +288,10 @@ int main(int argc, char *argv[])
     for (uint32_t i = 0; i < aegir::virtio::kQueueBytes; ++i) {
         queue_page[i] = 0;
     }
+    /* The clamp table's room: everything this service's memory holds past
+     * the queue. */
+    g_clamp_free = reinterpret_cast<uint8_t *>(memory_address) + aegir::virtio::kQueueBytes;
+    g_clamp_end = reinterpret_cast<uint8_t *>(memory_address) + (1ull << memory_bits);
 
     aegir::virtio::QueueReport queue_report{};
     aegir::virtio::set_up(registers, memory_physical, aegir::virtio::kQueueSize, &queue_report);
@@ -345,24 +391,36 @@ int main(int argc, char *argv[])
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("virtio-blk", "ready");
 
-    /* The serve loop. A request arrives as a method and one word; its data
+    /* The serve loop. A request arrives as a method and words; its data
      * crosses through the window -- identify writes its answer there, and a
      * read DMAs straight into it, because the window's physical base is an
      * address the device can be pointed at. Calls serialize at the endpoint,
      * so one window is all the protocol needs (aegir/block.h). */
     for (;;) {
-        uint64_t word = 0;
+        uint64_t words[3];
+        uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = port.receive(&word, &badge);
+        uint32_t const method = port.receive_words(words, 3, &count, &badge);
         if (method == aegir::block::kMethodIdentify) {
             *reinterpret_cast<aegir::block::Identify *>(window_address) = identify;
             port.reply(sizeof(aegir::block::Identify));
-        } else if (method == aegir::block::kMethodRead) {
-            uint64_t const first = aegir::block::read_first(word);
-            uint32_t const count = aegir::block::read_count(word);
+        } else if (method == aegir::block::kMethodRead && count == 1) {
+            uint64_t const first = aegir::block::read_first(words[0]);
+            uint32_t const sectors = aegir::block::read_count(words[0]);
+            /* The clamp: badge 0 is the manager and reads the whole device;
+             * any other badge reads only inside the range recorded for it,
+             * and a badge with no record reads nothing. A refused read
+             * answers zero with the window untouched. */
+            bool allowed =
+                sectors <= identify.window_sectors && first + sectors <= capacity;
+            if (allowed && badge != 0) {
+                Clamp const *clamp = find_clamp(badge);
+                allowed = clamp != nullptr && first >= clamp->first &&
+                          first + sectors <= clamp->first + clamp->sectors;
+            }
             uint32_t done = 0;
-            if (count <= identify.window_sectors && first + count <= capacity) {
-                for (uint32_t i = 0; i < count; ++i) {
+            if (allowed) {
+                for (uint32_t i = 0; i < sectors; ++i) {
                     aegir::virtio::ReadResult const result = aegir::virtio::read_sector(
                         registers, queue_page, memory_physical, first + i,
                         window_physical +
@@ -375,6 +433,15 @@ int main(int argc, char *argv[])
                 }
             }
             port.reply(done);
+        } else if (method == aegir::block::kMethodClamp && count == 3 && badge == 0) {
+            /* A range grant, recorded once: the manager is the badge-0
+             * caller, and the badge it names must not have one yet. */
+            uint64_t recorded = 0;
+            if (words[0] != 0 && words[2] != 0 && words[1] + words[2] <= capacity &&
+                record_clamp(words[0], words[1], words[2])) {
+                recorded = 1;
+            }
+            port.reply(recorded);
         } else {
             /* A method we do not know is a protocol version we do not speak:
              * the reply says so by saying nothing. */

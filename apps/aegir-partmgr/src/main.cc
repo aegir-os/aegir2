@@ -260,6 +260,44 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.fault_endpoint = fault;
     request.badge = badge;
 
+    /* The range, enforced before the child exists to hold the badge: the
+     * driver learns which sectors this badge may read, and only the badge-0
+     * caller -- this manager -- may tell it (aegir/block.h). Then the proof,
+     * asked with the child's own badge: sector 0 is no GPT partition's to
+     * read, so a clamp that holds refuses it. */
+    uint64_t const clamp_out[3] = {badge, first_lba, sector_count};
+    uint64_t clamp_answer = 0;
+    aegir::ipc::Consumer const clamp_port(block_port);
+    aegir::ipc::WordsReply const clamped = clamp_port.call_words(
+        aegir::block::kMethodClamp, clamp_out, 3, &clamp_answer, 1);
+    bool holds = false;
+    seL4_CPtr const probe = g_objects.alloc_slot();
+    if (probe != 0 &&
+        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, probe,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        block_port, aegir::bootstrap::kCNodeBits,
+                        seL4_CapRights_new(1, 0, 0, 1), badge) == seL4_NoError) {
+        aegir::ipc::Consumer const probe_port(probe);
+        aegir::ipc::Reply const refused =
+            probe_port.call(aegir::block::kMethodRead, aegir::block::pack_read(0, 1));
+        holds = refused.error == 0 && refused.word == 0;
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, probe,
+                          aegir::bootstrap::kCNodeBits);
+    }
+    if (clamped.error != 0 || clamped.count != 1 || clamp_answer != 1 || !holds) {
+        aegir::debug_write("      FAIL starting ");
+        aegir::debug_write(name, name_length);
+        aegir::debug_write(": the range clamp would not record or does not hold\n");
+        return;
+    }
+    aegir::debug_write("      clamp: badge ");
+    aegir::debug_write_unsigned(badge);
+    aegir::debug_write(" refused sector 0, holds [");
+    aegir::debug_write_unsigned(first_lba);
+    aegir::debug_write("..");
+    aegir::debug_write_unsigned(first_lba + sector_count - 1);
+    aegir::debug_write("]\n");
+
     aegir::spawn::Process process{};
     if (!spawner.spawn(request, child_account, process)) {
         aegir::debug_write("      FAIL spawning ");
