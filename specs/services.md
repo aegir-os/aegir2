@@ -317,10 +317,12 @@ That map is the reason it exists, and everything else it does is in service of i
 
 ## The partition manager and the VFS
 
-- The partition manager asks the device manager's registry for block devices,
-  reads the partition table (MBR/GPT — a filesystem-agnostic job), and for each
-  partition starts the filesystem service matching that partition's type — a
-  spawn of its own, under the spawn right its manifest entry declares.
+- The device manager starts the partition manager once block drivers answer, and
+  hands it their ports -- the registry is the map it just built, not a service to
+  ask. The partition manager reads the partition table (GPT first — a
+  filesystem-agnostic job), and for each partition starts the filesystem service
+  matching that partition's type — a spawn of its own, under the spawn right its
+  manifest entry declares.
 - A filesystem service receives the block device's port and a *range* grant
   (offset and length), not the whole device. Least authority again.
 - **Filesystems register with the VFS.** `vfs.namespace` accepts a registration
@@ -724,3 +726,79 @@ interrupt handler (`seL4_IRQControl_Get`, `seL4_IRQHandler_SetNotification`,
 `seL4_IRQHandler_Ack`) whose notification the driver waits on. A driver therefore
 does not need to be told about the machine -- it needs to be told about *its*
 device, and the map is what works out which is which.
+
+## The storage stack, landed
+
+The chain director → device manager → partition manager → filesystem service runs
+end to end. The boot's own summary:
+
+    spawned blk.virtio0 for virtio,mmio at 0x10007000, badge 257
+    I am BD0: window of 64 KiB at 0x26000 (physical 0xffee0000)
+    spawned partmgr, badge 264
+    BD0Part0: sectors 2048..32734, "AEGIR"
+    spawned fat.BD0Part0, badge 512
+    fat.BD0Part0: FAT32, 1 sectors per cluster, data starts at sector 506
+    fat.BD0Part0: AEGIR.TXT says: aegir read this file off a disk it enumerated itself
+
+What was decided, and what it took:
+
+- **The driver registry is data.** `manifests/drivers.registry`, a descriptor row
+  per driver (`compatible=... id=... prefix=... bus=... binary=... memory=13
+  window=16`), packed into the initrd and parsed by the device manager
+  (libs/aegir-descriptor). Adding a driver is adding a row, not a recompile. The
+  `window` field is the driver's to declare: how big the shared window its port
+  serves through is, in bits.
+- **A block device names itself.** The public namespace is the driver's business
+  and nobody else's: the driver derives its unit from its instance name
+  (`blk.virtio0` is unit 0) and answers `identify` with **BD0**. The device
+  manager binds instances and never learns which of them are block devices.
+- **The block port** (libs/aegir-block, v1 in full): `identify` writes the answer
+  (name, sector count and size, the window's capacity) into the shared window;
+  `read` packs first-sector and count into one word (48 + 16 bits) and DMAs
+  straight into the window. Bulk data never crosses the message. One window per
+  device suffices because `seL4_Call` serializes: there is exactly one outstanding
+  request per window, and that is structural rather than a lock. The window is
+  mapped by the spawner, at spawn time, into everyone who uses it -- a service
+  cannot map into its own address space -- and the bootstrap block carries it as
+  a `SharedWindow` entry: virtual address, size, and the physical base a driver
+  points virtqueue descriptors at.
+- **Window frame caps multiply because a frame's first mapping pins its ASID into
+  the capability** (specs/authority.md records the rule and the kernel lines).
+  Every consumer gets its own cap set, minted before any mapping from a set that
+  stays pristine.
+- **The device manager spawns the partition manager.** The alternative -- director
+  starting it as a boot-set peer -- was rejected with the drivers: the director
+  would have to learn the storage stack's insides. What the partition manager is
+  handed is what bound: each block port's caller half (under the driver's
+  instance name), the window frame caps in two groups (its own, and a set
+  reserved for the children it starts), an untyped, the ASID pool, its VSpace
+  root, the delegatable log, and the filesystem helper's image as a blob.
+- **The partition manager enumerates.** It maps each window, calls `identify`,
+  and walks the GPT (protective MBR, header, entries). A partition is named from
+  the driver's name and the entry's index: **BD0Part0** -- the driver names, the
+  manager enumerates.
+- **Each partition gets a filesystem service with a range, not the device.** The
+  range travels as a descriptor row (`first=2048 sectors=30687 name=BD0Part0`)
+  written by the manager and parsed by the service; the service adds the offset
+  to every read it makes. That is a grant the child *reads* rather than authority
+  the kernel checks: clamping by badge is the driver's business, and comes with
+  the first writer.
+- **The filesystem service's image travels as bytes** (`binary_image`), one
+  helper at a time, because the whole initrd is 1.2 MiB and a copy per spawning
+  service does not fit a service-sized delegation.
+- **fs.fat reads FAT16/32 read-only**: BPB, the root directory, and a file's
+  cluster chain. The test disk is built host-side without root (sgdisk writes
+  the GPT, mtools fills the partition through `image@@offset`;
+  scripts/make_disk.py), and the file's own content is the checksum.
+- **Two latent limits broke on the way and are written down because they will
+  not be the last.** The bootstrap block was capped at 512 bytes although it is
+  mapped as a page, and a service with many grants (a window's frame per page)
+  did not fit; it fills its page now. And the virtqueue was single-shot -- the
+  available ring always published slot 0 and the wait asked *nonzero* rather
+  than *advanced* -- so the second read of a boot answered with the first
+  request's used entry and a status of 0xff. The rings carry cursors now.
+
+Still open, in the order they arrive: each driver's interrupt (IRQControl custody
+and the handler cap), a port for the device manager itself so the map is something
+other services can ask, the VFS and the `Initrd:` volume, and range clamping by
+badge in the driver.

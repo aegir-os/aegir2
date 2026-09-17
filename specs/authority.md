@@ -378,11 +378,46 @@ already-badged endpoint is exactly what the kernel refuses. The shape that respe
   spawning service supervises what it spawns, and its own badged cap could no more be
   re-badged than the log port's.
 
+The delegatable copy travels *down* the chain the same way it arrives: the device
+manager grants the partition manager its own `spawn:log.main`, unbadged, because the
+partition manager's `log.main` is badged with who *it* is and cannot be re-minted for
+the filesystem services it starts either.
+
+### A frame cap serves one address space; the copies come first
+
+A frame's *first* mapping pins it: the mapped ASID and address are written into the
+**capability** at map time, and a later map of the same cap into another VSpace is
+refused with `seL4_InvalidCapability` ("Attempting to remap a frame that does not
+belong to the passed address space", `kernel/src/arch/riscv/kernel/vspace.c:869-878`;
+the same check on ARM, `kernel/src/arch/arm/64/kernel/vspace.c:1568`). But the pin is
+in *that cap*, not in the frame: a copy made **before** any mapping carries no ASID
+and may be mapped into a different address space -- which is how one physical page
+serves two VSpaces, and the only way.
+
+The storage stack lives on this. A block port's shared window is mapped into the
+driver *and* into every client, so the device manager mints copy sets of the window's
+frame caps before anything maps them: the originals go to the driver, one set stays
+pristine as the source for client grants, and each consumer's set is minted from a set
+nobody has mapped. A copy made *after* a mapping inherits the mapping's ASID and is
+useless -- the order is the whole mechanism. The partition manager is granted two sets
+per port -- its own, and one reserved for the children it starts -- so a set it never
+maps can mint mappable windows for filesystem services without bound.
+
 ### The sizes, measured
 
-- The delegated untyped is **256 KiB** (`kDelegatedUntypedBits = 18`): the driver's image
-  alone maps ~172 KiB of frames (its queues are static storage), and 64 KiB and 128 KiB
-  were both measured too small rather than guessed.
-- Badges for a service's spawned children count from **256** -- the low badges are
-  director's boot set, and until the badge space is a designed thing, a spawning
-  service's children live in a range of their own.
+- The delegation to the device manager is **1 MiB** (`kDelegatedUntypedBits = 20`):
+  the driver's image (~172 KiB of frames, its queues are static storage), its 8 KiB
+  of virtqueue, the 64 KiB shared window, the partition manager's image and the
+  256 KiB it is delegated, and the filesystem service's image handed over as bytes.
+  256 KiB and 512 KiB were both measured too small rather than guessed.
+- The partition manager's own untyped is **256 KiB**: its children's images and
+  objects come from it.
+- The whole initrd is **not** delegated: 1.2 MiB does not fit a service-sized
+  delegation, so a service that starts one known helper is handed that helper's image
+  as a blob, and `spawn::Request.binary_image` reads bytes instead of an archive. The
+  day a service starts helpers it cannot name in advance, the answer is a narrower
+  initrd, not a bigger delegation.
+- Badges for a service's spawned children count from **256** for the device manager's
+  (the low badges are director's boot set) and from **512** for the partition
+  manager's -- until the badge space is a designed thing, each spawning service's
+  children live in a range of their own.
