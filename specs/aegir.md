@@ -33,6 +33,7 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
   spawn, and accounts.
 - `specs/vfs.md` — the namespace, the volume protocol, and capabilities over
   IPC.
+- `specs/auth.md` — the user database's format and the login port's protocol.
 - `specs/build.md` — build environment, targets, and what our image is made of.
 - `specs/third_party.md` — how third-party code is pinned, fetched and patched.
 - `specs/userland.md` — what Aegir's userland is, and what it is not.

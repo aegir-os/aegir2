@@ -197,10 +197,12 @@ What multiuser means here, concretely:
 
 ## Open, for review
 
-- **Credential storage and method.** Where the user database lives (proposal: an
-  initial copy in the initrd, authoritative copy on the root volume, `auth` waits
-  for the volume — see `specs/services.md`), what it stores (which hash?), and
-  whether login is a challenge over a port rather than a password crossing it.
+- **Credential storage and method.** Decided for the first slice
+  (`specs/auth.md`): the database is a binary table packed at build time from a
+  descriptor-row source, carried in the initrd and read through the namespace;
+  v1 sends the plain secret over the port, honestly interim, and login becomes
+  a challenge when user sessions give the port listeners. What stays open is
+  the hash and the challenge exchange of that later arc.
 - **What elevation grants.** Via the sudo-like tool: `auth` checks the credential,
   director performs the spawn. Proposal: a one-shot system process per request
   (running the named program, or starting the named manifest entry), charged to
