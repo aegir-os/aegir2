@@ -52,6 +52,24 @@ bool name_is_block_port(char const *name, uint32_t length)
            name[3] == '.';
 }
 
+/* A partition the table walk found, remembered for the spawn phase. The two
+ * phases are separate because they cannot overlap: a filesystem service
+ * serves through the same window frames the walk reads through -- one
+ * physical buffer per device, and every consumer's caps name those same
+ * frames -- so the walk's last read comes before the first spawn, and the
+ * "serve the one announce between spawn and ready" rhythm below never
+ * touches the window at all. */
+struct Pending {
+    seL4_CPtr port;        /* the block port's caller half */
+    char device_name[8];   /* Identify's name field */
+    uint32_t device_name_length;
+    uint32_t partition;    /* its index in the table */
+    uint64_t first_lba;
+    uint64_t sector_count;
+    uint32_t port_index;   /* which window's frames its child maps with */
+    Pending *next;
+};
+
 /* A copy set of a window's frames, minted from one of the granted groups into
  * slots of our own, for one filesystem service to be mapped with. The group
  * it comes from is never mapped by anyone, so the copies arrive with no ASID
@@ -511,6 +529,7 @@ int main(int argc, char *argv[])
     }
 
     uint32_t port_index = 0;
+    Pending *pendings = nullptr;
     for (uint32_t e = 0; e < block->entry_count; ++e) {
         aegir::bootstrap::Entry const &entry = block->entries[e];
         if (entry.kind != aegir::bootstrap::EntryKind::Capability) {
@@ -667,43 +686,30 @@ int main(int argc, char *argv[])
                             aegir::debug_write("\"");
                         }
                         aegir::debug_write("\n");
-                        /* The filesystem service the partition calls for,
-                         * with the caller half of this port and a window set
-                         * of its own. Its group of this port's frames is the
-                         * second of the two. */
+                        /* Remembered for the spawn phase: starting the
+                         * service now would put a serving child on this
+                         * window while the walk is still reading through
+                         * it (Pending, above). */
                         if (can_spawn) {
-                            uint32_t const children_grant =
-                                port_index * 2 * pages_per_window + pages_per_window;
-                            uint64_t window_physical = 0;
-                            static_cast<void>(aegir::bootstrap::device_capability(
-                                children_grant, &window_physical, nullptr, nullptr));
-                            start_filesystem(
-                                spawner, static_cast<seL4_CPtr>(spawn_log_slot), nmspace,
-                                announce, device_name, device_name_length, i,
-                                partition.first_lba,
-                                partition.last_lba - partition.first_lba + 1,
-                                static_cast<seL4_CPtr>(entry.number), children_grant,
-                                window_physical, pages_per_window,
-                                reinterpret_cast<void const *>(fs_image_address),
-                                fs_image_bytes, 512u + fs_started);
-                            ++fs_started;
-                            /* The child just served itself through this same
-                             * window -- one physical buffer per device, and
-                             * every consumer's caps name those same frames --
-                             * so what the chunk held is gone. Read it again
-                             * before the next entry is parsed. */
-                            aegir::ipc::Reply const again = port.call(
-                                aegir::block::kMethodRead,
-                                aegir::block::pack_read(
-                                    entries_lba +
-                                        static_cast<uint64_t>(base) * entry_bytes / 512,
-                                    chunk_sectors));
-                            if (again.error != 0 || again.word != chunk_sectors) {
+                            auto *pending =
+                                static_cast<Pending *>(arena.allocate(sizeof(Pending)));
+                            if (pending == nullptr) {
                                 aegir::debug_write(
-                                    "      FAIL partition manager: the entries would not re-read\n");
-                                table_broken = true;
-                                break;
+                                    "      FAIL partition manager: no memory for a partition\n");
+                                continue;
                             }
+                            pending->port = static_cast<seL4_CPtr>(entry.number);
+                            pending->device_name_length = device_name_length;
+                            for (uint32_t c = 0; c < device_name_length; ++c) {
+                                pending->device_name[c] = device_name[c];
+                            }
+                            pending->partition = i;
+                            pending->first_lba = partition.first_lba;
+                            pending->sector_count =
+                                partition.last_lba - partition.first_lba + 1;
+                            pending->port_index = port_index;
+                            pending->next = pendings;
+                            pendings = pending;
                         }
                     }
                 }
@@ -719,6 +725,26 @@ int main(int argc, char *argv[])
             g_scratch.unmap(static_cast<seL4_CPtr>(grant_slot));
         }
         ++port_index;
+    }
+
+    /* The walk is done, and with it every read through a window. Now the
+     * spawns: each child serves through its window's frames from the moment
+     * it starts, which is exactly what the walk could not have happening
+     * underneath it (Pending, above). A child's group of its port's frames
+     * is the second of the two. */
+    for (Pending *pending = pendings; pending != nullptr; pending = pending->next) {
+        uint32_t const children_grant =
+            pending->port_index * 2 * pages_per_window + pages_per_window;
+        uint64_t window_physical = 0;
+        static_cast<void>(aegir::bootstrap::device_capability(
+            children_grant, &window_physical, nullptr, nullptr));
+        start_filesystem(spawner, static_cast<seL4_CPtr>(spawn_log_slot), nmspace,
+                         announce, pending->device_name, pending->device_name_length,
+                         pending->partition, pending->first_lba, pending->sector_count,
+                         pending->port, children_grant, window_physical, pages_per_window,
+                         reinterpret_cast<void const *>(fs_image_address), fs_image_bytes,
+                         512u + fs_started);
+        ++fs_started;
     }
 
     aegir::debug_write("      partition manager: ready\n");
