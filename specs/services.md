@@ -809,9 +809,12 @@ What was decided, and what it took:
 - **Each partition gets a filesystem service with a range, not the device.** The
   range travels as a descriptor row (`first=2048 sectors=30687 name=BD0Part0`)
   written by the manager and parsed by the service; the service adds the offset
-  to every read it makes. That is a grant the child *reads* rather than authority
-  the kernel checks: clamping by badge is the driver's business, and comes with
-  the first writer.
+  to every read it makes. And it is enforced, not just read: the manager
+  records the range with the driver (`kMethodClamp`, `libs/aegir-block`) before
+  the child exists, the driver clamps every read by the caller's badge --
+  badge 0 is the manager and the whole device, any other badge its recorded
+  range, an unrecorded badge nothing -- and the manager proves each clamp
+  holds by asking for sector 0 with the child's own badge and being refused.
 - **The filesystem service's image travels as bytes** (`binary_image`), one
   helper at a time, because the whole initrd is 1.2 MiB and a copy per spawning
   service does not fit a service-sized delegation.
@@ -838,5 +841,6 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: the VFS and the `Initrd:` volume, and range
-clamping by badge in the driver.
+Still open, in the order they arrive: `auth` and the user sessions it starts
+(boot-set rows 7-8), and a badge space that is a designed thing rather than
+ranges each spawning service picks for itself.
