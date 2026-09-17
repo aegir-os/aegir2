@@ -135,6 +135,106 @@ bool read_and_check(seL4_CPtr port, char const *path, uint32_t path_length,
     return right && seen == expected_length;
 }
 
+/* The handle side (specs/vfs.md): open with its mode flags, write at the
+ * cursor, close. Zero is never a handle, and ~0 is a write whose answer did
+ * not come back -- both are the refusal a check reports. */
+uint64_t vol_open(seL4_CPtr port, char const *path, uint32_t path_length,
+                  uint64_t flags) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 2];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    out[out_words] = flags;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodOpen, out, out_words + 1, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
+uint64_t vol_write(seL4_CPtr port, uint64_t handle, uint8_t const *bytes,
+                   uint32_t count) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[2 + aegir::volume::kWriteMax / 8];
+    out[0] = handle;
+    out[1] = count;
+    auto *packed = reinterpret_cast<uint8_t *>(out + 2);
+    for (uint32_t i = 0; i < count; ++i) {
+        packed[i] = bytes[i];
+    }
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodWrite, out, 2 + (count + 7) / 8, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return ~0ULL;
+    }
+    return in[0];
+}
+
+uint64_t vol_close(seL4_CPtr port, uint64_t handle) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodClose, &handle, 1, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
+/* What the write test writes: a pattern the reader can recompute, so a byte
+ * that landed in the wrong place is a byte that reads back wrong. */
+uint8_t pattern_at(uint64_t i) noexcept
+{
+    return static_cast<uint8_t>('a' + (i % 26));
+}
+
+/* Read the whole file and check every byte against the pattern. */
+bool read_and_check_pattern(seL4_CPtr port, char const *path, uint32_t path_length,
+                            uint64_t total) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t offset = 0;
+    bool right = true;
+    for (;;) {
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 3];
+        uint32_t out_words =
+            aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+        out[out_words++] = offset;
+        out[out_words++] = aegir::volume::kReadMax;
+        uint64_t in[aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8];
+        aegir::ipc::WordsReply const answer = volume.call_words(
+            aegir::volume::kMethodRead, out, out_words, in,
+            aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8);
+        if (answer.error != 0 || answer.count < aegir::volume::kReadHeaderWords) {
+            return false;
+        }
+        uint64_t const count = in[0];
+        uint64_t const eof = in[1];
+        if (count > aegir::volume::kReadMax ||
+            answer.count < aegir::volume::kReadHeaderWords + (count + 7) / 8) {
+            return false;
+        }
+        auto const *bytes =
+            reinterpret_cast<uint8_t const *>(in + aegir::volume::kReadHeaderWords);
+        for (uint64_t i = 0; i < count; ++i) {
+            if (offset + i >= total || bytes[i] != pattern_at(offset + i)) {
+                right = false;
+            }
+        }
+        offset += count;
+        if (eof != 0 || count == 0) {
+            break;
+        }
+    }
+    return right && offset == total;
+}
+
 /* A login ask: both halves of the credential, one word back -- and a word
  * that is not 0 or 1 says the protocol itself broke, which is a different
  * failure than a refused login. */
@@ -288,6 +388,107 @@ int main(int argc, char *argv[])
             write(bytes, 8);
             write("\n");
         }
+    }
+
+    /* The write side, on the volume that exists for it: create, write across
+     * a cluster boundary in two calls, close, read back byte-exact, list;
+     * then truncate shrinks it, and the refusals -- an existing name without
+     * create, a read-only volume, a handle that is not one. */
+    seL4_CPtr const scratch_volume =
+        resolve("SCRATCH:WROTE.TXT", 17, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 3));
+    {
+        constexpr uint64_t kTotal = 1100; /* two clusters and a piece */
+        uint8_t bytes[700];
+        for (uint32_t i = 0; i < sizeof(bytes); ++i) {
+            bytes[i] = pattern_at(400 + i);
+        }
+        uint64_t const handle =
+            vol_open(scratch_volume, rest, rest_length,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool ok = handle != 0;
+        if (ok) {
+            uint8_t first[400];
+            for (uint32_t i = 0; i < sizeof(first); ++i) {
+                first[i] = pattern_at(i);
+            }
+            ok = vol_write(scratch_volume, handle, first, sizeof(first)) == sizeof(first) &&
+                 vol_write(scratch_volume, handle, bytes, sizeof(bytes)) == sizeof(bytes) &&
+                 vol_close(scratch_volume, handle) == 1;
+        }
+        if (!ok) {
+            write("  test: FAIL SCRATCH:WROTE.TXT would not be written\n");
+            ++failed;
+        } else if (!read_and_check_pattern(scratch_volume, rest, rest_length, kTotal)) {
+            write("  test: FAIL SCRATCH:WROTE.TXT did not read back what was written\n");
+            ++failed;
+        } else {
+            write("  test: SCRATCH:WROTE.TXT reads back what was written (");
+            aegir::debug_write_unsigned(kTotal);
+            write(" bytes across a cluster boundary)\n");
+        }
+    }
+    {
+        /* Listed, with its size; then truncated small again. */
+        aegir::ipc::Consumer volume(scratch_volume);
+        bool listed = false;
+        for (uint32_t i = 0;; ++i) {
+            uint64_t out[2] = {0, i};
+            uint64_t in[aegir::ipc::kMaxWords];
+            aegir::ipc::WordsReply const answer = volume.call_words(
+                aegir::volume::kMethodList, out, 2, in, aegir::ipc::kMaxWords);
+            if (answer.error != 0 || answer.count == 0) {
+                break;
+            }
+            char const *name = nullptr;
+            uint32_t name_length = 0;
+            if (aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                              &name, &name_length) &&
+                name_length == 9 && same_bytes(name, "WROTE.TXT", 9)) {
+                listed = true;
+            }
+        }
+        if (!listed) {
+            write("  test: FAIL SCRATCH: lists without WROTE.TXT\n");
+            ++failed;
+        } else {
+            write("  test: SCRATCH: lists WROTE.TXT\n");
+        }
+
+        constexpr uint64_t kSmall = 10;
+        uint8_t small[kSmall];
+        for (uint32_t i = 0; i < sizeof(small); ++i) {
+            small[i] = pattern_at(i);
+        }
+        uint64_t const handle =
+            vol_open(scratch_volume, rest, rest_length,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool const shrunk = handle != 0 &&
+                            vol_write(scratch_volume, handle, small, sizeof(small)) ==
+                                sizeof(small) &&
+                            vol_close(scratch_volume, handle) == 1 &&
+                            read_and_check_pattern(scratch_volume, rest, rest_length, kSmall);
+        if (!shrunk) {
+            write("  test: FAIL SCRATCH:WROTE.TXT did not truncate and rewrite\n");
+            ++failed;
+        } else {
+            write("  test: SCRATCH:WROTE.TXT truncates and rewrites\n");
+        }
+    }
+    /* The refusals: an existing name without create, a read-only volume, a
+     * handle that is not one. */
+    if (vol_open(scratch_volume, rest, rest_length, 0) != 0) {
+        write("  test: FAIL an existing name opened without create\n");
+        ++failed;
+    }
+    if (vol_open(initrd_volume, "services.manifest", 17, aegir::volume::kOpenCreate) != 0) {
+        write("  test: FAIL the read-only volume took an open\n");
+        ++failed;
+    }
+    if (vol_write(scratch_volume, 9999, nullptr, 0) != 0 || /* no such handle */
+        vol_close(scratch_volume, 9999) != 0) {
+        write("  test: FAIL a handle that is not one was not refused\n");
+        ++failed;
     }
 
     /* auth.login: the entry the build packed is the checksum -- accepted
