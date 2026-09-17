@@ -1,6 +1,7 @@
 # auth: the user database and the login port
 
-Status: specified, not yet implemented (2026-09).
+Status: first slice implemented (2026-09) — the database, the packer, the
+service, and the login check. Sessions and elevation remain open.
 
 `auth` owns two things: the record of who the users are, and the port that
 answers "is this them" — `auth.login` (boot-set row 7, `specs/services.md`).

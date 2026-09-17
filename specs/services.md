@@ -841,6 +841,8 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: `auth` and the user sessions it starts
-(boot-set rows 7-8), and a badge space that is a designed thing rather than
-ranges each spawning service picks for itself.
+Still open, in the order they arrive: the user sessions `auth` starts (boot-set
+row 8 -- the login port and its database landed with `specs/auth.md`'s first
+slice; what a login answer carries, and what a session is given, is the next
+spec), and a badge space that is a designed thing rather than ranges each
+spawning service picks for itself.
