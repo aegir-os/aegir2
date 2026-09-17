@@ -14,10 +14,15 @@
  *     each resolver's own badge onto the copy it hands out. The answer is
  *     the name the volume actually got: a duplicate gains a `_N` suffix, and
  *     the registrant is told rather than shadowed silently.
- *   - `resolve`: a path, `Volume:rest`. The answer is one capability -- the
+ *   - `resolve`: a path, `Volume:rest`, where the volume part may be an
+ *     alias (specs/vfs.md's Aliases). The answer is one capability -- the
  *     volume's port, minted with the caller's badge, so the filesystem sees
- *     the true caller -- and where `rest` begins. Everything after the colon
- *     is the filesystem's to interpret.
+ *     the true caller -- and the volume-relative path the argument truly
+ *     names, as a string: substitution composes a rest the caller's string
+ *     never contained, and one reply shape serves both. Everything after
+ *     the colon is the filesystem's to interpret.
+ *   - `bind`: an alias for one badge -- the badge, the name, the path it
+ *     stands for. auth binds each session's Home: at login.
  *   - `count`/`describe`: the volumes, one Row per describe. The registry
  *     pattern (aegir/registry.h) applied to names.
  *
@@ -37,9 +42,10 @@ constexpr char kPortName[] = "vfs.namespace";
 constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
 constexpr uint32_t kMethodRegister = 1; /* in: name words + 1 cap; answer: assigned name */
-constexpr uint32_t kMethodResolve = 2;  /* in: path words; answer: rest offset + 1 cap */
+constexpr uint32_t kMethodResolve = 2;  /* in: path words; answer: the rest string + 1 cap */
 constexpr uint32_t kMethodCount = 3;    /* answer: how many volumes the namespace holds */
 constexpr uint32_t kMethodDescribe = 4; /* in: an index; answer: a Row's words */
+constexpr uint32_t kMethodBind = 5;     /* in: badge, name, path; answer: 1 bound, 0 refused */
 
 /** Register flags. */
 constexpr uint64_t kFlagReadOnly = 1;
@@ -101,8 +107,8 @@ struct Row {
 /** The Row as the message carries it. */
 constexpr uint32_t kRowWords = (sizeof(Row) + 7) / 8;
 
-/* resolve's answer words: where the rest of the path begins (the byte after
- * the colon), or an error. */
-constexpr uint32_t kResolveWords = 1;
+/* resolve's answer, at its longest: the volume-relative rest as one packed
+ * string -- the whole envelope, the way the request's path is. */
+constexpr uint32_t kResolveWords = kPathMax / 8 + 1;
 
 }  // namespace aegir::nmspace

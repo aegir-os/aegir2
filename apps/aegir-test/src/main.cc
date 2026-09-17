@@ -70,10 +70,14 @@ bool same_bytes(char const *a, char const *b, uint32_t length)
  * join the namespace while the boot set is still coming up, and a service
  * that asks too early is told no -- not yet is the same answer as never,
  * so the asking repeats. The capability the answer carries lands in `slot`,
- * minted with this service's own badge. */
+ * minted with this service's own badge, and the volume-relative rest comes
+ * back as a string -- an alias composes one the path never contained
+ * (specs/vfs.md's Aliases). One static buffer, because the checks resolve
+ * one path and use it before resolving the next. */
 seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
                   uint32_t *rest_length, seL4_CPtr slot) noexcept
 {
+    static char rest_buffer[aegir::nmspace::kPathMax];
     for (;;) {
         uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
         uint32_t const out_words =
@@ -83,10 +87,17 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
         aegir::ipc::WordsReply const answer =
             g_nmspace.call_transfer(aegir::nmspace::kMethodResolve, out, out_words, 0, in,
                                     aegir::nmspace::kResolveWords, &cap_arrived);
-        if (answer.error == 0 && answer.count == aegir::nmspace::kResolveWords &&
-            cap_arrived && in[0] <= path_length && aegir::ipc::take_received_cap(slot)) {
-            *rest = path + in[0];
-            *rest_length = path_length - static_cast<uint32_t>(in[0]);
+        char const *text = nullptr;
+        uint32_t length = 0;
+        if (answer.error == 0 && cap_arrived &&
+            aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                          &text, &length) &&
+            aegir::ipc::take_received_cap(slot)) {
+            for (uint32_t i = 0; i < length; ++i) {
+                rest_buffer[i] = text[i];
+            }
+            *rest = rest_buffer;
+            *rest_length = length;
             return slot;
         }
         seL4_Yield();
@@ -316,6 +327,19 @@ int main(int argc, char *argv[])
         ++failed;
     } else {
         write("  test: AEGIR:AEGIR.TXT reads back what the disk holds\n");
+    }
+
+    /* The same file by the system volume's alias: the disk's type GUID said
+     * AEGIR is Sys:, and the alias must answer with the same bytes. */
+    seL4_CPtr const sys_volume =
+        resolve("Sys:AEGIR.TXT", 13, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 4));
+    if (!read_and_check(sys_volume, rest, rest_length, kAegirTxt,
+                        text_length(kAegirTxt))) {
+        write("  test: FAIL Sys:AEGIR.TXT did not read back what AEGIR: holds\n");
+        ++failed;
+    } else {
+        write("  test: Sys:AEGIR.TXT is AEGIR:AEGIR.TXT by another name\n");
     }
 
     /* The same capability lists the volume's root: the empty rest names the

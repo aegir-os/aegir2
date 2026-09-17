@@ -291,8 +291,12 @@ int main(int argc, char *argv[])
     }
 
     /* Resolve Initrd:users.db, asking again until the volume exists -- the
-     * volumes join the namespace while the boot set is still coming up. */
+     * volumes join the namespace while the boot set is still coming up. The
+     * answer carries the volume-relative rest as a string (an alias may
+     * have composed one the path never contained, specs/vfs.md's Aliases),
+     * so it lands in a buffer of our own. */
     constexpr char kPath[] = "Initrd:users.db";
+    static char rest_buffer[aegir::nmspace::kPathMax];
     seL4_CPtr volume = 0;
     char const *rest = nullptr;
     uint32_t rest_length = 0;
@@ -305,12 +309,18 @@ int main(int argc, char *argv[])
         aegir::ipc::WordsReply const answer = nmspace.call_transfer(
             aegir::nmspace::kMethodResolve, out, out_words, 0, in,
             aegir::nmspace::kResolveWords, &cap_arrived);
-        if (answer.error == 0 && answer.count == aegir::nmspace::kResolveWords &&
-            cap_arrived && in[0] <= sizeof(kPath) - 1 &&
+        char const *text = nullptr;
+        uint32_t length = 0;
+        if (answer.error == 0 && cap_arrived &&
+            aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                          &text, &length) &&
             aegir::ipc::take_received_cap(db_slot)) {
             volume = db_slot;
-            rest = kPath + in[0];
-            rest_length = sizeof(kPath) - 1 - static_cast<uint32_t>(in[0]);
+            for (uint32_t i = 0; i < length; ++i) {
+                rest_buffer[i] = text[i];
+            }
+            rest = rest_buffer;
+            rest_length = length;
         } else {
             seL4_Yield();
         }

@@ -55,12 +55,20 @@ struct Volume {
 Volume *g_volumes = nullptr;
 uint32_t g_volume_count = 0;
 
-/* The system volume's assigned name, recorded from the first registration
- * that carries the boot flag -- the partition manager read it off the
- * partition's type GUID (specs/vfs.md's Aliases). Empty: this disk has no
- * Sys:, and resolves of it refuse. */
-char g_sys[aegir::nmspace::kNameMax];
-uint32_t g_sys_length = 0;
+/* An alias: a name that stands for a path (specs/vfs.md's Aliases). Sys is
+ * kept as one of these with the everyone-badge rather than through a shape
+ * of its own -- one table, one walk. */
+struct Binding {
+    uint64_t badge; /* whose alias this is; kAliasEveryone for a global */
+    char name[aegir::nmspace::kNameMax];
+    uint32_t name_length;
+    char target[aegir::nmspace::kPathMax];
+    uint32_t target_length;
+    Binding *next;
+};
+constexpr uint64_t kAliasEveryone = ~0ULL;
+Binding *g_bindings = nullptr;
+uint32_t g_binding_count = 0;
 
 /* The table's backing store: the memory the manifest's memory_kib granted,
  * mapped and ours, used up from the front. */
@@ -111,6 +119,26 @@ Volume *find_volume(char const *name, uint32_t length) noexcept
         }
     }
     return nullptr;
+}
+
+/* The binding that answers a name for a caller: the caller's own first, the
+ * everyone-badge after -- a session's Home: is its own, and Sys: is
+ * everyone's. */
+Binding *find_binding(uint64_t badge, char const *name, uint32_t length) noexcept
+{
+    Binding *global = nullptr;
+    for (Binding *b = g_bindings; b != nullptr; b = b->next) {
+        if (!same_volume(b->name, b->name_length, name, length)) {
+            continue;
+        }
+        if (b->badge == badge) {
+            return b;
+        }
+        if (b->badge == kAliasEveryone) {
+            global = b;
+        }
+    }
+    return global;
 }
 
 /* The name the volume actually gets: the one it asked for, or that with a
@@ -192,18 +220,29 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     write(volume->name, volume->name_length);
     write(": registered\n");
     if ((flags & aegir::nmspace::kFlagBoot) != 0) {
-        if (g_sys_length == 0) {
-            for (uint32_t i = 0; i < volume->name_length; ++i) {
-                g_sys[i] = volume->name[i];
-            }
-            g_sys_length = volume->name_length;
-            write("  vfs: Sys: is ");
-            write(g_sys, g_sys_length);
-            write("\n");
-        } else {
+        Binding *sys = static_cast<Binding *>(arena_take(sizeof(Binding)));
+        if (sys == nullptr) {
+            write("  vfs: no room for the Sys: alias, refused\n");
+        } else if (find_binding(kAliasEveryone, "Sys", 3) != nullptr) {
             write("  vfs: ");
             write(volume->name, volume->name_length);
             write(": a second boot flag -- the first stands\n");
+        } else {
+            sys->badge = kAliasEveryone;
+            sys->name[0] = 'S';
+            sys->name[1] = 'y';
+            sys->name[2] = 's';
+            sys->name_length = 3;
+            for (uint32_t i = 0; i < volume->name_length; ++i) {
+                sys->target[i] = volume->name[i];
+            }
+            sys->target_length = volume->name_length;
+            sys->next = g_bindings;
+            g_bindings = sys;
+            ++g_binding_count;
+            write("  vfs: Sys: is ");
+            write(sys->target, sys->target_length);
+            write("\n");
         }
     }
     uint64_t answer[aegir::nmspace::kNameMax / 8 + 1];
@@ -213,9 +252,86 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     port.reply_words(answer, answer_words);
 }
 
+/* bind: a badge, an alias name, the path it stands for (specs/vfs.md's
+ * Aliases). A pair binds once -- a badge's serial is never reused, so a
+ * second bind of the same pair is a lie, not a correction. */
+void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    char const *target = nullptr;
+    uint32_t target_length = 0;
+    if (count < 2 ||
+        !aegir::nmspace::unpack_string(words + 1, count - 1, aegir::nmspace::kNameMax,
+                                       &name, &name_length) ||
+        name_length == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const badge = words[0];
+    uint32_t const name_words = 1 + (name_length + 7) / 8;
+    if (count < 1 + name_words ||
+        !aegir::nmspace::unpack_string(words + 1 + name_words, count - 1 - name_words,
+                                       aegir::nmspace::kPathMax, &target, &target_length) ||
+        target_length == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    /* A name with a colon is a path, not an alias; a volume's name is a
+     * volume's -- resolution looks volumes up first, so the alias would be
+     * dead on arrival; and a bound pair does not rebind. */
+    bool colon = false;
+    for (uint32_t i = 0; i < name_length; ++i) {
+        if (name[i] == ':') {
+            colon = true;
+        }
+    }
+    if (colon || find_volume(name, name_length) != nullptr ||
+        find_binding(badge, name, name_length) != nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Binding *binding = static_cast<Binding *>(arena_take(sizeof(Binding)));
+    if (binding == nullptr) {
+        write("  vfs: no room for another alias, refused\n");
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    binding->badge = badge;
+    for (uint32_t i = 0; i < name_length; ++i) {
+        binding->name[i] = name[i];
+    }
+    binding->name_length = name_length;
+    for (uint32_t i = 0; i < target_length; ++i) {
+        binding->target[i] = target[i];
+    }
+    binding->target_length = target_length;
+    binding->next = g_bindings;
+    g_bindings = binding;
+    ++g_binding_count;
+    write("  vfs: ");
+    write(binding->name, binding->name_length);
+    write(": bound for badge ");
+    aegir::debug_write_hex(badge);
+    write("\n");
+    uint64_t const one = 1;
+    port.reply_words(&one, 1);
+}
+
+/* resolve: a `Volume:rest` path, where the volume part may be an alias
+ * (specs/vfs.md's Aliases). Substitution composes a path the caller never
+ * wrote -- Home:WELCOME.TXT is Sys:Homes/<user>/WELCOME.TXT is
+ * AEGIR:Homes/<user>/WELCOME.TXT -- so the reply carries the
+ * volume-relative rest as a string, and the alias table's own length bounds
+ * the chain: a chain that outlasts it is a cycle. The buffers are static:
+ * the serve loop is one thread, and a path is a kilobyte the stack need
+ * not hold twice. */
 void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                     seL4_Word badge) noexcept
 {
+    static char composed[aegir::nmspace::kPathMax];
+    static char next[aegir::nmspace::kPathMax];
+
     char const *path = nullptr;
     uint32_t path_length = 0;
     if (count == 0 ||
@@ -224,22 +340,74 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
         port.reply_words(nullptr, 0);
         return;
     }
-    uint32_t colon = 0;
-    while (colon < path_length && path[colon] != ':') {
-        ++colon;
+    uint32_t composed_length = path_length;
+    for (uint32_t i = 0; i < path_length; ++i) {
+        composed[i] = path[i];
     }
-    if (colon == path_length || colon == 0) {
-        port.reply_words(nullptr, 0);
-        return;
+
+    uint32_t budget = g_binding_count + 1;
+    Volume const *volume = nullptr;
+    uint32_t rest_at = 0;
+    for (;;) {
+        uint32_t colon = 0;
+        while (colon < composed_length && composed[colon] != ':') {
+            ++colon;
+        }
+        if (colon == composed_length || colon == 0) {
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        volume = find_volume(composed, colon);
+        if (volume != nullptr) {
+            rest_at = colon + 1;
+            break;
+        }
+        Binding const *binding = find_binding(badge, composed, colon);
+        if (binding == nullptr || budget == 0) {
+            write("  vfs: ");
+            write(composed, colon);
+            write(binding == nullptr ? ": no such volume\n" : ": an alias cycle\n");
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        --budget;
+        /* Compose: the target, then the rest. A target that names a volume
+         * joins with a colon; one that is a path joins with a slash, and an
+         * empty rest adds nothing. */
+        char const *target = binding->target;
+        uint32_t const target_length = binding->target_length;
+        uint32_t const rest_length = composed_length - colon - 1;
+        bool const target_is_path = [&] {
+            for (uint32_t i = 0; i < target_length; ++i) {
+                if (target[i] == ':') {
+                    return true;
+                }
+            }
+            return false;
+        }();
+        uint32_t const separator = rest_length != 0 || !target_is_path ? 1 : 0;
+        uint32_t const next_length = target_length + separator + rest_length;
+        if (next_length > aegir::nmspace::kPathMax) {
+            write("  vfs: an alias chain outgrew the path bound\n");
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        uint32_t at = 0;
+        for (uint32_t i = 0; i < target_length; ++i) {
+            next[at++] = target[i];
+        }
+        if (separator != 0) {
+            next[at++] = target_is_path ? '/' : ':';
+        }
+        for (uint32_t i = 0; i < rest_length; ++i) {
+            next[at++] = composed[colon + 1 + i];
+        }
+        for (uint32_t i = 0; i < next_length; ++i) {
+            composed[i] = next[i];
+        }
+        composed_length = next_length;
     }
-    Volume const *volume = find_volume(path, colon);
-    if (volume == nullptr) {
-        write("  vfs: ");
-        write(path, colon);
-        write(": no such volume\n");
-        port.reply_words(nullptr, 0);
-        return;
-    }
+
     /* The caller's own badge on the copy: the filesystem learns who is
      * asking from the kernel, which is what a range or a permission will one
      * day clamp by (specs/vfs.md). Minting from the unbadged stored cap is
@@ -253,8 +421,11 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const rest = colon + 1;
-    port.reply_cap(&rest, 1, g_mint_slot);
+    uint64_t answer[aegir::nmspace::kResolveWords];
+    uint32_t const answer_words =
+        aegir::nmspace::pack_string(answer, composed + rest_at, composed_length - rest_at,
+                                    aegir::nmspace::kPathMax);
+    port.reply_cap(answer, answer_words, g_mint_slot);
     /* The kernel transferred a copy; ours leaves, and the slot answers the
      * next resolve. */
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
@@ -356,6 +527,9 @@ int main(int argc, char *argv[])
         }
         case aegir::nmspace::kMethodDescribe:
             answer_describe(port, words, count);
+            break;
+        case aegir::nmspace::kMethodBind:
+            answer_bind(port, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

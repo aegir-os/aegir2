@@ -91,6 +91,7 @@ int main(int argc, char *argv[])
      * namespace answers "not yet" and "never" the same way, so the asking
      * is the wait (specs/vfs.md). */
     constexpr char kPath[] = "Initrd:services.manifest";
+    static char rest_buffer[aegir::nmspace::kPathMax];
     seL4_CPtr volume = 0;
     char const *rest = nullptr;
     uint32_t rest_length = 0;
@@ -103,12 +104,18 @@ int main(int argc, char *argv[])
         aegir::ipc::WordsReply const answer = nmspace.call_transfer(
             aegir::nmspace::kMethodResolve, out, out_words, 0, in,
             aegir::nmspace::kResolveWords, &cap_arrived);
-        if (answer.error == 0 && answer.count == aegir::nmspace::kResolveWords &&
-            cap_arrived && in[0] <= sizeof(kPath) - 1 &&
+        char const *text = nullptr;
+        uint32_t length = 0;
+        if (answer.error == 0 && cap_arrived &&
+            aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                          &text, &length) &&
             aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free))) {
             volume = static_cast<seL4_CPtr>(first_free);
-            rest = kPath + in[0];
-            rest_length = sizeof(kPath) - 1 - static_cast<uint32_t>(in[0]);
+            for (uint32_t i = 0; i < length; ++i) {
+                rest_buffer[i] = text[i];
+            }
+            rest = rest_buffer;
+            rest_length = length;
             break;
         }
         seL4_Yield();
