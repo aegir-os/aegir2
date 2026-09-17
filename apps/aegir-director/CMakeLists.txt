@@ -42,6 +42,7 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-vfs>"
     "$<TARGET_FILE:aegir-fs-initrd>"
     "$<TARGET_FILE:aegir-auth>"
+    "$<TARGET_FILE:aegir-session-smoke>"
     "$<TARGET_FILE:aegir-test>"
 )
 set(aegir_initrd_names
@@ -57,6 +58,7 @@ set(aegir_initrd_names
     "aegir-vfs"
     "aegir-fs-initrd"
     "aegir-auth"
+    "aegir-session-smoke"
     "aegir-test"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
