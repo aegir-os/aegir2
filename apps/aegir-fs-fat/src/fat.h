@@ -78,6 +78,7 @@ constexpr uint32_t kDirentClusterHigh = 20;
 constexpr uint32_t kDirentClusterLow = 26;
 constexpr uint32_t kDirentSize = 28;
 constexpr uint8_t kAttrArchive = 0x20;
+constexpr uint8_t kAttrDirectory = 0x10;
 
 /** Validate a client's name and build its 8.3 form: uppercase, space-padded,
  *  one dot, letters and digits and '-' and '_' (the conservative end of the
@@ -86,6 +87,10 @@ bool name_83(char const *name, uint32_t length, uint8_t out[11]) noexcept;
 
 /** Fill a 32-byte slot: a plain new file of this name. */
 void dirent_make(uint8_t slot[32], uint8_t const name83[11]) noexcept;
+
+/** Fill a 32-byte slot: a new directory of this name, on this cluster. */
+void dirent_make_dir(uint8_t slot[32], uint8_t const name83[11],
+                     uint32_t cluster) noexcept;
 
 /** Patch an existing slot after a write: the first cluster and the size. */
 void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noexcept;

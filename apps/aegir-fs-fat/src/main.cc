@@ -17,8 +17,7 @@
  * on the partition manager's own port -- the manager registers it with the
  * VFS, because a service not in the manifest is given its ports rather than
  * declaring them (specs/vfs.md) -- and then serves the volume protocol on
- * "vol": the root directory, version one, with directories the recorded next
- * step.
+ * "vol": component paths under the colon, directories walked and made.
  */
 
 #include "fat.h"
@@ -423,25 +422,26 @@ bool walk(char const *path, uint32_t path_length, bool through_last, Dir *dir,
     return true;
 }
 
-/* What a walk of the root directory came back with. */
-enum class Root : uint32_t {
+/* What a walk of a directory for a name came back with. */
+enum class Slot : uint32_t {
     Found,  /* the name is there; the locator is its slot */
     Free,   /* the name is not; the locator is a slot a new entry may take */
     Full,   /* no free slot and the chain would not grow: the volume is full */
     Broken, /* a read or a write underneath failed */
 };
 
-/* Walk the root directory's chain (FAT32: a chain like any other, and it
- * grows the same way), reporting where `name` lives when it does and the
- * first slot a new entry could take when it does not -- an End or deleted
- * slot, or, the chain being full, a fresh cluster linked on and zeroed. */
-Root root_slot(char const *name, uint32_t name_length, aegir::fat::Dirent *out,
-               uint64_t *sector_out, uint32_t *index_out) noexcept
+/* Walk one directory's chain (FAT32: every directory is a chain, the root
+ * included, and a full one grows like any file's), reporting where `name`
+ * lives when it does and the first slot a new entry could take when it does
+ * not -- an End or deleted slot, or, the chain being full, a fresh cluster
+ * linked on and zeroed. */
+Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Dirent *out,
+              uint64_t *sector_out, uint32_t *index_out) noexcept
 {
     bool have_free = false;
     uint64_t free_sector = 0;
     uint32_t free_index = 0;
-    uint32_t cluster = g_volume.root_cluster;
+    uint32_t cluster = dir.cluster;
     uint32_t last = cluster;
     bool ended = false;
     while (!ended && cluster >= 2 && cluster < aegir::fat::kEoc32) {
@@ -449,7 +449,7 @@ Root root_slot(char const *name, uint32_t name_length, aegir::fat::Dirent *out,
         uint64_t const at = aegir::fat::cluster_sector(g_volume, cluster);
         for (uint32_t s = 0; s < g_volume.sectors_per_cluster && !ended; ++s) {
             if (!read(at + s, 1)) {
-                return Root::Broken;
+                return Slot::Broken;
             }
             for (uint32_t i = 0; i < kSectorBytes / 32; ++i) {
                 uint8_t const *raw = g_window + i * 32;
@@ -479,7 +479,7 @@ Root root_slot(char const *name, uint32_t name_length, aegir::fat::Dirent *out,
                     *out = dirent;
                     *sector_out = at + s;
                     *index_out = i;
-                    return Root::Found;
+                    return Slot::Found;
                 }
             }
         }
@@ -488,26 +488,26 @@ Root root_slot(char const *name, uint32_t name_length, aegir::fat::Dirent *out,
         }
         uint64_t rel = 0;
         if (!fat_load(cluster, &rel)) {
-            return Root::Broken;
+            return Slot::Broken;
         }
         cluster = aegir::fat::next32(g_window, cluster % (kSectorBytes / 4));
     }
     if (have_free) {
         *sector_out = free_sector;
         *index_out = free_index;
-        return Root::Free;
+        return Slot::Free;
     }
     /* No End anywhere: the chain is full, and the root grows like any chain. */
     uint32_t const fresh = alloc_cluster();
     if (fresh == 0) {
-        return Root::Full;
+        return Slot::Full;
     }
     if (!fat_store(last, fresh)) {
-        return Root::Broken;
+        return Slot::Broken;
     }
     *sector_out = aegir::fat::cluster_sector(g_volume, fresh);
     *index_out = 0;
-    return Root::Free;
+    return Slot::Free;
 }
 
 void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
@@ -523,17 +523,15 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         return;
     }
     uint32_t const path_words = 1 + (path_length + 7) / 8;
-    /* The root only, like the read side: a '/' is a path this version does
-     * not know. And the write side is FAT32's: FAT16 refuses. */
-    bool nested = path_length == 0;
-    for (uint32_t i = 0; i < path_length; ++i) {
-        if (path[i] == '/') {
-            nested = true;
-        }
-    }
+    /* The walk ends at the directory the file lives in; the last component
+     * is the file. And the write side is FAT32's: FAT16 refuses. */
+    Dir dir;
+    char const *last = nullptr;
+    uint32_t last_length = 0;
     uint8_t name83[11];
-    if (nested || count < path_words + 1 || !g_writable || !g_volume.fat32 ||
-        !aegir::fat::name_83(path, path_length, name83)) {
+    if (count < path_words + 1 || !g_writable || !g_volume.fat32 ||
+        !walk(path, path_length, false, &dir, &last, &last_length) ||
+        !aegir::fat::name_83(last, last_length, name83)) {
         port.reply_words(&handle, 1);
         return;
     }
@@ -544,9 +542,10 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     uint32_t dirent_index = 0;
     uint32_t first_cluster = 0;
     uint64_t size = 0;
-    Root const slot = root_slot(path, path_length, &dirent, &dirent_sector, &dirent_index);
+    Slot const slot = dir_slot(dir, last, last_length, &dirent, &dirent_sector,
+                               &dirent_index);
     bool ok = false;
-    if (slot == Root::Found) {
+    if (slot == Slot::Found && !dirent.directory) {
         /* An existing name without `create` is refused: opening for write is
          * meaning to remake the file, and the flag is the meaning. Truncate
          * frees the old chain at once; without it the file keeps its chain
@@ -564,7 +563,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                 ok = true;
             }
         }
-    } else if (slot == Root::Free) {
+    } else if (slot == Slot::Free) {
         /* The locator is the free slot: the new entry is written there. */
         if ((flags & aegir::volume::kOpenCreate) != 0 && read(dirent_sector, 1)) {
             aegir::fat::dirent_make(g_window + dirent_index * 32, name83);
@@ -654,6 +653,102 @@ void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
         }
     }
     port.reply_words(&closed, 1);
+}
+
+/* mkdir's engine: every component of the path, found or made. A component
+ * that exists must be a directory; one that does not is made -- one fresh
+ * cluster holding "." and ".." (the parent by its cluster, the root as 0,
+ * the format's convention), then the slot in its parent. */
+bool make_dirs(char const *path, uint32_t path_length) noexcept
+{
+    static Dir stack[aegir::nmspace::kPathMax / 2 + 1];
+    uint32_t depth = 0;
+    Dir dir = dir_root();
+    uint32_t at = 0;
+    while (at <= path_length) {
+        uint32_t end = at;
+        while (end < path_length && path[end] != '/') {
+            ++end;
+        }
+        if (end == at) {
+            /* The parent, like the walk's: pop, staying at the root. */
+            if (depth > 0) {
+                dir = stack[--depth];
+            }
+        } else {
+            uint8_t name83[11];
+            if (!aegir::fat::name_83(path + at, end - at, name83)) {
+                return false;
+            }
+            aegir::fat::Dirent dirent;
+            uint64_t sector = 0;
+            uint32_t index = 0;
+            Slot const slot = dir_slot(dir, path + at, end - at, &dirent, &sector, &index);
+            uint32_t cluster = 0;
+            if (slot == Slot::Found) {
+                if (!dirent.directory) {
+                    return false; /* a file is not a way through */
+                }
+                cluster = dirent.first_cluster;
+            } else if (slot == Slot::Free) {
+                cluster = alloc_cluster();
+                if (cluster == 0) {
+                    return false;
+                }
+                uint64_t const own = aegir::fat::cluster_sector(g_volume, cluster);
+                if (!read(own, g_volume.sectors_per_cluster)) {
+                    return false;
+                }
+                uint8_t dot[11];
+                uint8_t dotdot[11];
+                for (uint32_t i = 0; i < 11; ++i) {
+                    dot[i] = ' ';
+                    dotdot[i] = ' ';
+                }
+                dot[0] = '.';
+                dotdot[0] = '.';
+                dotdot[1] = '.';
+                aegir::fat::dirent_make_dir(g_window, dot, cluster);
+                aegir::fat::dirent_make_dir(g_window + 32, dotdot,
+                                            dir.root ? 0 : dir.cluster);
+                if (!write_back(own, g_volume.sectors_per_cluster) ||
+                    !read(sector, 1)) {
+                    return false;
+                }
+                aegir::fat::dirent_make_dir(g_window + index * 32, name83, cluster);
+                if (!write_back(sector, 1)) {
+                    return false;
+                }
+            } else {
+                return false; /* full, or broken underneath */
+            }
+            stack[depth++] = dir;
+            dir = Dir{cluster, false};
+        }
+        if (end == path_length) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return true;
+}
+
+void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t made = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    /* The root only by courtesy: an empty path is the root, which exists. */
+    if (count != 0 &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                      &path_length)) {
+        if (path_length == 0) {
+            made = 1;
+        } else if (g_writable && g_volume.fat32 && make_dirs(path, path_length)) {
+            made = 1;
+        }
+    }
+    port.reply_words(&made, 1);
 }
 
 void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
@@ -1103,6 +1198,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodClose:
             answer_close(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodMkdir:
+            answer_mkdir(vol, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

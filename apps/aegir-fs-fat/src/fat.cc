@@ -183,6 +183,15 @@ void dirent_make(uint8_t slot[32], uint8_t const name83[11]) noexcept
     slot[kDirentAttr] = kAttrArchive;
 }
 
+void dirent_make_dir(uint8_t slot[32], uint8_t const name83[11],
+                     uint32_t cluster) noexcept
+{
+    dirent_make(slot, name83);
+    slot[kDirentAttr] = kAttrDirectory;
+    put16(slot + kDirentClusterHigh, static_cast<uint16_t>(cluster >> 16));
+    put16(slot + kDirentClusterLow, static_cast<uint16_t>(cluster));
+}
+
 void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noexcept
 {
     put16(slot + kDirentClusterHigh, static_cast<uint16_t>(first_cluster >> 16));

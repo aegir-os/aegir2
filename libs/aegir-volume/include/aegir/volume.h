@@ -58,6 +58,12 @@ constexpr uint32_t kMethodList = 2; /* in: path words, index; answer: name words
 constexpr uint32_t kMethodOpen = 3;  /* in: path words, mode flags; answer: handle */
 constexpr uint32_t kMethodWrite = 4; /* in: handle, count, bytes; answer: written */
 constexpr uint32_t kMethodClose = 5; /* in: handle; answer: 1, or 0 */
+/* mkdir: a path. The directory it names is made, and every missing
+ * component on the way -- the mmd shape, because "ensure the home exists"
+ * is one call, not a walk (specs/auth.md). Existing components are fine.
+ * Answer: 1, or 0 -- a component that is a file, an invalid name, a
+ * read-only or full volume. */
+constexpr uint32_t kMethodMkdir = 6; /* in: path words; answer: 1, or 0 */
 
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */

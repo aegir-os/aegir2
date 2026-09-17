@@ -201,6 +201,23 @@ uint64_t vol_close(seL4_CPtr port, uint64_t handle) noexcept
     return in[0];
 }
 
+/* mkdir: the path is the whole ask -- the directory it names and every
+ * missing component on the way. 1 made-or-existed, 0 refused. */
+uint64_t vol_mkdir(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodMkdir, out, out_words, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
 /* What the write test writes: a pattern the reader can recompute, so a byte
  * that landed in the wrong place is a byte that reads back wrong. */
 uint8_t pattern_at(uint64_t i) noexcept
@@ -531,6 +548,75 @@ int main(int argc, char *argv[])
         vol_close(scratch_volume, 9999) != 0) {
         write("  test: FAIL a handle that is not one was not refused\n");
         ++failed;
+    }
+
+    /* Directories are made, not found: the mmd shape builds the whole chain
+     * in one call, the same call again finds what the first made, and a
+     * file two components down writes and reads back. */
+    {
+        static char const kNestPath[] = "NEST/DEEP";
+        static char const kMadePath[] = "NEST/DEEP/MADE.TXT";
+        static char const kMadeContent[] =
+            "made by the system, in a directory it made\n";
+        constexpr uint32_t kMadeLength = sizeof(kMadeContent) - 1;
+        bool const made = vol_mkdir(scratch_volume, kNestPath, sizeof(kNestPath) - 1) == 1;
+        bool const again = vol_mkdir(scratch_volume, kNestPath, sizeof(kNestPath) - 1) == 1;
+        uint64_t const handle =
+            vol_open(scratch_volume, kMadePath, sizeof(kMadePath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool const wrote =
+            handle != 0 &&
+            vol_write(scratch_volume, handle,
+                      reinterpret_cast<uint8_t const *>(kMadeContent), kMadeLength) ==
+                kMadeLength &&
+            vol_close(scratch_volume, handle) == 1;
+        if (!made || !again || !wrote ||
+            !read_and_check(scratch_volume, kMadePath, sizeof(kMadePath) - 1,
+                            kMadeContent, kMadeLength)) {
+            write("  test: FAIL SCRATCH:NEST/DEEP/MADE.TXT did not make, write, "
+                  "and read back\n");
+            ++failed;
+        } else {
+            write("  test: SCRATCH:NEST/DEEP/MADE.TXT made, written, read back\n");
+        }
+        /* The middle directory lists what it holds, as a directory. */
+        bool listed = false;
+        for (uint32_t i = 0;; ++i) {
+            aegir::ipc::Consumer volume(scratch_volume);
+            uint64_t out[aegir::nmspace::kPathMax / 8 + 2];
+            uint32_t out_words = aegir::nmspace::pack_string(out, "NEST", 4,
+                                                             aegir::nmspace::kPathMax);
+            out[out_words++] = i;
+            uint64_t in[aegir::ipc::kMaxWords];
+            aegir::ipc::WordsReply const answer = volume.call_words(
+                aegir::volume::kMethodList, out, out_words, in, aegir::ipc::kMaxWords);
+            if (answer.error != 0 || answer.count == 0) {
+                break;
+            }
+            char const *name = nullptr;
+            uint32_t name_length = 0;
+            uint32_t const name_words =
+                aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                              &name, &name_length)
+                    ? 1 + (name_length + 7) / 8
+                    : 0;
+            if (name_words != 0 && answer.count >= name_words + 2 &&
+                name_length == 4 && same_bytes(name, "DEEP", 4) &&
+                in[name_words + 1] == aegir::volume::kKindDir) {
+                listed = true;
+            }
+        }
+        if (!listed) {
+            write("  test: FAIL SCRATCH:NEST lists without DEEP\n");
+            ++failed;
+        } else {
+            write("  test: SCRATCH:NEST lists DEEP, a directory\n");
+        }
+        /* And the read-only volume makes nothing. */
+        if (vol_mkdir(initrd_volume, "NEST", 4) != 0) {
+            write("  test: FAIL the read-only volume took a mkdir\n");
+            ++failed;
+        }
     }
 
     /* auth.login: the entry the build packed is the checksum -- accepted
