@@ -291,12 +291,24 @@ bool same_name(char const *a, uint32_t a_length, char const *b, uint32_t b_lengt
     return true;
 }
 
-/* Walk the root directory -- a fixed region on FAT16, a cluster chain like
- * any other on FAT32 -- for one entry: by name when `name` is given, else
- * the index-th entry the directory holds. False is not-found, which a
- * protocol answer reports by saying nothing. */
-bool find_in_root(char const *name, uint32_t name_length, uint32_t index,
-                  aegir::fat::Dirent *out) noexcept
+/* One directory, as the walks name one: the root -- a fixed region on
+ * FAT16, a cluster chain like any other on FAT32, so the flag matters only
+ * there -- or a subdirectory, always a chain. */
+struct Dir {
+    uint32_t cluster; /* first cluster of the chain; unused when root */
+    bool root;        /* the FAT16 fixed root region */
+};
+
+Dir dir_root() noexcept
+{
+    return g_volume.fat32 ? Dir{g_volume.root_cluster, false} : Dir{0, true};
+}
+
+/* Walk one directory for one entry: by name when `name` is given, else the
+ * index-th entry the directory holds. False is not-found, which a protocol
+ * answer reports by saying nothing. */
+bool find_in_dir(Dir dir, char const *name, uint32_t name_length, uint32_t index,
+                 aegir::fat::Dirent *out) noexcept
 {
     uint32_t seen = 0;
     bool found = false;
@@ -324,23 +336,7 @@ bool find_in_root(char const *name, uint32_t name_length, uint32_t index,
         }
         return false;
     };
-    if (g_volume.fat32) {
-        uint32_t cluster = g_volume.root_cluster;
-        while (!found && cluster < aegir::fat::kEoc32) {
-            if (!read(aegir::fat::cluster_sector(g_volume, cluster),
-                      g_volume.sectors_per_cluster)) {
-                return false;
-            }
-            if (consider(g_volume.sectors_per_cluster * kSectorBytes / 32)) {
-                break;
-            }
-            uint32_t const fat_offset = cluster * 4;
-            if (!read(g_volume.fat_start + fat_offset / kSectorBytes, 1)) {
-                return false;
-            }
-            cluster = aegir::fat::next32(g_window, cluster % (kSectorBytes / 4));
-        }
-    } else {
+    if (dir.root) {
         for (uint32_t s = 0; s < g_volume.root_sectors && !found; ++s) {
             if (!read(g_volume.root_start + s, 1)) {
                 return false;
@@ -349,8 +345,82 @@ bool find_in_root(char const *name, uint32_t name_length, uint32_t index,
                 break;
             }
         }
+        return found;
+    }
+    /* A chain like any other; the step is the one place the flavors differ. */
+    uint32_t const eoc = g_volume.fat32 ? aegir::fat::kEoc32 : aegir::fat::kEoc16;
+    uint32_t cluster = dir.cluster;
+    while (!found && cluster >= 2 && cluster < eoc) {
+        if (!read(aegir::fat::cluster_sector(g_volume, cluster),
+                  g_volume.sectors_per_cluster)) {
+            return false;
+        }
+        if (consider(g_volume.sectors_per_cluster * kSectorBytes / 32)) {
+            break;
+        }
+        uint32_t const fat_offset = cluster * (g_volume.fat32 ? 4u : 2u);
+        if (!read(g_volume.fat_start + fat_offset / kSectorBytes, 1)) {
+            return false;
+        }
+        cluster = g_volume.fat32
+                      ? aegir::fat::next32(g_window, cluster % (kSectorBytes / 4))
+                      : aegir::fat::next16(g_window, cluster % (kSectorBytes / 2));
     }
     return found;
+}
+
+/* The components of a path, walked from the root. Each nonempty component
+ * names a directory to descend into; an empty one is the parent -- the
+ * Amiga convention, and the parent of the root is the root. With
+ * `through_last` the whole path is directories (list); without it the walk
+ * stops before the last component, which the caller's method interprets
+ * (read, open). False: a component was not there, or was no directory, or
+ * the path had no last component for a method that needs one. The stack is
+ * the walk's own history, and its bound is the path bound's: a component is
+ * at least a name and a slash. */
+bool walk(char const *path, uint32_t path_length, bool through_last, Dir *dir,
+          char const **last, uint32_t *last_length) noexcept
+{
+    static Dir stack[aegir::nmspace::kPathMax / 2 + 1];
+    uint32_t depth = 0;
+    *dir = dir_root();
+    *last = nullptr;
+    *last_length = 0;
+    uint32_t at = 0;
+    while (at <= path_length) {
+        uint32_t end = at;
+        while (end < path_length && path[end] != '/') {
+            ++end;
+        }
+        bool const final = end == path_length;
+        if (final && !through_last) {
+            if (end == at) {
+                return false; /* a trailing slash names no file */
+            }
+            *last = path + at;
+            *last_length = end - at;
+            return true;
+        }
+        if (end == at) {
+            /* The parent: pop, staying at the root. */
+            if (depth > 0) {
+                *dir = stack[--depth];
+            }
+        } else {
+            aegir::fat::Dirent dirent;
+            if (!find_in_dir(*dir, path + at, end - at, 0, &dirent) ||
+                !dirent.directory) {
+                return false;
+            }
+            stack[depth++] = *dir;
+            *dir = Dir{dirent.first_cluster, false};
+        }
+        if (final) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return true;
 }
 
 /* What a walk of the root directory came back with. */
@@ -597,22 +667,20 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         return;
     }
     uint32_t const path_words = 1 + (path_length + 7) / 8;
-    /* The root only, version one: the empty rest names the directory, and a
-     * '/' is a path this version does not know. */
-    bool nested = path_length == 0;
-    for (uint32_t i = 0; i < path_length; ++i) {
-        if (path[i] == '/') {
-            nested = true;
-        }
-    }
-    if (nested || count < path_words + 2) {
+    if (count < path_words + 2) {
         port.reply_words(nullptr, 0);
         return;
     }
     uint64_t const offset = words[path_words];
     uint64_t wanted = words[path_words + 1];
+    /* The walk ends at the directory the file lives in; the last component
+     * is the file. */
+    Dir dir;
+    char const *last = nullptr;
+    uint32_t last_length = 0;
     aegir::fat::Dirent dirent;
-    if (!find_in_root(path, path_length, 0, &dirent) || dirent.directory ||
+    if (!walk(path, path_length, false, &dir, &last, &last_length) ||
+        !find_in_dir(dir, last, last_length, 0, &dirent) || dirent.directory ||
         offset > dirent.bytes) {
         port.reply_words(nullptr, 0);
         return;
@@ -672,13 +740,20 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         port.reply_words(nullptr, 0);
         return;
     }
-    /* The root only, version one: the empty rest is the one directory. */
-    if (path_length != 0 || count < 2) {
+    /* The whole path names the directory to list; the empty path is the
+     * root. The index follows the path's words. */
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    Dir dir;
+    char const *last = nullptr;
+    uint32_t last_length = 0;
+    if (count < path_words + 1 ||
+        !walk(path, path_length, true, &dir, &last, &last_length)) {
         port.reply_words(nullptr, 0);
         return;
     }
     aegir::fat::Dirent dirent;
-    if (!find_in_root(nullptr, 0, static_cast<uint32_t>(words[1]), &dirent)) {
+    if (!find_in_dir(dir, nullptr, 0, static_cast<uint32_t>(words[path_words]),
+                     &dirent)) {
         port.reply_words(nullptr, 0);
         return;
     }

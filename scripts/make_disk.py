@@ -53,6 +53,14 @@ PARTITIONS = [
     ("SCRATCH", 26624, None, None, None),
 ]
 
+# Beyond the root files: a directory with a file in it, so the component
+# walk has something to find (specs/vfs.md). (volume name, directory, file,
+# content -- the content is the checksum again.)
+NESTED = [
+    ("AEGIR", "DOCS", "NESTED.TXT",
+     b"two components deep, and the walk found it\n"),
+]
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -116,8 +124,27 @@ def main() -> int:
         if known_name.replace(".", "") not in "".join(listing.stdout.split()):
             print(f"make_disk: the file did not land:\n{listing.stdout}", file=sys.stderr)
             return 1
+
+    for name, directory, nested_name, nested_content in NESTED:
+        first = next(p[1] for p in PARTITIONS if p[0] == name)
+        volume = f"{args.image}@@{first * SECTOR}"
+        subprocess.run(["mmd", "-i", volume, f"::{directory}"], check=True,
+                       capture_output=True)
+        with tempfile.TemporaryDirectory() as staging:
+            source = Path(staging) / nested_name
+            source.write_bytes(nested_content)
+            subprocess.run(
+                ["mcopy", "-i", volume, str(source), f"::{directory}/{nested_name}"],
+                check=True, capture_output=True)
+        listing = subprocess.run(
+            ["mdir", "-i", volume, "-/", "::"], check=True, capture_output=True, text=True
+        )
+        if nested_name.replace(".", "") not in "".join(listing.stdout.split()):
+            print(f"make_disk: the nested file did not land:\n{listing.stdout}",
+                  file=sys.stderr)
+            return 1
     print(f"make_disk: {args.image}: GPT, three FAT partitions, "
-          "two known files and one empty volume")
+          "two known files, one nested, one empty volume")
     return 0
 
 

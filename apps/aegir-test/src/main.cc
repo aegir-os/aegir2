@@ -342,6 +342,21 @@ int main(int argc, char *argv[])
         write("  test: Sys:AEGIR.TXT is AEGIR:AEGIR.TXT by another name\n");
     }
 
+    /* Two components deep: the directory walk finds what the disk build
+     * planted, and the bytes are the checksum again. */
+    static char const kNestedTxt[] = "two components deep, and the walk found it\n";
+    static char const kNestedPath[] = "AEGIR:DOCS/NESTED.TXT";
+    seL4_CPtr const nested_volume =
+        resolve(kNestedPath, sizeof(kNestedPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 5));
+    if (!read_and_check(nested_volume, rest, rest_length, kNestedTxt,
+                        text_length(kNestedTxt))) {
+        write("  test: FAIL AEGIR:DOCS/NESTED.TXT did not read back through the walk\n");
+        ++failed;
+    } else {
+        write("  test: AEGIR:DOCS/NESTED.TXT reads back, two components deep\n");
+    }
+
     /* The same capability lists the volume's root: the empty rest names the
      * one directory version one knows. */
     {
