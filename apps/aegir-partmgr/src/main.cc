@@ -412,6 +412,9 @@ int main(int argc, char *argv[])
             break;
         }
         auto const *who = reinterpret_cast<aegir::block::Identify const *>(shared);
+        /* The walk's reads clobber the window, so the one number it still
+         * needs from the identify answer is taken now. */
+        uint32_t const device_window_sectors = who->window_sectors;
         char device_name[sizeof(who->name)];
         uint32_t device_name_length = 0;
         while (device_name_length < sizeof(who->name) &&
@@ -456,19 +459,50 @@ int main(int argc, char *argv[])
                 aegir::debug_write(device_name, device_name_length);
                 aegir::debug_write(": a protective MBR but no GPT header\n");
             } else {
-                uint64_t const table_bytes =
-                    static_cast<uint64_t>(entry_count) * entry_bytes;
-                uint32_t const table_sectors =
-                    static_cast<uint32_t>((table_bytes + 511) / 512);
-                aegir::ipc::Reply const table = port.call(
-                    aegir::block::kMethodRead,
-                    aegir::block::pack_read(entries_lba, table_sectors));
-                if (table.error != 0 || table.word != table_sectors) {
-                    aegir::debug_write("      FAIL partition manager: the entries would not read\n");
-                } else {
-                    for (uint32_t i = 0; i < entry_count; ++i) {
+                /* The table can outlast the window: the GPT's own minimum is
+                 * 128 entries but the format allows any count, so the walk
+                 * reads window-sized runs. A legal entry size is 128 * 2^n --
+                 * either a fraction of a sector or a whole run of them -- so
+                 * a chunk holds a whole number of entries, and a chunk's
+                 * first sector follows from its first entry exactly. */
+                bool const entry_size_walkable =
+                    entry_bytes >= 128 &&
+                    (entry_bytes <= 512 ? 512 % entry_bytes == 0
+                                        : entry_bytes % 512 == 0);
+                uint32_t const entries_per_chunk =
+                    entry_size_walkable
+                        ? (entry_bytes <= 512
+                               ? device_window_sectors * (512 / entry_bytes)
+                               : device_window_sectors / (entry_bytes / 512))
+                        : 0;
+                if (entries_per_chunk == 0) {
+                    aegir::debug_write(
+                        "      FAIL partition manager: an entry size the walk cannot chunk\n");
+                }
+                bool table_broken = false;
+                for (uint32_t base = 0;
+                     !table_broken && entries_per_chunk > 0 && base < entry_count;
+                     base += entries_per_chunk) {
+                    uint32_t here = entry_count - base;
+                    if (here > entries_per_chunk) {
+                        here = entries_per_chunk;
+                    }
+                    uint32_t const chunk_sectors = static_cast<uint32_t>(
+                        (static_cast<uint64_t>(here) * entry_bytes + 511) / 512);
+                    aegir::ipc::Reply const chunk = port.call(
+                        aegir::block::kMethodRead,
+                        aegir::block::pack_read(
+                            entries_lba + static_cast<uint64_t>(base) * entry_bytes / 512,
+                            chunk_sectors));
+                    if (chunk.error != 0 || chunk.word != chunk_sectors) {
+                        aegir::debug_write(
+                            "      FAIL partition manager: the entries would not read\n");
+                        break;
+                    }
+                    for (uint32_t e = 0; e < here; ++e) {
+                        uint32_t const i = base + e;
                         aegir::gpt::Partition partition;
-                        if (!aegir::gpt::entry(shared + static_cast<uint64_t>(i) * entry_bytes,
+                        if (!aegir::gpt::entry(shared + static_cast<uint64_t>(e) * entry_bytes,
                                                entry_bytes, &partition)) {
                             continue;
                         }
@@ -505,6 +539,23 @@ int main(int argc, char *argv[])
                                 reinterpret_cast<void const *>(fs_image_address),
                                 fs_image_bytes, 512u + fs_started);
                             ++fs_started;
+                            /* The child just served itself through this same
+                             * window -- one physical buffer per device, and
+                             * every consumer's caps name those same frames --
+                             * so what the chunk held is gone. Read it again
+                             * before the next entry is parsed. */
+                            aegir::ipc::Reply const again = port.call(
+                                aegir::block::kMethodRead,
+                                aegir::block::pack_read(
+                                    entries_lba +
+                                        static_cast<uint64_t>(base) * entry_bytes / 512,
+                                    chunk_sectors));
+                            if (again.error != 0 || again.word != chunk_sectors) {
+                                aegir::debug_write(
+                                    "      FAIL partition manager: the entries would not re-read\n");
+                                table_broken = true;
+                                break;
+                            }
                         }
                     }
                 }

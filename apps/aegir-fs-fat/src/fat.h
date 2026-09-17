@@ -58,10 +58,11 @@ Entry dirent(uint8_t const *raw, Dirent *out) noexcept;
 
 /** End of a cluster chain is a range of marks, not one sentinel. */
 constexpr uint32_t kEoc32 = 0x0ffffff8;
+constexpr uint32_t kEoc16 = 0xfff8;
 
 /** The next cluster in a chain, from the FAT sector the caller fetched:
- *  `cluster_mod_128` is the cluster's index within it (4-byte entries, 128 to
- *  a sector). */
+ *  4-byte entries on FAT32 (128 to a sector), 2-byte on FAT16 (256). */
 uint32_t next32(uint8_t const *fat_sector, uint32_t cluster_mod_128) noexcept;
+uint32_t next16(uint8_t const *fat_sector, uint32_t cluster_mod_256) noexcept;
 
 }  // namespace aegir::fat

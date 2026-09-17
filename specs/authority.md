@@ -405,13 +405,14 @@ maps can mint mappable windows for filesystem services without bound.
 
 ### The sizes, measured
 
-- The delegation to the device manager is **1 MiB** (`kDelegatedUntypedBits = 20`):
+- The delegation to the device manager is **2 MiB** (`kDelegatedUntypedBits = 21`):
   the driver's image (~172 KiB of frames, its queues are static storage), its 8 KiB
   of virtqueue, the 64 KiB shared window, the partition manager's image and the
-  256 KiB it is delegated, and the filesystem service's image handed over as bytes.
-  256 KiB and 512 KiB were both measured too small rather than guessed.
-- The partition manager's own untyped is **256 KiB**: its children's images and
-  objects come from it.
+  1 MiB it is delegated, and the filesystem service's image handed over as bytes.
+  256 KiB, 512 KiB and 1 MiB were each measured too small rather than guessed.
+- The partition manager's own untyped is **1 MiB**: each filesystem child costs
+  its image copy (~180 KiB), its objects, and a 64 KiB window set of its own, so
+  two partitions already ask for most of a megabyte.
 - The whole initrd is **not** delegated: 1.2 MiB does not fit a service-sized
   delegation, so a service that starts one known helper is handed that helper's image
   as a blob, and `spawn::Request.binary_image` reads bytes instead of an archive. The

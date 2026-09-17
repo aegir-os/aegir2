@@ -938,8 +938,10 @@ int main(int argc, char *argv[])
                 static char const kPartmgrName[] = "partmgr";
                 static char const kPartmgrBinary[] = "aegir-partmgr";
                 /* Room for its own objects and for what it carves for the
-                 * filesystem services it starts. */
-                constexpr uint32_t kPartmgrUntypedBits = 18;
+                 * filesystem services it starts: each one costs its image
+                 * copy, its objects, and a 64 KiB window set of its own, so
+                 * two partitions already ask for most of a megabyte. */
+                constexpr uint32_t kPartmgrUntypedBits = 20;
                 uint64_t const partmgr_badge = 256u + binding_count;
                 aegir::mem::Account partmgr_account{"partmgr", 0, 0, 0};
                 seL4_Error untyped_error = seL4_NoError;

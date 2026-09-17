@@ -733,12 +733,16 @@ The chain director → device manager → partition manager → filesystem servi
 end to end. The boot's own summary:
 
     spawned blk.virtio0 for virtio,mmio at 0x10007000, badge 257
-    I am BD0: window of 64 KiB at 0x26000 (physical 0xffee0000)
+    I am BD0: window of 64 KiB at 0x26000 (physical 0xffde0000)
     spawned partmgr, badge 264
-    BD0Part0: sectors 2048..32734, "AEGIR"
+    BD0Part0: sectors 2048..18431, "AEGIR"
     spawned fat.BD0Part0, badge 512
     fat.BD0Part0: FAT32, 1 sectors per cluster, data starts at sector 506
     fat.BD0Part0: AEGIR.TXT says: aegir read this file off a disk it enumerated itself
+    BD0Part1: sectors 18432..32734, "SECOND"
+    spawned fat.BD0Part1, badge 513
+    fat.BD0Part1: FAT32, 1 sectors per cluster, data starts at sector 254
+    fat.BD0Part1: SECOND.TXT says: a second volume, a second service, the same reader
 
 What was decided, and what it took:
 
@@ -774,7 +778,9 @@ What was decided, and what it took:
   reserved for the children it starts), an untyped, the ASID pool, its VSpace
   root, the delegatable log, and the filesystem helper's image as a blob.
 - **The partition manager enumerates.** It maps each window, calls `identify`,
-  and walks the GPT (protective MBR, header, entries). A partition is named from
+  and walks the GPT (protective MBR, header, entries). The entry table is read
+  in window-sized runs, not one call, because the format's own minimum of 128
+  entries is a floor and not a ceiling. A partition is named from
   the driver's name and the entry's index: **BD0Part0** -- the driver names, the
   manager enumerates.
 - **Each partition gets a filesystem service with a range, not the device.** The
@@ -787,16 +793,27 @@ What was decided, and what it took:
   helper at a time, because the whole initrd is 1.2 MiB and a copy per spawning
   service does not fit a service-sized delegation.
 - **fs.fat reads FAT16/32 read-only**: BPB, the root directory, and a file's
-  cluster chain. The test disk is built host-side without root (sgdisk writes
-  the GPT, mtools fills the partition through `image@@offset`;
-  scripts/make_disk.py), and the file's own content is the checksum.
-- **Two latent limits broke on the way and are written down because they will
-  not be the last.** The bootstrap block was capped at 512 bytes although it is
-  mapped as a page, and a service with many grants (a window's frame per page)
-  did not fit; it fills its page now. And the virtqueue was single-shot -- the
-  available ring always published slot 0 and the wait asked *nonzero* rather
-  than *advanced* -- so the second read of a boot answered with the first
-  request's used entry and a status of 0xff. The rings carry cursors now.
+  cluster chain -- the chain step is the one place the flavors differ (4-byte
+  entries and one end-of-chain floor on FAT32, 2-byte and another on FAT16,
+  and the file walk branches on both). The test disk is built host-side
+  without root (sgdisk writes the GPT, mtools fills each partition through
+  `image@@offset`; scripts/make_disk.py): two FAT partitions, one known file
+  each, because the second partition is the proof that the range grant works
+  -- its BPB is nowhere near sector 0 -- and each file's content is the
+  checksum.
+- **Three latent limits broke on the way and are written down because they
+  will not be the last.** The bootstrap block was capped at 512 bytes
+  although it is mapped as a page, and a service with many grants (a window's
+  frame per page) did not fit; it fills its page now. The virtqueue was
+  single-shot -- the available ring always published slot 0 and the wait
+  asked *nonzero* rather than *advanced* -- so the second read of a boot
+  answered with the first request's used entry and a status of 0xff; the
+  rings carry cursors now. And the shared window's content belongs to the
+  most recent call by *anyone*: the endpoint serializes the DMAs, not the
+  consumers, so a partition manager that waits on the filesystem child it
+  just started resumes to a window full of that child's reads -- the second
+  partition "did not exist" until the manager re-read the entry chunk after
+  each spawn.
 
 Still open, in the order they arrive: each driver's interrupt (IRQControl custody
 and the handler cap), a port for the device manager itself so the map is something

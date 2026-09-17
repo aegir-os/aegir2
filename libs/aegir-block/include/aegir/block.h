@@ -12,6 +12,13 @@
  * synchronous: requests serialize at the endpoint, so there is exactly one
  * outstanding request per window, and that is structural rather than a lock.
  *
+ * The serialization orders the DMAs, not the consumers. Every client's caps
+ * name the same physical frames, so the window's content belongs to the most
+ * recent call by anyone: a caller must have consumed what it needed before
+ * another client of the same port calls again -- and a caller that waits on
+ * such a client (a partition manager starting the filesystem for one entry
+ * while more entries wait) re-reads what it had when it resumes.
+ *
  * The window's size is the driver's to declare (the `window` field of its
  * registry row): a device that benefits from larger transfers declares a
  * larger window, and the spawner provisions without interpreting.

@@ -111,4 +111,9 @@ uint32_t next32(uint8_t const *fat_sector, uint32_t cluster_mod_128) noexcept
     return word32(fat_sector + cluster_mod_128 * 4) & 0x0fffffffu;
 }
 
+uint32_t next16(uint8_t const *fat_sector, uint32_t cluster_mod_256) noexcept
+{
+    return word16(fat_sector + cluster_mod_256 * 2);
+}
+
 }  // namespace aegir::fat

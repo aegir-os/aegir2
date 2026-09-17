@@ -818,11 +818,11 @@ int main(int argc, char *argv[])
          * the 8 KiB the driver's virtqueue takes. The image alone maps about
          * 172 KiB of frames -- the driver keeps its queues in static storage --
          * and the shared window a block port serves through adds another
-         * 64 KiB; the partition manager's own image and the 256 KiB it is
+         * 64 KiB; the partition manager's own image and the 1 MiB it is
          * delegated for the filesystem services it starts take the total past
-         * 512 KiB, and untyped memory is power-of-two. More is delegated when
+         * 1 MiB, and untyped memory is power-of-two. More is delegated when
          * something needs more (specs/authority.md). */
-        constexpr uint32_t kDelegatedUntypedBits = 20;
+        constexpr uint32_t kDelegatedUntypedBits = 21;
         seL4_Error untyped_error = seL4_NoError;
         /* The physical base comes with the capability: there is no invocation that
          * reads an untyped's address, so a region a driver will one day point a

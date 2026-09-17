@@ -102,7 +102,11 @@ int main(int argc, char *argv[])
     }
 
     /* One read, volume-relative: the data lands in the window, which every
-     * parse below then reads. False is a report, not a hang. */
+     * parse below then reads. False is a report, not a hang. A read larger
+     * than the window refuses rather than chunking, and that is a bound the
+     * FAT format itself already keeps: every structure walked here is one
+     * sector or one cluster, and the specification caps a cluster at 64 KiB
+     * -- exactly this window's size. */
     auto read = [&blk, window, first, window_sectors](uint64_t lba, uint32_t count) -> bool {
         if (count > window_sectors) {
             return false;
@@ -210,7 +214,11 @@ int main(int argc, char *argv[])
         aegir::debug_write(": ");
         aegir::debug_write(target.name, target.name_length);
         aegir::debug_write(" says: ");
-        while (left > 0 && cluster >= 2 && cluster < aegir::fat::kEoc32) {
+        /* The chain step is the one place the flavors differ: 4-byte entries
+         * on FAT32, 2-byte on FAT16, and each with its own end-of-chain
+         * floor. */
+        uint32_t const eoc = volume.fat32 ? aegir::fat::kEoc32 : aegir::fat::kEoc16;
+        while (left > 0 && cluster >= 2 && cluster < eoc) {
             if (!read(aegir::fat::cluster_sector(volume, cluster),
                       volume.sectors_per_cluster)) {
                 aegir::debug_write("(a cluster would not read)");
@@ -221,11 +229,13 @@ int main(int argc, char *argv[])
             uint32_t const shown = left < here ? left : here;
             aegir::debug_write(reinterpret_cast<char const *>(window), shown);
             left -= shown;
-            uint32_t const fat_offset = cluster * 4;
+            uint32_t const fat_offset = cluster * (volume.fat32 ? 4u : 2u);
             if (!read(volume.fat_start + fat_offset / kSectorBytes, 1)) {
                 break;
             }
-            cluster = aegir::fat::next32(window, cluster % (kSectorBytes / 4));
+            cluster = volume.fat32
+                          ? aegir::fat::next32(window, cluster % (kSectorBytes / 4))
+                          : aegir::fat::next16(window, cluster % (kSectorBytes / 2));
         }
         aegir::debug_write("\n");
     }
