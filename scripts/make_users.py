@@ -4,10 +4,10 @@ the service (specs/auth.md).
 
 Usage: make_users.py <source> <output>
 
-The source is one row per user, `name=.. secret=.. account=..` (account
-defaults to the name), `#` comments and blank lines skipped. The output is
-the table auth parses directly: a 16-byte header, then 80-byte rows of
-NUL-terminated fields.
+The source is one row per user, `name=.. secret=.. account=.. home=..`
+(account defaults to the name, home to `Sys:Homes/<name>`), `#` comments and
+blank lines skipped. The output is the table auth parses directly: a 16-byte
+header, then 128-byte rows of NUL-terminated fields.
 """
 
 import argparse
@@ -16,10 +16,11 @@ import sys
 from pathlib import Path
 
 MAGIC = b"AUDB"
-VERSION = 1
+VERSION = 2
 NAME_BYTES = 24
 ACCOUNT_BYTES = 24
 SECRET_BYTES = 32
+HOME_BYTES = 48
 
 
 def field(text: str, width: int, what: str, line: int) -> bytes:
@@ -50,11 +51,13 @@ def main() -> int:
             print(f"make_users: line {number}: a row needs name= and secret=", file=sys.stderr)
             return 1
         account = fields.get("account", fields["name"])
+        home = fields.get("home", f"Sys:Homes/{fields['name']}")
         try:
             rows.append(
                 field(fields["name"], NAME_BYTES, "the name", number)
                 + field(account, ACCOUNT_BYTES, "the account", number)
                 + field(fields["secret"], SECRET_BYTES, "the secret", number)
+                + field(home, HOME_BYTES, "the home", number)
             )
         except ValueError as problem:
             print(f"make_users: {problem}", file=sys.stderr)

@@ -2,7 +2,9 @@
 # binary table auth serves from (specs/auth.md); the initrd carries the
 # table as users.db.
 #
-# One row per user: name, secret, account (defaults to the name). The
+# One row per user: name, secret, account (defaults to the name), home
+# (defaults to Sys:Homes/<name>; a name that is not a clean FAT 8.3 needs
+# an explicit one). The
 # secret is the plain word, honestly interim until login becomes a
 # challenge -- this one is the development credential, not a real one.
 name=rroland secret=aegir account=rroland

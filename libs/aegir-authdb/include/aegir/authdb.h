@@ -36,19 +36,21 @@ namespace aegir::authdb {
 /* The table: a 16-byte header, then fixed rows. The field widths are format
  * decisions, the way FAT's 8.3 is one; the version is how they grow. */
 constexpr uint32_t kMagic = 0x42445541; /* "AUDB", little-endian */
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr uint32_t kHeaderBytes = 16;
 
 constexpr uint32_t kNameBytes = 24;    /* the system's name bound, kNameMax */
 constexpr uint32_t kAccountBytes = 24; /* names what it says */
 constexpr uint32_t kSecretBytes = 32;  /* a v1 plain secret fits; v1's bound */
+constexpr uint32_t kHomeBytes = 48;    /* a Volume:rest path, Sys:Homes/<name> + room */
 
 struct Row {
     char name[kNameBytes];       /* NUL-terminated within the field */
     char account[kAccountBytes]; /* NUL-terminated within the field */
     char secret[kSecretBytes];   /* NUL-terminated within the field */
+    char home[kHomeBytes];       /* the path the session's Home: stands for */
 };
-static_assert(sizeof(Row) == 80, "the user row is a storage format");
+static_assert(sizeof(Row) == 128, "the user row is a storage format");
 
 /** The flat name the packed table travels under in the initrd. */
 constexpr char kFileName[] = "users.db";
