@@ -28,6 +28,7 @@
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/ipc/port.h>
+#include <aegir/nmspace.h>
 #include <aegir/log.h>
 #include <aegir/registry.h>
 #include <aegir/spawn/initrd.h>
@@ -666,6 +667,13 @@ int main(int argc, char *argv[])
             uint64_t log_slot = 0;
             bool const have_log =
                 aegir::bootstrap::capability("spawn:log.main", 14, &log_slot);
+            /* The namespace's caller half, for the partition manager's part
+             * of registering the volumes it starts (specs/vfs.md): it has
+             * Grant, so the volume port's caller half can ride the
+             * registration call. */
+            uint64_t nmspace_slot = 0;
+            bool const have_nmspace =
+                aegir::bootstrap::capability("spawn:vfs.namespace", 19, &nmspace_slot);
             if (binding_count > 0 && !have_log) {
                 write_line("FAIL", "no delegatable log.main was given");
             }
@@ -1071,9 +1079,10 @@ int main(int argc, char *argv[])
                  * when the endpoint exists -- the map is for asking, and the
                  * partition manager is the first service that asks. */
                 uint32_t const registry_rows = registry_endpoint != 0 ? 1 : 0;
+                uint32_t const nmspace_rows = have_nmspace ? 1 : 0;
                 auto *ports = static_cast<aegir::spawn::PortGrant *>(
                     arena.allocate(sizeof(aegir::spawn::PortGrant) *
-                                   (4 + registry_rows + bound_count)));
+                                   (4 + registry_rows + nmspace_rows + bound_count)));
                 auto *frames = static_cast<aegir::spawn::DeviceGrant *>(arena.allocate(
                     sizeof(aegir::spawn::DeviceGrant) *
                     (window_grant_count != 0 ? window_grant_count : 1)));
@@ -1114,15 +1123,26 @@ int main(int argc, char *argv[])
                                     registry_endpoint, seL4_CapRights_new(1, 0, 0, 1),
                                     partmgr_badge | kCallMark, 0};
                     }
+                    if (nmspace_rows != 0) {
+                        /* The namespace, badged with who the manager is and
+                         * no call mark -- the VFS's port wakes its own
+                         * receive only. */
+                        ports[4 + registry_rows] = {
+                            aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+                            aegir::bootstrap::kSlotFirstDeclared + 4 + registry_rows,
+                            static_cast<seL4_CPtr>(nmspace_slot),
+                            seL4_CapRights_new(1, 1, 0, 1), partmgr_badge, 0};
+                    }
                     /* Each block port arrives under the driver's instance name:
                      * the caller half, which is Write and GrantReply -- the
                      * kernel's own requirement of a capability that may be
                      * called (out/aegir/libsel4/include/interfaces/
                      * sel4_client.h:1202). The owner half stays here. */
                     for (uint32_t i = 0; i < bound_count; ++i) {
-                        ports[4 + registry_rows + i] = {
+                        ports[4 + registry_rows + nmspace_rows + i] = {
                             bound[i].name, bound[i].name_length,
-                            aegir::bootstrap::kSlotFirstDeclared + 4 + registry_rows + i,
+                            aegir::bootstrap::kSlotFirstDeclared + 4 + registry_rows +
+                                nmspace_rows + i,
                             bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
                             0};
                     }
@@ -1156,7 +1176,7 @@ int main(int argc, char *argv[])
                     request.account_length = 6;
                     request.priority = seL4_MaxPrio - 1;
                     request.ports = ports;
-                    request.port_count = 4 + registry_rows + bound_count;
+                    request.port_count = 4 + registry_rows + nmspace_rows + bound_count;
                     request.give_vspace = true;
                     /* The filesystem service's image, as bytes: the whole
                      * initrd is 1.2 MiB and does not fit a service-sized

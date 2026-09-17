@@ -8,9 +8,13 @@
  * it the caller half of their ports and the frames of their shared windows.
  * Its job is the filesystem-agnostic step between a block device and a
  * filesystem: ask each driver who it is, read the partition table (GPT
- * first), and name the partitions (BD0Part0, BD0Part1, ...). Starting the
+ * first), and name the partitions (BD0Part0, BD0Part1, ...). It starts the
  * filesystem service each partition's type calls for, with a range grant
- * rather than the whole device, is the next step (specs/services.md).
+ * rather than the whole device, and -- because a filesystem it starts is not
+ * in the manifest and cannot declare a need -- it speaks to the VFS on the
+ * filesystem's behalf: it hands the filesystem a port of its own to announce
+ * the volume's label on, and registers the label together with the volume
+ * port's caller half it kept at the spawn (specs/vfs.md).
  */
 
 #include "gpt.h"
@@ -23,6 +27,8 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/nmspace.h>
+#include <aegir/partman.h>
 #include <aegir/registry.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
@@ -105,8 +111,19 @@ void append_number(char *out, uint32_t *at, uint64_t value) noexcept
  * block port badged with who it is, the window mapped at spawn time by us,
  * and the helper's image as bytes. Badges count from 512: our spawner's
  * children are 256+n, and a spawning service's children live in a range of
- * their own until the badge space is a designed thing (specs/services.md). */
+ * their own until the badge space is a designed thing (specs/services.md).
+ *
+ * Two ports of our own making go with it: the owner half of its volume port
+ * ("vol") -- whose caller half we keep, unbadged, because the VFS badges
+ * each resolver's own copy of it -- and the caller half of our announce
+ * port, which it tells us the volume's label on (specs/vfs.md). The label
+ * is the filesystem's own to know, so registration is a conversation: the
+ * child announces, we register the label with the VFS together with the
+ * caller half we kept, and the child gets the name the volume actually got.
+ * The child blocks in its announce until we answer, so the answer is served
+ * here, between the spawn and the wait for its ready. */
 void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
+                      aegir::ipc::Consumer const &nmspace, seL4_CPtr announce,
                       char const *device_name, uint32_t device_name_length,
                       uint32_t partition, uint64_t first_lba, uint64_t sector_count,
                       seL4_CPtr block_port, uint32_t children_grant,
@@ -166,10 +183,21 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
                                                    child_account, &fault_error);
-    if (window == 0 || fault == 0) {
+    seL4_Error volume_error = seL4_NoError;
+    seL4_CPtr const volume = g_objects.alloc_object(seL4_EndpointObject,
+                                                    seL4_EndpointBits, child_account,
+                                                    &volume_error);
+    seL4_CPtr const volume_caller = g_objects.alloc_slot();
+    bool const caller_minted =
+        volume != 0 && volume_caller != 0 &&
+        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, volume_caller,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        volume, aegir::bootstrap::kCNodeBits,
+                        seL4_CapRights_new(1, 0, 0, 1), 0) == seL4_NoError;
+    if (window == 0 || fault == 0 || volume == 0 || !caller_minted) {
         aegir::debug_write("      FAIL starting ");
         aegir::debug_write(name, name_length);
-        aegir::debug_write(": no window set or fault endpoint\n");
+        aegir::debug_write(": no window set, fault endpoint, or volume port\n");
         return;
     }
 
@@ -182,6 +210,17 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
          * clamp by (specs/services.md). */
         {"blk", 3, aegir::bootstrap::kSlotFirstDeclared + 1, block_port,
          seL4_CapRights_new(1, 0, 0, 1), badge, 0},
+        /* Its volume port, receiving half only: a port you may not receive
+         * on is not yours, and this one is. */
+        {"vol", 3, aegir::bootstrap::kSlotFirstDeclared + 2, volume, seL4_CanRead,
+         0, 0},
+        /* Our announce port, calling half: where it tells us the volume's
+         * label. No badge and no mark -- we serve the one announce between
+         * this spawn and the wait for its ready, so there is nothing to
+         * tell apart. */
+        {aegir::partman::kPortName, aegir::partman::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 3, announce,
+         seL4_CapRights_new(1, 0, 0, 1), 0, 0},
     };
     aegir::spawn::Request request{};
     request.name = name;
@@ -194,7 +233,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.account_length = 6;
     request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
-    request.port_count = 2;
+    request.port_count = 4;
     request.devices = range;
     request.devices_bytes = range_length;
     request.window_frame = window;
@@ -224,6 +263,40 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     aegir::debug_write(", badge ");
     aegir::debug_write_unsigned(badge);
     aegir::debug_write("\n");
+
+    /* The announce, served before the ready: the child blocks in it until
+     * we answer, and the answer is the VFS's. A child that faults first
+     * leaves us waiting here, which is what waiting on its ready did
+     * before. */
+    aegir::ipc::Owner announce_port(announce);
+    uint64_t words[aegir::ipc::kMaxWords];
+    uint32_t count = 0;
+    uint32_t const method =
+        announce_port.receive_words(words, aegir::ipc::kMaxWords, &count, nullptr);
+    char const *label = nullptr;
+    uint32_t label_length = 0;
+    uint64_t in[aegir::nmspace::kNameMax / 8 + 1];
+    uint32_t in_count = 0;
+    if (method == aegir::partman::kMethodAnnounce && nmspace.valid() &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kNameMax, &label,
+                                      &label_length)) {
+        uint64_t out[aegir::nmspace::kNameMax / 8 + 2];
+        uint32_t out_words = aegir::nmspace::pack_string(out, label, label_length,
+                                                         aegir::nmspace::kNameMax);
+        out[out_words++] = aegir::nmspace::kFlagReadOnly;
+        aegir::ipc::WordsReply const registered = nmspace.call_transfer(
+            aegir::nmspace::kMethodRegister, out, out_words, volume_caller, in,
+            aegir::nmspace::kNameMax / 8 + 1, nullptr);
+        if (registered.error == 0 && registered.count != 0) {
+            in_count = registered.count;
+        }
+    }
+    /* The kernel transferred a copy; our half of the mint leaves. And an
+     * empty answer is how the child learns the announce was refused. */
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, volume_caller,
+                      aegir::bootstrap::kCNodeBits);
+    announce_port.reply_words(in, in_count);
+
     seL4_Word ready_badge = 0;
     seL4_Wait(process.supervision, &ready_badge);
 }
@@ -357,6 +430,26 @@ int main(int argc, char *argv[])
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::kCNodeBits);
     uint32_t fs_started = 0;
+
+    /* What registering a started filesystem's volume takes (specs/vfs.md):
+     * the namespace's caller half, and a port of our own the filesystem
+     * announces its label on -- it is not in the manifest, so its port is
+     * given, not declared. */
+    aegir::ipc::Consumer const nmspace =
+        aegir::ipc::Consumer::find(aegir::nmspace::kPortName,
+                                   aegir::nmspace::kPortNameLength);
+    if (!nmspace.valid()) {
+        aegir::debug_write("      vfs.namespace: not given -- volumes will not register\n");
+    }
+    seL4_Error announce_error = seL4_NoError;
+    seL4_CPtr const announce = g_objects.alloc_object(seL4_EndpointObject,
+                                                      seL4_EndpointBits, g_account,
+                                                      &announce_error);
+    if (announce == 0) {
+        aegir::debug_write("      FAIL partition manager: no announce port\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
 
     aegir::debug_write("      partition manager: ");
     aegir::debug_write_unsigned(port_count);
@@ -585,8 +678,9 @@ int main(int argc, char *argv[])
                             static_cast<void>(aegir::bootstrap::device_capability(
                                 children_grant, &window_physical, nullptr, nullptr));
                             start_filesystem(
-                                spawner, static_cast<seL4_CPtr>(spawn_log_slot),
-                                device_name, device_name_length, i, partition.first_lba,
+                                spawner, static_cast<seL4_CPtr>(spawn_log_slot), nmspace,
+                                announce, device_name, device_name_length, i,
+                                partition.first_lba,
                                 partition.last_lba - partition.first_lba + 1,
                                 static_cast<seL4_CPtr>(entry.number), children_grant,
                                 window_physical, pages_per_window,
