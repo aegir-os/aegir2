@@ -23,6 +23,7 @@ struct Volume {
     uint32_t sectors_per_cluster;
     uint64_t fat_start;   /* the first FAT's first sector */
     uint32_t fat_sectors; /* per FAT */
+    uint32_t fats;        /* how many copies a change must write */
     uint64_t data_start;  /* the first data sector: cluster 2 lives here */
     uint32_t root_cluster; /* FAT32: where the root directory's chain starts */
     uint64_t root_start;   /* FAT16: the root region's first sector */
@@ -64,5 +65,33 @@ constexpr uint32_t kEoc16 = 0xfff8;
  *  4-byte entries on FAT32 (128 to a sector), 2-byte on FAT16 (256). */
 uint32_t next32(uint8_t const *fat_sector, uint32_t cluster_mod_128) noexcept;
 uint32_t next16(uint8_t const *fat_sector, uint32_t cluster_mod_256) noexcept;
+
+/* The write side. A free cluster's FAT entry is zero; the value written at
+ * a chain's end is the EOC mark (any value at or past the floor reads as
+ * end -- this is the one the tools write). */
+constexpr uint32_t kFreeCluster = 0;
+constexpr uint32_t kEocMark32 = 0x0fffffff;
+
+/** A 32-byte directory slot's fields, as offsets. */
+constexpr uint32_t kDirentAttr = 11;
+constexpr uint32_t kDirentClusterHigh = 20;
+constexpr uint32_t kDirentClusterLow = 26;
+constexpr uint32_t kDirentSize = 28;
+constexpr uint8_t kAttrArchive = 0x20;
+
+/** Validate a client's name and build its 8.3 form: uppercase, space-padded,
+ *  one dot, letters and digits and '-' and '_' (the conservative end of the
+ *  format's charset -- a name past it is refused, not mangled). */
+bool name_83(char const *name, uint32_t length, uint8_t out[11]) noexcept;
+
+/** Fill a 32-byte slot: a plain new file of this name. */
+void dirent_make(uint8_t slot[32], uint8_t const name83[11]) noexcept;
+
+/** Patch an existing slot after a write: the first cluster and the size. */
+void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noexcept;
+
+/** Set one entry in a FAT sector the caller holds (the mirror of next*). */
+void set_next32(uint8_t *fat_sector, uint32_t cluster_mod_128, uint32_t value) noexcept;
+void set_next16(uint8_t *fat_sector, uint32_t cluster_mod_256, uint32_t value) noexcept;
 
 }  // namespace aegir::fat

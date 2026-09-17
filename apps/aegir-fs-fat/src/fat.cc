@@ -25,6 +25,19 @@ uint32_t word32(uint8_t const *at) noexcept
     return value;
 }
 
+void put16(uint8_t *at, uint16_t value) noexcept
+{
+    at[0] = static_cast<uint8_t>(value);
+    at[1] = static_cast<uint8_t>(value >> 8);
+}
+
+void put32(uint8_t *at, uint32_t value) noexcept
+{
+    for (uint32_t i = 0; i < 4; ++i) {
+        at[i] = static_cast<uint8_t>(value >> (i * 8));
+    }
+}
+
 }  // namespace
 
 bool bpb(uint8_t const *sector, Volume *volume) noexcept
@@ -52,6 +65,7 @@ bool bpb(uint8_t const *sector, Volume *volume) noexcept
     volume->sectors_per_cluster = sectors_per_cluster;
     volume->fat_start = reserved;
     volume->fat_sectors = fat_sectors;
+    volume->fats = fats;
     volume->root_sectors =
         volume->fat32 ? 0u : (static_cast<uint32_t>(root_entries) * 32 + 511) / 512;
     volume->root_start = static_cast<uint64_t>(reserved) +
@@ -114,6 +128,79 @@ uint32_t next32(uint8_t const *fat_sector, uint32_t cluster_mod_128) noexcept
 uint32_t next16(uint8_t const *fat_sector, uint32_t cluster_mod_256) noexcept
 {
     return word16(fat_sector + cluster_mod_256 * 2);
+}
+
+bool name_83(char const *name, uint32_t length, uint8_t out[11]) noexcept
+{
+    uint32_t dot = length;
+    for (uint32_t i = 0; i < length; ++i) {
+        if (name[i] == '.') {
+            if (dot != length) {
+                return false; /* one dot is the whole form */
+            }
+            dot = i;
+        }
+    }
+    uint32_t const base = dot;
+    uint32_t const ext = dot == length ? 0 : length - dot - 1;
+    if (base == 0 || base > 8 || ext > 3 || (dot != length && ext == 0)) {
+        return false;
+    }
+    for (uint32_t i = 0; i < 11; ++i) {
+        out[i] = ' ';
+    }
+    for (uint32_t i = 0; i < base; ++i) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - ('a' - 'A'));
+        }
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+            return false;
+        }
+        out[i] = static_cast<uint8_t>(c);
+    }
+    for (uint32_t i = 0; i < ext; ++i) {
+        char c = name[dot + 1 + i];
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - ('a' - 'A'));
+        }
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+            return false;
+        }
+        out[8 + i] = static_cast<uint8_t>(c);
+    }
+    return true;
+}
+
+void dirent_make(uint8_t slot[32], uint8_t const name83[11]) noexcept
+{
+    for (uint32_t i = 0; i < 32; ++i) {
+        slot[i] = 0;
+    }
+    for (uint32_t i = 0; i < 11; ++i) {
+        slot[i] = name83[i];
+    }
+    slot[kDirentAttr] = kAttrArchive;
+}
+
+void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noexcept
+{
+    put16(slot + kDirentClusterHigh, static_cast<uint16_t>(first_cluster >> 16));
+    put16(slot + kDirentClusterLow, static_cast<uint16_t>(first_cluster));
+    put32(slot + kDirentSize, bytes);
+}
+
+void set_next32(uint8_t *fat_sector, uint32_t cluster_mod_128, uint32_t value) noexcept
+{
+    /* The high four bits are reserved and kept (next32 masks them off when
+     * reading), so the write is a read-modify-write of the whole entry. */
+    uint8_t *entry = fat_sector + cluster_mod_128 * 4;
+    put32(entry, (word32(entry) & 0xf0000000u) | (value & 0x0fffffffu));
+}
+
+void set_next16(uint8_t *fat_sector, uint32_t cluster_mod_256, uint32_t value) noexcept
+{
+    put16(fat_sector + cluster_mod_256 * 2, static_cast<uint16_t>(value));
 }
 
 }  // namespace aegir::fat
