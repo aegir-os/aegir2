@@ -235,6 +235,19 @@ uint64_t vol_remove(seL4_CPtr port, char const *path, uint32_t path_length) noex
     return in[0];
 }
 
+/* reap: how many of the badge's handles were dropped. */
+uint64_t vol_reap(seL4_CPtr port, uint64_t badge) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodReap, &badge, 1, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
 /* One read, asking for refusal: true when the volume says no. */
 bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
 {
@@ -799,6 +812,38 @@ int main(int argc, char *argv[])
         ++failed;
     } else {
         write("  test: Sys:Homes/rroland/WELCOME.TXT is the session's own words\n");
+    }
+
+    /* reap and unbind, the teardown mechanisms, driven directly (the caller
+     * who knows a session died is the session-reclaim arc's, specs/auth.md):
+     * the session left LEAK.TXT open in its home, and its badge is the first
+     * login of the first user. A name an open handle holds refuses remove;
+     * once the badge's handles are reaped the file dies; and unbinding the
+     * badge drops its Home: while Sys:, everyone's alias, still answers. */
+    {
+        uint64_t const session_badge = aegir::ipc::make_user_badge(0, 0);
+        static char const kLeakPath[] = "Sys:Homes/rroland/LEAK.TXT";
+        seL4_CPtr const leak_volume =
+            resolve(kLeakPath, sizeof(kLeakPath) - 1, &rest, &rest_length,
+                    static_cast<seL4_CPtr>(first_free + 8));
+        bool const held = vol_remove(leak_volume, rest, rest_length) == 0;
+        uint64_t const reaped = vol_reap(leak_volume, session_badge);
+        bool const died = vol_remove(leak_volume, rest, rest_length) == 1;
+        uint64_t badge_word = session_badge;
+        uint64_t in[1] = {0};
+        aegir::ipc::WordsReply const answer = g_nmspace.call_words(
+            aegir::nmspace::kMethodUnbind, &badge_word, 1, in, 1);
+        uint64_t const unbound =
+            answer.error == 0 && answer.count == 1 ? in[0] : 0;
+        bool const sys_lives =
+            read_and_check(sys_volume, "AEGIR.TXT", 9, kAegirTxt,
+                           text_length(kAegirTxt));
+        if (!held || reaped != 1 || !died || unbound != 1 || !sys_lives) {
+            write("  test: FAIL reap or unbind did not do their counts\n");
+            ++failed;
+        } else {
+            write("  test: reap drops the session's handles, unbind its aliases; Sys: is everyone's\n");
+        }
     }
 
     if (failed == 0) {

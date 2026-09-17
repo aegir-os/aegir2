@@ -46,6 +46,10 @@ constexpr uint32_t kMethodResolve = 2;  /* in: path words; answer: the rest stri
 constexpr uint32_t kMethodCount = 3;    /* answer: how many volumes the namespace holds */
 constexpr uint32_t kMethodDescribe = 4; /* in: an index; answer: a Row's words */
 constexpr uint32_t kMethodBind = 5;     /* in: badge, name, path; answer: 1 bound, 0 refused */
+/* unbind: a badge. Every binding the badge holds is dropped -- the session
+ * teardown's mechanism, beside the volume protocol's reap (specs/vfs.md).
+ * Answer: how many were dropped. */
+constexpr uint32_t kMethodUnbind = 6;   /* in: badge; answer: how many */
 
 /** Register flags. */
 constexpr uint64_t kFlagReadOnly = 1;

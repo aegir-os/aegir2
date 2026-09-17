@@ -123,6 +123,26 @@ Handle *handle_alloc(uint64_t badge) noexcept
     return nullptr;
 }
 
+/* Every handle one badge holds, dropped as though closed -- the dirent is
+ * already current, because a write patches it on the way, so reaping is
+ * only the rows. The answer is how many there were. */
+uint64_t handle_reap(uint64_t badge) noexcept
+{
+    if (g_memory == nullptr) {
+        return 0;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    uint64_t reaped = 0;
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial != 0 && rows[i].badge == badge) {
+            rows[i].serial = 0;
+            ++reaped;
+        }
+    }
+    return reaped;
+}
+
 /* One read, volume-relative: the data lands in the window, which every parse
  * then reads. False is a report, not a hang. A read larger than the window
  * refuses rather than chunking, and that is a bound the FAT format itself
@@ -737,6 +757,16 @@ void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
         }
     }
     port.reply_words(&closed, 1);
+}
+
+void answer_reap(aegir::ipc::Owner &port, uint64_t const *words,
+                 uint32_t count) noexcept
+{
+    uint64_t reaped = 0;
+    if (count >= 1) {
+        reaped = handle_reap(words[0]);
+    }
+    port.reply_words(&reaped, 1);
 }
 
 /* mkdir's engine: every component of the path, found or made. A component
@@ -1381,6 +1411,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodRemove:
             answer_remove(vol, words, count);
+            break;
+        case aegir::volume::kMethodReap:
+            answer_reap(vol, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

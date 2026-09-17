@@ -70,6 +70,10 @@ constexpr uint32_t kMethodMkdir = 6; /* in: path words; answer: 1, or 0 */
  * refused rather than unlinked under the writer. Answer: 1, or 0 -- not
  * found, not empty, open, read-only, or the root. */
 constexpr uint32_t kMethodRemove = 7; /* in: path words; answer: 1, or 0 */
+/* reap: a badge. Every handle the badge holds is dropped, as though
+ * closed -- the session teardown's mechanism, called today by whoever
+ * knows the badge (specs/vfs.md). Answer: how many were dropped. */
+constexpr uint32_t kMethodReap = 8;   /* in: badge; answer: how many */
 
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */

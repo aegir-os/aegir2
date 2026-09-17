@@ -318,6 +318,33 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(&one, 1);
 }
 
+/* unbind: a badge. Every binding the badge holds is dropped (specs/vfs.md's
+ * Aliases) -- the session teardown's mechanism; the answer is how many
+ * there were. The arena is not reclaimed: it grows on demand and a binding
+ * is small, which the session-reclaim arc's budget already assumes. */
+void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
+                   uint32_t count) noexcept
+{
+    uint64_t dropped = 0;
+    if (count < 1) {
+        port.reply_words(&dropped, 1);
+        return;
+    }
+    uint64_t const badge = words[0];
+    Binding **at = &g_bindings;
+    while (*at != nullptr) {
+        Binding *b = *at;
+        if (b->badge == badge) {
+            *at = b->next;
+            --g_binding_count;
+            ++dropped;
+        } else {
+            at = &b->next;
+        }
+    }
+    port.reply_words(&dropped, 1);
+}
+
 /* resolve: a `Volume:rest` path, where the volume part may be an alias
  * (specs/vfs.md's Aliases). Substitution composes a path the caller never
  * wrote -- Home:WELCOME.TXT is Sys:Homes/<user>/WELCOME.TXT is
@@ -530,6 +557,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::nmspace::kMethodBind:
             answer_bind(port, words, count);
+            break;
+        case aegir::nmspace::kMethodUnbind:
+            answer_unbind(port, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

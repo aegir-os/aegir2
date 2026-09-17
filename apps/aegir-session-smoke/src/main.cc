@@ -244,6 +244,27 @@ int main(int argc, char *argv[])
             write("  session.smoke: Home:WELCOME.TXT written -- ");
             write(kWelcome, sizeof(kWelcome) - 1);
         }
+        /* One handle left open on purpose: a session that halts without
+         * closing is what the volume protocol's reap exists for, and the
+         * test service drops it (specs/vfs.md). The file sits beside
+         * WELCOME.TXT -- the resolved rest's directory is this home, and
+         * the test removes the file once the handle is gone. */
+        if (home_volume != 0 && length > sizeof("WELCOME.TXT") - 1) {
+            char leak[aegir::nmspace::kPathMax];
+            uint32_t const prefix = length - (sizeof("WELCOME.TXT") - 1);
+            for (uint32_t i = 0; i < prefix; ++i) {
+                leak[i] = text[i];
+            }
+            for (uint32_t i = 0; i < sizeof("LEAK.TXT") - 1; ++i) {
+                leak[prefix + i] = "LEAK.TXT"[i];
+            }
+            uint32_t const leak_length = prefix + sizeof("LEAK.TXT") - 1;
+            uint64_t const leaked =
+                vol_open(home_volume, leak, leak_length,
+                         aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            write(leaked != 0 ? "  session.smoke: LEAK.TXT left open for the reaper\n"
+                              : "  session.smoke: FAIL LEAK.TXT would not open\n");
+        }
     }
 
     if (log.valid()) {
