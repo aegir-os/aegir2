@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Build the test disk: a GPT with three FAT partitions -- two holding a known
-file, one empty.
+"""Build the test disk: a GPT with four FAT partitions -- two holding a known
+file, one empty for the write side, one FAT16 for the flavors to differ.
 
 Copyright (c) 2026 Robert Roland
 SPDX-License-Identifier: MIT
@@ -31,7 +31,7 @@ import tempfile
 from pathlib import Path
 
 SECTOR = 512
-DISK_BYTES = 16 << 20
+DISK_BYTES = 32 << 20
 # The Aegir system volume's partition type GUID (specs/services.md): the
 # disk's own statement of which partition the system stands on, which the
 # partition manager reads and the VFS aliases as Sys:. The discovery shape
@@ -50,7 +50,12 @@ PARTITIONS = [
      b"a second volume, a second service, the same reader\n"),
     # No file: the writable volume the write side proves itself on. An empty
     # root directory is the point -- everything in it, the system put there.
-    ("SCRATCH", 26624, None, None, None),
+    ("SCRATCH", 26624, 32766, None, None),
+    # FAT16, and provably so: with one sector per cluster this many sectors
+    # is past the 4085-cluster FAT12 ceiling and under FAT32's floor, which
+    # is the format's own definition of the flavor. mtools picks from the
+    # geometry, so the minfo check below is the checksum, not a courtesy.
+    ("FAT16", 32768, 43007, None, None),
 ]
 
 # Beyond the root files: a directory with a file in it, so the component
@@ -89,21 +94,37 @@ def main() -> int:
 
     for name, first, _, known_name, known_content in PARTITIONS:
         volume = f"{args.image}@@{first * SECTOR}"
-        # -F forces FAT32, which a volume this size would not normally get;
-        # the service's first reader is meant to speak it. If this mtools
-        # refuses, the geometry default -- FAT16 at this size -- still
-        # exercises the same BPB walk, so either answer is a disk worth
-        # having.
-        forced = subprocess.run(
-            ["mformat", "-i", volume, "-F", "-v", name, "::"],
-            capture_output=True,
-        )
-        if forced.returncode != 0:
+        if name == "FAT16":
+            # FAT16 on purpose: -c 1 makes the cluster count decide, and the
+            # count is FAT16's range. mtools picks by geometry, so verify --
+            # a build that silently made FAT12 would feed the service a
+            # flavor it does not speak.
             subprocess.run(
-                ["mformat", "-i", volume, "-v", name, "::"],
-                check=True,
+                ["mformat", "-i", volume, "-c", "1", "-v", name, "::"],
+                check=True, capture_output=True,
+            )
+            info = subprocess.run(["minfo", "-i", volume, "::"], check=True,
+                                  capture_output=True, text=True)
+            if 'disk type="FAT16' not in info.stdout:
+                print(f"make_disk: the FAT16 partition is not one:\n{info.stdout}",
+                      file=sys.stderr)
+                return 1
+        else:
+            # -F forces FAT32, which a volume this size would not normally get;
+            # the service's first reader is meant to speak it. If this mtools
+            # refuses, the geometry default -- FAT16 at this size -- still
+            # exercises the same BPB walk, so either answer is a disk worth
+            # having.
+            forced = subprocess.run(
+                ["mformat", "-i", volume, "-F", "-v", name, "::"],
                 capture_output=True,
             )
+            if forced.returncode != 0:
+                subprocess.run(
+                    ["mformat", "-i", volume, "-v", name, "::"],
+                    check=True,
+                    capture_output=True,
+                )
 
         if known_name is None:
             continue
@@ -143,8 +164,8 @@ def main() -> int:
             print(f"make_disk: the nested file did not land:\n{listing.stdout}",
                   file=sys.stderr)
             return 1
-    print(f"make_disk: {args.image}: GPT, three FAT partitions, "
-          "two known files, one nested, one empty volume")
+    print(f"make_disk: {args.image}: GPT, four FAT partitions, "
+          "two known files, one nested, one empty volume, one FAT16")
     return 0
 
 
