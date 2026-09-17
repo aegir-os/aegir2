@@ -25,11 +25,23 @@ So identity is not a claim in a message that a service has to believe; it is a
 property of the capability the sender had to hold in order to speak at all. An
 Aegir identity is that badge plus a human-readable name plus an account.
 
+The badge space is a designed thing (it was per-spawner ranges until sessions
+forced the design). Bit 63 is `kCallMark`, the call/signal mark a supervising
+server keeps on the caller caps it hands out. Bit 62 is the **user class**: a
+badge with it set belongs to a user, one with it clear to the system. A user
+badge is `bit62 | (user << 24) | serial` — the user being the row index in
+the user database, the serial counting what the user runs — minted by `auth`
+when it starts a session (`specs/auth.md`). System badges stay low: director's
+boot set from 1, and each spawning service's children in a range of their own
+(the device manager's from 256, the partition manager's from 512), all with
+bit 62 clear. "Is this a user, and which" is a mask, not a table — and a
+badge that fits no shape is nothing anyone minted.
+
 ## The two classes of authority
 
 | | system | user |
 | --- | --- | --- |
-| created by | director, at boot from the manifest, or by an elevation request | director, on request of an authenticated user |
+| created by | director, at boot from the manifest, or by an elevation request | auth, on a successful login, with delegated spawn authority (`specs/auth.md`) |
 | authority | exactly what its manifest entry declares: custody, ports, an account | its session's ports and volumes, and its account |
 | device capabilities | per declaration, least-authority | not declarable (`specs/services.md`); a specific device may be granted at runtime by the device manager and recorded in the account — see Open, for review |
 | `IRQControl` | custody is delegated to the device manager | never |
@@ -451,5 +463,6 @@ portable one, and a driver that finds no pair polls.
   initrd, not a bigger delegation.
 - Badges for a service's spawned children count from **256** for the device manager's
   (the low badges are director's boot set) and from **512** for the partition
-  manager's -- until the badge space is a designed thing, each spawning service's
-  children live in a range of their own.
+  manager's -- the system ranges of the designed badge space (see Identity is a
+  badge, above): bit 62 clear is the system class, bit 62 set is a user, and
+  `auth` mints user badges of `bit62 | (user << 24) | serial`.

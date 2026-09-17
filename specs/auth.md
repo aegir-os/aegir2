@@ -99,8 +99,52 @@ is refused. The database's known entry is the checksum, the way
 
 ## Later, recorded rather than designed
 
-The authoritative database on the root volume; challenge/response; a login
-answer that carries what a session starts with (its badge, its pool, its
-home volume); elevation through the sudo-like tool; attempt counting and
-lockout. Each is in `specs/authority.md`'s open list, and each gets easier
-when this slice stands.
+The authoritative database on the root volume; challenge/response; attempt
+counting and lockout; elevation through the sudo-like tool, when there is a
+session to elevate from. Each gets easier when the slices above stand.
+
+## Sessions, v1
+
+A successful login starts a session. The decisions, taken 2026-09:
+
+- **auth spawns the session itself**, with a delegated spawn kit -- untyped,
+  an ASID pool, its VSpace root with an address window, the session binary
+  as a blob, and `spawn:`-prefixed unbadged copies of the ports a session
+  is given. This is the established pattern -- the device manager starts
+  the drivers, the partition manager starts the filesystems, and the
+  service that knows a login succeeded starts the session. It amends
+  authority.md's "director, on request of an authenticated user": auth is
+  the requester *and* the mechanism, and director stays static after boot.
+- **The badge space is designed now.** Bit 63 is `kCallMark`, the
+  call/signal mark a supervising server keeps. Bit 62 is the **user
+  class**: a badge with it set belongs to a user, one with it clear to the
+  system. A user badge is `bit62 | (user << 24) | serial`, where *user* is
+  the row index in the user database -- free, stable within a build, and
+  noted: reordering the source rows renumbers users, so the row order is
+  part of the format's meaning -- and *serial* counts what the user runs.
+  System badges stay low, as they already are. "Is this a user, and which"
+  is a mask, not a table.
+- **A login answers first, then spawns.** The reply says the credential was
+  true; the session is its consequence, and a session that will not start
+  is logged loudly rather than folded into the answer. While the spawn and
+  the wait for the session's ready run, later logins queue at the endpoint
+  -- the partition manager's synchronous rhythm, sufficient while sessions
+  are short-lived; the supervisor-that-serves shape (one receive, calls
+  marked, signals bare) lands when they are not.
+- **The first session is a smoke, not a shell.** There is no input path --
+  no keyboard, no serial input -- so an interactive session cannot exist
+  yet, and there is no home volume to give it (the filesystems are
+  read-only). The session proves the authority shape instead: it runs with
+  the user's badge and account, it logs, it reads through the VFS, it
+  exits. The evidence is the logger's own lines: the logger prints the
+  caller's badge, so a session's lines carry a bit-62 badge, and the
+  identity chain is visible end to end.
+- **Resolve stays open.** There is no volume-ownership model to check
+  against, and a check without one would be an arbitrary rule, not a
+  policy. Permission checks land with home volumes.
+
+Known gap, stated rather than stumbled into: **an exited session is not
+reclaimed.** Drivers and filesystems never exit, so this is the first
+process whose objects outlive it; repeated logins drain the spawn untyped
+until reclaim (authority.md's retained-copy path) extends to sessions. The
+bound is the grant, and reaching it is a loud refusal, never a quiet one.

@@ -267,7 +267,7 @@ that the caller can read.
 | 5 | `partition-manager` | system | `partman.partitions` | `log.main`, `vfs.namespace` | needs block devices to exist (the registry and their ports arrive as grants); launches one filesystem per partition |
 | 6 | `test` | system | — | `log.main`, `vfs.namespace` | the accumulating test bed; asks again until the volumes it checks exist |
 | 7 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace` | needs the user database, which lives on a volume that only exists once the filesystems serve |
-| 8 | *sessions* | user | — | `log.main`, `auth.login` | not part of boot proper: `auth` asks director for one per authenticated user, and it starts with user authority |
+| 8 | *sessions* | user | — | `log.main`, `vfs.namespace` | not part of boot proper: `auth` starts one on each successful login, with the user's badge and account (`specs/auth.md`) |
 
 Every `needs` above names a port that some row `owns` — which is what makes the
 table a valid manifest sketch rather than prose: a row consuming a port nobody
@@ -841,8 +841,8 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: the user sessions `auth` starts (boot-set
-row 8 -- the login port and its database landed with `specs/auth.md`'s first
-slice; what a login answer carries, and what a session is given, is the next
-spec), and a badge space that is a designed thing rather than ranges each
-spawning service picks for itself.
+Still open, in the order they arrive: reclaiming an exited session's objects
+(`specs/auth.md` records the gap), an input path so a session can be a shell,
+home volumes once a filesystem writes, and resolve checks once volumes have an
+ownership model to check against. The badge space is designed now
+(`specs/authority.md`, Identity is a badge).
