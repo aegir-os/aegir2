@@ -55,6 +55,13 @@ struct Volume {
 Volume *g_volumes = nullptr;
 uint32_t g_volume_count = 0;
 
+/* The system volume's assigned name, recorded from the first registration
+ * that carries the boot flag -- the partition manager read it off the
+ * partition's type GUID (specs/vfs.md's Aliases). Empty: this disk has no
+ * Sys:, and resolves of it refuse. */
+char g_sys[aegir::nmspace::kNameMax];
+uint32_t g_sys_length = 0;
+
 /* The table's backing store: the memory the manifest's memory_kib granted,
  * mapped and ours, used up from the front. */
 uint8_t *g_arena = nullptr;
@@ -184,6 +191,21 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     write("  vfs: ");
     write(volume->name, volume->name_length);
     write(": registered\n");
+    if ((flags & aegir::nmspace::kFlagBoot) != 0) {
+        if (g_sys_length == 0) {
+            for (uint32_t i = 0; i < volume->name_length; ++i) {
+                g_sys[i] = volume->name[i];
+            }
+            g_sys_length = volume->name_length;
+            write("  vfs: Sys: is ");
+            write(g_sys, g_sys_length);
+            write("\n");
+        } else {
+            write("  vfs: ");
+            write(volume->name, volume->name_length);
+            write(": a second boot flag -- the first stands\n");
+        }
+    }
     uint64_t answer[aegir::nmspace::kNameMax / 8 + 1];
     uint32_t const answer_words =
         aegir::nmspace::pack_string(answer, volume->name, volume->name_length,

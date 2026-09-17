@@ -37,4 +37,10 @@ bool header(uint8_t const *sector, uint64_t *entries_lba, uint32_t *entry_count,
 /** One entry: false when it is unused, which is a zero type GUID. */
 bool entry(uint8_t const *raw, uint32_t bytes, Partition *partition) noexcept;
 
+/** True when the partition's type GUID is the Aegir system volume's --
+ *  5cd58811-9bf5-4af3-8682-9b76edce3535, the disk's own statement of which
+ *  volume the system stands on (specs/services.md). The VFS aliases the
+ *  volume it yields as Sys:. */
+bool system_volume(Partition const &partition) noexcept;
+
 }  // namespace aegir::gpt

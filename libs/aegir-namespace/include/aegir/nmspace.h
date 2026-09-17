@@ -43,6 +43,7 @@ constexpr uint32_t kMethodDescribe = 4; /* in: an index; answer: a Row's words *
 
 /** Register flags. */
 constexpr uint64_t kFlagReadOnly = 1;
+constexpr uint64_t kFlagBoot = 2; /* the system volume -- the VFS aliases it Sys: */
 
 /** The longest name a volume may carry, NUL not included: short enough to
  *  travel in the envelope with room for what comes after it, long enough for

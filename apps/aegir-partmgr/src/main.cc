@@ -67,6 +67,7 @@ struct Pending {
     uint64_t first_lba;
     uint64_t sector_count;
     uint32_t port_index;   /* which window's frames its child maps with */
+    uint32_t boot;         /* the Aegir system type GUID said so */
     Pending *next;
 };
 
@@ -144,6 +145,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                       aegir::ipc::Consumer const &nmspace, seL4_CPtr announce,
                       char const *device_name, uint32_t device_name_length,
                       uint32_t partition, uint64_t first_lba, uint64_t sector_count,
+                      uint32_t boot,
                       seL4_CPtr block_port, uint32_t children_grant,
                       uint64_t window_physical, uint32_t window_pages,
                       void const *fs_image, uint32_t fs_image_bytes,
@@ -364,9 +366,11 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
         uint64_t out[aegir::nmspace::kNameMax / 8 + 2];
         uint32_t out_words = aegir::nmspace::pack_string(out, label, label_length,
                                                          aegir::nmspace::kNameMax);
-        /* Writable: a FAT volume takes writes, which the descriptor row
-         * already told the child -- one statement, two hearers. */
-        out[out_words++] = 0;
+        /* Flags: not read-only -- a FAT volume takes writes, which the
+         * descriptor row already told the child -- plus boot when the
+         * partition's type GUID said this is the system volume
+         * (specs/services.md). One statement, two hearers. */
+        out[out_words++] = boot != 0 ? aegir::nmspace::kFlagBoot : 0;
         aegir::ipc::WordsReply const registered = nmspace.call_transfer(
             aegir::nmspace::kMethodRegister, out, out_words, volume_caller, in,
             aegir::nmspace::kNameMax / 8 + 1, nullptr);
@@ -750,6 +754,10 @@ int main(int argc, char *argv[])
                             aegir::debug_write(partition.name, partition.name_length);
                             aegir::debug_write("\"");
                         }
+                        bool const system = aegir::gpt::system_volume(partition);
+                        if (system) {
+                            aegir::debug_write(" -- the system volume");
+                        }
                         aegir::debug_write("\n");
                         /* Remembered for the spawn phase: starting the
                          * service now would put a serving child on this
@@ -773,6 +781,7 @@ int main(int argc, char *argv[])
                             pending->sector_count =
                                 partition.last_lba - partition.first_lba + 1;
                             pending->port_index = port_index;
+                            pending->boot = system ? 1 : 0;
                             pending->next = pendings;
                             pendings = pending;
                         }
@@ -806,7 +815,8 @@ int main(int argc, char *argv[])
         start_filesystem(spawner, static_cast<seL4_CPtr>(spawn_log_slot), nmspace,
                          announce, pending->device_name, pending->device_name_length,
                          pending->partition, pending->first_lba, pending->sector_count,
-                         pending->port, children_grant, window_physical, pages_per_window,
+                         pending->boot, pending->port, children_grant, window_physical,
+                         pages_per_window,
                          reinterpret_cast<void const *>(fs_image_address), fs_image_bytes,
                          512u + fs_started);
         ++fs_started;

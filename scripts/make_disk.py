@@ -32,6 +32,11 @@ from pathlib import Path
 
 SECTOR = 512
 DISK_BYTES = 16 << 20
+# The Aegir system volume's partition type GUID (specs/services.md): the
+# disk's own statement of which partition the system stands on, which the
+# partition manager reads and the VFS aliases as Sys:. The discovery shape
+# is systemd's Discoverable Partitions Specification -- one GUID per role.
+AEGIR_SYSTEM_GUID = "5cd58811-9bf5-4af3-8682-9b76edce3535"
 # The partitions: name, first LBA, last LBA (None = to the end of the disk),
 # and the file each volume's root will hold. The first starts at the
 # conventional LBA -- the first megabyte is the GPT's, which is also what
@@ -62,12 +67,14 @@ def main() -> int:
     with args.image.open("wb") as handle:
         handle.truncate(DISK_BYTES)
 
-    # Three partitions typed Microsoft basic data -- the type a FAT volume on
-    # GPT carries.
+    # Three partitions. The first carries the Aegir system volume's type
+    # GUID -- the disk says which volume is Sys: -- the rest are plain
+    # Microsoft basic data, the type a FAT volume on GPT carries.
     sgdisk = ["sgdisk", "--clear"]
     for number, (name, first, last, _, _) in enumerate(PARTITIONS, start=1):
+        typecode = AEGIR_SYSTEM_GUID if number == 1 else "0700"
         sgdisk += [f"--new={number}:{first}:{last if last is not None else 0}",
-                   f"--typecode={number}:0700",
+                   f"--typecode={number}:{typecode}",
                    f"--change-name={number}:{name}"]
     sgdisk.append(str(args.image))
     subprocess.run(sgdisk, check=True, capture_output=True)

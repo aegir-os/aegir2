@@ -36,6 +36,23 @@ uint32_t word32(uint8_t const *at) noexcept
 
 }  // namespace
 
+bool system_volume(Partition const &partition) noexcept
+{
+    /* 5cd58811-9bf5-4af3-8682-9b76edce3535, as GPT stores a GUID: the first
+     * three fields little-endian, the last two as written
+     * (specs/services.md). */
+    static constexpr uint8_t kAegirSystem[16] = {
+        0x11, 0x88, 0xd5, 0x5c, 0xf5, 0x9b, 0xf3, 0x4a,
+        0x86, 0x82, 0x9b, 0x76, 0xed, 0xce, 0x35, 0x35,
+    };
+    for (uint32_t i = 0; i < 16; ++i) {
+        if (partition.type[i] != kAegirSystem[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool protective_mbr(uint8_t const *sector) noexcept
 {
     if (sector[kMbrSignature] != 0x55 || sector[kMbrSignature + 1] != 0xaa) {
