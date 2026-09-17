@@ -1,6 +1,8 @@
 # Services, ports and the boot manifest
 
-Status: proposed, for review (2026-09).
+Status: implemented except where an open section says otherwise (2026-09)
+— the manifest, the boot set, the storage stack and the sessions row stand;
+what remains is the open list at the end.
 
 A service is a process with a name, a job, a set of ports and an authority class
 — and all four are *declared*, not built in. This file defines the manifest that

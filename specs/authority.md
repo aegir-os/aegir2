@@ -1,6 +1,9 @@
 # Identity, authority and accounts
 
-Status: proposed, for review (2026-09).
+Status: partially implemented (2026-09). The badge space (Identity is a
+badge) and the right to spawn as a delegated kit stand in code — auth
+mints user badges and starts sessions with them (`specs/auth.md`).
+Accounts, elevation, and the open list remain proposed, for review.
 
 Aegir is multiuser, which is not a property of the kernel: seL4 has no users, and
 it should not. What Aegir has instead is a kernel-enforced answer to "who sent
