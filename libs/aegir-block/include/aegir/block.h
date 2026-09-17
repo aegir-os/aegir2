@@ -5,13 +5,14 @@
  * SPDX-License-Identifier: MIT
  *
  * v1, in full. A call carries a method in MR0 and words after it -- one for
- * a read, three for a clamp; a reply is one word. Bulk data never crosses
- * the message: each device has a *shared
+ * a read or a write, three for a clamp; a reply is one word. Bulk data never
+ * crosses the message: each device has a *shared
  * window*, mapped into the driver and into whichever client is calling, and
  * what does not fit in a word -- the identify answer, the sectors a read asked
- * for -- is written there. One window per device is enough because a call is
- * synchronous: requests serialize at the endpoint, so there is exactly one
- * outstanding request per window, and that is structural rather than a lock.
+ * for or a write carries -- is written there. One window per device is enough
+ * because a call is synchronous: requests serialize at the endpoint, so there
+ * is exactly one outstanding request per window, and that is structural
+ * rather than a lock.
  *
  * The serialization orders the DMAs, not the consumers. Every client's caps
  * name the same physical frames, so the window's content belongs to the most
@@ -43,6 +44,11 @@ constexpr uint32_t kMethodRead = 2;
  * other badge reads only inside its recorded range, and an unrecorded badge
  * reads nothing (specs/services.md). */
 constexpr uint32_t kMethodClamp = 3;
+/* The write: the same packed word as a read, the same clamp by badge, the
+ * reply the number of sectors written. The sectors cross through the window
+ * exactly as a read's do, in the other direction: the caller fills the
+ * window, then calls. */
+constexpr uint32_t kMethodWrite = 4;
 
 /** The identify answer, written at offset 0 of the shared window. The device
  *  names *itself* -- "BD0" -- because the public block-device namespace is the

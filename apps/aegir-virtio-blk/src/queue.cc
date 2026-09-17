@@ -140,14 +140,22 @@ void use_interrupts(uint64_t notification, uint64_t handler) noexcept
     irq_handler = static_cast<seL4_CPtr>(handler);
 }
 
-ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
-                       uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept
+namespace {
+
+/* One request of either direction: the type word says which, and the data
+ * descriptor's kDescWrite follows it -- the device writes the buffer on a
+ * read, reads it on a write. Everything else -- the chain, the publish, the
+ * wait, the status byte -- is the same machine. */
+ReadResult transfer_sector(Registers const &registers, volatile uint8_t *page,
+                           uint64_t physical, uint64_t sector, uint64_t data_physical,
+                           uint8_t *data_out, uint32_t type) noexcept
 {
     ReadResult result{false, 0, 0, 0, 0, 0, 0};
 
-    /* The request header: a read, of one sector at `sector`. Written *before* it is published,
-     * because the device may look as soon as it is told there is something to do. */
-    put_word(word_at(page, kRequestOffset + 0), 0, kBlkTypeIn);
+    /* The request header: a read or a write, of one sector at `sector`. Written *before* it
+     * is published, because the device may look as soon as it is told there is something to
+     * do. */
+    put_word(word_at(page, kRequestOffset + 0), 0, type);
     put_word(word_at(page, kRequestOffset + 0), 1, 0);
     volatile uint32_t *sector_words = word_at(page, kRequestOffset + 8);
     put_word(sector_words, 0, static_cast<uint32_t>(sector));
@@ -172,7 +180,8 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
         } else if (i == 1) {
             addr = data_physical;
             len = kSectorBytes;
-            flags = static_cast<uint16_t>(kDescNext | kDescWrite);
+            flags = static_cast<uint16_t>(
+                kDescNext | (type == kBlkTypeIn ? kDescWrite : 0));
             next = 2;
         } else {
             addr = physical + kStatusOffset;
@@ -246,6 +255,23 @@ ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint6
         }
     }
     return result;
+}
+
+}  // namespace
+
+ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
+                       uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept
+{
+    return transfer_sector(registers, page, physical, sector, data_physical, data_out,
+                           kBlkTypeIn);
+}
+
+ReadResult write_sector(Registers const &registers, volatile uint8_t *page,
+                        uint64_t physical, uint64_t sector,
+                        uint64_t data_physical) noexcept
+{
+    return transfer_sector(registers, page, physical, sector, data_physical, nullptr,
+                           kBlkTypeOut);
 }
 
 }  // namespace aegir::virtio

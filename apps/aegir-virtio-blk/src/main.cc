@@ -90,6 +90,23 @@ bool record_clamp(uint64_t badge, uint64_t first, uint64_t sectors) noexcept
     return true;
 }
 
+/* Read or write, the range question is the same: badge 0 is the manager and
+ * the whole device; any other badge, only inside the range recorded for it,
+ * and a badge with no record gets nothing. */
+bool clamp_allows(uint64_t badge, uint64_t first, uint32_t sectors, uint64_t capacity,
+                  uint32_t window_sectors) noexcept
+{
+    if (sectors > window_sectors || first + sectors > capacity) {
+        return false;
+    }
+    if (badge == 0) {
+        return true;
+    }
+    Clamp const *clamp = find_clamp(badge);
+    return clamp != nullptr && first >= clamp->first &&
+           first + sectors <= clamp->first + clamp->sectors;
+}
+
 /** The status handshake (virtio 1.x, 2.1.1). The device is told, in order, that we have
  *  seen it, that we know how to drive it, and what features we will use; it then either
  *  accepts the feature set -- leaving FEATURES_OK set -- or clears the bit to say it will
@@ -407,25 +424,34 @@ int main(int argc, char *argv[])
         } else if (method == aegir::block::kMethodRead && count == 1) {
             uint64_t const first = aegir::block::read_first(words[0]);
             uint32_t const sectors = aegir::block::read_count(words[0]);
-            /* The clamp: badge 0 is the manager and reads the whole device;
-             * any other badge reads only inside the range recorded for it,
-             * and a badge with no record reads nothing. A refused read
-             * answers zero with the window untouched. */
-            bool allowed =
-                sectors <= identify.window_sectors && first + sectors <= capacity;
-            if (allowed && badge != 0) {
-                Clamp const *clamp = find_clamp(badge);
-                allowed = clamp != nullptr && first >= clamp->first &&
-                          first + sectors <= clamp->first + clamp->sectors;
-            }
+            /* A refused read answers zero with the window untouched. */
             uint32_t done = 0;
-            if (allowed) {
+            if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
                 for (uint32_t i = 0; i < sectors; ++i) {
                     aegir::virtio::ReadResult const result = aegir::virtio::read_sector(
                         registers, queue_page, memory_physical, first + i,
                         window_physical +
                             static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes,
                         nullptr);
+                    if (!result.completed || result.status != 0) {
+                        break;
+                    }
+                    ++done;
+                }
+            }
+            port.reply(done);
+        } else if (method == aegir::block::kMethodWrite && count == 1) {
+            uint64_t const first = aegir::block::read_first(words[0]);
+            uint32_t const sectors = aegir::block::read_count(words[0]);
+            /* The write's range question is the read's own, word for word;
+             * the sectors leave the window instead of landing in it. */
+            uint32_t done = 0;
+            if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
+                for (uint32_t i = 0; i < sectors; ++i) {
+                    aegir::virtio::ReadResult const result = aegir::virtio::write_sector(
+                        registers, queue_page, memory_physical, first + i,
+                        window_physical +
+                            static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes);
                     if (!result.completed || result.status != 0) {
                         break;
                     }

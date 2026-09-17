@@ -66,8 +66,9 @@ constexpr uint16_t kDescNext = 1;   /* the next descriptor continues this chain 
 constexpr uint16_t kDescWrite = 2;  /* the *device* writes this buffer, not the driver */
 
 /* The block device's request header (virtio 1.x, 5.2.6): a type, a reserved word, and the
- * 512-byte sector to start at. `type` 0 is a read into the data buffer. */
+ * 512-byte sector to start at. `type` 0 is a read into the data buffer, 1 a write from it. */
 constexpr uint32_t kBlkTypeIn = 0;
+constexpr uint32_t kBlkTypeOut = 1;
 constexpr uint32_t kBlkOk = 0;
 constexpr uint32_t kBlkUnsupp = 2;
 
@@ -161,5 +162,13 @@ void use_interrupts(uint64_t notification, uint64_t handler) noexcept;
  *  *is* that area, and nullptr for reads that landed somewhere else. */
 ReadResult read_sector(Registers const &registers, volatile uint8_t *page, uint64_t physical,
                        uint64_t sector, uint64_t data_physical, uint8_t *data_out) noexcept;
+
+/** The write half: the device reads the sector *from* `data_physical` -- the
+ *  shared window again, so what a client left there crosses no message. The
+ *  result is read_sector's: the same publish, the same wait, the same status
+ *  byte. */
+ReadResult write_sector(Registers const &registers, volatile uint8_t *page,
+                        uint64_t physical, uint64_t sector,
+                        uint64_t data_physical) noexcept;
 
 }  // namespace aegir::virtio
