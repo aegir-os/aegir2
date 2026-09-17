@@ -89,9 +89,9 @@ The registration table **grows on demand**; there is no fixed volume count.
 
 An alias is a name that stands for a path; resolution substitutes and
 resolves again until the name part is a volume — `Home:WELCOME.TXT` for
-boot's session is `Sys:Homes/boot/WELCOME.TXT` is
-`AEGIR:Homes/boot/WELCOME.TXT`, and the answer is the volume `AEGIR` and
-the rest `Homes/boot/WELCOME.TXT`. A substitution chain is bounded by the
+rroland's session is `Sys:Homes/rroland/WELCOME.TXT` is
+`AEGIR:Homes/rroland/WELCOME.TXT`, and the answer is the volume `AEGIR` and
+the rest `Homes/rroland/WELCOME.TXT`. A substitution chain is bounded by the
 alias table's own length: a chain that outlasts it is a cycle, refused.
 
 - **`Sys` is the system volume.** A partition whose GPT type GUID is the
@@ -234,5 +234,5 @@ components deep reads back through the walk (`AEGIR:DOCS/NESTED.TXT`, put
 there by the disk build); `mkdir` builds `NEST/DEEP` on `SCRATCH:` and a
 file created inside it writes and reads back; and the session's
 `Home:WELCOME.TXT` — written under the session's own badge — reads back
-through `Sys:Homes/boot/WELCOME.TXT` from the test's badge, the same bytes
+through `Sys:Homes/rroland/WELCOME.TXT` from the test's badge, the same bytes
 by two names.

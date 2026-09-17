@@ -177,5 +177,5 @@ A login gives the session somewhere to be. The decisions:
 - **The smoke proves it end to end.** The session resolves
   `Home:WELCOME.TXT`, creates it, writes, closes, reads back — and
   `aegir-test`, under its own system badge, reads the same bytes back
-  through `Sys:Homes/boot/WELCOME.TXT`. Two badges, two names, one file:
+  through `Sys:Homes/rroland/WELCOME.TXT`. Two badges, two names, one file:
   the alias is the namespace's, not the session's imagination.
