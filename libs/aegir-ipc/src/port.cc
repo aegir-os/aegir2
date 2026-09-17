@@ -45,6 +45,29 @@ Reply Consumer::call(uint32_t method, uint64_t word) const noexcept
     return reply;
 }
 
+WordsReply Consumer::call_words(uint32_t method, uint64_t const *out, uint32_t out_count,
+                                uint64_t *in, uint32_t in_capacity) const noexcept
+{
+    WordsReply reply{seL4_InvalidArgument, 0};
+    if (out_count > kMaxWords || in_capacity > kMaxWords) {
+        return reply;
+    }
+    seL4_SetMR(kMethodMr, method);
+    for (uint32_t i = 0; i < out_count; ++i) {
+        seL4_SetMR(kWordMr + i, out[i]);
+    }
+    seL4_MessageInfo_t const info = seL4_MessageInfo_new(0, 0, 0, kWordMr + out_count);
+    seL4_MessageInfo_t const answer = seL4_Call(capability_, info);
+    reply.error = seL4_MessageInfo_get_label(answer);
+    uint32_t const arrived =
+        static_cast<uint32_t>(seL4_MessageInfo_get_length(answer));
+    reply.count = arrived < in_capacity ? arrived : in_capacity;
+    for (uint32_t i = 0; i < reply.count; ++i) {
+        in[i] = seL4_GetMR(kReplyMr + i);
+    }
+    return reply;
+}
+
 Owner::Owner() noexcept : capability_(0) {}
 
 Owner::Owner(seL4_CPtr capability) noexcept : capability_(capability) {}
@@ -71,10 +94,40 @@ uint32_t Owner::receive(uint64_t *word, seL4_Word *badge) noexcept
     return seL4_MessageInfo_get_length(info) > kMethodMr ? seL4_GetMR(kMethodMr) : 0;
 }
 
+uint32_t Owner::receive_words(uint64_t *words, uint32_t capacity, uint32_t *count,
+                              seL4_Word *badge) noexcept
+{
+    seL4_Word sender = 0;
+    seL4_MessageInfo_t const info = seL4_Recv(capability_, &sender);
+    if (badge != nullptr) {
+        *badge = sender;
+    }
+    uint32_t const length = static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
+    uint32_t const arrived = length > kWordMr ? length - kWordMr : 0;
+    uint32_t const taken = arrived < capacity ? arrived : capacity;
+    for (uint32_t i = 0; i < taken; ++i) {
+        words[i] = seL4_GetMR(kWordMr + i);
+    }
+    if (count != nullptr) {
+        *count = arrived;
+    }
+    return length > kMethodMr ? seL4_GetMR(kMethodMr) : 0;
+}
+
 void Owner::reply(uint64_t word) noexcept
 {
     seL4_SetMR(kReplyMr, word);
     seL4_MessageInfo_t const info = seL4_MessageInfo_new(0, 0, 0, (seL4_Word)kReplyMr + 1);
+    seL4_Reply(info);
+}
+
+void Owner::reply_words(uint64_t const *words, uint32_t count) noexcept
+{
+    uint32_t const sent = count < kMaxWords ? count : kMaxWords;
+    for (uint32_t i = 0; i < sent; ++i) {
+        seL4_SetMR(kReplyMr + i, words[i]);
+    }
+    seL4_MessageInfo_t const info = seL4_MessageInfo_new(0, 0, 0, (seL4_Word)sent);
     seL4_Reply(info);
 }
 

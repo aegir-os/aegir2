@@ -18,9 +18,13 @@
  * cannot accidentally receive, because it was never given Read.
  *
  * The wire format is the same for every port: a method number and words. A
- * protocol on top belongs to the port's owner (specs/services.md), and the
- * out-of-line buffer, when something needs to send a string, is the next
- * version of that format rather than something each port invents.
+ * protocol on top belongs to the port's owner (specs/services.md). The first
+ * version carried one word in each direction, which is what the boot set's
+ * protocols needed; the multi-word form below is this version's answer to a
+ * protocol that needs to send a string, and the ceiling on it is the kernel's
+ * own -- the message registers there are (seL4_MsgMaxLength,
+ * kernel/libsel4/include/sel4/constants.h:55), minus the method's word --
+ * not a number this library chose.
  */
 
 #ifndef AEGIR_IPC_PORT_H
@@ -50,6 +54,19 @@ struct Reply {
     uint64_t word;
 };
 
+/** The payload ceiling in words, each way: the message registers the kernel
+ *  has, minus the one the method travels in. A protocol's rows are smaller;
+ *  this is the bound a caller is refused at, not a size to aim for. */
+constexpr uint32_t kMaxWords = 119;
+
+/** A multi-word answer: the error label, as with Reply -- non-zero means the
+ *  kernel refused the call, or the count was past the ceiling and the kernel
+ *  was never asked -- and how many words the owner actually sent back. */
+struct WordsReply {
+    uint64_t error;
+    uint32_t count;
+};
+
 /** A port we may write to: we can call it, and that is all. */
 class Consumer {
 public:
@@ -67,6 +84,13 @@ public:
      *  not there -- which is a fact the caller has to be able to see rather than
      *  read as a nonsense answer. */
     Reply call(uint32_t method, uint64_t word) const noexcept;
+
+    /** The multi-word form: `out`/`out_count` words ride after the method, and
+     *  the answer's words land in `in` (up to `in_capacity`; the reply's count
+     *  says how many the owner sent). A count past kMaxWords is refused before
+     *  the kernel is asked. */
+    WordsReply call_words(uint32_t method, uint64_t const *out, uint32_t out_count,
+                          uint64_t *in, uint32_t in_capacity) const noexcept;
 
 private:
     seL4_CPtr capability_;
@@ -87,10 +111,22 @@ public:
      *  which is who is asking rather than who they say they are. */
     uint32_t receive(uint64_t *word, seL4_Word *badge) noexcept;
 
+    /** The multi-word form of receive(): the payload lands in `words` (up to
+     *  `capacity`), and `count` says how many words *arrived* -- more than
+     *  `capacity` is a protocol break the owner can see, not something
+     *  silently trimmed. */
+    uint32_t receive_words(uint64_t *words, uint32_t capacity, uint32_t *count,
+                           seL4_Word *badge) noexcept;
+
     /** Answer, then wait for the next call. One call needs one reply, and
      *  replying before receiving again is what keeps the caller's `call` a single
      *  round trip. */
     void reply(uint64_t word) noexcept;
+
+    /** The multi-word form of reply(). A count past the ceiling is the owner's
+     *  own protocol bug, and is trimmed to it -- there is no channel to report
+     *  it on, and a partial answer beats none. */
+    void reply_words(uint64_t const *words, uint32_t count) noexcept;
 
 private:
     seL4_CPtr capability_;
