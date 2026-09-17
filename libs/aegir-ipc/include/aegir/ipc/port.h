@@ -61,6 +61,19 @@ constexpr uint32_t kMethodEvent = 1;
  *  owner's to keep: it badges the caller caps it hands out, and it checks. */
 constexpr seL4_Word kCallMark = 1ULL << 63;
 
+/** The designed badge space (specs/authority.md): bit 62 is the user class --
+ * a badge with it set belongs to a user, one with it clear to the system. A
+ * user badge is `kUserBadge | (user << 24) | serial`, where user is the row
+ * in the user database (the row order is part of the format's meaning, so it
+ * is stable within a build) and serial counts what the user has run. Auth
+ * mints them (specs/auth.md); system badges stay small. */
+constexpr seL4_Word kUserBadge = 1ULL << 62;
+
+constexpr seL4_Word make_user_badge(uint64_t user, uint64_t serial) noexcept
+{
+    return kUserBadge | (user << 24) | serial;
+}
+
 /** One word of payload, in each direction. Enough for the boot set's protocols;
  *  a protocol that needs more words is a change to this envelope, which is why
  *  it is here and not in a service. */

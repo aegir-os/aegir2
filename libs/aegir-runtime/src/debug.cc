@@ -54,9 +54,14 @@ void debug_write_hex(uint64_t value) noexcept
 
 [[noreturn]] void halt() noexcept
 {
-    // Parking by yielding keeps the hart available to the rest of the system
-    // instead of spinning with interrupts off. A thread that has nothing to do
-    // is a scheduling decision, not a kernel one.
+    /* Park by suspending: suspended, a thread is out of the scheduler
+     * entirely, where a yield loop stays runnable at its own priority
+     * forever -- seL4_Yield reaches equal priorities only, so a parked
+     * service would starve every thread below it (a session runs below
+     * the boot set). Every process holds its own TCB at slot 1
+     * (aegir/bootstrap.h, kSlotOwnTcb), so the cap is always at hand. */
+    seL4_TCB_Suspend(seL4_CapInitThreadTCB);
+    /* A suspend that returned did not take; halt() does not return. */
     for (;;) {
         seL4_Yield();
     }

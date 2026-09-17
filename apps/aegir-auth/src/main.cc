@@ -4,13 +4,17 @@
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * The first slice: read the packed user table from Initrd: through the
- * namespace -- the first system consumer of the VFS, because the database
- * is bytes on a volume and everything that reads bytes on a volume goes
- * through the map -- and serve auth.login from it. A name and a secret in,
- * one word out: 1 authenticated, 0 refused, and an unknown name, a wrong
- * secret and a malformed call are the same 0. No sessions, no elevation;
- * the namespace stays open until there is a user badge to check.
+ * Reads the packed user table from Initrd: through the namespace -- the
+ * first system consumer of the VFS, because the database is bytes on a
+ * volume and everything that reads bytes on a volume goes through the map
+ * -- and serves auth.login from it: a name and a secret in, one word out,
+ * 1 authenticated and 0 refused, with an unknown name, a wrong secret and
+ * a malformed call the same 0. A successful login then starts a session:
+ * auth is a spawner, its memory is the untyped it was delegated, and the
+ * session runs with the user's badge -- the user class bit, the row, and
+ * the serial (specs/authority.md). The answer goes first, then the spawn,
+ * because the caller's answer must not wait on one. No elevation, and the
+ * namespace stays open until there is a check to make (specs/auth.md).
  */
 
 #include <aegir/authdb.h>
@@ -22,6 +26,8 @@
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
+#include <aegir/spawn/initrd.h>
+#include <aegir/spawn/process.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -36,12 +42,26 @@ aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 aegir::mem::Account g_account{"auth", 0, 0, 0};
 
+/* The delegatable copies the kit carries (specs/services.md): unbadged,
+ * because a badged endpoint cap cannot be minted again, and badging is
+ * exactly what starting a session takes. */
+seL4_CPtr g_spawn_log = 0;
+seL4_CPtr g_spawn_nmspace = 0;
+
 aegir::authdb::Row const *g_rows = nullptr;
 uint32_t g_users = 0;
+/* The serial counts what the user has run (specs/authority.md's badge
+ * space): one counter per row, zeroed when the table is read. */
+uint32_t *g_serials = nullptr;
 
 void write(char const *text)
 {
     aegir::debug_write(text);
+}
+
+void write(char const *text, uint32_t length)
+{
+    aegir::debug_write(text, length);
 }
 
 /* One field of a row against a string on the wire: equal lengths, equal
@@ -65,8 +85,10 @@ bool field_is(char const *field, uint32_t field_bytes, char const *text,
 }
 
 /* The one method: both halves of the credential, or a refusal that says
- * nothing about which half failed. */
-void answer_login(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+ * nothing about which half failed. Answers first and returns the matched
+ * row -- the session is started after the answer, because the caller's
+ * answer must not wait on a spawn (specs/auth.md). -1 is every refusal. */
+int answer_login(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     char const *name = nullptr;
     uint32_t name_length = 0;
@@ -74,7 +96,7 @@ void answer_login(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
         !aegir::nmspace::unpack_string(words, count, aegir::authdb::kNameBytes, &name,
                                        &name_length)) {
         port.reply(0);
-        return;
+        return -1;
     }
     uint32_t const name_words = 1 + (name_length + 7) / 8;
     char const *secret = nullptr;
@@ -84,17 +106,93 @@ void answer_login(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
                                        aegir::authdb::kSecretBytes, &secret,
                                        &secret_length)) {
         port.reply(0);
-        return;
+        return -1;
     }
     for (uint32_t u = 0; u < g_users; ++u) {
         if (field_is(g_rows[u].name, aegir::authdb::kNameBytes, name, name_length) &&
             field_is(g_rows[u].secret, aegir::authdb::kSecretBytes, secret,
                      secret_length)) {
             port.reply(1);
-            return;
+            return static_cast<int>(u);
         }
     }
     port.reply(0);
+    return -1;
+}
+
+/* A row field's length: NUL-terminated within its width. */
+uint32_t field_length(char const *field, uint32_t field_bytes) noexcept
+{
+    uint32_t held = 0;
+    while (held < field_bytes && field[held] != '\0') {
+        ++held;
+    }
+    return held;
+}
+
+/* A successful login starts a session (specs/auth.md): the smoke, until
+ * there is an input path for anything interactive. The badge is the user
+ * class bit, the row as the user id, and the serial counting what the
+ * user has run (specs/authority.md); the ports are the delegatable copies
+ * badged with it. Then the wait for its ready, and serving resumes --
+ * there is no reclaim of an exited session yet, and the untyped draining
+ * is the loud form that takes (specs/auth.md's honest gaps). */
+void start_session(aegir::spawn::Spawner &spawner, uint32_t user) noexcept
+{
+    uint64_t const badge =
+        aegir::ipc::make_user_badge(user, g_serials[user]);
+    seL4_Error fault_error = seL4_NoError;
+    seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                                   g_account, &fault_error);
+    if (fault == 0) {
+        write("      auth: FAIL no fault endpoint for the session\n");
+        return;
+    }
+    aegir::spawn::PortGrant const ports[] = {
+        {aegir::log::kPortName, aegir::log::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared, g_spawn_log, seL4_CapRights_new(1, 0, 0, 1),
+         badge, 0},
+        /* The namespace, with Grant: a resolve's answer carries a
+         * capability, and a cap crosses only between halves that may grant
+         * (specs/services.md). */
+        {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
+         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
+    };
+    static char const kSessionName[] = "session.smoke";
+    static char const kSessionBinary[] = "aegir-session-smoke";
+    aegir::spawn::Request request{};
+    request.name = kSessionName;
+    request.name_length = sizeof(kSessionName) - 1;
+    request.binary = kSessionBinary;
+    request.binary_length = sizeof(kSessionBinary) - 1;
+    request.account = g_rows[user].account;
+    request.account_length = field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
+    request.priority = seL4_MaxPrio - 2;
+    request.ports = ports;
+    request.port_count = 2;
+    request.fault_endpoint = fault;
+    request.badge = badge;
+
+    aegir::spawn::Process process{};
+    if (!spawner.spawn(request, g_account, process)) {
+        write("      auth: FAIL spawning the session: ");
+        write(spawner.problem());
+        write("\n");
+        return;
+    }
+    write("      auth: ");
+    write(g_rows[user].name, field_length(g_rows[user].name, aegir::authdb::kNameBytes));
+    write(" authenticated, session started, badge ");
+    aegir::debug_write_hex(badge);
+    write("\n");
+    ++g_serials[user];
+
+    /* The ready, waited on the way the partition manager waits for a
+     * filesystem's: a session that faults first leaves us here, which is
+     * what waiting on it is for. */
+    seL4_Wait(process.supervision, nullptr);
+    write("      auth: session ready\n");
 }
 
 }  // namespace
@@ -299,11 +397,50 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    g_serials = static_cast<uint32_t *>(arena.allocate(sizeof(uint32_t) * g_users));
+    if (g_serials == nullptr) {
+        write("      FAIL auth: no room for the serial counters\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    for (uint32_t u = 0; u < g_users; ++u) {
+        g_serials[u] = 0;
+    }
+
+    /* The rest of the spawn kit: the pool the sessions' address spaces come
+     * from, the delegatable copies of what a session needs, and the initrd
+     * the session's image is read out of (specs/auth.md). */
+    uint64_t pool_slot = 0;
+    uint64_t spawn_log_slot = 0;
+    uint64_t spawn_nmspace_slot = 0;
+    uint64_t binaries_address = 0;
+    uint32_t binaries_bytes = 0;
+    bool const can_spawn =
+        aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
+        aegir::bootstrap::capability("spawn:log.main", 14, &spawn_log_slot) &&
+        aegir::bootstrap::capability("spawn:vfs.namespace", 19, &spawn_nmspace_slot) &&
+        aegir::bootstrap::binaries(&binaries_address, &binaries_bytes) && binaries_bytes != 0;
+    g_spawn_log = static_cast<seL4_CPtr>(spawn_log_slot);
+    g_spawn_nmspace = static_cast<seL4_CPtr>(spawn_nmspace_slot);
+    aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(binaries_address),
+                                      binaries_bytes);
+    if (!can_spawn || !initrd.valid()) {
+        write("      auth: no pool, delegatable ports, or initrd -- "
+              "logins will not start sessions\n");
+    }
 
     write("      auth: ");
     aegir::debug_write_unsigned(g_users);
     write(g_users == 1 ? " user, serving auth.login\n" : " users, serving auth.login\n");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
+
+    /* Our own CNode, at its own depth: a service's own-CNode cap is a raw
+     * copy with guard 0 and radix kCNodeBits, so the spawner addresses mint
+     * sources through it (aegir/bootstrap.h). */
+    aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd,
+                                  static_cast<seL4_CPtr>(pool_slot),
+                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                  aegir::bootstrap::kCNodeBits);
 
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
@@ -311,7 +448,10 @@ int main(int argc, char *argv[])
         uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
                                                    nullptr);
         if (method == aegir::auth::kMethodLogin) {
-            answer_login(port, words, count);
+            int const user = answer_login(port, words, count);
+            if (user >= 0 && can_spawn) {
+                start_session(spawner, static_cast<uint32_t>(user));
+            }
         } else {
             /* A method this version does not know is answered by saying
              * nothing (specs/services.md's versioning rule). */
