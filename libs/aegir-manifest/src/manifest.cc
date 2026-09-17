@@ -203,6 +203,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool device_manager_seen = false;
     bool device_id_seen = false;
     bool memory_seen = false;
+    bool initrd_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
 
@@ -248,6 +249,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             device_manager_seen = false;
             device_id_seen = false;
             memory_seen = false;
+            initrd_seen = false;
             return true;
         }
 
@@ -314,6 +316,26 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             }
             failure_line = number;
             failure = "device_manager is either `true` or `false`";
+            return false;
+        }
+
+        if (equals(key, "initrd")) {
+            if (initrd_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            initrd_seen = true;
+            if (equals(value, "true")) {
+                current->initrd = true;
+                return true;
+            }
+            if (equals(value, "false")) {
+                current->initrd = false;
+                return true;
+            }
+            failure_line = number;
+            failure = "initrd is either `true` or `false`";
             return false;
         }
 

@@ -61,24 +61,45 @@ bool same_name(PortGraph::Name left, PortGraph::Name right) noexcept
     return true;
 }
 
-/** A port whose protocol transfers capabilities (specs/vfs.md) needs Grant on
- *  both halves: nothing transfers unless the cap the sender invokes has it
- *  (kernel/src/kernel/thread.c:212-218), and a reply that carries a cap
- *  inherits its grant from the owner's receiving half (kernel/manual/parts/
- *  ipc.tex, "Calling and Replying"). The manifest's format has no field for
- *  this yet; this table is the declaration until it grows one. */
-bool carries_caps(PortGraph::Name name) noexcept
+/** Some ports need other rights than the rule below gives, and the manifest's
+ *  format has no field for it yet; this table is the declaration until it
+ *  grows one.
+ *
+ *  - `vfs.namespace` transfers capabilities (specs/vfs.md), which needs Grant
+ *    on both halves: nothing transfers unless the cap the sender invokes has
+ *    it (kernel/src/kernel/thread.c:212-218), and a reply that carries a cap
+ *    inherits its grant from the owner's receiving half (kernel/manual/parts/
+ *    ipc.tex, "Calling and Replying").
+ *  - `vol.initrd` is *published* by its owner: fs.initrd registers the
+ *    volume with the VFS itself, and minting the unbadged caller half that
+ *    registration carries takes a source cap with at least those rights. */
+struct Rights {
+    seL4_CapRights_t owner;
+    seL4_CapRights_t caller;
+};
+
+bool name_is(PortGraph::Name name, char const *text, uint32_t length) noexcept
 {
-    constexpr char kNamespace[] = "vfs.namespace";
-    if (name.length != sizeof(kNamespace) - 1) {
+    if (name.length != length) {
         return false;
     }
-    for (uint32_t i = 0; i < name.length; ++i) {
-        if (name.data[i] != kNamespace[i]) {
+    for (uint32_t i = 0; i < length; ++i) {
+        if (name.data[i] != text[i]) {
             return false;
         }
     }
     return true;
+}
+
+Rights rights_for(PortGraph::Name name) noexcept
+{
+    if (name_is(name, "vfs.namespace", 13)) {
+        return Rights{seL4_CapRights_new(0, 1, 1, 0), seL4_CapRights_new(1, 1, 0, 1)};
+    }
+    if (name_is(name, "vol.initrd", 10)) {
+        return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+    }
+    return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 
 }  // namespace
@@ -233,27 +254,22 @@ bool PortGraph::build(manifest::Manifest const &manifest, mem::Account &account)
      * only, because a reply travels on the kernel's reply capability and not on
      * the endpoint -- then the ones it may call, with Write and GrantReply. The
      * second half is the kernel's own requirement for a capability that may be
-     * called (out/aegir/libsel4/include/interfaces/sel4_client.h:1202). A port
-     * whose protocol transfers capabilities adds Grant on both halves
-     * (carries_caps, above). */
+     * called (out/aegir/libsel4/include/interfaces/sel4_client.h:1202). The
+     * ports that need other rights are named in rights_for, above. */
     for (uint32_t i = 0; i < entry_count_; ++i) {
         uint64_t slot = bootstrap::kSlotFirstDeclared;
         for (uint32_t j = 0; j < own_count_[i]; ++j) {
             Port const &port = ports_[own_offset_[i] + j];
             grants_[grant_offset_[i] + j] =
                 spawn::PortGrant{port.name.data, port.name.length, slot, port.endpoint,
-                                 carries_caps(port.name) ? seL4_CapRights_new(0, 1, 1, 0)
-                                                         : seL4_CanRead,
-                                 0};
+                                 rights_for(port.name).owner, 0};
             ++slot;
         }
         for (uint32_t j = 0; j < need_count_[i]; ++j) {
             Port const &port = ports_[need_port_[need_offset_[i] + j]];
             grants_[grant_offset_[i] + own_count_[i] + j] =
                 spawn::PortGrant{port.name.data, port.name.length, slot, port.endpoint,
-                                 carries_caps(port.name) ? seL4_CapRights_new(1, 1, 0, 1)
-                                                         : seL4_CapRights_new(1, 0, 0, 1),
-                                 i + 1};
+                                 rights_for(port.name).caller, i + 1};
             ++slot;
         }
     }

@@ -102,6 +102,22 @@ needs     = log.main
 memory_kib = 16
 restart   = always
 
+# The initrd service serves the boot image itself as the Initrd: volume --
+# the flat archive, mapped read-only (`initrd = true`, the same mapping a
+# spawner gets without the spawn authority), registered with the VFS by the
+# service itself, read out of in place (specs/vfs.md). It must start after
+# the VFS, so its volume exists before anything that reads the boot image.
+# Its name is not in the fs.* class on purpose: that class is partmgr's
+# spawn right, and this service is director's to start.
+[initrd]
+binary    = aegir-fs-initrd
+authority = system
+account   = system
+owns      = vol.initrd
+needs     = log.main, vfs.namespace
+initrd    = true
+restart   = always
+
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process
 # can call a port it was given.

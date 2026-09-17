@@ -68,6 +68,11 @@ struct Entry {
      * specs/authority.md). A power of two, because a region that is carved is a power of
      * two wide; a request that is not one is rounded up when it is parsed. */
     uint32_t memory_kib;
+    /* The flat initrd, mapped read-only, for a service that reads the boot
+     *  image itself rather than spawning from it: the fs.initrd service
+     *  serves the archive as the Initrd: volume (specs/vfs.md). The same
+     *  mapping a spawning service gets, without the spawn authority. */
+    bool initrd;
     uint32_t line; /* the line the section started on, for messages */
 };
 

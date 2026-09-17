@@ -444,6 +444,13 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             request.device_grants = device_grants;
             request.device_grant_count = device_grant_count;
         }
+        /* A service that reads the boot image itself gets the same read-only
+         * mapping a spawner does, without the spawn authority: the archive
+         * is the volume fs.initrd serves (specs/vfs.md). */
+        if (entry.initrd) {
+            request.binaries = initrd_.blob();
+            request.binaries_bytes = static_cast<uint32_t>(initrd_.blob_size());
+        }
         request.memory_frame = memory_frame;
         request.memory_bytes = memory_frame != 0 ? (1u << memory_bits) : 0;
         request.fault_endpoint = fault_endpoint_;
