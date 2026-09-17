@@ -48,6 +48,12 @@ aegir::mem::Account g_account{"auth", 0, 0, 0};
 seL4_CPtr g_spawn_log = 0;
 seL4_CPtr g_spawn_nmspace = 0;
 
+/* The namespace as auth speaks it, and the slot a home resolve's capability
+ * lands in -- one slot, deleted after each use, so a login does not spend
+ * what the next one needs. */
+aegir::ipc::Consumer g_nmspace;
+seL4_CPtr g_home_slot = 0;
+
 aegir::authdb::Row const *g_rows = nullptr;
 uint32_t g_users = 0;
 /* The serial counts what the user has run (specs/authority.md's badge
@@ -130,6 +136,69 @@ uint32_t field_length(char const *field, uint32_t field_bytes) noexcept
     return held;
 }
 
+/* The home arc (specs/auth.md's Homes), run after the answer and before
+ * the spawn: the row's home path is ensured -- one mkdir, the mmd shape --
+ * and the session's badge is bound to Home:. The order is the point: the
+ * session never sees a Home: that does not resolve. A home that will not
+ * make is logged and the bind happens anyway -- the failure surfaces where
+ * it belongs, at the session's first write into it. */
+void ensure_home(uint32_t user, uint64_t badge) noexcept
+{
+    uint32_t const home_length =
+        field_length(g_rows[user].home, aegir::authdb::kHomeBytes);
+    if (home_length == 0 || g_home_slot == 0) {
+        return;
+    }
+    char const *home = g_rows[user].home;
+
+    bool made = false;
+    {
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+        uint32_t const out_words = aegir::nmspace::pack_string(
+            out, home, home_length, aegir::nmspace::kPathMax);
+        uint64_t in[aegir::nmspace::kResolveWords];
+        bool cap_arrived = false;
+        aegir::ipc::WordsReply const resolved = g_nmspace.call_transfer(
+            aegir::nmspace::kMethodResolve, out, out_words, 0, in,
+            aegir::nmspace::kResolveWords, &cap_arrived);
+        char const *rest = nullptr;
+        uint32_t rest_length = 0;
+        if (resolved.error == 0 && cap_arrived &&
+            aegir::nmspace::unpack_string(in, resolved.count, aegir::nmspace::kPathMax,
+                                          &rest, &rest_length) &&
+            aegir::ipc::take_received_cap(g_home_slot)) {
+            aegir::ipc::Consumer const volume(g_home_slot);
+            uint64_t mout[aegir::nmspace::kPathMax / 8 + 1];
+            uint32_t const mout_words = aegir::nmspace::pack_string(
+                mout, rest, rest_length, aegir::nmspace::kPathMax);
+            uint64_t min[1];
+            aegir::ipc::WordsReply const answered = volume.call_words(
+                aegir::volume::kMethodMkdir, mout, mout_words, min, 1);
+            made = answered.error == 0 && answered.count == 1 && min[0] == 1;
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
+                              aegir::bootstrap::kCNodeBits);
+        }
+    }
+    if (!made) {
+        write("      auth: the home would not be made -- the session starts "
+              "without one\n");
+    }
+
+    uint64_t out[1 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
+    out[0] = badge;
+    uint32_t out_words = 1;
+    out_words += aegir::nmspace::pack_string(out + out_words, "Home", 4,
+                                             aegir::nmspace::kNameMax);
+    out_words += aegir::nmspace::pack_string(out + out_words, home, home_length,
+                                             aegir::nmspace::kPathMax);
+    uint64_t in[1];
+    aegir::ipc::WordsReply const bound =
+        g_nmspace.call_words(aegir::nmspace::kMethodBind, out, out_words, in, 1);
+    if (bound.error != 0 || bound.count != 1 || in[0] != 1) {
+        write("      auth: FAIL the Home: bind was refused\n");
+    }
+}
+
 /* A successful login starts a session (specs/auth.md): the smoke, until
  * there is an input path for anything interactive. The badge is the user
  * class bit, the row as the user id, and the serial counting what the
@@ -141,6 +210,9 @@ void start_session(aegir::spawn::Spawner &spawner, uint32_t user) noexcept
 {
     uint64_t const badge =
         aegir::ipc::make_user_badge(user, g_serials[user]);
+    /* The home first: ensured and bound before the spawn, so the session
+     * never sees a Home: that does not resolve (specs/auth.md's Homes). */
+    ensure_home(user, badge);
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
                                                    g_account, &fault_error);
@@ -219,6 +291,7 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    g_nmspace = nmspace;
 
     /* The spawn kit, adopted the way the partition manager adopts its own
      * (specs/authority.md): the untyped by name -- its size is the grant's,
@@ -289,6 +362,10 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    /* A second slot for the home arc's resolves (specs/auth.md's Homes):
+     * deleted after each use, so a login does not spend what the next one
+     * needs. */
+    g_home_slot = g_objects.alloc_slot();
 
     /* Resolve Initrd:users.db, asking again until the volume exists -- the
      * volumes join the namespace while the boot set is still coming up. The

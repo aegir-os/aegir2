@@ -643,6 +643,26 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The session the login started wrote its home: the same file reads
+     * back here by the system name, under this service's own badge -- two
+     * badges, two names, one file (specs/auth.md's Homes). The refused
+     * logins above ran after the successful one, and auth serves again only
+     * once the session signalled ready, so the write is already done. The
+     * content is the session's constant, this service's the other end. */
+    static char const kHomePath[] = "Sys:Homes/rroland/WELCOME.TXT";
+    static char const kWelcome[] = "a home of one's own, written by the session\n";
+    seL4_CPtr const home_volume =
+        resolve(kHomePath, sizeof(kHomePath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 6));
+    if (!read_and_check(home_volume, rest, rest_length, kWelcome,
+                        sizeof(kWelcome) - 1)) {
+        write("  test: FAIL Sys:Homes/rroland/WELCOME.TXT is not what the "
+              "session wrote\n");
+        ++failed;
+    } else {
+        write("  test: Sys:Homes/rroland/WELCOME.TXT is the session's own words\n");
+    }
+
     if (failed == 0) {
         write("  test: every check passed\n");
     } else {

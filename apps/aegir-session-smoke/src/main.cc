@@ -20,7 +20,10 @@
  *   - the badge auth minted arrives: the logger prints it, and a number
  *     with bit 62 set is a user where the boot set's badges are small;
  *   - the namespace is open to a user badge, which is the decided shape
- *     until volumes have owners (specs/auth.md).
+ *     until volumes have owners (specs/auth.md);
+ *   - Home: is this badge's own: auth ensured the directory and bound the
+ *     alias, and the session writes into it -- the test service reads the
+ *     same file back through Sys:, two badges and two names for one file.
  */
 
 #include <aegir/bootstrap.h>
@@ -42,6 +45,58 @@ void write(char const *text)
 void write(char const *text, uint32_t length)
 {
     aegir::debug_write(text, length);
+}
+
+/* The handle side of the volume protocol (specs/vfs.md), the smallest
+ * shape of it: open with the mode flags, write at the cursor, close.
+ * Zero is never a handle. */
+uint64_t vol_open(seL4_CPtr port, char const *path, uint32_t path_length,
+                  uint64_t flags) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 2];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    out[out_words] = flags;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodOpen, out, out_words + 1, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
+uint64_t vol_write(seL4_CPtr port, uint64_t handle, uint8_t const *bytes,
+                   uint32_t count) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[2 + aegir::volume::kWriteMax / 8];
+    out[0] = handle;
+    out[1] = count;
+    auto *packed = reinterpret_cast<uint8_t *>(out + 2);
+    for (uint32_t i = 0; i < count; ++i) {
+        packed[i] = bytes[i];
+    }
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodWrite, out, 2 + (count + 7) / 8, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
+uint64_t vol_close(seL4_CPtr port, uint64_t handle) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodClose, &handle, 1, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
 }
 
 }  // namespace
@@ -140,6 +195,54 @@ int main(int argc, char *argv[])
             write("  session.smoke: Initrd:services.manifest begins: ");
             write(bytes, 8);
             write("\n");
+        }
+    }
+
+    /* Home: is this badge's own (specs/auth.md's Homes): auth ensured the
+     * directory and bound the alias before this process started, so the
+     * resolve is the whole ask. Create, write, close -- and the
+     * test service reads the same bytes through Sys:Homes/<user>/ under
+     * its own badge, which is what makes this a fact about the namespace
+     * and not about the session's say-so. The content is the checksum, and
+     * aegir-test's copy of it is the other end. */
+    static char const kWelcomePath[] = "Home:WELCOME.TXT";
+    static char const kWelcome[] = "a home of one's own, written by the session\n";
+    {
+        seL4_CPtr home_volume = 0;
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+        uint32_t const out_words = aegir::nmspace::pack_string(
+            out, kWelcomePath, sizeof(kWelcomePath) - 1, aegir::nmspace::kPathMax);
+        uint64_t in[aegir::nmspace::kResolveWords];
+        bool cap_arrived = false;
+        aegir::ipc::WordsReply const answer = nmspace.call_transfer(
+            aegir::nmspace::kMethodResolve, out, out_words, 0, in,
+            aegir::nmspace::kResolveWords, &cap_arrived);
+        char const *text = nullptr;
+        uint32_t length = 0;
+        if (answer.error == 0 && cap_arrived &&
+            aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                          &text, &length) &&
+            aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free + 1))) {
+            home_volume = static_cast<seL4_CPtr>(first_free + 1);
+        }
+        bool wrote = false;
+        if (home_volume != 0) {
+            /* The rest the answer named: the volume-relative path the alias
+             * composed, which open walks like any other. */
+            uint64_t const handle =
+                vol_open(home_volume, text, length,
+                         aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            wrote = handle != 0 &&
+                    vol_write(home_volume, handle,
+                              reinterpret_cast<uint8_t const *>(kWelcome),
+                              sizeof(kWelcome) - 1) == sizeof(kWelcome) - 1 &&
+                    vol_close(home_volume, handle) == 1;
+        }
+        if (!wrote) {
+            write("  session.smoke: FAIL Home:WELCOME.TXT would not be written\n");
+        } else {
+            write("  session.smoke: Home:WELCOME.TXT written -- ");
+            write(kWelcome, sizeof(kWelcome) - 1);
         }
     }
 
