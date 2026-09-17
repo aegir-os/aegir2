@@ -699,6 +699,64 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* FAT16 writes: the other flavor's entries, the fixed root, and a
+     * subdirectory's chain -- the whole write side again, on the volume the
+     * disk build made FAT16 on purpose. */
+    {
+        static char const kF16Path[] = "FAT16:F16.TXT";
+        seL4_CPtr const f16_volume =
+            resolve(kF16Path, sizeof(kF16Path) - 1, &rest, &rest_length,
+                    static_cast<seL4_CPtr>(first_free + 7));
+        constexpr uint64_t kTotal = 1100; /* clusters are one sector: three */
+        uint8_t bytes[700];
+        for (uint32_t i = 0; i < sizeof(bytes); ++i) {
+            bytes[i] = pattern_at(400 + i);
+        }
+        uint64_t handle = vol_open(f16_volume, rest, rest_length,
+                                   aegir::volume::kOpenCreate |
+                                       aegir::volume::kOpenTruncate);
+        bool ok = handle != 0;
+        if (ok) {
+            uint8_t first[400];
+            for (uint32_t i = 0; i < sizeof(first); ++i) {
+                first[i] = pattern_at(i);
+            }
+            ok = vol_write(f16_volume, handle, first, sizeof(first)) == sizeof(first) &&
+                 vol_write(f16_volume, handle, bytes, sizeof(bytes)) == sizeof(bytes) &&
+                 vol_close(f16_volume, handle) == 1;
+        }
+        /* A subdirectory on FAT16: the fixed root gives the slot, the chain
+         * holds the file. mmd first -- open makes the file, not the way. */
+        static char const kSubPath[] = "SUB/IN.TXT";
+        bool const in_sub = vol_mkdir(f16_volume, "SUB", 3) == 1 && [&] {
+            uint8_t few[64];
+            for (uint32_t i = 0; i < sizeof(few); ++i) {
+                few[i] = pattern_at(i);
+            }
+            uint64_t const sub_handle =
+                vol_open(f16_volume, kSubPath, sizeof(kSubPath) - 1,
+                         aegir::volume::kOpenCreate |
+                             aegir::volume::kOpenTruncate);
+            return sub_handle != 0 &&
+                   vol_write(f16_volume, sub_handle, few, sizeof(few)) == sizeof(few) &&
+                   vol_close(f16_volume, sub_handle) == 1 &&
+                   read_and_check_pattern(f16_volume, kSubPath,
+                                          sizeof(kSubPath) - 1, sizeof(few));
+        }();
+        bool const readback = read_and_check_pattern(f16_volume, rest, rest_length,
+                                                     kTotal);
+        bool const removed =
+            vol_remove(f16_volume, kSubPath, sizeof(kSubPath) - 1) == 1 &&
+            vol_remove(f16_volume, "SUB", 3) == 1 &&
+            vol_remove(f16_volume, rest, rest_length) == 1;
+        if (!ok || !readback || !in_sub || !removed) {
+            write("  test: FAIL FAT16: did not write, nest, and unmake\n");
+            ++failed;
+        } else {
+            write("  test: FAT16: writes, nests, and unmakes -- the other flavor\n");
+        }
+    }
+
     /* auth.login: the entry the build packed is the checksum -- accepted
      * with its secret, and refused the same way for a wrong secret and an
      * unknown name, because the port is not an oracle (specs/auth.md). */

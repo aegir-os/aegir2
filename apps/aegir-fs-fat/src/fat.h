@@ -71,6 +71,7 @@ uint32_t next16(uint8_t const *fat_sector, uint32_t cluster_mod_256) noexcept;
  * end -- this is the one the tools write). */
 constexpr uint32_t kFreeCluster = 0;
 constexpr uint32_t kEocMark32 = 0x0fffffff;
+constexpr uint32_t kEocMark16 = 0xffff;
 
 /** A 32-byte directory slot's fields, as offsets. */
 constexpr uint32_t kDirentAttr = 11;

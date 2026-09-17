@@ -152,12 +152,46 @@ bool write_back(uint64_t lba, uint32_t count) noexcept
     return reply.error == 0 && reply.word == count;
 }
 
+/* The chain's flavor, in the four places the formats differ: an entry's
+ * bytes, its end-of-chain floor, the mark a new chain end gets, and the
+ * entry read or written in the window's FAT sector. */
+uint32_t entry_bytes() noexcept
+{
+    return g_volume.fat32 ? 4 : 2;
+}
+
+uint32_t chain_eoc() noexcept
+{
+    return g_volume.fat32 ? aegir::fat::kEoc32 : aegir::fat::kEoc16;
+}
+
+uint32_t chain_eoc_mark() noexcept
+{
+    return g_volume.fat32 ? aegir::fat::kEocMark32 : aegir::fat::kEocMark16;
+}
+
+uint32_t window_next(uint32_t cluster) noexcept
+{
+    return g_volume.fat32
+               ? aegir::fat::next32(g_window, cluster % (kSectorBytes / 4))
+               : aegir::fat::next16(g_window, cluster % (kSectorBytes / 2));
+}
+
+void window_set_next(uint32_t cluster, uint32_t value) noexcept
+{
+    if (g_volume.fat32) {
+        aegir::fat::set_next32(g_window, cluster % (kSectorBytes / 4), value);
+    } else {
+        aegir::fat::set_next16(g_window, cluster % (kSectorBytes / 2), value);
+    }
+}
+
 /* The FAT sector holding one cluster's entry, read into the window; the
- * answer is its offset from the FAT's start. FAT32 only: the write side is
- * FAT32's (FAT16 refuses before it gets here). */
+ * answer is its offset from the FAT's start. */
 bool fat_load(uint32_t cluster, uint64_t *sector_out) noexcept
 {
-    uint64_t const rel = (static_cast<uint64_t>(cluster) * 4) / kSectorBytes;
+    uint64_t const rel =
+        (static_cast<uint64_t>(cluster) * entry_bytes()) / kSectorBytes;
     if (!read(g_volume.fat_start + rel, 1)) {
         return false;
     }
@@ -173,7 +207,7 @@ bool fat_store(uint32_t cluster, uint32_t value) noexcept
     if (!fat_load(cluster, &rel)) {
         return false;
     }
-    aegir::fat::set_next32(g_window, cluster % (kSectorBytes / 4), value);
+    window_set_next(cluster, value);
     for (uint32_t f = 0; f < g_volume.fats; ++f) {
         if (!write_back(g_volume.fat_start + f * g_volume.fat_sectors + rel, 1)) {
             return false;
@@ -197,22 +231,23 @@ bool zero_cluster(uint32_t cluster) noexcept
 /* The first free cluster the FAT knows, claimed and zeroed. Zero is the
  * answer for a full volume as much as for a broken one -- the caller refuses
  * the write, and the count says how much landed. The scan is linear and
- * holds its FAT sector across the entries it covers: 128 clusters per read. */
+ * holds its FAT sector across the entries it covers: 128 clusters per read
+ * on FAT32, 256 on FAT16. */
 uint32_t alloc_cluster() noexcept
 {
     uint64_t held = ~0ull; /* the FAT sector in the window, when one is */
     for (uint32_t c = 2; c < 2 + g_cluster_count; ++c) {
-        uint64_t const rel = (static_cast<uint64_t>(c) * 4) / kSectorBytes;
+        uint64_t const rel = (static_cast<uint64_t>(c) * entry_bytes()) / kSectorBytes;
         if (rel != held) {
             if (!read(g_volume.fat_start + rel, 1)) {
                 return 0;
             }
             held = rel;
         }
-        if (aegir::fat::next32(g_window, c % (kSectorBytes / 4)) != aegir::fat::kFreeCluster) {
+        if (window_next(c) != aegir::fat::kFreeCluster) {
             continue;
         }
-        if (!fat_store(c, aegir::fat::kEocMark32) || !zero_cluster(c)) {
+        if (!fat_store(c, chain_eoc_mark()) || !zero_cluster(c)) {
             return 0;
         }
         return c;
@@ -225,12 +260,12 @@ uint32_t alloc_cluster() noexcept
 bool chain_free(uint32_t first) noexcept
 {
     uint32_t c = first;
-    while (c >= 2 && c < aegir::fat::kEoc32) {
+    while (c >= 2 && c < chain_eoc()) {
         uint64_t rel = 0;
         if (!fat_load(c, &rel)) {
             return false;
         }
-        uint32_t const next = aegir::fat::next32(g_window, c % (kSectorBytes / 4));
+        uint32_t const next = window_next(c);
         if (!fat_store(c, aegir::fat::kFreeCluster)) {
             return false;
         }
@@ -258,8 +293,8 @@ uint32_t chain_seek(Handle *handle) noexcept
         if (!fat_load(c, &rel)) {
             return 0;
         }
-        uint32_t next = aegir::fat::next32(g_window, c % (kSectorBytes / 4));
-        if (next >= aegir::fat::kEoc32) {
+        uint32_t next = window_next(c);
+        if (next >= chain_eoc()) {
             next = alloc_cluster();
             if (next == 0 || !fat_store(c, next)) {
                 return 0;
@@ -430,21 +465,69 @@ enum class Slot : uint32_t {
     Broken, /* a read or a write underneath failed */
 };
 
-/* Walk one directory's chain (FAT32: every directory is a chain, the root
- * included, and a full one grows like any file's), reporting where `name`
- * lives when it does and the first slot a new entry could take when it does
- * not -- an End or deleted slot, or, the chain being full, a fresh cluster
- * linked on and zeroed. */
+/* Walk one directory for `name`, reporting where it lives when it does and
+ * the first slot a new entry could take when it does not -- an End or
+ * deleted slot. The FAT16 root is the fixed region, and a full one is Full:
+ * it does not grow. Everything else is a chain (FAT32's root included), and
+ * a full one grows like any file's -- a fresh cluster linked on and
+ * zeroed. */
 Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Dirent *out,
               uint64_t *sector_out, uint32_t *index_out) noexcept
 {
     bool have_free = false;
     uint64_t free_sector = 0;
     uint32_t free_index = 0;
+    if (dir.root) {
+        for (uint32_t s = 0; s < g_volume.root_sectors; ++s) {
+            uint64_t const at = g_volume.root_start + s;
+            if (!read(at, 1)) {
+                return Slot::Broken;
+            }
+            bool ended = false;
+            for (uint32_t i = 0; i < kSectorBytes / 32; ++i) {
+                uint8_t const *raw = g_window + i * 32;
+                if (raw[0] == 0x00) {
+                    if (!have_free) {
+                        free_sector = at;
+                        free_index = i;
+                        have_free = true;
+                    }
+                    ended = true;
+                    break;
+                }
+                if (raw[0] == 0xe5) {
+                    if (!have_free) {
+                        free_sector = at;
+                        free_index = i;
+                        have_free = true;
+                    }
+                    continue;
+                }
+                aegir::fat::Dirent dirent;
+                if (aegir::fat::dirent(raw, &dirent) == aegir::fat::Entry::Used &&
+                    name != nullptr &&
+                    same_name(dirent.name, dirent.name_length, name, name_length)) {
+                    *out = dirent;
+                    *sector_out = at;
+                    *index_out = i;
+                    return Slot::Found;
+                }
+            }
+            if (ended) {
+                break;
+            }
+        }
+        if (have_free) {
+            *sector_out = free_sector;
+            *index_out = free_index;
+            return Slot::Free;
+        }
+        return Slot::Full;
+    }
     uint32_t cluster = dir.cluster;
     uint32_t last = cluster;
     bool ended = false;
-    while (!ended && cluster >= 2 && cluster < aegir::fat::kEoc32) {
+    while (!ended && cluster >= 2 && cluster < chain_eoc()) {
         last = cluster;
         uint64_t const at = aegir::fat::cluster_sector(g_volume, cluster);
         for (uint32_t s = 0; s < g_volume.sectors_per_cluster && !ended; ++s) {
@@ -490,14 +573,15 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
         if (!fat_load(cluster, &rel)) {
             return Slot::Broken;
         }
-        cluster = aegir::fat::next32(g_window, cluster % (kSectorBytes / 4));
+        cluster = window_next(cluster);
     }
     if (have_free) {
         *sector_out = free_sector;
         *index_out = free_index;
         return Slot::Free;
     }
-    /* No End anywhere: the chain is full, and the root grows like any chain. */
+    /* No End anywhere: the chain is full, and a chain grows like any
+     * file's. */
     uint32_t const fresh = alloc_cluster();
     if (fresh == 0) {
         return Slot::Full;
@@ -524,12 +608,12 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     }
     uint32_t const path_words = 1 + (path_length + 7) / 8;
     /* The walk ends at the directory the file lives in; the last component
-     * is the file. And the write side is FAT32's: FAT16 refuses. */
+     * is the file. Both flavors write: the chain helpers know which. */
     Dir dir;
     char const *last = nullptr;
     uint32_t last_length = 0;
     uint8_t name83[11];
-    if (count < path_words + 1 || !g_writable || !g_volume.fat32 ||
+    if (count < path_words + 1 || !g_writable ||
         !walk(path, path_length, false, &dir, &last, &last_length) ||
         !aegir::fat::name_83(last, last_length, name83)) {
         port.reply_words(&handle, 1);
@@ -744,7 +828,7 @@ void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
                                       &path_length)) {
         if (path_length == 0) {
             made = 1;
-        } else if (g_writable && g_volume.fat32 && make_dirs(path, path_length)) {
+        } else if (g_writable && make_dirs(path, path_length)) {
             made = 1;
         }
     }
@@ -756,7 +840,7 @@ void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
 bool dir_is_empty(uint32_t cluster) noexcept
 {
     uint32_t c = cluster;
-    while (c >= 2 && c < aegir::fat::kEoc32) {
+    while (c >= 2 && c < chain_eoc()) {
         if (!read(aegir::fat::cluster_sector(g_volume, c),
                   g_volume.sectors_per_cluster)) {
             return false;
@@ -781,7 +865,7 @@ bool dir_is_empty(uint32_t cluster) noexcept
         if (!fat_load(c, &rel)) {
             return false;
         }
-        c = aegir::fat::next32(g_window, c % (kSectorBytes / 4));
+        c = window_next(c);
     }
     return true;
 }
@@ -824,7 +908,7 @@ void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
     aegir::fat::Dirent dirent;
     uint64_t dirent_sector = 0;
     uint32_t dirent_index = 0;
-    if (!g_writable || !g_volume.fat32 ||
+    if (!g_writable ||
         !walk(path, path_length, false, &dir, &last, &last_length) ||
         dir_slot(dir, last, last_length, &dirent, &dirent_sector, &dirent_index) !=
             Slot::Found ||
@@ -1096,7 +1180,7 @@ int main(int argc, char *argv[])
     aegir::debug_write(" sectors per cluster, data starts at sector ");
     aegir::debug_write_unsigned(volume.data_start);
     if (g_writable) {
-        aegir::debug_write(volume.fat32 ? ", writable" : ", writable but FAT16: read-only");
+        aegir::debug_write(", writable");
     }
     aegir::debug_write("\n");
 
