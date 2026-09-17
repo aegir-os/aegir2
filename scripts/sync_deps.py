@@ -37,7 +37,14 @@ PATCH_SCRIPT = pins.ROOT / "scripts" / "apply_patches.py"
 
 def run(command: list[str], cwd: Path | None = None) -> None:
     print(f"INFO  {' '.join(command)}", flush=True)
-    subprocess.run(command, cwd=str(cwd or pins.ROOT), check=True)
+    # stdin is /dev/null: `make deps` runs us under GNU timeout, which puts the
+    # command in a background process group. repo prompts interactively when
+    # stdin is a tty (git identity, color.ui) and that read then SIGTTIN-stops
+    # the whole group -- a silent, permanent wedge. EOF skips the prompts and
+    # turns any unexpected prompt into an error instead of a hang.
+    subprocess.run(
+        command, cwd=str(cwd or pins.ROOT), check=True, stdin=subprocess.DEVNULL
+    )
 
 
 def repo_tool_pin() -> dict[str, object]:
