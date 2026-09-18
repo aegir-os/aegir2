@@ -32,6 +32,11 @@ from targets import TARGETS, Target
 
 ENV_SCRIPT = pins.ROOT / "scripts" / "env.sh"
 TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) tests disabled\.")
+# The guest's own verdict: a check that fails prints "test: FAIL ..." and the
+# summary counts them ("N checks FAILED"). The marker is the boot's last line,
+# not the verdict -- a failing test still reaches it -- so a run whose checks
+# failed is a failed run however the marker arrived.
+GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED")
 
 
 def preflight(target: Target) -> list[str]:
@@ -321,6 +326,8 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             match = TEST_SUMMARY.search(stripped)
             if match:
                 summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
+            if GUEST_FAILURE.search(stripped):
+                failed = True
             for index, step in enumerate(target.qmp_steps):
                 if (step.times != 0 and step_matches[index] >= step.times) or re.search(
                     step.trigger, stripped
