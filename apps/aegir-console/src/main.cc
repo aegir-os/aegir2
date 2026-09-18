@@ -238,9 +238,12 @@ void cursor_erase() noexcept
     g_cursor_drawn = false;
 }
 
+/* The position has already moved when this runs: the erase happened in
+ * route(), before the update, because the save-under only restores where
+ * the cursor actually was. What is left here is the draw at the new spot,
+ * the flush, and the event. */
 void pointer_moved() noexcept
 {
-    cursor_erase();
     cursor_draw();
     (void)g_gpu.call(aegir::framebuffer::kMethodFlush, 0);
     Window *const target =
@@ -310,7 +313,12 @@ void route(uint32_t device, uint64_t word) noexcept
     if (device == kHidKbd && type == aegir::input::kEvKey) {
         key_event(code, value);
     } else if (device == kHidMouse && type == aegir::input::kEvRel) {
-        /* Relative motion integrates to the pointer, clamped to the screen. */
+        /* Relative motion integrates to the pointer, clamped to the screen.
+         * The cursor comes down first: erase restores the save-under where
+         * the cursor was drawn, which is only the position it was drawn at
+         * -- erase after the update and the old pixels stay (trails) while
+         * the new spot gets the old spot's saved pixels. */
+        cursor_erase();
         int64_t const next =
             static_cast<int64_t>(code == aegir::input::kAxisX ? g_pointer_x
                                                               : g_pointer_y) +
@@ -328,7 +336,9 @@ void route(uint32_t device, uint64_t word) noexcept
         pointer_moved();
     } else if (device == kHidTablet && type == aegir::input::kEvAbs) {
         /* Absolute, in the axis's own units (0..32767): scaled to the
-         * screen, the numbers pass through unchanged from the injector. */
+         * screen, the numbers pass through unchanged from the injector.
+         * Cursor down first, as for the relative axis above. */
+        cursor_erase();
         if (code == aegir::input::kAxisX) {
             g_pointer_x = (static_cast<uint64_t>(value) * g_width) >> 15;
         } else {
