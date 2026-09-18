@@ -438,6 +438,11 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         failed = True
             if target.marker in stripped:
                 seen = True
+            # The run is done when the marker has printed and the script is
+            # played out -- the business may continue past the boot marker (a
+            # login on the greeter, the bureau's backdrop), and a cue that
+            # never comes is the timeout's and the gate's to report.
+            if seen and all(played > 0 for played in step_matches):
                 break
         # A step whose cue never printed is a check that never ran: the run
         # does not get to pass on evidence that was never taken.
