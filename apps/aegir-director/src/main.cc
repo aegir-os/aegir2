@@ -533,6 +533,11 @@ void report_manifest(aegir::manifest::Manifest const &manifest) noexcept
             number(entry.memory_kib);
             write(" KiB");
         }
+        if (entry.delegate_mib > 0) {
+            write(", delegation ");
+            number(entry.delegate_mib);
+            write(" MiB");
+        }
         write("\n");
     }
 }

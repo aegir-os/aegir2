@@ -203,6 +203,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool device_manager_seen = false;
     bool device_id_seen = false;
     bool memory_seen = false;
+    bool delegate_seen = false;
     bool initrd_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
@@ -249,6 +250,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             device_manager_seen = false;
             device_id_seen = false;
             memory_seen = false;
+            delegate_seen = false;
             initrd_seen = false;
             return true;
         }
@@ -374,6 +376,44 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 rounded <<= 1;
             }
             current->memory_kib = rounded;
+            return true;
+        }
+
+        if (equals(key, "delegate_mib")) {
+            if (delegate_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            delegate_seen = true;
+            /* A decimal number of MiB, for a spawning service's untyped (the key
+             * without `spawns` asks for memory nobody can use -- a validation the
+             * parser leaves to director, who can see the whole section). Rounded
+             * up to a power of two, the way `memory_kib` is. */
+            uint32_t mib = 0;
+            if (value.length == 0 || value.length > 4) {
+                failure_line = number;
+                failure = "delegate_mib is a decimal number of MiB";
+                return false;
+            }
+            for (uint32_t d = 0; d < value.length; ++d) {
+                if (value.data[d] < '0' || value.data[d] > '9') {
+                    failure_line = number;
+                    failure = "delegate_mib is a decimal number of MiB";
+                    return false;
+                }
+                mib = mib * 10 + static_cast<uint32_t>(value.data[d] - '0');
+            }
+            if (mib == 0) {
+                failure_line = number;
+                failure = "delegate_mib of zero asks for the default; leave the key out";
+                return false;
+            }
+            uint32_t rounded = 1;
+            while (rounded < mib && rounded < (1u << 10)) {
+                rounded <<= 1;
+            }
+            current->delegate_mib = rounded;
             return true;
         }
 

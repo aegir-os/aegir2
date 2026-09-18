@@ -68,6 +68,13 @@ struct Entry {
      * specs/authority.md). A power of two, because a region that is carved is a power of
      * two wide; a request that is not one is rounded up when it is parsed. */
     uint32_t memory_kib;
+    /* The untyped a spawning service is delegated, in MiB, or zero for the default
+     * (services.cc's kDelegatedUntypedBits). Spawners' appetites diverge -- the
+     * device manager holds drivers' windows and the partition manager's megabyte,
+     * auth holds sessions -- so the manifest says who gets how much rather than a
+     * shared constant saying it for everyone (specs/services.md,
+     * specs/authority.md). A power of two, rounded up when parsed. */
+    uint32_t delegate_mib;
     /* The flat initrd, mapped read-only, for a service that reads the boot
      *  image itself rather than spawning from it: the initrd service
      *  serves the archive as the Initrd: volume (specs/vfs.md). The same

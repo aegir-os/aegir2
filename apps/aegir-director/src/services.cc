@@ -259,19 +259,27 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
           * projects/sel4test/apps/sel4test-tests/src/tests/vspace.c:141), so
           * both are this service's to carve here. */
          bool const spawner = entry.spawns.length > 0;
-         /* The delegation's size grew with what a spawner must hold: the device
-          * manager's share is three drivers' images, queue memories and windows,
-          * the partition manager's megabyte, and the filesystem image that
-          * manager is handed -- 2 MiB ran out under the third driver ("no memory
-          * for a frame" mapping the blob). It is a budget, not a capacity: the
-          * day spawners' needs diverge, the manifest says who gets how much. */
+         /* The delegation's size is the manifest's to say (`delegate_mib`),
+          * because spawners' appetites diverge: the device manager's share is
+          * drivers' images, queue memories and windows -- two 32 MiB scanout
+          * windows dwarf everything else -- while auth's sessions fit the
+          * default. The default grew with what a spawner must hold: 2 MiB ran
+          * out under the third driver ("no memory for a frame" mapping the
+          * blob). It is a budget, not a capacity (specs/authority.md). */
          constexpr uint32_t kDelegatedUntypedBits = 22;
+         uint32_t delegate_bits = kDelegatedUntypedBits;
+         if (entry.delegate_mib != 0) {
+             delegate_bits = 20;
+             while ((1u << (delegate_bits - 20)) < entry.delegate_mib) {
+                 ++delegate_bits;
+             }
+         }
          seL4_CPtr spawn_untyped = 0;
          uint64_t spawn_untyped_physical = 0;
          seL4_CPtr spawn_pool = 0;
          if (spawner) {
              seL4_Error kit_error = seL4_NoError;
-             spawn_untyped = allocator_.carve_untyped(kDelegatedUntypedBits, account,
+             spawn_untyped = allocator_.carve_untyped(delegate_bits, account,
                                                       &kit_error, &spawn_untyped_physical);
              if (spawn_untyped == 0) {
                  boot.problem = "no untyped memory to delegate to a spawning service";
@@ -342,7 +350,7 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                 merged[at] = spawn::PortGrant{kUntypedGrant, sizeof(kUntypedGrant) - 1,
                                               bootstrap::kSlotFirstDeclared + at,
                                               spawn_untyped, seL4_AllRights, 0,
-                                              kDelegatedUntypedBits};
+                                              delegate_bits};
                 ++at;
                 static char const kPoolGrant[] = "asid-pool";
                 merged[at] = spawn::PortGrant{kPoolGrant, sizeof(kPoolGrant) - 1,
@@ -449,7 +457,7 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
          * describes it rather than any memory grant. */
         if (spawner) {
             request.untyped_physical = spawn_untyped_physical;
-            request.untyped_bits = kDelegatedUntypedBits;
+            request.untyped_bits = delegate_bits;
         }
         /* A service that spawns is given what spawning takes (specs/services.md,
          * specs/authority.md): its own VSpace root (the spawner grants a window of
