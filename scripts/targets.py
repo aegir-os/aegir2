@@ -32,7 +32,7 @@ class QmpStep:
     send the input `events` (QMP input-send-event dicts:
     pointer moves and clicks -- no device is named, because with no console
     bound the events fall through to the unbound input handlers, and ours
-    are), then press the key `press`, if any."""
+    are), then type the keys `press`, one send-key per character, if any."""
 
     trigger: str
     times: int = 1  # how often the action may run; 0 is every match
@@ -126,6 +126,47 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         # which-console-is-which agnostic: the *set* of dimensions is what is
         # checked) and presses the key that paces the guest's next step.
         qmp_steps=(
+            # The greeter first (specs/console.md's login arc): auth starts
+            # it before the test bed runs, so its cue is the boot's first
+            # input cue. The dump reads the form up -- grey window over the
+            # Workbench-blue backdrop, the white name field, the dark button
+            # -- then the click focuses the window (the pointer starts at
+            # the screen's centre, which is inside it) and the credentials
+            # are typed: name, Tab, secret, Enter. The accepted login's
+            # session is the boot's first, and auth's reap line paces the
+            # second dump, which reads the backdrop restored where the form
+            # stood (samples kept clear of the cursor at the centre).
+            QmpStep(
+                r"greeter: a name and a secret, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 10, 10, 0, 85, 170),
+                    ("gpu0", 410, 230, 160, 160, 160),
+                    ("gpu0", 500, 290, 255, 255, 255),
+                    ("gpu0", 434, 398, 80, 80, 80),
+                ),
+                events=(
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                press="rroland\taegir\n",
+            ),
+            QmpStep(
+                r"auth: the greeter's windows are reaped",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The backdrop where the form stood. The samples keep to the
+                # window's right strip (x > 700) -- the test bed's windows
+                # (64..463 and 300..699 wide) never reach it, and when the
+                # greeter's login lands is the greeter's to say, so the
+                # samples must be true whenever they are read.
+                pixels=(
+                    ("gpu0", 10, 10, 0, 85, 170),
+                    ("gpu0", 860, 240, 0, 85, 170),
+                    ("gpu0", 860, 520, 0, 85, 170),
+                ),
+            ),
             # The console owns the input devices (specs/console.md), so the
             # checks are paced through its channel: a click focuses the test
             # bed's window, and the keys land in its ring. The pointer starts

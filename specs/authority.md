@@ -473,7 +473,8 @@ portable one, and a driver that finds no pair polls.
   day a service starts helpers it cannot name in advance, the answer is a narrower
   initrd, not a bigger delegation.
 - Badges for a service's spawned children count from **256** for the device manager's
-  (the low badges are director's boot set) and from **512** for the partition
-  manager's -- the system ranges of the designed badge space (see Identity is a
-  badge, above): bit 62 clear is the system class, bit 62 set is a user, and
-  `auth` mints user badges of `bit62 | (user << 24) | serial`.
+  (the low badges are director's boot set), from **512** for the partition
+  manager's, and from **768** for auth's -- the greeter is auth's system child
+  (specs/console.md's login arc) -- the system ranges of the designed badge
+  space (see Identity is a badge, above): bit 62 clear is the system class, bit
+  62 set is a user, and `auth` mints user badges of `bit62 | (user << 24) | serial`.

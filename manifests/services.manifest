@@ -195,15 +195,27 @@ restart   = always
 # consumer of the VFS -- and serves auth.login from it. It is also a
 # spawner: a successful login starts a session, so its memory is the
 # untyped it is delegated, and its table and its sessions both come out
-# of it.
+# of it. console.gui is its own caller half: a login through the greeter
+# ends with auth reaping the greeter's windows and slice (specs/console.md).
 [auth]
 binary    = aegir-auth
 authority = system
 account   = system
 owns      = auth.login
-needs     = log.main, vfs.namespace
-spawns    = session.*
+needs     = log.main, vfs.namespace, console.gui
+spawns    = session.*, greeter
 restart   = always
+
+# The login window (specs/console.md's login arc): auth's face, started once
+# the user database is read, badged from auth's own range (specs/authority.md).
+# Nothing else starts it, and its needs are what drives the delegatable
+# copies auth's spawn kit carries for it.
+[greeter]
+binary    = aegir-greeter
+authority = system
+account   = system
+needs     = console.gui, auth.login
+restart   = never
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
 # constructors, TLS, floating point, console) and now also that a spawned process

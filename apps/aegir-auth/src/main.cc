@@ -25,6 +25,7 @@
 #include <aegir/authdb.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/console.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/mem/allocator.h>
@@ -52,6 +53,21 @@ aegir::mem::Account g_account{"auth", 0, 0, 0};
  * exactly what starting a session takes. */
 seL4_CPtr g_spawn_log = 0;
 seL4_CPtr g_spawn_nmspace = 0;
+
+/* The greeter's kit (specs/console.md's login arc): the delegatable copies
+ * its spawn takes, and the console caller half that is auth's own -- a login
+ * through the greeter ends with auth reaping the greeter's windows and
+ * slice, and the reap call is this half's. The badge is from auth's system
+ * children range (specs/authority.md). */
+seL4_CPtr g_spawn_gui = 0;
+seL4_CPtr g_spawn_login = 0;
+aegir::ipc::Consumer g_gui;
+constexpr uint64_t kGreeterBadge = 768;
+bool g_greeter_up = false;
+/* The greeter's supervision notification: signalled twice -- the form is on
+ * the screen (start_greeter's wait), and the accepted login's exit (the
+ * login handler's wait, before the reap). */
+seL4_CPtr g_greeter_supervision = 0;
 
 /* The namespace as auth speaks it, and the slot a home resolve's capability
  * lands in -- one slot, deleted after each use, so a login does not spend
@@ -422,6 +438,89 @@ void start_session(uint32_t user) noexcept
     reclaim_session(badge, mark, scratch_mark, session_account);
 }
 
+/* The greeter (specs/console.md's login arc): auth's face, started once the
+ * user database is read. Two things set it apart from a session. Its memory
+ * comes from auth's own delegation, not the session pool: a login's reclaim
+ * revokes the pool, and the greeter's windows must stand until the login it
+ * brokers is done. And nobody waits on it: it runs beside the serving loop
+ * until its login succeeds, the loop's reap of its badge takes the windows
+ * and slice back, and the process itself is one-shot -- its few pages stay
+ * spent, a boot's price, until the desktop arc owns re-login. The spawn's
+ * staging through the scratch window ratchets the same way. */
+void start_greeter(aegir::mem::Arena &arena) noexcept
+{
+    if (g_spawn_gui == 0 || g_spawn_login == 0 || !g_gui.valid()) {
+        write("      auth: no kit for the greeter -- the screen stays dark\n");
+        return;
+    }
+    aegir::mem::Account greeter_account{"greeter", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject,
+                                                   seL4_EndpointBits,
+                                                   greeter_account, &error);
+    uint64_t untyped_physical = 0;
+    /* 256 KiB: the page tables the greeter's own mapping of its console
+     * slice is retyped from, and nothing else -- everything else it touches
+     * is already mapped (the spawn) or the console's (the slice). */
+    constexpr uint32_t kGreeterUntypedBits = 18;
+    seL4_CPtr const untyped = g_objects.carve_untyped(kGreeterUntypedBits,
+                                                      greeter_account, &error,
+                                                      &untyped_physical);
+    if (fault == 0 || untyped == 0) {
+        write("      auth: no fault endpoint or untyped for the greeter\n");
+        return;
+    }
+    aegir::spawn::PortGrant const ports[] = {
+        {aegir::console::kPortName, aegir::console::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared, g_spawn_gui,
+         seL4_CapRights_new(1, 1, 0, 1), kGreeterBadge, 0},
+        {aegir::auth::kPortName, aegir::auth::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_login,
+         seL4_CapRights_new(1, 0, 0, 1), kGreeterBadge, 0},
+        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 2, untyped,
+         seL4_AllRights, 0, kGreeterUntypedBits},
+    };
+    static char const kGreeterName[] = "greeter";
+    static char const kGreeterBinary[] = "aegir-greeter";
+    static char const kGreeterAccount[] = "system";
+    aegir::spawn::Request request{};
+    request.name = kGreeterName;
+    request.name_length = sizeof(kGreeterName) - 1;
+    request.binary = kGreeterBinary;
+    request.binary_length = sizeof(kGreeterBinary) - 1;
+    request.account = kGreeterAccount;
+    request.account_length = sizeof(kGreeterAccount) - 1;
+    request.priority = seL4_MaxPrio - 2;
+    request.ports = ports;
+    request.port_count = 3;
+    request.fault_endpoint = fault;
+    request.badge = kGreeterBadge;
+    request.give_vspace = true;
+    request.untyped_physical = untyped_physical;
+    request.untyped_bits = kGreeterUntypedBits;
+
+    aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
+                                      g_binaries_bytes);
+    aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd, g_asid_pool,
+                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                  aegir::bootstrap::kCNodeBits);
+    aegir::spawn::Process process{};
+    if (!spawner.spawn(request, greeter_account, process)) {
+        write("      auth: FAIL spawning the greeter: ");
+        write(spawner.problem());
+        write("\n");
+        return;
+    }
+    /* Wait for the form: the greeter signals when the cue is printed, and
+     * serving -- and the rest of the boot, with its own lines -- starts
+     * after, so the runner's cue never shares a serial line with another
+     * service's output. */
+    g_greeter_supervision = process.supervision;
+    seL4_Wait(process.supervision, nullptr);
+    g_greeter_up = true;
+    write("      auth: the greeter is up\n");
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -667,6 +766,9 @@ int main(int argc, char *argv[])
     uint64_t pool_slot = 0;
     uint64_t spawn_log_slot = 0;
     uint64_t spawn_nmspace_slot = 0;
+    uint64_t spawn_gui_slot = 0;
+    uint64_t spawn_login_slot = 0;
+    uint64_t gui_slot = 0;
     bool const kit_complete =
         aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
         aegir::bootstrap::capability("spawn:log.main", 14, &spawn_log_slot) &&
@@ -676,6 +778,15 @@ int main(int argc, char *argv[])
     g_spawn_log = static_cast<seL4_CPtr>(spawn_log_slot);
     g_spawn_nmspace = static_cast<seL4_CPtr>(spawn_nmspace_slot);
     g_asid_pool = static_cast<seL4_CPtr>(pool_slot);
+    /* The greeter's kit, separate from the sessions': a boot without it
+     * still takes logins over the serial line. */
+    if (aegir::bootstrap::capability("spawn:console.gui", 17, &spawn_gui_slot) &&
+        aegir::bootstrap::capability("spawn:auth.login", 16, &spawn_login_slot) &&
+        aegir::bootstrap::capability("console.gui", 11, &gui_slot)) {
+        g_spawn_gui = static_cast<seL4_CPtr>(spawn_gui_slot);
+        g_spawn_login = static_cast<seL4_CPtr>(spawn_login_slot);
+        g_gui = aegir::ipc::Consumer(static_cast<seL4_CPtr>(gui_slot));
+    }
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);
     bool const can_spawn = g_session_pool != 0 && kit_complete && initrd.valid();
@@ -687,16 +798,34 @@ int main(int argc, char *argv[])
     write("      auth: ");
     aegir::debug_write_unsigned(g_users);
     write(g_users == 1 ? " user, serving auth.login\n" : " users, serving auth.login\n");
+    start_greeter(arena);
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
+        seL4_Word caller_badge = 0;
         uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
-                                                   nullptr);
+                                                   &caller_badge);
         if (method == aegir::auth::kMethodLogin) {
             int const user = answer_login(port, words, count);
             if (user >= 0 && can_spawn) {
+                /* A login through the greeter ends the greeter's part. The
+                 * exit comes first: the wait is for the second supervision
+                 * signal, which the greeter sends as it leaves -- so its
+                 * welcome line is written before ours, never across it. Then
+                 * the windows and the slice go back before the session
+                 * starts -- console's reap, the same teardown order a
+                 * session's reclaim follows (specs/console.md). */
+                if (g_greeter_up && caller_badge == kGreeterBadge) {
+                    seL4_Wait(g_greeter_supervision, nullptr);
+                    uint64_t const badge_word = kGreeterBadge;
+                    uint64_t bin[1];
+                    (void)g_gui.call_words(aegir::console::kMethodReap, &badge_word,
+                                           1, bin, 1);
+                    g_greeter_up = false;
+                    write("      auth: the greeter's windows are reaped\n");
+                }
                 start_session(static_cast<uint32_t>(user));
             }
         } else {

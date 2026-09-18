@@ -852,6 +852,50 @@ int main(int argc, char *argv[])
             /* What was under it is everyone else's redraw. */
             repaint(gone.x, gone.y, gone.width, gone.height);
             gui.reply(0);
+        } else if (method == aegir::console::kMethodReap && length == 2) {
+            /* Session teardown: every window the badge held goes away as if
+             * destroyed, then the slice's child untyped is revoked -- the
+             * frames, the pristine mints and their copies in the client, and
+             * with them the console's own mappings all die in one revoke
+             * (finaliseCap unmaps a mapped frame whose cap is deleted), and
+             * the memory is the console's to carve again. The console's own
+             * allocator never gives slots back, so the dead pristine and
+             * notification slots stay spent; a console that reaps daily is
+             * the desktop arc's problem. */
+            uint64_t const target = static_cast<uint64_t>(seL4_GetMR(1));
+            Window **link = &g_windows;
+            while (*link != nullptr) {
+                if ((*link)->owner != target) {
+                    link = &(*link)->next;
+                    continue;
+                }
+                Window const gone = **link;
+                *link = (*link)->next;
+                if (g_focused != nullptr && g_focused->id == gone.id) {
+                    deliver(gone.owner, aegir::console::kEventFocus, 0, 0,
+                            gone.id);
+                    g_focused = nullptr;
+                }
+                if (g_grab != nullptr && g_grab->id == gone.id) {
+                    g_grab = nullptr;
+                }
+                repaint(gone.x, gone.y, gone.width, gone.height);
+            }
+            Slice **slink = &g_slices;
+            while (*slink != nullptr && (*slink)->badge != target) {
+                slink = &(*slink)->next;
+            }
+            if (*slink != nullptr) {
+                Slice *const dead = *slink;
+                *slink = dead->next;
+                seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, dead->untyped,
+                                  aegir::bootstrap::kCNodeBits);
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                  dead->untyped, aegir::bootstrap::kCNodeBits);
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                  dead->events, aegir::bootstrap::kCNodeBits);
+            }
+            gui.reply(0);
         } else {
             /* A method we do not know: the answer says so by saying nothing
              * (aegir/console.h). */
