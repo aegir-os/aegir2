@@ -787,7 +787,7 @@ and answers "who owns this device?" for everyone else.
   so the first row that claims a transport is not necessarily the row for the
   device behind it -- the probe, the only read that says what is behind one,
   re-points the binding at the row the probed id names.
-- **the third driver has two queues, and a port that can say "wait"**:
+- **done**: the third driver has two queues, and its port can say "wait".
   virtio-input (device id 18, QEMU's `virtio-keyboard-device`) is what the
   `Queue` object's per-instance state was for: the *event* queue is primed
   with one device-writable buffer per descriptor -- the device only ever
@@ -796,18 +796,25 @@ and answers "who owns this device?" for everyone else.
   (`libs/aegir-input`) serves two methods: `poll` answers whether an event
   waits, and `next` answers with the next event, one word -- and when none
   has arrived, the reply is *held*, not refused: the caller's reply
-  capability is saved and the answer crosses when the interrupt lands. That
-  is the supervisor-that-serves shape again: the irq notification is bound
-  to the serving thread, one receive sees calls and signals, and a bare
-  badge is the signal (a caller's badge is never bare -- the registry's
-  `open` minted it). The queue's own size is the only bound on pending
-  events, and a completed buffer is re-primed as it is consumed, so the
-  driver holds no second queue of its own. The registry row is
-  `id=18 prefix=kbd window=0` -- events ride in the envelope, like entropy.
-  Acceptance presses a real key: the runner holds a QMP socket to the QEMU
-  it started, issues `send-key a` when the test bed says it is waiting, and
-  the check is EV_KEY 30 arriving down and then up through the held reply
-  (scripts/run_target.py).
+  capability is saved (`seL4_CNode_SaveCaller` -- a CNode invocation in
+  this kernel's API, not a syscall) and the answer crosses when the
+  interrupt lands. That is the supervisor-that-serves shape again: the irq
+  notification is bound to the serving thread, one receive sees calls and
+  signals, and a bare badge is the signal (a caller's badge is never bare
+  -- the registry's `open` minted it). The queue's own size is the only
+  bound on pending events, and a completed buffer is re-primed as it is
+  consumed, so the driver holds no second queue of its own. The registry
+  row is `id=18 prefix=kbd window=0` -- events ride in the envelope, like
+  entropy. Acceptance presses a real key: the runner holds a QMP socket to
+  the QEMU it started, issues `send-key a` when the test bed says it is
+  waiting, and the check is EV_KEY 30 arriving down and then up through the
+  held reply (scripts/run_target.py). Two lessons the landing taught: a
+  bootstrap block's `DeviceCapability` entry keeps its slot in `reserved`,
+  not `number` -- a free-slot scan that missed that saved the caller onto
+  the frame cap ("Destination slot not empty", then a send through a
+  page) -- and a third driver's images, queues and windows outgrew the
+  spawner's 2 MiB delegation, which is 4 now (specs/authority.md's budget,
+  not a capacity).
 - **next**: the VFS and the `Initrd:` volume.
 
 Devices are given to a driver the way everything else here is given: capabilities
