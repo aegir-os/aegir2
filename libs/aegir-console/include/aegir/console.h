@@ -20,6 +20,7 @@
 #ifndef AEGIR_CONSOLE_H
 #define AEGIR_CONSOLE_H
 
+#include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -61,9 +62,74 @@ constexpr uint32_t kMethodDamage = 4;
 constexpr uint32_t kMethodDestroyWindow = 5;
 
 /** Reap: system authority's call (auth's, on session reclaim): every
- *  window the badge held is destroyed and its slice is free whole. In: the
- *  badge. The answer is empty. Joins the reclaim order in specs/auth.md. */
+ * window the badge held is destroyed and its slice is free whole. In: the
+ * badge. The answer is empty. Joins the reclaim order in specs/auth.md. */
 constexpr uint32_t kMethodReap = 6;
+
+/** Listen: collect the client's event channel -- one notification,
+ *  answered as a capability (the frame shape). Console appends events to
+ *  the ring and signals; the client waits on the notification and drains
+ *  the ring. One channel per client, events tagged with their window: a
+ *  thread waits on one notification, where per-window endpoints would
+ *  have been one blocked receive too many. */
+constexpr uint32_t kMethodListen = 7;
+
+/* The event channel. The ring is the slice's last 4 KiB page: the console
+ * mapped the whole slice when it carved it, so appending is writing memory
+ * it already has, and the client maps the page with the rest. Word 0 is
+ * the write index (console's), word 1 the read index (the client's), both
+ * monotonic; entries are two words each -- the event as aegir-input packs
+ * it (type, code, value), then the window's id. One producer, one
+ * consumer, one core: volatile is the whole synchronisation story, and the
+ * notification is the wakeup. A client that stops reading fills the ring,
+ * and a full ring drops -- the console never blocks on a client. */
+constexpr uint64_t kEventRingBytes = 1ull << seL4_PageBits;
+constexpr uint64_t kEventRingEntries = (kEventRingBytes / 8 - 2) / 2;
+
+/* The event vocabulary (specs/console.md's event channel). The envelope is
+ * aegir-input's packed word. */
+constexpr uint16_t kEventKey = 1;     /* code: the raw code; value below */
+constexpr uint16_t kEventPointer = 2; /* code: 0 motion, else the button */
+constexpr uint16_t kEventFocus = 3;   /* value: 1 in, 0 out */
+
+/* A key event's value: bits 0..15 the translated character -- the keymap
+ * is console's, US layout v1, and an unmapped code carries zero -- and
+ * bit 16 set for a press, clear for a release. */
+constexpr uint32_t kKeyPressed = 1u << 16;
+
+/* A pointer event's value: x in bits 0..15, y in bits 16..31, window-local.
+ * A button event's code carries kButtonRelease for the up. */
+constexpr uint16_t kButtonRelease = 0x8000;
+
+/** The ring's address within a mapped slice. */
+inline volatile uint64_t *event_ring(uint8_t *slice, uint64_t slice_bytes) noexcept
+{
+    return reinterpret_cast<volatile uint64_t *>(slice + (slice_bytes - kEventRingBytes));
+}
+
+/** Listen, and take the notification into `slot`. False when refused. */
+inline bool listen(aegir::ipc::Consumer const &gui, seL4_CPtr slot) noexcept
+{
+    bool cap_arrived = false;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answered =
+        gui.call_transfer(kMethodListen, nullptr, 0, 0, in, 0, &cap_arrived);
+    return answered.error == 0 && cap_arrived && aegir::ipc::take_received_cap(slot);
+}
+
+/** Take the oldest event off the ring. False when the ring is empty. */
+inline bool ring_take(volatile uint64_t *ring, uint64_t *event, uint64_t *window) noexcept
+{
+    uint64_t const read = ring[1];
+    if (read == ring[0]) {
+        return false;
+    }
+    volatile uint64_t const *entry = ring + 2 + (read % kEventRingEntries) * 2;
+    *event = entry[0];
+    *window = entry[1];
+    ring[1] = read + 1;
+    return true;
+}
 
 /* The client walk, the registry.h shape: small inline callers over the
  * port's Consumer. */
