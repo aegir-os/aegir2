@@ -445,8 +445,17 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     /* The shared window a data port serves through goes right after the memory,
      * where the spawner knows both ends, and the child's own VSpace window
      * starts past it -- a service that maps for itself still has its port's
-     * window placed for it, because the window is part of the port. */
-    uintptr_t const shared_window_at = memory_at + request.memory_bytes;
+     * window placed for it, because the window is part of the port. A window
+     * of mega pages is aligned up to its frame size: a 2 MiB mapping needs a
+     * page-table slot of its own level, which the address it lands at decides. */
+    uintptr_t const window_frame_bytes =
+        request.window_frame != 0 ? (1ul << request.window_page_bits) : kPage;
+    if (request.window_page_bits != seL4_PageBits &&
+        request.window_page_bits != seL4_LargePageBits) {
+        return fail("a shared window's frames are 4 KiB pages or 2 MiB mega pages");
+    }
+    uintptr_t const shared_window_at =
+        align_up(memory_at + request.memory_bytes, window_frame_bytes);
     /* Everything above the memory and the shared window is the child's, when it
      * is trusted with its own VSpace root: addresses cost nothing, so the
      * window is generous, and the spawner -- not the child -- is what chose
@@ -502,16 +511,20 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     }
     /* And the shared window follows the memory, the same shape: frames the
      * caller carved, sitting in consecutive slots, mapped -- not given -- so
-     * both sides of the port hold the same pages at their own spawn times. */
+     * both sides of the port hold the same pages at their own spawn times.
+     * A frame is `window_page_bits` wide -- 4 KiB for a window a port's
+     * clients copy through, 2 MiB for one a device scans out of. */
     if (shared_window_address != 0) {
-        if ((request.window_bytes % kPage) != 0) {
-            return fail("a shared window that is not a whole number of pages");
+        if ((request.window_bytes % window_frame_bytes) != 0) {
+            return fail("a shared window that is not a whole number of frames");
         }
-        uint32_t const pages = request.window_bytes / static_cast<uint32_t>(kPage);
-        for (uint32_t i = 0; i < pages; ++i) {
+        uint32_t const frames =
+            request.window_bytes / static_cast<uint32_t>(window_frame_bytes);
+        for (uint32_t i = 0; i < frames; ++i) {
             seL4_Error mapped = seL4_NoError;
-            if (!vspace.map_page(shared_window_at + i * kPage, request.window_frame + i, true,
-                                 account, &mapped)) {
+            if (!vspace.map_page(shared_window_at + i * window_frame_bytes,
+                                 request.window_frame + i, true, account, &mapped,
+                                 request.window_page_bits)) {
                 return fail("the shared window a port serves through could not be mapped "
                             "into the child");
             }

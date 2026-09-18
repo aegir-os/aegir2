@@ -42,7 +42,8 @@ bool ChildVSpace::create(seL4_CPtr pool, Account &account) noexcept
 }
 
 bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
-                           Account &account, seL4_Error *error_out) noexcept
+                           Account &account, seL4_Error *error_out,
+                           seL4_Word size_bits) noexcept
 {
     if (error_out != nullptr) {
         *error_out = seL4_NoError;
@@ -89,7 +90,7 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
         return false;
     }
     ++mapped_pages_;
-    mapped_bytes_ += kPage;
+    mapped_bytes_ += 1ull << size_bits;
     return true;
 }
 

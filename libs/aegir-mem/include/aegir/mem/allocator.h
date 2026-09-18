@@ -165,8 +165,15 @@ public:
      * caller can use, which is what a service's memory grant needs to become a frame the
      * spawner can map into it. The region's physical base is the page's, because an untyped
      * of exactly `seL4_PageBits` holds exactly one page.
+     *
+     * `size_bits` is seL4_PageBits (4 KiB) or seL4_LargePageBits (2 MiB, a
+     * seL4_RISCV_Mega_Page): a window big enough to hold a framebuffer is a
+     * handful of mega pages, not a thousand small ones -- every cap in a set is
+     * a slot somebody's CSpace pays for (specs/services.md). Consecutive carves
+     * stay aligned because the untyped's watermark advances by the frame's size.
      */
-    seL4_CPtr carve_page(seL4_CPtr untyped_cap, Account &account, seL4_Error *error) noexcept;
+    seL4_CPtr carve_page(seL4_CPtr untyped_cap, Account &account, seL4_Error *error,
+                         seL4_Word size_bits = seL4_PageBits) noexcept;
 
     /**
      * Adopt a run of slots this process may put capabilities in, and the depth that

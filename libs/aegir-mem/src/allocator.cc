@@ -372,7 +372,7 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
 }
 
 seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
-                                seL4_Error *error) noexcept
+                                seL4_Error *error, seL4_Word size_bits) noexcept
 {
     *error = seL4_NoError;
     seL4_CPtr const slot = alloc_slot();
@@ -380,8 +380,14 @@ seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
         *error = seL4_NotEnoughMemory;
         return 0;
     }
+    /* The object type names the frame's size (kernel/src/arch/riscv/object/
+     * objecttype.c: seL4_RISCV_Mega_Page is a 2 MiB frame); the size_bits the
+     * retype also carries are ignored for a fixed-size type, so they simply
+     * agree. */
+    seL4_Word const type =
+        size_bits == seL4_PageBits ? seL4_RISCV_4K_Page : seL4_RISCV_Mega_Page;
     seL4_Error const retyped =
-        seL4_Untyped_Retype(untyped_cap, seL4_RISCV_4K_Page, seL4_PageBits, seL4_CapInitThreadCNode,
+        seL4_Untyped_Retype(untyped_cap, type, size_bits, seL4_CapInitThreadCNode,
                             seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
     if (retyped != seL4_NoError) {
         slot_failed(slot);

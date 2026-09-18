@@ -147,6 +147,15 @@ void copy_out(char *out, uint32_t out_bytes, char const *in, uint32_t in_length)
     out[at] = '\0';
 }
 
+/** A bound port's window is the storage stack's to hand on when its instance
+ *  says blk: the partition manager pairs the granted window frames with the
+ *  block ports it picked, and it pairs them 4 KiB at a time -- a window it
+ *  cannot serve (a scanout's mega pages) is never granted to it. */
+bool block_window(char const *name, uint32_t length) noexcept
+{
+    return length >= 4 && name[0] == 'b' && name[1] == 'l' && name[2] == 'k' && name[3] == '.';
+}
+
 /** One binding as the registry answers it. */
 void fill_row(Binding const &binding, aegir::registry::Row *row) noexcept
 {
@@ -809,10 +818,19 @@ int main(int argc, char *argv[])
                 seL4_CPtr window_frame = 0;
                 uint64_t window_physical = 0;
                 uint32_t window_pages = 0;
+                uint32_t window_page_bits = seL4_PageBits;
                 seL4_CPtr window_client = 0;
                 seL4_CPtr window_children = 0;
                 seL4_CPtr window_smoke = 0;
                 if (driver->window_bits != 0) {
+                /* A window of 2 MiB or more rides as mega pages: a framebuffer
+                 * window of thousands of 4 KiB frames is thousands of caps, and
+                 * every CSpace here holds 1024 slots (kCNodeBits) -- the per-page
+                 * path tops out long before a screen does. 4 KiB stays the shape
+                 * for windows a port's clients copy through (blk's 64 KiB). */
+                window_page_bits =
+                    driver->window_bits >= seL4_LargePageBits ? seL4_LargePageBits
+                                                              : seL4_PageBits;
                 seL4_Error window_error = seL4_NoError;
                 seL4_CPtr const window_untyped =
                     g_objects.carve_untyped(driver->window_bits, child_account,
@@ -821,12 +839,12 @@ int main(int argc, char *argv[])
                     write_line("FAIL", "no memory for a driver's shared window");
                     continue;
                 }
-                window_pages = (1u << driver->window_bits) / 4096u;
+                window_pages = (1u << driver->window_bits) >> window_page_bits;
                 bool window_paged = true;
                 for (uint32_t p = 0; p < window_pages; ++p) {
                     seL4_Error page_error = seL4_NoError;
                     seL4_CPtr const frame = g_objects.carve_page(window_untyped, child_account,
-                                                                 &page_error);
+                                                                 &page_error, window_page_bits);
                     if (frame == 0) {
                         window_paged = false;
                         break;
@@ -968,6 +986,7 @@ int main(int argc, char *argv[])
                 request.window_bytes =
                     driver->window_bits != 0 ? (1u << driver->window_bits) : 0;
                 request.window_physical = window_physical;
+                request.window_page_bits = window_page_bits;
                 /* The queue's descriptors carry physical addresses the device
                  * reads, and a capability does not say where it is -- so the
                  * physical base travels beside the frames, the way director's
@@ -1133,8 +1152,12 @@ int main(int argc, char *argv[])
                 uint32_t window_grant_count = 0;
                 for (uint32_t i = 0; i < bound_count; ++i) {
                     /* Two groups per port: the partition manager's own pages,
-                     * then the set reserved for the children it will start. */
-                    window_grant_count += 2 * bound[i].window_pages;
+                     * then the set reserved for the children it will start.
+                     * Only the block ports' windows ride: they are the ports
+                     * the manager pairs the frames with, 4 KiB at a time. */
+                    if (block_window(bound[i].name, bound[i].name_length)) {
+                        window_grant_count += 2 * bound[i].window_pages;
+                    }
                 }
                 /* The registry's caller half rides with the manager's grants
                  * when the endpoint exists -- the map is for asking, and the
@@ -1210,11 +1233,17 @@ int main(int argc, char *argv[])
                     /* The windows as frame capabilities, two groups per port in
                      * the ports' own order -- the manager's own pages, then the
                      * set reserved for its children -- pages ascending within a
-                     * group. All minted from pristine sets, so they arrive with
+                     * group, and only the block ports' windows granted (the
+                     * pairing above is 4 KiB a page; a scanout window's mega
+                     * pages are not the storage stack's to hand out). All minted
+                     * from pristine sets, so they arrive with
                      * no ASID and the child may map them (kernel/src/arch/
                      * riscv/kernel/vspace.c:869-878). */
                     uint32_t at = 0;
                     for (uint32_t i = 0; i < bound_count; ++i) {
+                        if (!block_window(bound[i].name, bound[i].name_length)) {
+                            continue;
+                        }
                         for (uint32_t p = 0; p < bound[i].window_pages; ++p) {
                             frames[at] = {bound[i].window_physical +
                                               static_cast<uint64_t>(p) * 4096,

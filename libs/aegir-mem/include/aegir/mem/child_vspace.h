@@ -64,13 +64,16 @@ public:
                   seL4_CPtr *first_frame = nullptr, char const **why = nullptr,
                   seL4_CPtr *frames_out = nullptr) noexcept;
 
-    /** Map one page, creating whatever page tables the kernel says are missing. */
     /** Map `frame` at `address`, creating the page tables above it if they are
      *  missing. `error`, when given, is why it did not work -- the kernel's own
      *  answer, because "it did not work" has several of them and they mean
-     *  different things (kernel/manual/parts/vspace.tex). */
+     *  different things (kernel/manual/parts/vspace.tex).
+     *  `size_bits` is the frame's size -- a mega page (seL4_LargePageBits) maps
+     *  at the level above a 4 KiB one, which the table-provisioning loop gets
+     *  right on its own: the kernel says FailedLookup one level fewer times.
+     *  The address must be aligned to the frame's size. */
     bool map_page(uintptr_t address, seL4_CPtr frame, bool writable, Account &account,
-                  seL4_Error *error = nullptr) noexcept;
+                  seL4_Error *error = nullptr, seL4_Word size_bits = seL4_PageBits) noexcept;
 
     seL4_CPtr root() const noexcept { return root_; }
     unsigned mapped_pages() const noexcept { return mapped_pages_; }

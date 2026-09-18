@@ -121,6 +121,15 @@ struct Request {
     seL4_CPtr window_frame = 0;
     uint32_t window_bytes = 0;
     uint64_t window_physical = 0;
+    /* How wide one window frame is: seL4_PageBits (4 KiB) or
+     * seL4_LargePageBits (a 2 MiB mega page, seL4_RISCV_Mega_Page). A window
+     * big enough to be a framebuffer rides as a handful of mega pages, because
+     * every frame in a set is a slot somebody's CSpace pays for
+     * (specs/services.md). `window_frame + i` is frame `i' at
+     * `window_physical + (i << window_page_bits)`, and the window is placed at
+     * an address aligned to its frames -- a mega page's mapping needs a fresh
+     * 2 MiB slot, not a page table already carrying 4 KiB leaves. */
+    uint32_t window_page_bits = seL4_PageBits;
     /* A copy of the flat initrd, mapped read-only, for a process that starts
      * processes of its own: the binaries are the one part of spawning that cannot
      * be delegated as a capability, so they travel as bytes (specs/services.md).
