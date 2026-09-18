@@ -490,7 +490,13 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
     request.binary_length = sizeof(kGreeterBinary) - 1;
     request.account = kGreeterAccount;
     request.account_length = sizeof(kGreeterAccount) - 1;
-    request.priority = seL4_MaxPrio - 2;
+    /* A service's priority, not a session's: the greeter shares the serial
+     * line with the services, and at a session's priority their every wakeup
+     * preempts it -- mid-print, which is how a cue line garbles. At their
+     * own priority only a timeslice's end moves it aside, and a line is far
+     * shorter than a slice. It blocks on its event channel besides, so the
+     * priority costs the boot nothing. */
+    request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
     request.port_count = 3;
     request.fault_endpoint = fault;
