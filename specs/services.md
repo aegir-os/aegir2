@@ -660,16 +660,19 @@ and answers "who owns this device?" for everyone else.
   index), and everything worked except the one entry that had been overwritten. Reading
   `entries[6]` from the child said `kind 4` -- a `Capability` -- where 8 was expected. Any
   fixed entry added before the ports has to move the port base with it.
-- **where a driver's shared parts go, and why nothing moved yet**: the first driver,
-  virtio-blk, has a register window and a status handshake that every virtio device on the
+- **where a driver's shared parts go**: the first driver, virtio-blk, has a
+  register window and a status handshake that every virtio device on the
   bus shares -- the layout is the same ABI for all of them (virtio 1.x, 4.2.2), and the
   handshake is: reset, ACKNOWLEDGE, DRIVER, features, FEATURES_OK, verify, DRIVER_OK --
-  while only the config space and the request queue are the device's own. Those shared parts
-  live in one header, `apps/aegir-virtio-blk/src/virtio_mmio.h`, marked as the seam rather
-  than split into a library in advance of the evidence that says where the split belongs.
-  The second driver is what turns that comment into a library, and the queue is the third
-  thing to look at, because a virtqueue is the same shape for every device too. Naming the
-  library early would be a guess about the seam; the second driver makes it a measurement.
+  while only the config space and the request queue are the device's own. The second
+  driver is virtio-rng, the smallest device on the bus (one queue, and the device only
+  ever writes into buffers the driver posts), and its arrival is what splits the shared
+  parts into **`libs/aegir-virtio`**: the register window, the handshake, and the
+  virtqueue core (descriptor table, the two rings, publish and wait), with each driver
+  keeping only its device's own shapes. The seam is the legacy-MMIO transport made
+  concrete; a second transport (virtio-pci's modern layout, if PCI is ever taken on)
+  arrives *beside* it, not through it -- the ring and the device logic are the shared
+  parts, the register map and queue activation are the transport's.
 - **next, and designed**: give the device manager the *series* of transport frames, so
   it can inspect every transport rather than only its own. The shape:
   - the survey already retypes and keeps every page of the series, one slot per page;
@@ -751,6 +754,26 @@ and answers "who owns this device?" for everyone else.
   waiting for the partition manager's ready -- the child's supervision
   notification is bound to the serving thread, one receive sees both, and the
   call/signal convention above is what tells them apart.
+- **the map answers, and now it also introduces**: `open` on
+  `devmgr.registry` takes a row's index and answers with one capability -- the
+  bound driver's port, minted with the caller's badge so the driver sees the
+  true caller, the shape `vfs.namespace`'s resolve already has. The device
+  manager holds the unbadged original of every port it made for exactly this:
+  an endpoint the spawner created may be minted again. Asking for an unbound
+  row, or a row that does not exist, is the empty reply. This is how a client
+  finds a spawned driver's port without a static edge in the manifest: walk
+  `count`/`describe` to the instance name, `open` it.
+- **the entropy source is a driver now.** virtio-rng (device id 4) was the
+  device manager's own device -- the first proof that a service could read
+  hardware, made when nothing else could. The proof served, and the transport
+  joins the map like any other: a registry row (`id=4 prefix=rng`), and
+  `rng.virtio0` is spawned from it. The driver is the smallest on the bus --
+  one queue, and the device only ever writes into buffers the driver posts --
+  which is what makes it the second driver that measured the lib split. Its
+  port serves one method, `read`: one posted buffer per call, the answer is
+  the bytes the device filled, up to what the envelope carries. Its first
+  consumer reaches it through the registry's `open`; the consumer the source
+  is *for* is auth's nonce arc (specs/auth.md).
 - **next**: the VFS and the `Initrd:` volume.
 
 Devices are given to a driver the way everything else here is given: capabilities
