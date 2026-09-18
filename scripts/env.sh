@@ -12,7 +12,14 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 
 _aegir_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-export AEGIR_ROOT="${AEGIR_ROOT:-$_aegir_root}"
+# The root is where this file lives — never whatever AEGIR_ROOT the shell
+# happens to carry. A stale export (an old checkout, a profile leftover) makes
+# every check below look in the wrong tree and claim the tools are missing
+# while `make tools` — which resolves its own path — correctly finds them.
+if [ -n "${AEGIR_ROOT:-}" ] && [ "$AEGIR_ROOT" != "$_aegir_root" ]; then
+  echo "scripts/env.sh: ignoring AEGIR_ROOT=$AEGIR_ROOT (this tree is $_aegir_root)" >&2
+fi
+export AEGIR_ROOT="$_aegir_root"
 
 # The cross toolchain is unpacked from Debian packages, so its layout is
 # <prefix>/usr/bin. Its cc1 links libisl/libgmp/libmpfr/libmpc shared and the
