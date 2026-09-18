@@ -29,11 +29,9 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
-#include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/nmspace.h>
-#include <aegir/registry.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
 #include <stdint.h>

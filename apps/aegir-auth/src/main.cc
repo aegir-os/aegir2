@@ -31,7 +31,6 @@
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
-#include <aegir/registry.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
 #include <aegir/volume.h>
@@ -53,7 +52,6 @@ aegir::mem::Account g_account{"auth", 0, 0, 0};
  * exactly what starting a session takes. */
 seL4_CPtr g_spawn_log = 0;
 seL4_CPtr g_spawn_nmspace = 0;
-seL4_CPtr g_spawn_registry = 0;
 
 /* The namespace as auth speaks it, and the slot a home resolve's capability
  * lands in -- one slot, deleted after each use, so a login does not spend
@@ -375,13 +373,6 @@ void start_session(uint32_t user) noexcept
         {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
-        /* The registry: the session's input path (specs/auth.md). The call
-         * mark rides in the badge because the device manager tells a call
-         * from a supervision signal by bit 63 -- without it the session's
-         * count/describe/open would be read as signals and never answered. */
-        {aegir::registry::kPortName, aegir::registry::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_registry,
-         seL4_CapRights_new(1, 0, 0, 1), badge | aegir::ipc::kCallMark, 0},
     };
     static char const kSessionName[] = "session.smoke";
     static char const kSessionBinary[] = "aegir-session-smoke";
@@ -394,7 +385,7 @@ void start_session(uint32_t user) noexcept
     request.account_length = field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
-    request.port_count = 3;
+    request.port_count = 2;
     request.fault_endpoint = fault;
     request.badge = badge;
 
@@ -676,17 +667,14 @@ int main(int argc, char *argv[])
     uint64_t pool_slot = 0;
     uint64_t spawn_log_slot = 0;
     uint64_t spawn_nmspace_slot = 0;
-    uint64_t spawn_registry_slot = 0;
     bool const kit_complete =
         aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
         aegir::bootstrap::capability("spawn:log.main", 14, &spawn_log_slot) &&
         aegir::bootstrap::capability("spawn:vfs.namespace", 19, &spawn_nmspace_slot) &&
-        aegir::bootstrap::capability("spawn:devmgr.registry", 21, &spawn_registry_slot) &&
         aegir::bootstrap::binaries(&g_binaries_address, &g_binaries_bytes) &&
         g_binaries_bytes != 0;
     g_spawn_log = static_cast<seL4_CPtr>(spawn_log_slot);
     g_spawn_nmspace = static_cast<seL4_CPtr>(spawn_nmspace_slot);
-    g_spawn_registry = static_cast<seL4_CPtr>(spawn_registry_slot);
     g_asid_pool = static_cast<seL4_CPtr>(pool_slot);
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);
