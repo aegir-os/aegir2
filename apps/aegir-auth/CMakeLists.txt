@@ -24,6 +24,6 @@ target_compile_options(aegir-auth PRIVATE -Wall -Wextra -Werror)
 # specs/authority.md).
 target_link_libraries(
   aegir-auth PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
-                     aegir-authdb aegir-mem aegir-namespace aegir-spawn aegir-volume sel4
+                     aegir-authdb aegir-mem aegir-namespace aegir-registry aegir-spawn aegir-volume sel4
                      muslc sel4runtime
 )

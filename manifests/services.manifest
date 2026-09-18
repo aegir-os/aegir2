@@ -206,13 +206,15 @@ needs     = log.main, vfs.namespace, auth.login, devmgr.registry
 restart   = never
 
 # The first session (specs/auth.md). Nothing starts it at boot -- auth
-# starts one when a login succeeds, with the user's badge and account,
-# and there is no input path yet, so the session is the smoke that
-# proves the shape. The entry is what declares a session's needs, which
+# starts one when a login succeeds, with the user's badge and account.
+# devmgr.registry in its needs is the input path: the director hands auth a
+# delegatable copy, auth mints it per session (with the call mark, which is
+# how the device manager tells a call from a signal), and the session opens
+# the tablet by name. The entry is what declares a session's needs, which
 # is what drives the delegatable copies its spawner is given.
 [session.smoke]
 binary    = aegir-session-smoke
 authority = user
 account   = user
-needs     = log.main, vfs.namespace
+needs     = log.main, vfs.namespace, devmgr.registry
 restart   = never

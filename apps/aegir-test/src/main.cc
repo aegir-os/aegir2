@@ -161,38 +161,10 @@ bool set_mode(aegir::ipc::Consumer const &gpu, uint64_t width, uint64_t height) 
     return answer.error == 0 && answer.count == 2 && in[0] == width && in[1] == height;
 }
 
-/* Walk the registry to the bound row named `name` and open it: the port the
- * answer carries lands in `slot`, minted with this service's own badge
- * (specs/services.md). False when the map has no such bound row or the open
- * was refused. */
-bool open_bound(aegir::ipc::Consumer const &registry, char const *name,
-                uint32_t name_length, seL4_CPtr slot) noexcept
-{
-    aegir::ipc::Reply const count = registry.call(aegir::registry::kMethodCount, 0);
-    if (count.error != 0) {
-        return false;
-    }
-    for (uint64_t i = 0; i < count.word; ++i) {
-        uint64_t words[aegir::registry::kRowWords];
-        aegir::ipc::WordsReply const described =
-            registry.call_words(aegir::registry::kMethodDescribe, &i, 1, words,
-                                aegir::registry::kRowWords);
-        if (described.error != 0 || described.count != aegir::registry::kRowWords) {
-            return false;
-        }
-        auto const *row = reinterpret_cast<aegir::registry::Row const *>(words);
-        if (row->bound == 0 || !same_bytes(row->instance, name, name_length) ||
-            row->instance[name_length] != '\0') {
-            continue;
-        }
-        bool cap_arrived = false;
-        uint64_t in[1];
-        aegir::ipc::WordsReply const opened = registry.call_transfer(
-            aegir::registry::kMethodOpen, &i, 1, 0, in, 1, &cap_arrived);
-        return opened.error == 0 && cap_arrived && aegir::ipc::take_received_cap(slot);
-    }
-    return false;
-}
+/* The registry walk -- find the bound row by name, open it -- is the lib's
+ * now (aegir/registry.h): a session takes the same walk, and one walk is
+ * one implementation. */
+using aegir::registry::open_bound;
 
 /* Read the whole file, one envelope at a time, and check every byte against
  * what the disk was made with. */

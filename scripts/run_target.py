@@ -304,10 +304,10 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
 
     seen = False
     failed = False
-    # The QMP script, in order: each step's trigger counts matches (two heads
-    # say the same line, so a step can want two), and fires once.
+    # The QMP script, in order: each step's trigger counts matches and fires
+    # on every one, up to `times` (0: no cap -- a cue that repeats once per
+    # session gets an answer per session).
     step_matches = [0] * len(target.qmp_steps)
-    step_done = [False] * len(target.qmp_steps)
     step_dims: list[tuple[int, int]] = []
     summary = ""
     try:
@@ -322,12 +322,11 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             if match:
                 summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
             for index, step in enumerate(target.qmp_steps):
-                if step_done[index] or re.search(step.trigger, stripped) is None:
+                if (step.times != 0 and step_matches[index] >= step.times) or re.search(
+                    step.trigger, stripped
+                ) is None:
                     continue
                 step_matches[index] += 1
-                if step_matches[index] < step.times:
-                    continue
-                step_done[index] = True
                 socket_path = build_dir / str(target.qmp_socket)
                 # The screens first, then the key: the key paces the guest's
                 # next step, so everything this step checks must be read

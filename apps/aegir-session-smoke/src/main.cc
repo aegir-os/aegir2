@@ -7,11 +7,13 @@
  * Auth starts one of these when a login succeeds (specs/auth.md): it is a
  * user process, which today means exactly one thing the system services
  * are not -- the badge it carries has the user bit set (bit 62 of the
- * designed badge space, specs/authority.md), and auth minted it. There is
- * no input path yet, so the session is not interactive: what it does is
- * walk the same path any client walks -- log who it is, resolve a name
- * through the namespace, read what the name points at -- and the evidence
- * is the logger's lines, which render the badge of every caller.
+ * designed badge space, specs/authority.md), and auth minted it. The input
+ * path is the registry's `open` at session distance: the session walks the
+ * device map by name and waits on the tablet's held reply like any client.
+ * What it does is walk the same paths any client walks -- log who it is,
+ * resolve a name through the namespace, read what the name points at, take
+ * a pointer event -- and the evidence is the logger's lines, which render
+ * the badge of every caller.
  *
  * What it demonstrates:
  *   - auth's spawn kit works: this process was loaded out of the initrd
@@ -28,9 +30,11 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/nmspace.h>
+#include <aegir/registry.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -265,6 +269,48 @@ int main(int argc, char *argv[])
             write(leaked != 0 ? "  session.smoke: LEAK.TXT left open for the reaper\n"
                               : "  session.smoke: FAIL LEAK.TXT would not open\n");
         }
+    }
+
+    /* The input path (specs/auth.md): this session holds devmgr.registry
+     * like anything that needs a device, and the tablet is opened by name.
+     * The line below is the runner's cue to move the pointer from outside
+     * (scripts/run_target.py); what must arrive through the held reply is
+     * the position it sent. Then drain whatever else the move left in the
+     * queue -- the next session's wait must not find this session's
+     * leftovers. */
+    {
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        seL4_CPtr const tablet_slot = static_cast<seL4_CPtr>(first_free + 2);
+        bool ok = registry.valid() &&
+                  aegir::registry::open_bound(registry, "tablet.virtio0", 14, tablet_slot);
+        aegir::ipc::Consumer const tablet(tablet_slot);
+        if (ok) {
+            write("  session.smoke: tablet.virtio0 opened -- a pointer move, please\n");
+            for (;;) {
+                aegir::ipc::Reply const event = tablet.call(aegir::input::kMethodNext, 0);
+                if (event.error != 0) {
+                    ok = false;
+                    break;
+                }
+                if (aegir::input::event_type(event.word) == aegir::input::kEvAbs &&
+                    aegir::input::event_code(event.word) == aegir::input::kAxisX &&
+                    aegir::input::event_value(event.word) == 10000) {
+                    break;
+                }
+            }
+        }
+        if (ok) {
+            while (true) {
+                aegir::ipc::Reply const waiting = tablet.call(aegir::input::kMethodPoll, 0);
+                if (waiting.error != 0 || waiting.word == 0) {
+                    break;
+                }
+                (void)tablet.call(aegir::input::kMethodNext, 0);
+            }
+        }
+        write(ok ? "  session.smoke: the pointer moved for this session -- a session's own input\n"
+                 : "  session.smoke: FAIL the pointer did not reach the session\n");
     }
 
     if (log.valid()) {

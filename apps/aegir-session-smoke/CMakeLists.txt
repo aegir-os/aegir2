@@ -22,10 +22,10 @@ target_compile_options(aegir-session-smoke PRIVATE -Wall -Wextra -Werror)
 
 # aegir-cxx-policy carries the freestanding C++ flags; aegir-runtime provides
 # the pieces every binary needs (see libs/aegir-runtime). aegir-namespace and
-# aegir-volume are the two wires it speaks: the map, and what the map points
-# at (specs/vfs.md).
+# aegir-volume are the map and what the map points at (specs/vfs.md),
+# aegir-registry and aegir-input the input path (specs/auth.md).
 target_link_libraries(
   aegir-session-smoke PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc
-                              aegir-log aegir-namespace aegir-volume sel4 muslc
+                              aegir-log aegir-namespace aegir-volume aegir-registry aegir-input sel4 muslc
                               sel4runtime
 )

@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 class QmpStep:
     """One outside-in action on QEMU, cued by the console. A guest cannot see
     its own screen, so the screen is read from here: `trigger` is a regex
-    matched against console lines, and once it has matched `times` times the
+    matched against console lines, and the action runs on each match, up to
+    `times` (0: every match -- a cue every session prints wants an answer
+    every time, however many logins the test bed happens to do) --
     action runs -- screendump each QEMU device in `dumps` and check the PPMs
     (dimensions are the multiset `expect`, and the driver's band pattern must
     be at its posts), send the input `events` (QMP input-send-event dicts:
@@ -31,7 +33,7 @@ class QmpStep:
     are), then press the key `press`, if any."""
 
     trigger: str
-    times: int = 1
+    times: int = 1  # how often the action may run; 0 is every match
     press: str | None = None
     dumps: tuple[str, ...] = ()
     expect: tuple[tuple[int, int], ...] = ()
@@ -121,6 +123,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         # checked) and presses the key that paces the guest's next step.
         qmp_steps=(
             QmpStep(r"test: kbd\.virtio0 opened -- a key, please", press="a"),
+            # Every login's session opens the tablet and waits for a move of
+            # its own (specs/auth.md's input path): the cue prints once per
+            # session, and each gets the same move.
+            QmpStep(
+                r"session\.smoke: tablet\.virtio0 opened -- a pointer move, please",
+                times=0,
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 10000}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20000}},
+                ),
+            ),
             # The tablet: absolute positions in the axis's own units (0..32767
             # both ways, as the driver announces), so the numbers sent here
             # are the numbers the guest must see -- no display size between.
