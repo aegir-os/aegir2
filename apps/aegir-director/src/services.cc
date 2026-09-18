@@ -259,7 +259,13 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
           * projects/sel4test/apps/sel4test-tests/src/tests/vspace.c:141), so
           * both are this service's to carve here. */
          bool const spawner = entry.spawns.length > 0;
-         constexpr uint32_t kDelegatedUntypedBits = 21;
+         /* The delegation's size grew with what a spawner must hold: the device
+          * manager's share is three drivers' images, queue memories and windows,
+          * the partition manager's megabyte, and the filesystem image that
+          * manager is handed -- 2 MiB ran out under the third driver ("no memory
+          * for a frame" mapping the blob). It is a budget, not a capacity: the
+          * day spawners' needs diverge, the manifest says who gets how much. */
+         constexpr uint32_t kDelegatedUntypedBits = 22;
          seL4_CPtr spawn_untyped = 0;
          uint64_t spawn_untyped_physical = 0;
          seL4_CPtr spawn_pool = 0;
