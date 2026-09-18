@@ -149,15 +149,43 @@ A successful login starts a session. The decisions, taken 2026-09:
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.
 
-Known gap, stated rather than stumbled into: **an exited session is not
-reclaimed.** Drivers and filesystems never exit, so this is the first
-process whose objects outlive it; repeated logins drain the spawn untyped
-until reclaim (authority.md's retained-copy path) extends to sessions. The
-bound is the grant, and reaching it is a loud refusal, never a quiet one.
-When the arc lands, its notification is already served: `reap` on the
-volume protocol drops a badge's handles, `unbind` on the namespace drops
-its aliases (`specs/vfs.md`) -- the mechanisms exist, tested; what is
-missing is the caller who knows a session died.
+## Session reclaim
+
+An exited session is reclaimed by the spawner that started it: auth is the
+caller who knows a session died. Drivers and filesystems never exit, so the
+session is the first process whose objects outlive it -- and the first whose
+reclaim is exercised. The decisions:
+
+- **The exit is observed where the ready already is.** The serve loop's
+  wait on the session's supervision notification returns when the session
+  has finished -- the smoke signals it as its last act, so ready and exit
+  are one signal while sessions are short-lived. The split -- ready early,
+  exit late -- lands with the supervisor-that-serves shape, when sessions
+  are not.
+- **A session's memory is a pool auth retains.** The session's objects are
+  retyped from one untyped carved out of auth's delegation and kept: auth
+  holds the capability, so `seL4_CNode_Revoke` on it deletes everything the
+  session was -- its CSpace, TCB, VSpace and frames, and with the CSpace
+  the minted port copies it held (authority.md's retained-copy path,
+  extended to sessions). The pool is then free whole and the next login
+  reuses it: the wait serializes sessions, so one pool suffices, and the
+  revoke is the only free the memory needs. The pool's size is a starting
+  grant, measured from the account the session charges, not guessed.
+- **Teardown order: reap, unbind, revoke.** The badge's handles go first --
+  one `reap` per volume the namespace names, walked through
+  `count`/`describe`/`resolve`, because a handle is a filesystem's row and
+  not a kernel object -- then the badge's aliases with `unbind`, then the
+  revoke. The mechanisms were landed and tested ahead of their caller
+  (specs/vfs.md); this is the caller they were waiting for.
+- **Slots come back too.** The capabilities a spawn puts in auth's own
+  CSpace die with the revoke, and the slot cursor returns to the mark the
+  login took (`slot_mark`/`slot_release`, libs/aegir-mem) -- valid exactly
+  because the revoke emptied the range. Without it the drain only moves
+  from the untyped to the CSpace, the same leak in a different hat.
+- **The test proves the drain is closed.** Logins past what the grant could
+  hold unreclaimed all succeed, and the handle a session leaves open is
+  already gone when the next caller asks -- the test no longer reaps it
+  itself.
 
 ## Homes
 
