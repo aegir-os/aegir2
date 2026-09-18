@@ -16,10 +16,12 @@ Exit status: 0 the marker was seen (or the build succeeded with --build-only).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -86,6 +88,33 @@ def record_flags(build_dir: Path, flags: str) -> None:
     (build_dir / ".aegir-configure").write_text(flags, encoding="utf-8")
 
 
+def send_key(socket_path: Path, key: str) -> None:
+    """One keypress through QEMU's QMP socket: the acceptance check's finger.
+
+    The conversation is newline-terminated JSON each way: the server's
+    greeting, capabilities negotiation, then the command itself.
+    """
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(10)
+    client.connect(str(socket_path))
+    try:
+        stream = client.makefile("rw", encoding="utf-8", newline="\n")
+        stream.readline()  # the greeting
+        stream.write(json.dumps({"execute": "qmp_capabilities"}) + "\n")
+        stream.flush()
+        stream.readline()
+        stream.write(
+            json.dumps(
+                {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": key}]}}
+            )
+            + "\n"
+        )
+        stream.flush()
+        stream.readline()
+    finally:
+        client.close()
+
+
 def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, str]:
     """Boot the image, streaming the console until the marker appears."""
     # The target's extra arguments belong to QEMU, not to the simulate script, so
@@ -108,6 +137,9 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
 
     extra = " ".join(target.qemu_args)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)
+    # A leftover socket from a previous run would make QEMU's own bind fail.
+    if target.qmp_socket is not None:
+        (build_dir / target.qmp_socket).unlink(missing_ok=True)
     process = subprocess.Popen(
         ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec {command}"],
         cwd=str(build_dir),
@@ -131,6 +163,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     signal.signal(signal.SIGINT, _stop)
 
     seen = False
+    key_sent = False
     summary = ""
     try:
         stream = process.stdout
@@ -143,6 +176,15 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             match = TEST_SUMMARY.search(stripped)
             if match:
                 summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
+            if (
+                target.key_trigger is not None
+                and not key_sent
+                and target.key_trigger in stripped
+            ):
+                # The guest said it is waiting: press the key. Events persist
+                # in the driver's posted buffers, so the press is not a race.
+                key_sent = True
+                send_key(build_dir / str(target.qmp_socket), str(target.key))
             if target.marker in stripped:
                 seen = True
                 break

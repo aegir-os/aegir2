@@ -22,6 +22,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/entropy.h>
+#include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/nmspace.h>
@@ -104,6 +105,60 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
         }
         seL4_Yield();
     }
+}
+
+/* Wait for one key's down (value 1) or up (value 0): events that are not
+ * it -- the EV_SYN that ends a moment, other keys -- are consumed and
+ * skipped. `next` holds its reply until there is one, so the wait is the
+ * kernel's, not a spin. */
+constexpr uint16_t kKeyA = 30; /* Linux's KEY_A, which virtio-input carries unchanged */
+
+bool wait_key(aegir::ipc::Consumer const &kbd, uint32_t value) noexcept
+{
+    for (;;) {
+        aegir::ipc::Reply const event = kbd.call(aegir::input::kMethodNext, 0);
+        if (event.error != 0) {
+            return false;
+        }
+        if (aegir::input::event_type(event.word) == aegir::input::kEvKey &&
+            aegir::input::event_code(event.word) == kKeyA &&
+            aegir::input::event_value(event.word) == value) {
+            return true;
+        }
+    }
+}
+
+/* Walk the registry to the bound row named `name` and open it: the port the
+ * answer carries lands in `slot`, minted with this service's own badge
+ * (specs/services.md). False when the map has no such bound row or the open
+ * was refused. */
+bool open_bound(aegir::ipc::Consumer const &registry, char const *name,
+                uint32_t name_length, seL4_CPtr slot) noexcept
+{
+    aegir::ipc::Reply const count = registry.call(aegir::registry::kMethodCount, 0);
+    if (count.error != 0) {
+        return false;
+    }
+    for (uint64_t i = 0; i < count.word; ++i) {
+        uint64_t words[aegir::registry::kRowWords];
+        aegir::ipc::WordsReply const described =
+            registry.call_words(aegir::registry::kMethodDescribe, &i, 1, words,
+                                aegir::registry::kRowWords);
+        if (described.error != 0 || described.count != aegir::registry::kRowWords) {
+            return false;
+        }
+        auto const *row = reinterpret_cast<aegir::registry::Row const *>(words);
+        if (row->bound == 0 || !same_bytes(row->instance, name, name_length) ||
+            row->instance[name_length] != '\0') {
+            continue;
+        }
+        bool cap_arrived = false;
+        uint64_t in[1];
+        aegir::ipc::WordsReply const opened = registry.call_transfer(
+            aegir::registry::kMethodOpen, &i, 1, 0, in, 1, &cap_arrived);
+        return opened.error == 0 && cap_arrived && aegir::ipc::take_received_cap(slot);
+    }
+    return false;
 }
 
 /* Read the whole file, one envelope at a time, and check every byte against
@@ -889,49 +944,10 @@ int main(int argc, char *argv[])
      * opened cap lands in is a fresh one: a second cap onto an occupied
      * slot is refused. */
     {
-        bool ok = true;
         aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
             aegir::registry::kPortName, aegir::registry::kPortNameLength);
-        uint64_t rng_row = 0;
-        bool found = false;
-        if (registry.valid()) {
-            aegir::ipc::Reply const count =
-                registry.call(aegir::registry::kMethodCount, 0);
-            ok = count.error == 0;
-            static char const kRngName[] = "rng.virtio0";
-            for (uint64_t i = 0; ok && !found && i < count.word; ++i) {
-                uint64_t words[aegir::registry::kRowWords];
-                aegir::ipc::WordsReply const described = registry.call_words(
-                    aegir::registry::kMethodDescribe, &i, 1, words,
-                    aegir::registry::kRowWords);
-                if (described.error != 0 ||
-                    described.count != aegir::registry::kRowWords) {
-                    ok = false;
-                    break;
-                }
-                auto const *row = reinterpret_cast<aegir::registry::Row const *>(words);
-                if (row->bound != 0 &&
-                    same_bytes(row->instance, kRngName, sizeof(kRngName) - 1) &&
-                    row->instance[sizeof(kRngName) - 1] == '\0') {
-                    rng_row = i;
-                    found = true;
-                }
-            }
-        } else {
-            ok = false;
-        }
         seL4_CPtr const entropy_slot = static_cast<seL4_CPtr>(first_free + 10);
-        if (ok && found) {
-            bool cap_arrived = false;
-            uint64_t in[1];
-            aegir::ipc::WordsReply const opened =
-                registry.call_transfer(aegir::registry::kMethodOpen, &rng_row, 1, 0, in,
-                                       1, &cap_arrived);
-            ok = opened.error == 0 && cap_arrived &&
-                 aegir::ipc::take_received_cap(entropy_slot);
-        } else {
-            ok = false;
-        }
+        bool ok = registry.valid() && open_bound(registry, "rng.virtio0", 11, entropy_slot);
         if (ok) {
             aegir::ipc::Consumer const entropy(entropy_slot);
             uint64_t want = 32;
@@ -962,6 +978,33 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: devmgr.registry's open reaches rng.virtio0 -- entropy, twice, fresh\n");
+        }
+    }
+
+    /* The keyboard, discovered the same way -- and its `next` is the first
+     * held reply (specs/services.md): poll says nothing is waiting, then the
+     * line below is the runner's cue to press a key from outside the guest
+     * (scripts/run_target.py), and what arrives must be 'a', down and then
+     * up, through a reply that was held until it did. */
+    {
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        seL4_CPtr const kbd_slot = static_cast<seL4_CPtr>(first_free + 11);
+        bool ok = registry.valid() && open_bound(registry, "kbd.virtio0", 11, kbd_slot);
+        aegir::ipc::Consumer const kbd(kbd_slot);
+        if (ok) {
+            aegir::ipc::Reply const waiting = kbd.call(aegir::input::kMethodPoll, 0);
+            ok = waiting.error == 0 && waiting.word == 0;
+        }
+        if (ok) {
+            write("  test: kbd.virtio0 opened -- a key, please\n");
+            ok = wait_key(kbd, 1) && wait_key(kbd, 0);
+        }
+        if (!ok) {
+            write("  test: FAIL the keyboard did not deliver 'a', down and up\n");
+            ++failed;
+        } else {
+            write("  test: kbd.virtio0's held reply delivered 'a', down and up\n");
         }
     }
 

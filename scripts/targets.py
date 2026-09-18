@@ -39,6 +39,13 @@ class Target:
     # own default repeated because passing anything replaces that default rather
     # than adding to it.
     qemu_args: tuple[str, ...] = field(default_factory=lambda: ("-bios none",))
+    # The acceptance check's finger, when a target's test waits for a key: the
+    # console line that is the cue, the key pressed through QEMU's QMP socket,
+    # and the socket's name (relative to the build directory, where QEMU runs).
+    # None for targets that never wait for input.
+    key_trigger: str | None = None
+    key: str | None = None
+    qmp_socket: str | None = None
 
 
 def _aegir(memory_mib: int, cores: int, name: str) -> Target:
@@ -49,14 +56,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         build_dir=f"out/{name}",
         configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}"),
         marker="AEGIR_BOOT_OK",
-        # One real virtio device: an entropy source, the cheapest one because it
-        # needs no backing file. Without a device, the transports the tree describes
-        # are empty and answer nothing, which cannot show that a driver can read its
-        # device at all (specs/services.md).
-        # Two real virtio devices, so the transports the tree describes are not all
-        # empty: an entropy source (which needs no backing file) and a block device
-        # (which does -- the path is relative because QEMU runs with the build
-        # directory as its working directory, and the runner puts a disk there).
+        # Three real virtio devices, so the transports the tree describes are
+        # not all empty: an entropy source (which needs no backing file), a
+        # block device (which does -- the path is relative because QEMU runs
+        # with the build directory as its working directory, and the runner
+        # puts a disk there), and a keyboard. The keyboard's acceptance check
+        # needs a finger: the QMP socket is how the runner presses a key from
+        # outside the guest (scripts/run_target.py).
         qemu_args=(
             "-bios none",
             f"-smp {cores}",
@@ -68,7 +74,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-snapshot",
             "-drive file=disk.img,if=none,format=raw,id=hd",
             "-device virtio-blk-device,drive=hd",
+            "-device virtio-keyboard-device",
+            "-qmp unix:qmp.sock,server,nowait",
         ),
+        key_trigger="test: kbd.virtio0 opened -- a key, please",
+        key="a",
+        qmp_socket="qmp.sock",
     )
 
 
