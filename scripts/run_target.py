@@ -34,7 +34,7 @@ ENV_SCRIPT = pins.ROOT / "scripts" / "env.sh"
 TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) tests disabled\.")
 
 
-def preflight(target: Target, booting: bool) -> list[str]:
+def preflight(target: Target) -> list[str]:
     """What this machine still needs before the target can build or boot, as a
     list of "what (which make command fixes it)". Checked here because the
     failure otherwise surfaces as `bash returned exit status 1`: the vendored
@@ -48,9 +48,11 @@ def preflight(target: Target, booting: bool) -> list[str]:
         missing.append("the pinned host tools (make tools)")
     if not any(pins.ROOT.glob("third_party/toolchain/*/usr/bin/riscv64-unknown-elf-gcc")):
         missing.append("the pinned RISC-V toolchain (make tools)")
-    if booting and shutil.which("qemu-system-riscv64") is None:
+    if shutil.which("qemu-system-riscv64") is None:
         # QEMU is the one piece taken from the host (specs/build.md's host
-        # prerequisites), so there is no make target that fixes it.
+        # prerequisites). Needed even for --build-only: configure extracts the
+        # machine's device tree by running it
+        # (kernel/src/plat/qemu-riscv-virt/config.cmake:133).
         missing.append("qemu-system-riscv64 (a host package)")
     return missing
 
@@ -391,7 +393,7 @@ def main(argv: list[str]) -> int:
     target = TARGETS[arguments.target]
     build_dir = pins.ROOT / target.build_dir
 
-    missing = preflight(target, booting=not arguments.build_only)
+    missing = preflight(target)
     if missing:
         pins.report(False, f"{target.name} cannot build yet", "missing: " + "; ".join(missing))
         return 1
