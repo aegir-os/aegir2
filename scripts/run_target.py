@@ -58,8 +58,16 @@ def preflight(target: Target, booting: bool) -> list[str]:
 def bash(command: str, cwd: Path, timeout: int) -> None:
     """Run a shell command with Aegir's pinned tools on PATH."""
     print(f"INFO  (cd {cwd.relative_to(pins.ROOT)} && {command})", flush=True)
+    # The marker after sourcing env.sh is a diagnostic: a `set -e` death inside
+    # the source prints nothing, and without the marker a silent failure cannot
+    # be told apart from the command itself failing to start.
     subprocess.run(
-        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; {command}"],
+        [
+            "bash",
+            "-c",
+            f"set -euo pipefail; . {ENV_SCRIPT}; "
+            f"echo 'INFO  environment ready (scripts/env.sh)' >&2; {command}",
+        ],
         cwd=str(cwd),
         check=True,
         timeout=timeout,

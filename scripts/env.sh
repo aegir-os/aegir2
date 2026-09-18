@@ -18,7 +18,16 @@ export AEGIR_ROOT="${AEGIR_ROOT:-$_aegir_root}"
 # <prefix>/usr/bin. Its cc1 links libisl/libgmp/libmpfr/libmpc shared and the
 # host does not necessarily have all of them, so the copies extracted with the
 # toolchain go on LD_LIBRARY_PATH — but only for shells that sourced this file.
-_aegir_toolchain_usr=$(find "$AEGIR_ROOT/third_party/toolchain" -maxdepth 2 -type d -name usr 2>/dev/null | head -n 1)
+# A glob loop, not `find | head`: this file is sourced by callers running
+# `set -euo pipefail`, and a head(1) that exits early can SIGPIPE the find,
+# which pipefail then turns into a silent `set -e` death mid-source.
+_aegir_toolchain_usr=""
+for _aegir_candidate in "$AEGIR_ROOT"/third_party/toolchain/*/usr; do
+  if [ -d "$_aegir_candidate" ]; then
+    _aegir_toolchain_usr="$_aegir_candidate"
+    break
+  fi
+done
 if [ -n "$_aegir_toolchain_usr" ]; then
   export PATH="$_aegir_toolchain_usr/bin:$PATH"
   _aegir_toolchain_libs="$_aegir_toolchain_usr/lib/x86_64-linux-gnu"
@@ -43,4 +52,4 @@ else
   echo "scripts/env.sh: no dtc yet — run 'make tools'" >&2
 fi
 
-unset _aegir_root _aegir_toolchain_usr _aegir_toolchain_libs
+unset _aegir_root _aegir_candidate _aegir_toolchain_usr _aegir_toolchain_libs
