@@ -3,8 +3,9 @@
 Status: first slice, sessions v1, homes, and session reclaim implemented
 (2026-09) — the database, the packer, the service, the login check, a login
 that starts a session under the user's badge, the home the session lands
-in, and the teardown that takes an exited session back. An input path and
-elevation remain open.
+in, and the teardown that takes an exited session back. Elevation remains
+open; the input path is decided (the registry's `open`, at session distance,
+below).
 
 `auth` owns two things: the record of who the users are, and the port that
 answers "is this them" — `auth.login` (boot-set row 7, `specs/services.md`).
@@ -149,6 +150,21 @@ A successful login starts a session. The decisions, taken 2026-09:
   caller's badge, so a session's lines carry a bit-62 badge, and the
   identity chain is visible end to end. (Written when the filesystems were
   read-only; the home arc below is what a session was waiting for.)
+- **The input path is the registry's `open`, at session distance.** A
+  session's `needs` naming `devmgr.registry` travels the generic spawn-needs
+  pipeline: the director hands auth an unbadged, mintable copy
+  (`spawn:devmgr.registry`), and auth mints it per session with the session's
+  badge -- with the call mark set, bit 63, because the device manager tells a
+  call from a supervision signal by exactly that bit. The session then opens
+  an input device by name (`tablet.virtio0` first) and waits on its held
+  reply like any caller; acceptance injects one pointer event per login from
+  outside (QMP `input-send-event`, specs/services.md's pointer bullet). What
+  this is not: a focus model -- every session's open is equal, and routing
+  "the" pointer to "the" foreground session is the console arc, not this one.
+  And the grant is the whole registry, not one device: `open` carries no
+  per-badge policy, so while the only sessions are smokes this is recorded as
+  sufficient; authority.md's "may users hold device capabilities?" stays
+  open.
 - **Resolve stays open.** There is no volume-ownership model to check
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.

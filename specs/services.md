@@ -891,6 +891,31 @@ and answers "who owns this device?" for everyone else.
   not the drivers' markers -- the markers pass while the boot is still
   spawning, and a key pressed then is consumed by the keyboard check's own
   wait before the display check is listening.
+- **decided**: the third driver's kind is a family -- pointer devices join
+  the keyboard, and the registry learns to tell them apart. virtio-mouse and
+  virtio-tablet answer to the same virtio id 18 as the keyboard, so the probe
+  that re-points a binding at the row the id names cannot place them: the id
+  is the family, and the *kind* -- keys, relative motion, absolute position --
+  lives in the config space's EV_BITS (virtio 1.x, 5.8.6.2), which the probe
+  now reads when the rows for an id ask it to. The registry row gains an
+  optional `evtype` key (`key`, `rel`, `abs`): three rows share `id=18`, the
+  prefixes are `kbd`, `mouse`, and `tablet`, and one aegir-virtio-input
+  process starts per device, as the second gpu head already proved. The
+  driver itself is unchanged at the event layer -- events were always raw
+  type/code/value in the envelope -- and learns to read its own EV_BITS and
+  ABS_INFO, announcing its kind and its axes' ranges; libs/aegir-input gains
+  the EV_REL/EV_ABS/BTN_* constants, no new protocol. QEMU grows two devices
+  (`virtio-mouse-device,id=mouse0`, `virtio-tablet-device,id=tablet0`).
+  Acceptance injects from outside: QMP `input-send-event` against the named
+  device -- absolute moves asserted at the scaled coordinate within the
+  axis-range tolerance, relative moves asserted exactly, buttons down and up
+  through the held reply -- and every login's session opens `tablet.virtio0`
+  and waits for one pointer event of its own (specs/auth.md's input path).
+  Two notes recorded with the decision: the probe's classification is the
+  first device knowledge the binder holds beyond an id, contained to the rows
+  that carry `evtype`; and a session that holds `devmgr.registry` can open
+  any bound driver -- the per-device open policy is authority.md's open
+  question, answered-for-now while the only sessions are smokes.
 - **next**: the VFS and the `Initrd:` volume.
 
 Devices are given to a driver the way everything else here is given: capabilities
