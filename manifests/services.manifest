@@ -30,13 +30,11 @@ account   = system
 needs     = log.main
 restart   = always
 # The machine's devices are given to this service and to no other: a device is a
-# capability, so it cannot be handed out to everyone who might want one.
-# `device_id` is what a service is *for*: the bus's id for the device it drives, which
-# director looks up in the survey of what the machine has. The random number generator
-# is virtio device 4 (`VIRTIO_ID_*`, projects/sel4_projects_libs/libsel4vmmplatsupport);
-# the block device is 2, which is what a driver will claim.
+# capability, so it cannot be handed out to everyone who might want one. No device
+# is its own any more: the random number generator (virtio device 4) was, as the
+# first proof that a service could read hardware, and the proof served -- the
+# transport is bound from the driver registry like any other (specs/services.md).
 device_manager = true
-device_id  = 4
 # The drivers are this service's to start, not director's: a device manager owns
 # the bus -> device -> service map, so the process made for a device is made by
 # the service that knows the bus (specs/services.md). Director delegates the
@@ -44,7 +42,7 @@ device_id  = 4
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, partmgr
+spawns    = blkdriver, rngdriver, partmgr
 
 # The block driver. Director's survey found virtio device 2 behind a transport, and this
 # service asks for it by id -- one device per service, because a device is a capability and
@@ -61,6 +59,22 @@ device_id = 2
 # memory is -- so director carves a region, says where it is, and hands over the
 # capability (specs/services.md, specs/authority.md).
 memory_kib = 8
+restart   = always
+
+# The entropy driver. virtio device 4, bound from the registry row like any
+# other driver (specs/services.md). It serves one method, `read`, answered in
+# the port's own envelope -- entropy is small, so the registry row declares no
+# shared window, and its first consumer finds the port through the registry's
+# `open` rather than a static edge here.
+[rngdriver]
+binary    = aegir-virtio-rng
+authority = system
+account   = system
+needs     = log.main
+device_id = 4
+# The queue's memory, as the block driver's above: the registry row is what
+# the device manager carves by.
+memory_kib = 16
 restart   = always
 
 # The partition manager. The device manager starts it once block drivers answer,

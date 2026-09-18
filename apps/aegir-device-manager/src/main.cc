@@ -508,9 +508,12 @@ int main(int argc, char *argv[])
                                     aegir::descriptor::number(field, &fields_ok));
                             }
                         }
+                        /* A window of zero bits is a complete row, not a broken
+                         * one: a port whose answers ride in the envelope needs
+                         * no shared window (aegir/entropy.h). */
                         if (!fields_ok || row.compatible == nullptr || row.binary == nullptr ||
                             row.name_prefix == nullptr || row.bus == nullptr ||
-                            row.memory_bits == 0 || row.window_bits == 0) {
+                            row.memory_bits == 0) {
                             write_line("FAIL", "a row of the driver registry is not complete");
                             continue;
                         }
@@ -592,13 +595,40 @@ int main(int argc, char *argv[])
                         continue;
                     }
                     if (probed_id != binding.row->virtio_id) {
-                        aegir::debug_write("      map: virtio device ");
-                        aegir::debug_write_unsigned(probed_id);
-                        aegir::debug_write(" at ");
-                        aegir::debug_write_hex(binding.base);
-                        aegir::debug_write(": no driver in the registry\n");
-                        binding.frame = 0;
-                        continue;
+                        /* The candidate match was on the compatible string,
+                         * which every transport on the bus shares -- the first
+                         * row that claims it is not necessarily the row for
+                         * the device behind this one, and the probe is what
+                         * says which is. Find the row the id names. */
+                        DriverRow const *match = nullptr;
+                        for (uint32_t r = 0; r < row_count; ++r) {
+                            if (rows[r].virtio_id != probed_id ||
+                                rows[r].compatible_length !=
+                                    binding.row->compatible_length) {
+                                continue;
+                            }
+                            bool same = true;
+                            for (uint32_t c = 0; c < rows[r].compatible_length; ++c) {
+                                if (rows[r].compatible[c] != binding.row->compatible[c]) {
+                                    same = false;
+                                    break;
+                                }
+                            }
+                            if (same) {
+                                match = &rows[r];
+                                break;
+                            }
+                        }
+                        if (match == nullptr) {
+                            aegir::debug_write("      map: virtio device ");
+                            aegir::debug_write_unsigned(probed_id);
+                            aegir::debug_write(" at ");
+                            aegir::debug_write_hex(binding.base);
+                            aegir::debug_write(": no driver in the registry\n");
+                            binding.frame = 0;
+                            continue;
+                        }
+                        binding.row = match;
                     }
                 }
                 /* The instance name: which kind, which bus, and which one it is --
@@ -681,9 +711,12 @@ int main(int argc, char *argv[])
              * director's boot set, and until the badge space is a designed thing,
              * a spawning service's children live in a range of their own
              * (specs/services.md). */
-            /* What bound, collected for the partition manager: the caller half of
-             * each block port and the pristine window-cap set its clients map.
-             * What it enumerates is what bound, and no more. */
+            /* What bound, collected for the services that consume the map: the
+             * caller half of each bound driver's port and the pristine
+             * window-cap set its clients map -- empty for a driver whose row
+             * declares no window. The partition manager picks the block ports
+             * out of the list by name; the registry's `open` is where the
+             * others are reached (specs/services.md). */
             struct BoundPort {
                 seL4_CPtr port;
                 seL4_CPtr window;   /* the pristine set: one frame cap per page */
@@ -759,13 +792,22 @@ int main(int argc, char *argv[])
                     continue;
                 }
 
-                /* The shared window the driver's port serves through: carved the
-                 * same way as the queue, mapped into the child beside its
-                 * memory, and mapped into each client the port is later
-                 * delegated to -- what a request moves is in the window, not
-                 * the message (aegir/block.h, specs/services.md). */
-                seL4_Error window_error = seL4_NoError;
+                /* The shared window the driver's port serves through, when the
+                 * row asks for one: carved the same way as the queue, mapped
+                 * into the child beside its memory, and mapped into each client
+                 * the port is later delegated to -- what a request moves is in
+                 * the window, not the message (aegir/block.h,
+                 * specs/services.md). A row with zero window bits gets none of
+                 * this: the port's answers ride in the envelope itself
+                 * (aegir/entropy.h). */
+                seL4_CPtr window_frame = 0;
                 uint64_t window_physical = 0;
+                uint32_t window_pages = 0;
+                seL4_CPtr window_client = 0;
+                seL4_CPtr window_children = 0;
+                seL4_CPtr window_smoke = 0;
+                if (driver->window_bits != 0) {
+                seL4_Error window_error = seL4_NoError;
                 seL4_CPtr const window_untyped =
                     g_objects.carve_untyped(driver->window_bits, child_account,
                                             &window_error, &window_physical);
@@ -773,8 +815,7 @@ int main(int argc, char *argv[])
                     write_line("FAIL", "no memory for a driver's shared window");
                     continue;
                 }
-                seL4_CPtr window_frame = 0;
-                uint32_t const window_pages = (1u << driver->window_bits) / 4096u;
+                window_pages = (1u << driver->window_bits) / 4096u;
                 bool window_paged = true;
                 for (uint32_t p = 0; p < window_pages; ++p) {
                     seL4_Error page_error = seL4_NoError;
@@ -822,12 +863,13 @@ int main(int argc, char *argv[])
                     }
                     return base;
                 };
-                seL4_CPtr const window_client = mint_window_set();
-                seL4_CPtr const window_children = mint_window_set();
-                seL4_CPtr const window_smoke = mint_window_set();
+                window_client = mint_window_set();
+                window_children = mint_window_set();
+                window_smoke = mint_window_set();
                 if (window_client == 0 || window_children == 0 || window_smoke == 0) {
                     write_line("FAIL", "the shared window's frames could not be copied");
                     continue;
+                }
                 }
                 /* The port the driver serves: one endpoint per device, made
                  * here because the endpoint is the spawner's to make -- the
@@ -917,7 +959,8 @@ int main(int argc, char *argv[])
                 request.memory_frame = memory_frame;
                 request.memory_bytes = 1u << driver->memory_bits;
                 request.window_frame = window_frame;
-                request.window_bytes = 1u << driver->window_bits;
+                request.window_bytes =
+                    driver->window_bits != 0 ? (1u << driver->window_bits) : 0;
                 request.window_physical = window_physical;
                 /* The queue's descriptors carry physical addresses the device
                  * reads, and a capability does not say where it is -- so the
@@ -973,13 +1016,23 @@ int main(int argc, char *argv[])
                 seL4_Word ready_badge = 0;
                 seL4_Wait(process.supervision, &ready_badge);
 
-                /* Smoke: use the port the way a client will. Identify fills the
-                 * window with who the device says it is -- "BD0" is the driver's
-                 * own name for itself, not something we assigned (aegir/block.h,
-                 * specs/services.md) -- and a read of sector 0 lands in the same
-                 * window without a byte crossing the message. We hold the caller
-                 * half because we made the endpoint; the window's frames stay
-                 * ours as well, and are what a later client maps. */
+                /* Smoke: use the port the way a client will. The smoke speaks
+                 * the block protocol -- Identify fills the window with who the
+                 * device says it is ("BD0" is the driver's own name for itself,
+                 * not something we assigned; aegir/block.h, specs/services.md),
+                 * and a read of sector 0 lands in the same window without a
+                 * byte crossing the message -- so it is for the drivers whose
+                 * port is one. A driver with no window (the entropy source
+                 * answers in the envelope itself) is bound without it; the
+                 * registry's `open` is where its port gets used. We hold the
+                 * caller half because we made the endpoint; the window's
+                 * frames stay ours as well, and are what a later client
+                 * maps. */
+                bool const is_block = driver->name_prefix_length == 3 &&
+                                      driver->name_prefix[0] == 'b' &&
+                                      driver->name_prefix[1] == 'l' &&
+                                      driver->name_prefix[2] == 'k';
+                if (is_block) {
                 auto *shared = static_cast<uint8_t *>(g_scratch.map(window_smoke));
                 if (shared == nullptr) {
                     uint64_t const window_map_error = g_scratch.last_error();
@@ -1034,8 +1087,10 @@ int main(int argc, char *argv[])
                     aegir::debug_write("\n");
                 }
                 g_scratch.unmap(window_smoke);
-                /* The binding is whole: port served, window checked. What the
-                 * partition manager gets is this list. */
+                }
+                /* The binding is whole: port served, window checked when the
+                 * driver has one. What the partition manager gets is this
+                 * list. */
                 bound[bound_count] = BoundPort{block_port, window_client, window_children,
                                                window_pages, window_physical, binding.name,
                                                binding.name_length};

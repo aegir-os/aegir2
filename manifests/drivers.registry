@@ -11,5 +11,8 @@
 #   binary      the initrd entry the driver starts from
 #   memory      the driver's virtqueue memory, in bits (2^n bytes) -- the
 #               queue takes the first 8 KiB, the clamp table grows past it
-#   window      the shared window its port serves through, in bits
+#   window      the shared window its port serves through, in bits; 0 is no
+#               window -- the port's answers ride in the envelope itself
+#               (aegir/entropy.h)
 compatible=virtio,mmio id=2 prefix=blk bus=virtio binary=aegir-virtio-blk memory=14 window=16
+compatible=virtio,mmio id=4 prefix=rng bus=virtio binary=aegir-virtio-rng memory=14 window=0
