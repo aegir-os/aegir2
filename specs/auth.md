@@ -165,10 +165,10 @@ A successful login starts a session. The decisions, taken 2026-09:
   And the grant is the whole registry, not one device: `open` carries no
   per-badge policy, so while the only sessions are smokes this is recorded as
   sufficient; authority.md's "may users hold device capabilities?" stays
-  open. The console arc supersedes this for sessions: once console stands, a
-  session's devices are windows and event channels (`specs/console.md`), the
-  `devmgr.registry` grant leaves the session's `needs`, and what is written
-  here remains true of the smoke-era mechanism, not of the desktop's.
+  open. The console arc has superseded this for sessions (2026-09): the
+  devices are the console's, the smoke's tablet open is gone, and a session's
+  input arrives as windows' events (`specs/console.md`). What is written here
+  remains true of the smoke-era mechanism, not of the desktop's.
 - **A greeter asks; auth stays the database.** The GUI login prompt is
   auth's face, and auth spawns it -- the pattern the system already runs:
   the service that knows, starts it. Auth's `needs` gain `console.gui`, the

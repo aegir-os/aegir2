@@ -120,45 +120,25 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         ),
         qmp_socket="qmp.sock",
         # The script the runner plays against the QMP socket, in order. The
-        # keyboard's cue is the test bed saying it waits; the screens' cues
+        # test bed's lines are the cues it waits on; the screens' other cues
         # are the gpu drivers' marker lines, two heads naming themselves.
         # After each screen moment the runner dumps both heads (the dumps are
         # which-console-is-which agnostic: the *set* of dimensions is what is
         # checked) and presses the key that paces the guest's next step.
         qmp_steps=(
-            QmpStep(r"test: kbd\.virtio0 opened -- a key, please", press="a"),
-            # Every login's session opens the tablet and waits for a move of
-            # its own (specs/auth.md's input path): the cue prints once per
-            # session, and each gets the same move.
+            # The console owns the input devices (specs/console.md), so the
+            # checks are paced through its channel: a click focuses the test
+            # bed's window, and the keys land in its ring. The pointer starts
+            # at the screen's centre; the window's centre is (-376,-186) of
+            # relative motion away, and buttons land on the mouse headless --
+            # QEMU bundles BTN into the relative handler's mask.
             QmpStep(
-                r"session\.smoke: tablet\.virtio0 opened -- a pointer move, please",
-                times=0,
+                r"test: the console's channel -- a click, please",
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 10000}},
-                    {"type": "abs", "data": {"axis": "y", "value": 20000}},
-                ),
-            ),
-            # The tablet: absolute positions in the axis's own units (0..32767
-            # both ways, as the driver announces), so the numbers sent here
-            # are the numbers the guest must see -- no display size between.
-            QmpStep(
-                r"test: tablet\.virtio0 opened -- a pointer move, please",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 10000}},
-                    {"type": "abs", "data": {"axis": "y", "value": 20000}},
-                ),
-            ),
-            # The mouse: the click first, then the nudge -- headless, buttons
-            # route to the relative handler (QEMU bundles BTN into its mask),
-            # and the deltas pass through exactly. The guest waits for them in
-            # this order, which is the order they are queued in.
-            QmpStep(
-                r"test: mouse\.virtio0 opened -- a nudge, please",
-                events=(
+                    {"type": "rel", "data": {"axis": "x", "value": -376}},
+                    {"type": "rel", "data": {"axis": "y", "value": -186}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "rel", "data": {"axis": "x", "value": 120}},
-                    {"type": "rel", "data": {"axis": "y", "value": -60}},
                 ),
             ),
             # Both heads up at the display's preferred mode. The cue is the
@@ -237,7 +217,30 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 350, 250, 255, 0, 0),
                     ("gpu0", 10, 10, 0, 85, 170),
                 ),
-                press="f",
+                # No key: focus went with the destroyed window, so a key now
+                # would go nowhere. The next click refocuses.
+            ),
+            # The click refocuses on the red window -- its centre is
+            # (+236,+136) from where the pointer stands -- and then the key
+            # and the pointer arrive through the ring: the keymap's 'g', and
+            # the tablet's (10000,20000) in the axis's own units (0..32767),
+            # which is the screen's (390,488) and the window's (90,288).
+            QmpStep(
+                r"test: the red one takes the focus, please",
+                events=(
+                    {"type": "rel", "data": {"axis": "x", "value": 236}},
+                    {"type": "rel", "data": {"axis": "y", "value": 136}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(r"test: a key through the keymap, please", press="g"),
+            QmpStep(
+                r"test: the pointer, window-local, please",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 10000}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20000}},
+                ),
             ),
         ),
     )

@@ -117,35 +117,48 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
     }
 }
 
-/* Wait for one event: events that are not it -- the EV_SYN that ends a
- * moment, other axes or keys -- are consumed and skipped. `next` holds its
- * reply until there is one, so the wait is the kernel's, not a spin. */
-constexpr uint16_t kKeyA = 30; /* Linux's KEY_A, which virtio-input carries unchanged */
-constexpr uint16_t kKeyB = 48;
+/* The console's event channel: wait for one event of a kind for a window,
+ * scanning past the rest -- the motion on the way to a click, a key's
+ * release after its press. The Wait on the notification is the kernel's
+ * wait, not a spin; the ring is drained between wakeups. */
+constexpr uint16_t kKeyB = 48; /* Linux's KEY_*, which virtio-input carries unchanged */
 constexpr uint16_t kKeyC = 46;
 constexpr uint16_t kKeyD = 32;
 constexpr uint16_t kKeyE = 18;
-constexpr uint16_t kKeyF = 33;
+constexpr uint16_t kKeyG = 34;
 
-bool wait_event(aegir::ipc::Consumer const &port, uint16_t type, uint16_t code,
-                uint32_t value) noexcept
+bool wait_ring(volatile uint64_t *ring, seL4_CPtr events, uint16_t type,
+               uint64_t window, uint64_t *event) noexcept
 {
     for (;;) {
-        aegir::ipc::Reply const event = port.call(aegir::input::kMethodNext, 0);
-        if (event.error != 0) {
-            return false;
+        uint64_t word = 0;
+        uint64_t id = 0;
+        if (aegir::console::ring_take(ring, &word, &id)) {
+            if (aegir::input::event_type(word) == type && id == window) {
+                *event = word;
+                return true;
+            }
+            continue;
         }
-        if (aegir::input::event_type(event.word) == type &&
-            aegir::input::event_code(event.word) == code &&
-            aegir::input::event_value(event.word) == value) {
-            return true;
-        }
+        seL4_Wait(events, nullptr);
     }
 }
 
-bool wait_key(aegir::ipc::Consumer const &kbd, uint16_t code, uint32_t value) noexcept
+/* One pressed key, translated: the code it arrived with and the character
+ * the console's keymap gave it. */
+bool wait_ring_key(volatile uint64_t *ring, seL4_CPtr events, uint64_t window,
+                   uint16_t code, char translated) noexcept
 {
-    return wait_event(kbd, aegir::input::kEvKey, code, value);
+    uint64_t event = 0;
+    while (wait_ring(ring, events, aegir::console::kEventKey, window, &event)) {
+        if (aegir::input::event_code(event) == code &&
+            (aegir::input::event_value(event) & 0xffff) ==
+                static_cast<uint8_t>(translated) &&
+            (aegir::input::event_value(event) & aegir::console::kKeyPressed) != 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* The framebuffer port's two questions (aegir/framebuffer.h): info answered
@@ -998,84 +1011,89 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* The keyboard, discovered the same way -- and its `next` is the first
-     * held reply (specs/services.md): poll says nothing is waiting, then the
-     * line below is the runner's cue to press a key from outside the guest
-     * (scripts/run_target.py), and what arrives must be 'a', down and then
-     * up, through a reply that was held until it did. */
+    /* The console's channel, ahead of every check that paces by key: the
+     * devices are the console's own now (specs/console.md), and what any
+     * other process sees of them is what console serves -- so this service
+     * attaches, listens, and creates its window first, and every key the
+     * runner presses from here arrives routed, in the focused window's
+     * ring. The window is invisible until its first damage, so the display
+     * checks below still read a bare backdrop. */
+    aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
+        aegir::console::kPortName, aegir::console::kPortNameLength);
+    seL4_CPtr const events = static_cast<seL4_CPtr>(first_free + 34);
+    uint8_t *slice = nullptr;
+    volatile uint64_t *ring = nullptr;
+    uint64_t first_window = 0;
+    bool channel = false;
     {
-        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
-            aegir::registry::kPortName, aegir::registry::kPortNameLength);
-        seL4_CPtr const kbd_slot = static_cast<seL4_CPtr>(first_free + 11);
-        bool ok = registry.valid() && open_bound(registry, "kbd.virtio0", 11, kbd_slot);
-        aegir::ipc::Consumer const kbd(kbd_slot);
+        uint64_t untyped_slot = 0;
+        uint64_t vspace_slot = 0;
+        uint64_t window_base = 0;
+        uint32_t window_bytes = 0;
+        uint64_t untyped_physical = 0;
+        uint32_t untyped_bits = 0;
+        uint64_t untyped_address = 0;
+        static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &untyped_bits,
+                                                    &untyped_address));
+        bool ok = gui.valid() &&
+                  aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
+                  aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+                  aegir::bootstrap::window(&window_base, &window_bytes) &&
+                  g_test_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
+                                               untyped_bits, untyped_physical);
         if (ok) {
-            aegir::ipc::Reply const waiting = kbd.call(aegir::input::kMethodPoll, 0);
-            ok = waiting.error == 0 && waiting.word == 0;
+            /* The slots below +64 are this block's constants' neighbours;
+             * the allocator works past them. */
+            g_test_objects.adopt_slots(first_free + 64, (1u << 10) - (first_free + 64), 0);
+            ok = g_test_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
+                                      static_cast<uintptr_t>(window_base),
+                                      static_cast<uintptr_t>(window_base + window_bytes),
+                                      &g_test_objects);
         }
-        if (ok) {
-            write("  test: kbd.virtio0 opened -- a key, please\n");
-            ok = wait_key(kbd, kKeyA, 1) && wait_key(kbd, kKeyA, 0);
-        }
+        uint64_t frame_bits = 0;
+        uint64_t frames = 0;
+        ok = ok && aegir::console::attach(gui, 2ull << 20, &frame_bits, &frames) &&
+             frame_bits == seL4_LargePageBits && frames == 1;
+        seL4_CPtr const slice_frame = static_cast<seL4_CPtr>(first_free + 33);
+        ok = ok && aegir::console::frame(gui, 0, slice_frame) &&
+             aegir::console::listen(gui, events);
+        slice = static_cast<uint8_t *>(
+            ok ? g_test_scratch.map_large(slice_frame) : nullptr);
+        ok = ok && slice != nullptr;
+        ring = ok ? aegir::console::event_ring(slice, 2ull << 20) : nullptr;
+        first_window = ok ? aegir::console::create_window(gui, 64, 64, 400, 300, 0) : 0;
+        ok = ok && first_window != 0;
         if (!ok) {
-            write("  test: FAIL the keyboard did not deliver 'a', down and up\n");
+            write("  test: FAIL the console's channel would not open\n");
             ++failed;
         } else {
-            write("  test: kbd.virtio0's held reply delivered 'a', down and up\n");
-        }
-    }
-
-    /* The tablet, discovered the same way: absolute positions in the axis's
-     * own units (0..32767 both ways, as the driver announces), so the numbers
-     * the runner sends through QMP input-send-event are the numbers that must
-     * arrive -- no display's size between. Its click is not asserted here:
-     * QEMU bundles buttons into the relative handler's mask, so a headless
-     * click falls to the mouse, and a tablet click needs a bound console --
-     * run-ui's territory (ui/input.c's qemu_input_find_handler). */
-    {
-        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
-            aegir::registry::kPortName, aegir::registry::kPortNameLength);
-        seL4_CPtr const tablet_slot = static_cast<seL4_CPtr>(first_free + 14);
-        bool ok = registry.valid() && open_bound(registry, "tablet.virtio0", 14, tablet_slot);
-        aegir::ipc::Consumer const tablet(tablet_slot);
-        if (ok) {
-            write("  test: tablet.virtio0 opened -- a pointer move, please\n");
-            ok = wait_event(tablet, aegir::input::kEvAbs, aegir::input::kAxisX, 10000) &&
-                 wait_event(tablet, aegir::input::kEvAbs, aegir::input::kAxisY, 20000);
-        }
-        if (!ok) {
-            write("  test: FAIL the tablet did not deliver (10000,20000)\n");
-            ++failed;
-        } else {
-            write("  test: tablet.virtio0's held reply delivered (10000,20000)\n");
-        }
-    }
-
-    /* The mouse: a click and a nudge. Buttons land here headless -- QEMU
-     * bundles BTN into the relative handler's mask, so the first (only)
-     * unbound handler carrying BTN is this one -- and relative motion passes
-     * through exactly: the deltas the runner sends are the deltas that
-     * arrive, sign and all (a negative delta rides as its two's complement
-     * word). The click is sent first, so it is waited for first. */
-    {
-        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
-            aegir::registry::kPortName, aegir::registry::kPortNameLength);
-        seL4_CPtr const mouse_slot = static_cast<seL4_CPtr>(first_free + 15);
-        bool ok = registry.valid() && open_bound(registry, "mouse.virtio0", 13, mouse_slot);
-        aegir::ipc::Consumer const mouse(mouse_slot);
-        if (ok) {
-            write("  test: mouse.virtio0 opened -- a nudge, please\n");
-            ok = wait_event(mouse, aegir::input::kEvKey, aegir::input::kBtnLeft, 1) &&
-                 wait_event(mouse, aegir::input::kEvKey, aegir::input::kBtnLeft, 0) &&
-                 wait_event(mouse, aegir::input::kEvRel, aegir::input::kAxisX, 120) &&
-                 wait_event(mouse, aegir::input::kEvRel, aegir::input::kAxisY,
-                            static_cast<uint32_t>(-60));
-        }
-        if (!ok) {
-            write("  test: FAIL the mouse did not deliver a left click and (+120,-60)\n");
-            ++failed;
-        } else {
-            write("  test: mouse.virtio0's held reply delivered a left click and (+120,-60)\n");
+            /* The runner moves the pointer from the screen's centre to the
+             * window's centre -- (-376,-186) of relative motion -- and
+             * clicks: focus lands (and does not raise), and the button-down
+             * arrives window-local, (200,150) in a 400x300 window. */
+            write("  test: the console's channel -- a click, please\n");
+            uint64_t event = 0;
+            bool const focused =
+                wait_ring(ring, events, aegir::console::kEventFocus, first_window,
+                          &event) &&
+                aegir::input::event_value(event) == 1;
+            bool clicked = false;
+            while (focused &&
+                   wait_ring(ring, events, aegir::console::kEventPointer,
+                             first_window, &event)) {
+                if (aegir::input::event_code(event) == aegir::input::kBtnLeft &&
+                    aegir::input::event_value(event) == (200u | (150u << 16))) {
+                    clicked = true;
+                    break;
+                }
+            }
+            if (!focused || !clicked) {
+                write("  test: FAIL the click did not focus the window\n");
+                ++failed;
+            } else {
+                channel = true;
+                write("  test: the click focused the window, button-down at (200,150) local\n");
+            }
         }
     }
 
@@ -1106,14 +1124,13 @@ int main(int argc, char *argv[])
             write("  test: gpu.virtio0 and gpu.virtio1 both answer 1280x800, 320x200 mm\n");
         }
         if (ok) {
-            /* The keyboard's port is still open above. This line is the
-             * runner's cue to dump both heads at 1280x800 -- the drivers'
-             * own markers passed long before this service could say it was
-             * listening, so the cue is ours -- and its 'b' says the dumps
-             * are done. */
+            /* This line is the runner's cue to dump both heads at 1280x800
+             * -- the drivers' own markers passed long before this service
+             * could say it was listening, so the cue is ours -- and the 'b'
+             * that says the dumps are done comes back routed, through the
+             * focused window's ring. */
             write("  test: both heads answered -- the screens, please\n");
-            aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
-            ok = wait_key(kbd, kKeyB, 1);
+            ok = channel && wait_ring_key(ring, events, first_window, kKeyB, 'b');
         }
         if (ok) {
             /* The parked head shrinks; the console's screen must not move. */
@@ -1128,8 +1145,8 @@ int main(int argc, char *argv[])
         if (ok) {
             /* 'c' says the shrunken head's dump is done; then 4K, the window's
              * whole reason for being 32 MiB. */
-            aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
-            ok = wait_key(kbd, kKeyC, 1) && set_mode(gpu1, 3840, 2160);
+            ok = channel && wait_ring_key(ring, events, first_window, kKeyC, 'c') &&
+                 set_mode(gpu1, 3840, 2160);
         }
         /* A mode the window cannot hold is refused, and the screen keeps what
          * it had: 8192x8192 at 32 bits a pixel is 256 MiB, eight windows. */
@@ -1184,84 +1201,90 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* The console's window protocol, and its first client (specs/console.md):
-     * a slice of the console's arena, mapped here (this service carries the
-     * maps grant for exactly this); a white window over the blue backdrop; a
-     * red one overlapping it, on top by creation order; then the white
-     * destroyed and the backdrop redrawn beneath. What the screen shows is
-     * the runner's part -- the cues pace its dumps, and the keys say the
-     * dumps are done. */
-    {
-        aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
-            aegir::console::kPortName, aegir::console::kPortNameLength);
-        uint64_t untyped_slot = 0;
-        uint64_t vspace_slot = 0;
-        uint64_t window_base = 0;
-        uint32_t window_bytes = 0;
-        uint64_t untyped_physical = 0;
-        uint32_t untyped_bits = 0;
-        uint64_t untyped_address = 0;
-        static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &untyped_bits,
-                                                    &untyped_address));
-        bool ok = gui.valid() &&
-                  aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
-                  aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
-                  aegir::bootstrap::window(&window_base, &window_bytes) &&
-                  g_test_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
-                                               untyped_bits, untyped_physical);
-        if (ok) {
-            /* The slots below +64 are this block's constants' neighbours;
-             * the allocator works past them. */
-            g_test_objects.adopt_slots(first_free + 64, (1u << 10) - (first_free + 64), 0);
-            ok = g_test_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
-                                      static_cast<uintptr_t>(window_base),
-                                      static_cast<uintptr_t>(window_base + window_bytes),
-                                      &g_test_objects);
+    /* The window protocol, composited and routed: the white window damaged
+     * in over the blue backdrop, a red one overlapping it on top by creation
+     * order, the white destroyed and the backdrop redrawn beneath -- and the
+     * input that paces it arriving through the ring: the click that refocuses
+     * (focus went with the destroyed window), the keymap's 'g', and the
+     * pointer's motion in window-local coordinates. What the screen shows is
+     * the runner's part -- the cues pace its dumps. */
+    if (channel) {
+        bool ok = true;
+        auto *backing = reinterpret_cast<uint32_t *>(slice);
+        for (uint32_t p = 0; p < 400 * 300; ++p) {
+            backing[p] = 0x00FFFFFF; /* white */
         }
-        uint64_t frame_bits = 0;
-        uint64_t frames = 0;
-        ok = ok && aegir::console::attach(gui, 2ull << 20, &frame_bits, &frames) &&
-             frame_bits == seL4_LargePageBits && frames == 1;
-        seL4_CPtr const slice_frame = static_cast<seL4_CPtr>(first_free + 33);
-        bool const got_frame = ok && aegir::console::frame(gui, 0, slice_frame);
-        auto *slice = static_cast<uint8_t *>(
-            got_frame ? g_test_scratch.map_large(slice_frame) : nullptr);
-        ok = got_frame && slice != nullptr;
-        uint64_t const first_window =
-            ok ? aegir::console::create_window(gui, 64, 64, 400, 300, 0) : 0;
-        ok = ok && first_window != 0;
-        aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
-        if (ok) {
-            auto *backing = reinterpret_cast<uint32_t *>(slice);
-            for (uint32_t p = 0; p < 400 * 300; ++p) {
-                backing[p] = 0x00FFFFFF; /* white */
-            }
-            ok = aegir::console::damage(gui, first_window, 0, 0, 400, 300);
-            write("  test: a window of one's own -- the screen, please\n");
-            ok = ok && wait_key(kbd, kKeyD, 1);
-        }
+        ok = aegir::console::damage(gui, first_window, 0, 0, 400, 300);
+        write("  test: a window of one's own -- the screen, please\n");
+        ok = ok && wait_ring_key(ring, events, first_window, kKeyD, 'd');
         uint64_t const second_window =
             ok ? aegir::console::create_window(gui, 300, 200, 400, 300, 0x80000) : 0;
         ok = ok && second_window != 0;
         if (ok) {
-            auto *backing = reinterpret_cast<uint32_t *>(slice + 0x80000);
+            auto *red = reinterpret_cast<uint32_t *>(slice + 0x80000);
             for (uint32_t p = 0; p < 400 * 300; ++p) {
-                backing[p] = 0x00FF0000; /* red */
+                red[p] = 0x00FF0000; /* red */
             }
             ok = aegir::console::damage(gui, second_window, 0, 0, 400, 300);
             write("  test: two windows, the newer on top -- the screen, please\n");
-            ok = ok && wait_key(kbd, kKeyE, 1);
+            ok = ok && wait_ring_key(ring, events, first_window, kKeyE, 'e');
         }
         if (ok) {
             ok = aegir::console::destroy_window(gui, first_window);
             write("  test: the first window left -- the screen, please\n");
-            ok = ok && wait_key(kbd, kKeyF, 1);
+            /* Focus went with the destroyed window, so no key paces this
+             * cue: the dump fires on the line, and the next click refocuses. */
+        }
+        if (ok) {
+            /* The pointer stands at the first window's centre; the red one's
+             * centre is (+236,+136) away, and the click focuses it. */
+            write("  test: the red one takes the focus, please\n");
+            uint64_t event = 0;
+            bool const focused =
+                wait_ring(ring, events, aegir::console::kEventFocus, second_window,
+                          &event) &&
+                aegir::input::event_value(event) == 1;
+            bool clicked = false;
+            while (focused &&
+                   wait_ring(ring, events, aegir::console::kEventPointer,
+                             second_window, &event)) {
+                if (aegir::input::event_code(event) == aegir::input::kBtnLeft &&
+                    aegir::input::event_value(event) == (200u | (150u << 16))) {
+                    clicked = true;
+                    break;
+                }
+            }
+            ok = focused && clicked;
+        }
+        if (ok) {
+            /* The keymap is the console's (specs/console.md): what arrives
+             * is the raw KEY_G and the translated 'g' in one event. */
+            write("  test: a key through the keymap, please\n");
+            ok = wait_ring_key(ring, events, second_window, kKeyG, 'g');
+        }
+        if (ok) {
+            /* The tablet's (10000,20000) is the screen's (390,488) -- the
+             * axis runs 0..32767 -- and (90,288) in the red window's local
+             * coordinates. */
+            write("  test: the pointer, window-local, please\n");
+            uint64_t event = 0;
+            bool moved = false;
+            while (wait_ring(ring, events, aegir::console::kEventPointer,
+                             second_window, &event)) {
+                if (aegir::input::event_code(event) == 0 &&
+                    aegir::input::event_value(event) == (90u | (288u << 16))) {
+                    moved = true;
+                    break;
+                }
+            }
+            ok = moved;
         }
         if (!ok) {
             write("  test: FAIL the console's window protocol did not hold\n");
             ++failed;
         } else {
-            write("  test: the console composited two windows, and redrew what the destroy uncovered\n");
+            write("  test: the console composited two windows, redrew what the destroy uncovered,\n");
+            write("        and routed the click, the key, and the pointer\n");
         }
     }
 

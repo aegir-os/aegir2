@@ -67,6 +67,8 @@ struct Slice {
     seL4_CPtr pristine; /* base of the unmapped copy set, one slot per frame */
     uint64_t frames;
     uintptr_t base; /* where the console reads the slice */
+    seL4_CPtr events; /* the client's event notification, ours to signal */
+    bool listening;   /* the notification's mint went out (one per client) */
     Slice *next;
 };
 
@@ -108,9 +110,262 @@ Window *find_window(uint64_t id) noexcept
     return nullptr;
 }
 
+/* ---- Input routing (specs/console.md's focus and the pointer) ---- */
+
+/* The HID devices in the order their mints' badge bits name them: a
+ * wakeup's bit (1 << d) is this device's queue having moved. */
+aegir::ipc::Consumer g_hid[3];
+constexpr uint32_t kHidKbd = 0;
+constexpr uint32_t kHidMouse = 1;
+constexpr uint32_t kHidTablet = 2;
+
+/* The keymap is the system's, US layout v1 (specs/console.md): indexed by
+ * the raw code as it arrives -- Linux's KEY_*, which virtio-input carries
+ * unchanged -- with a zero where a code has no character. First the
+ * unshifted character, then the shifted. */
+constexpr char kKeymap[58][2] = {
+    {0, 0},          {0, 0},          {'1', '!'},  {'2', '@'},  /* 0-3 */
+    {'3', '#'},      {'4', '$'},      {'5', '%'},  {'6', '^'},  /* 4-7 */
+    {'7', '&'},      {'8', '*'},      {'9', '('},  {'0', ')'},  /* 8-11 */
+    {'-', '_'},      {'=', '+'},      {'\b', '\b'}, {'\t', '\t'}, /* 12-15 */
+    {'q', 'Q'},      {'w', 'W'},      {'e', 'E'},  {'r', 'R'},  /* 16-19 */
+    {'t', 'T'},      {'y', 'Y'},      {'u', 'U'},  {'i', 'I'},  /* 20-23 */
+    {'o', 'O'},      {'p', 'P'},      {'[', '{'},  {']', '}'},  /* 24-27 */
+    {'\n', '\n'},    {0, 0},          {'a', 'A'},  {'s', 'S'},  /* 28-31 */
+    {'d', 'D'},      {'f', 'F'},      {'g', 'G'},  {'h', 'H'},  /* 32-35 */
+    {'j', 'J'},      {'k', 'K'},      {'l', 'L'},  {';', ':'},  /* 36-39 */
+    {'\'', '"'},     {'`', '~'},      {0, 0},      {'\\', '|'}, /* 40-43 */
+    {'z', 'Z'},      {'x', 'X'},      {'c', 'C'},  {'v', 'V'},  /* 44-47 */
+    {'b', 'B'},      {'n', 'N'},      {'m', 'M'},  {',', '<'},  /* 48-51 */
+    {'.', '>'},      {'/', '?'},      {0, 0},      {0, 0},      /* 52-55 */
+    {0, 0},          {' ', ' '},                                  /* 56-57 */
+};
+constexpr uint16_t kKeyLeftShift = 42;
+constexpr uint16_t kKeyRightShift = 54;
+bool g_shift = false;
+
+/* The pointer: tracked by the console (the tablet's absolute events are
+ * the natural feed, the mouse's relative ones integrate to the same
+ * point), focused by click (Amiga semantics: a button-down focuses, and
+ * does not raise), and grabbed for the length of a drag. */
+uint64_t g_pointer_x = 0;
+uint64_t g_pointer_y = 0;
+Window *g_focused = nullptr;
+Window *g_grab = nullptr;
+
+/* The topmost window covering a point, or none. The list is bottom first,
+ * so the last coverer is the answer. */
+Window *window_at(uint64_t x, uint64_t y) noexcept
+{
+    Window *found = nullptr;
+    for (Window *w = g_windows; w != nullptr; w = w->next) {
+        if (x >= w->x && x < w->x + w->width && y >= w->y && y < w->y + w->height) {
+            found = w;
+        }
+    }
+    return found;
+}
+
+/* Append an event to a client's ring and signal. A full ring drops: the
+ * console never blocks on a client that stopped reading. */
+void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
+             uint64_t window) noexcept
+{
+    Slice *slice = find_slice(owner);
+    if (slice == nullptr || slice->events == 0) {
+        return;
+    }
+    volatile uint64_t *const ring = aegir::console::event_ring(
+        reinterpret_cast<uint8_t *>(slice->base), slice->frames << seL4_LargePageBits);
+    uint64_t const write = ring[0];
+    if (write - ring[1] >= aegir::console::kEventRingEntries) {
+        return;
+    }
+    volatile uint64_t *const entry =
+        ring + 2 + (write % aegir::console::kEventRingEntries) * 2;
+    entry[0] = aegir::input::pack_event(type, code, value);
+    entry[1] = window;
+    ring[0] = write + 1;
+    seL4_Signal(slice->events);
+}
+
+/* The cursor is software (specs/console.md): an 8x8 arrow composited over
+ * the output, with what is under it saved and restored around every move
+ * and repaint. */
+constexpr uint64_t kCursorSize = 8;
+constexpr uint8_t kCursorShape[kCursorSize] = {0x80, 0xC0, 0xE0, 0xF0,
+                                               0xF8, 0xE0, 0xA0, 0x90};
+uint32_t g_cursor_under[kCursorSize * kCursorSize];
+bool g_cursor_drawn = false;
+
+void cursor_draw() noexcept
+{
+    for (uint64_t y = 0; y < kCursorSize; ++y) {
+        for (uint64_t x = 0; x < kCursorSize; ++x) {
+            uint64_t const sx = g_pointer_x + x;
+            uint64_t const sy = g_pointer_y + y;
+            uint32_t *const out =
+                reinterpret_cast<uint32_t *>(g_screen + sy * g_stride);
+            if (sx >= g_width || sy >= g_height) {
+                g_cursor_under[y * kCursorSize + x] = 0;
+                continue;
+            }
+            g_cursor_under[y * kCursorSize + x] = out[sx];
+            if ((kCursorShape[y] & (0x80 >> x)) != 0) {
+                out[sx] = 0x00FFFFFF;
+            }
+        }
+    }
+    g_cursor_drawn = true;
+}
+
+void cursor_erase() noexcept
+{
+    if (!g_cursor_drawn) {
+        return;
+    }
+    for (uint64_t y = 0; y < kCursorSize; ++y) {
+        for (uint64_t x = 0; x < kCursorSize; ++x) {
+            uint64_t const sx = g_pointer_x + x;
+            uint64_t const sy = g_pointer_y + y;
+            if (sx >= g_width || sy >= g_height) {
+                continue;
+            }
+            auto *out = reinterpret_cast<uint32_t *>(g_screen + sy * g_stride);
+            out[sx] = g_cursor_under[y * kCursorSize + x];
+        }
+    }
+    g_cursor_drawn = false;
+}
+
+void pointer_moved() noexcept
+{
+    cursor_erase();
+    cursor_draw();
+    (void)g_gpu.call(aegir::framebuffer::kMethodFlush, 0);
+    Window *const target =
+        g_grab != nullptr ? g_grab : window_at(g_pointer_x, g_pointer_y);
+    if (target != nullptr) {
+        deliver(target->owner, aegir::console::kEventPointer, 0,
+                static_cast<uint32_t>((g_pointer_x - target->x) |
+                                      ((g_pointer_y - target->y) << 16)),
+                target->id);
+    }
+}
+
+/* A button-down hit-tests, focuses -- and does not raise -- and grabs for
+ * the drag; the up goes to the grab-held window. */
+void pointer_button(uint16_t code, uint32_t state) noexcept
+{
+    Window *const under = window_at(g_pointer_x, g_pointer_y);
+    if (state != 0) {
+        g_grab = under;
+        if (under != g_focused) {
+            if (g_focused != nullptr) {
+                deliver(g_focused->owner, aegir::console::kEventFocus, 0, 0,
+                        g_focused->id);
+            }
+            g_focused = under;
+            if (under != nullptr) {
+                deliver(under->owner, aegir::console::kEventFocus, 0, 1, under->id);
+            }
+        }
+    }
+    Window *const target = g_grab != nullptr ? g_grab : under;
+    if (target != nullptr) {
+        deliver(target->owner, aegir::console::kEventPointer,
+                static_cast<uint16_t>(code | (state == 0 ? aegir::console::kButtonRelease
+                                                          : 0)),
+                static_cast<uint32_t>((g_pointer_x - target->x) |
+                                      ((g_pointer_y - target->y) << 16)),
+                target->id);
+    }
+    if (state == 0) {
+        g_grab = nullptr;
+    }
+}
+
+void key_event(uint16_t code, uint32_t state) noexcept
+{
+    if (code == kKeyLeftShift || code == kKeyRightShift) {
+        g_shift = state != 0;
+        return;
+    }
+    if (g_focused == nullptr) {
+        return;
+    }
+    uint32_t const translated =
+        code < 58 ? static_cast<uint8_t>(kKeymap[code][g_shift ? 1 : 0]) : 0;
+    deliver(g_focused->owner, aegir::console::kEventKey, code,
+            translated | (state != 0 ? aegir::console::kKeyPressed : 0),
+            g_focused->id);
+}
+
+/* One event from a device, routed. */
+void route(uint32_t device, uint64_t word) noexcept
+{
+    uint16_t const type = aegir::input::event_type(word);
+    uint16_t const code = aegir::input::event_code(word);
+    uint32_t const value = aegir::input::event_value(word);
+    if (device == kHidKbd && type == aegir::input::kEvKey) {
+        key_event(code, value);
+    } else if (device == kHidMouse && type == aegir::input::kEvRel) {
+        /* Relative motion integrates to the pointer, clamped to the screen. */
+        int64_t const next =
+            static_cast<int64_t>(code == aegir::input::kAxisX ? g_pointer_x
+                                                              : g_pointer_y) +
+            static_cast<int32_t>(value);
+        uint64_t const limit =
+            code == aegir::input::kAxisX ? g_width - 1 : g_height - 1;
+        uint64_t const clamped =
+            next < 0 ? 0 : static_cast<uint64_t>(next) > limit ? limit
+                                                               : static_cast<uint64_t>(next);
+        if (code == aegir::input::kAxisX) {
+            g_pointer_x = clamped;
+        } else {
+            g_pointer_y = clamped;
+        }
+        pointer_moved();
+    } else if (device == kHidTablet && type == aegir::input::kEvAbs) {
+        /* Absolute, in the axis's own units (0..32767): scaled to the
+         * screen, the numbers pass through unchanged from the injector. */
+        if (code == aegir::input::kAxisX) {
+            g_pointer_x = (static_cast<uint64_t>(value) * g_width) >> 15;
+        } else {
+            g_pointer_y = (static_cast<uint64_t>(value) * g_height) >> 15;
+        }
+        pointer_moved();
+    } else if (device != kHidKbd && type == aegir::input::kEvKey &&
+               code >= aegir::input::kBtnLeft && code <= aegir::input::kBtnMiddle) {
+        pointer_button(code, value);
+    }
+    /* EV_SYN ends a moment's worth of events; delivered as they come. */
+}
+
+/* Drain one device's queue -- poll, then next only when an event waits,
+ * so the reply is never held -- and route what came. */
+void drain(uint32_t device) noexcept
+{
+    for (;;) {
+        uint64_t in[1];
+        aegir::ipc::WordsReply const polled =
+            g_hid[device].call_words(aegir::input::kMethodPoll, nullptr, 0, in, 1);
+        if (polled.error != 0 || polled.count != 1 || in[0] == 0) {
+            return;
+        }
+        aegir::ipc::WordsReply const next =
+            g_hid[device].call_words(aegir::input::kMethodNext, nullptr, 0, in, 1);
+        if (next.error != 0 || next.count != 1) {
+            return;
+        }
+        route(device, in[0]);
+    }
+}
+
 /* Composite a screen rectangle: every pixel is the topmost window covering
  * it, or the backdrop. The windows are walked bottom to top, so the last
- * coverer wins. */
+ * coverer wins. The cursor comes off for the repaint and goes back on
+ * after: it rides over everything. */
 void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
 {
     if (sx >= g_width || sy >= g_height) {
@@ -118,6 +373,7 @@ void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
     }
     uint64_t const ex = sx + width > g_width ? g_width : sx + width;
     uint64_t const ey = sy + height > g_height ? g_height : sy + height;
+    cursor_erase();
     for (uint64_t yy = sy; yy < ey; ++yy) {
         auto *out =
             reinterpret_cast<uint32_t *>(g_screen + yy * g_stride);
@@ -139,6 +395,7 @@ void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
             out[xx] = pixel;
         }
     }
+    cursor_draw();
     (void)g_gpu.call(aegir::framebuffer::kMethodFlush, 0);
 }
 
@@ -272,8 +529,11 @@ int main(int argc, char *argv[])
     }
 
     /* The HID devices are the console's, exclusively: opening them here is
-     * what makes that true. Routing their events is the input piece's; the
-     * ports are held, not yet read. */
+     * what makes that true. Their queues feed the routing above; how the
+     * console hears about events without holding a next it could not sit
+     * in is subscribe (aegir/input.h): one notification, bound to this
+     * thread so a signal wakes the same receive that serves the port, and
+     * a mint per device badged with the device's own bit. */
     struct {
         char const *name;
         uint32_t length;
@@ -286,15 +546,70 @@ int main(int argc, char *argv[])
             seL4_Signal(aegir::bootstrap::kSlotSupervision);
             aegir::halt();
         }
+        g_hid[d] = aegir::ipc::Consumer(hid_slot);
+    }
+    {
+        aegir::mem::Account self{"console", 0, 0, 0};
+        seL4_Error wake_error = seL4_NoError;
+        seL4_CPtr const wake = g_objects.alloc_object(seL4_NotificationObject,
+                                                      seL4_NotificationBits, self,
+                                                      &wake_error);
+        if (wake == 0 ||
+            seL4_TCB_BindNotification(aegir::bootstrap::kSlotOwnTcb, wake) !=
+                seL4_NoError) {
+            write_line("FAIL the wake notification would not be made or bound");
+            seL4_Signal(aegir::bootstrap::kSlotSupervision);
+            aegir::halt();
+        }
+        for (uint32_t d = 0; d < 3; ++d) {
+            seL4_CPtr const mint = g_objects.alloc_slot();
+            /* A notification's write right is the signal; the badge is the
+             * device's bit in the wakeup's word, set high above any service
+             * number so the loop can tell a wakeup from a call. */
+            if (mint == 0 ||
+                seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint,
+                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::kSlotOwnCNode, wake,
+                                aegir::bootstrap::kCNodeBits,
+                                seL4_CapRights_new(0, 0, 0, 1),
+                                1ull << (32 + d)) != seL4_NoError) {
+                write_line("FAIL a device mint would not be made");
+                seL4_Signal(aegir::bootstrap::kSlotSupervision);
+                aegir::halt();
+            }
+            bool answered = false;
+            uint64_t sink[1];
+            aegir::ipc::WordsReply const subscribed = g_hid[d].call_transfer(
+                aegir::input::kMethodSubscribe, nullptr, 0, mint, sink, 0, &answered);
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint,
+                              aegir::bootstrap::kCNodeBits);
+            if (subscribed.error != 0) {
+                write_line("FAIL a device would not take the subscription");
+                seL4_Signal(aegir::bootstrap::kSlotSupervision);
+                aegir::halt();
+            }
+        }
     }
 
-    /* The backdrop, then the flush that pushes the window to the screen. */
+    /* The screen the serve loop composites into -- set before the backdrop
+     * paint, so the cursor's first draw lands in the first flush. */
+    g_gpu = gpu;
+    g_screen = pixels;
+    g_width = width;
+    g_height = height;
+    g_stride = stride;
+    g_pointer_x = width / 2;
+    g_pointer_y = height / 2;
+
+    /* The backdrop, then the cursor over it, then the flush that pushes the
+     * window to the screen. */
     for (uint64_t y = 0; y < height; ++y) {
         auto *row = reinterpret_cast<uint32_t *>(pixels + y * stride);
         for (uint64_t x = 0; x < width; ++x) {
             row[x] = kBackdrop;
         }
     }
+    cursor_draw();
     (void)gpu.call(aegir::framebuffer::kMethodFlush, 0);
     aegir::debug_write("      console: the backdrop is up -- gpu.virtio0, ");
     aegir::debug_write_unsigned(width);
@@ -304,25 +619,18 @@ int main(int argc, char *argv[])
     aegir::debug_write_unsigned(pages);
     aegir::debug_write(" mega pages mapped\n");
 
-    /* The screen the serve loop composites into. */
-    g_gpu = gpu;
-    g_screen = pixels;
-    g_width = width;
-    g_height = height;
-    g_stride = stride;
-
     if (log.valid()) {
         (void)log.call(aegir::log::kMethodEvent,
                        static_cast<uint64_t>(aegir::log::Event::Ready));
     }
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
-    /* The window protocol (aegir/console.h). One endpoint, and every
-     * receive on it is a call -- endpoints do not signal -- so there is no
-     * badge mark to tell apart here; the caller's badge is who the slice
-     * and the windows belong to. The mint slot an attach's `frame` copies
-     * into: one, reused, because the reply transfers a copy and ours is
-     * deleted right after. */
+    /* The window protocol (aegir/console.h), and the input routing beside
+     * it: one receive serves the port, and the bound notification wakes the
+     * same receive when a device's queue moved -- a zero-length receive is
+     * that wakeup, the badge's bits naming the devices (the mints' badges).
+     * The mint slot an attach's `frame` copies into: one, reused, because
+     * the reply transfers a copy and ours is deleted right after. */
     uint64_t gui_slot = 0;
     if (!aegir::bootstrap::capability("console.gui", 11, &gui_slot)) {
         write_line("FAIL the console.gui port was not given");
@@ -338,6 +646,20 @@ int main(int argc, char *argv[])
             seL4_Recv(static_cast<seL4_CPtr>(gui_slot), &badge);
         uint32_t const length =
             static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
+        if ((badge >> 32) != 0) {
+            /* A wakeup, not a call: the device mints are badged with a bit
+             * above any service number, because a notification that wakes a
+             * blocked receive sets the badge register only -- the message
+             * registers keep whatever the last call left (notification.c's
+             * sendSignal), so the badge is the only thing to read. Bits
+             * 32..34 name the devices whose queues moved. */
+            for (uint32_t d = 0; d < 3; ++d) {
+                if ((badge & (1ull << (32 + d))) != 0) {
+                    drain(d);
+                }
+            }
+            continue;
+        }
         uint32_t const method = static_cast<uint32_t>(seL4_GetMR(0));
         if (method == aegir::console::kMethodAttach && length == 2) {
             /* The slice, carved on demand: a child untyped of the slice's
@@ -396,11 +718,26 @@ int main(int argc, char *argv[])
             }
             auto *slice = static_cast<Slice *>(
                 carved ? arena.allocate(sizeof(Slice)) : nullptr);
-            if (slice == nullptr) {
+            /* The client's event channel: one notification, console's to
+             * signal, and the ring -- the slice's last page, zeroed here
+             * because retyped frames arrive dirty. */
+            seL4_Error notify_error = seL4_NoError;
+            seL4_CPtr const events =
+                slice != nullptr
+                    ? g_objects.alloc_object(seL4_NotificationObject,
+                                             seL4_NotificationBits, account,
+                                             &notify_error)
+                    : 0;
+            if (slice == nullptr || events == 0) {
                 gui.reply(0);
                 continue;
             }
-            *slice = Slice{badge, untyped, pristine_base, frames, base, g_slices};
+            volatile uint64_t *const ring = aegir::console::event_ring(
+                reinterpret_cast<uint8_t *>(base), frames << seL4_LargePageBits);
+            ring[0] = 0;
+            ring[1] = 0;
+            *slice = Slice{badge, untyped, pristine_base, frames, base,
+                           events, false, g_slices};
             g_slices = slice;
             uint64_t shape[2] = {seL4_LargePageBits, frames};
             gui.reply_words(shape, 2);
@@ -473,6 +810,24 @@ int main(int argc, char *argv[])
                 repaint(window->x + rx, window->y + ry, cw, ch);
             }
             gui.reply(0);
+        } else if (method == aegir::console::kMethodListen && length == 1) {
+            /* The event channel's cap: a wait-only mint of the slice's
+             * notification. One per client -- a second listen is refused. */
+            Slice *slice = find_slice(badge);
+            if (slice == nullptr || slice->events == 0 || slice->listening ||
+                mint_slot == 0 ||
+                seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint_slot,
+                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::kSlotOwnCNode, slice->events,
+                                aegir::bootstrap::kCNodeBits,
+                                seL4_CapRights_new(0, 0, 1, 0), 0) != seL4_NoError) {
+                gui.reply(0);
+            } else {
+                slice->listening = true;
+                gui.reply_cap(nullptr, 0, mint_slot);
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
+                                  aegir::bootstrap::kCNodeBits);
+            }
         } else if (method == aegir::console::kMethodDestroyWindow && length == 2) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
             Window **link = &g_windows;
@@ -485,6 +840,15 @@ int main(int argc, char *argv[])
             }
             Window const gone = **link;
             *link = (*link)->next;
+            /* Focus and grab do not outlive the window: the out event is
+             * the owner's to hear before the id goes away. */
+            if (g_focused != nullptr && g_focused->id == gone.id) {
+                deliver(gone.owner, aegir::console::kEventFocus, 0, 0, gone.id);
+                g_focused = nullptr;
+            }
+            if (g_grab != nullptr && g_grab->id == gone.id) {
+                g_grab = nullptr;
+            }
             /* What was under it is everyone else's redraw. */
             repaint(gone.x, gone.y, gone.width, gone.height);
             gui.reply(0);

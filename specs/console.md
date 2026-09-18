@@ -36,9 +36,9 @@ sees of the screen and the keyboard is what console serves.
   is an offset into the client's slice — chosen by the client, which
   allocates its own slice — so creating and destroying windows is
   bookkeeping, not memory traffic.
-- **Capabilities ride this protocol.** `create_window` answers with the
-  window's event endpoint, and attaching hands over the slice's frame caps —
-  one cap per reply, the registry-`open` precedent. This is services.md's
+- **Capabilities ride this protocol.** Attaching hands over the slice's
+  frame caps — one cap per reply, the registry-`open` precedent — and
+  `listen` hands over the client's event notification. This is services.md's
   "may ports carry capabilities?" answered as it predicted: individual
   ports, a protocol that says it carries them. Console's is the first.
 
@@ -55,10 +55,11 @@ method console does not know is answered by saying nothing.
   root, the way every service already maps what it is given.
 - `frame`. In: the index within the slice. Out: that frame's capability.
 - `create_window`. In: position and size in screen pixels, and the backing's
-  offset within the caller's slice. Out: the window's id, and its **event
-  endpoint** — minted per window, because a window's events are its own
-  channel, the IDCMP shape. Console clip-checks the backing against the
-  slice: a window whose pixels would fall outside it is refused.
+  offset within the caller's slice. Out: the window's id. Console
+  clip-checks the backing against the slice: a window whose pixels would
+  fall outside it is refused.
+- `listen`. Out: one capability — the client's event notification (below).
+  One channel per client; a second listen is refused.
 - `damage`. In: the window's id and a rectangle in window-local pixels. The
   rectangle's pixels, as they stand in the slice, are composited to the
   screen: painter's algorithm, clipped against the windows above, then the
@@ -73,10 +74,25 @@ method console does not know is answered by saying nothing.
 
 ## The event channel
 
-A window's endpoint serves `poll`/`next` with the held-reply shape of
-`libs/aegir-input` — the client code is the input driver's client code,
-and the envelope is the same packed type/code/value. The vocabulary is
-console's (`libs/aegir-console`), three kinds to start:
+One channel per client: a notification (console signals, the client waits)
+and a ring buffer in the slice's last 4 KiB page — console mapped the whole
+slice when it carved it, so appending is writing memory it already has, and
+the client maps the page with the rest. The endpoint shape this replaces —
+an endpoint per window, serving poll/next — does not survive the kernel's
+one-blocked-receive rule on either side: console cannot receive on the gui
+port and every window's endpoint, and a client thread waits on one
+notification where it could not wait on many endpoints. Events are tagged
+with their window's id instead. The envelope is the input driver's packed
+word (`libs/aegir-input`), and a full ring drops — console never blocks on
+a client that stopped reading.
+
+Console's own side of the devices is the same bound-notification shape the
+drivers wait on their interrupts with: the input protocol's `subscribe`
+hands each driver a minted, badged notification, a signal wakes the receive
+that serves the port, and console drains with `poll`/`next` — the queue is
+the driver's, so coalesced signals lose nothing.
+
+The vocabulary is console's (`libs/aegir-console`), three kinds to start:
 
 - **key** — the raw code, and the translated character in the same event.
   The keymap is console's (a table in the service, US layout v1): key-code
