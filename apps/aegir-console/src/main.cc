@@ -74,7 +74,9 @@ struct Slice {
 
 /* A window: a rectangle on the screen and where its pixels live in the
  * owner's slice. The list is in z order, bottom first; create appends, so
- * new windows sit on top. */
+ * new windows sit on top. A window is invisible until its first damage --
+ * the backing is the client's to paint first, and retyped frames arrive
+ * dirty, so compositing one earlier would show memory, not pixels. */
 struct Window {
     uint64_t id;
     uint64_t owner; /* the badge create_window arrived with */
@@ -83,6 +85,7 @@ struct Window {
     uint64_t width;
     uint64_t height;
     uint64_t offset; /* the backing's offset within the owner's slice */
+    bool shown;      /* the first damage happened */
     Window *next;
 };
 
@@ -390,8 +393,8 @@ void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
         for (uint64_t xx = sx; xx < ex; ++xx) {
             uint32_t pixel = kBackdrop;
             for (Window const *w = g_windows; w != nullptr; w = w->next) {
-                if (xx < w->x || xx >= w->x + w->width || yy < w->y ||
-                    yy >= w->y + w->height) {
+                if (!w->shown || xx < w->x || xx >= w->x + w->width ||
+                    yy < w->y || yy >= w->y + w->height) {
                     continue;
                 }
                 Slice const *slice = find_slice(w->owner);
@@ -787,7 +790,7 @@ int main(int argc, char *argv[])
                 continue;
             }
             *window = Window{++g_next_id, badge, x, y, width, height, offset,
-                             nullptr};
+                             false, nullptr};
             /* Append: the list is bottom first, and a new window is on top. */
             Window **tail = &g_windows;
             while (*tail != nullptr) {
@@ -801,11 +804,15 @@ int main(int argc, char *argv[])
             uint64_t const ry = static_cast<uint64_t>(seL4_GetMR(3));
             uint64_t const rw = static_cast<uint64_t>(seL4_GetMR(4));
             uint64_t const rh = static_cast<uint64_t>(seL4_GetMR(5));
-            Window const *window = find_window(id);
+            Window *window = find_window(id);
             if (window == nullptr || window->owner != badge) {
                 gui.reply(0);
                 continue;
             }
+            /* The first damage is what shows the window: before it, the
+             * backing is the client's to paint and the composite leaves the
+             * rectangle to whatever is beneath. */
+            window->shown = true;
             /* The rectangle is clipped to the window; a client may damage
              * only its own. */
             uint64_t const cw = rx >= window->width ? 0
