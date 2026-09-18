@@ -18,7 +18,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check build run envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check build run run-ui envelope test clean distclean
 
 all: help
 
@@ -54,6 +54,15 @@ build: ## configure and build Aegir's own root task
 
 run: ## boot Aegir under QEMU, stopping once it reports online
 	timeout $(BOOT_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET)
+
+# run-ui is attended: QEMU's GTK window shows the gpu heads (one tab each),
+# the serial console stays here, and the guest's test bed paces itself on
+# keys *you* press -- the console says when, and which ('a', then 'b', then
+# 'c'). QEMU exits when the window closes, so the project rule's `timeout`
+# wrapper is the watched batch run's, not this one's: there is no wedged
+# process to detect when the operator is sitting in front of it.
+run-ui: ## boot Aegir with a GTK window on the displays; you press the keys
+	$(PYTHON) scripts/run_target.py --target $(TARGET) --interactive
 
 envelope: ## build and boot every target in the memory/cores envelope
 	@for target in aegir aegir-2g-smp2 aegir-2g-smp4 aegir-8g-smp4; do \

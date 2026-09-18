@@ -171,6 +171,43 @@ def bands_at_posts(width: int, height: int, pixels: bytes) -> bool:
     )
 
 
+def ensure_disk(build_dir: Path) -> None:
+    """The machine's block device needs a disk to be a block device *of*. It is
+    a GPT with three FAT partitions -- two holding a known file, one empty and
+    writable -- built by make_disk.py in the build directory. Created once and
+    left alone, and QEMU's -snapshot keeps even a writing run off it: a disk
+    that changes between runs is not something to depend on. It lives in the
+    build output rather than the repository, where scratch belongs."""
+    disk = build_dir / "disk.img"
+    if not disk.exists():
+        subprocess.run(
+            [sys.executable, str(Path(__file__).parent / "make_disk.py"), str(disk)],
+            check=True,
+        )
+
+
+def boot_interactive(target: Target, build_dir: Path) -> int:
+    """Boot the image with QEMU's own window on the displays: the user is the
+    runner. The keys the acceptance check's script would press are theirs to
+    press (the console says when, and which), the heads are the window's tabs,
+    and QEMU stops when its window closes, not at a marker -- so nothing here
+    watches, and nothing here is timed out but the user."""
+    ensure_disk(build_dir)
+    extra = " ".join(target.qemu_args)
+    # -g/-s replace simulate's -nographic: a GTK window on the consoles, the
+    # serial console on the terminal. Attached with `=`, for the same reason
+    # --extra-qemu-args is: argparse reads a loose value starting with `-` as
+    # an option of its own.
+    command = (
+        "./simulate --graphic='-display gtk' --serial='-serial stdio' --extra-qemu-args="
+        + shlex.quote(extra)
+    )
+    return subprocess.call(
+        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec {command}"],
+        cwd=str(build_dir),
+    )
+
+
 def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, bool, str]:
     """Boot the image, streaming the console until the marker appears.
 
@@ -181,18 +218,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # than passed as a separate argument, because the value starts with `-bios`
     # and the script's argparse refuses a value that looks like an option (and
     # would read a loose `-bios` as its own `-b`).
-    # The machine's block device needs a disk to be a block device *of*. It is a
-    # GPT with three FAT partitions -- two holding a known file, one empty and
-    # writable -- built by make_disk.py in the build directory. Created once and
-    # left alone, and QEMU's -snapshot keeps even a writing run off it: a disk
-    # that changes between runs is not something to depend on. It lives in the
-    # build output rather than the repository, where scratch belongs.
-    disk = build_dir / "disk.img"
-    if not disk.exists():
-        subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "make_disk.py"), str(disk)],
-            check=True,
-        )
+    ensure_disk(build_dir)
 
     extra = " ".join(target.qemu_args)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)
@@ -321,6 +347,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--timeout", type=int, default=900, help="seconds per step")
     parser.add_argument("--build-only", action="store_true", help="stop after building")
     parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="boot with a GTK window on the displays and no watching: the user "
+        "presses the keys the acceptance script would, and QEMU stops when the "
+        "window closes",
+    )
+    parser.add_argument(
         "--reconfigure", action="store_true", help="re-run cmake instead of reusing the build dir"
     )
     arguments = parser.parse_args(argv)
@@ -352,6 +385,9 @@ def main(argv: list[str]) -> int:
     if arguments.build_only:
         pins.report(True, f"{target.name} built", target.description)
         return 0
+
+    if arguments.interactive:
+        return boot_interactive(target, build_dir)
 
     try:
         seen, failed, summary = boot_and_watch(target, build_dir, arguments.timeout)
