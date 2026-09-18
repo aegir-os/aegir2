@@ -23,24 +23,24 @@ export AEGIR_ROOT="$_aegir_root"
 
 # The cross toolchain is unpacked from Debian packages, so its layout is
 # <prefix>/usr/bin. Its cc1 links libisl/libgmp/libmpfr/libmpc shared and the
-# host does not necessarily have all of them, so the copies extracted with the
-# toolchain go on LD_LIBRARY_PATH — but only for shells that sourced this file.
-# A glob loop, not `find | head`: this file is sourced by callers running
+# host does not necessarily have all of them, so each tool is exposed through
+# a shim in <prefix>/shims that puts the bundled copies on LD_LIBRARY_PATH for
+# that process only (scripts/fetch_toolchain.py:make_shims). Exporting
+# LD_LIBRARY_PATH here instead would leak those Debian library builds into
+# every host process the build spawns — qemu loading the toolchain's libgmp
+# hung `make build` at the kernel's dtb extraction on Fedora. The probe is a
+# glob loop, not `find | head`: this file is sourced by callers running
 # `set -euo pipefail`, and a head(1) that exits early can SIGPIPE the find,
 # which pipefail then turns into a silent `set -e` death mid-source.
-_aegir_toolchain_usr=""
-for _aegir_candidate in "$AEGIR_ROOT"/third_party/toolchain/*/usr; do
+_aegir_toolchain_shims=""
+for _aegir_candidate in "$AEGIR_ROOT"/third_party/toolchain/*/shims; do
   if [ -d "$_aegir_candidate" ]; then
-    _aegir_toolchain_usr="$_aegir_candidate"
+    _aegir_toolchain_shims="$_aegir_candidate"
     break
   fi
 done
-if [ -n "$_aegir_toolchain_usr" ]; then
-  export PATH="$_aegir_toolchain_usr/bin:$PATH"
-  _aegir_toolchain_libs="$_aegir_toolchain_usr/lib/x86_64-linux-gnu"
-  if [ -d "$_aegir_toolchain_libs" ]; then
-    export LD_LIBRARY_PATH="$_aegir_toolchain_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  fi
+if [ -n "$_aegir_toolchain_shims" ]; then
+  export PATH="$_aegir_toolchain_shims:$PATH"
 else
   echo "scripts/env.sh: no RISC-V toolchain yet — run 'make tools'" >&2
 fi
@@ -59,4 +59,4 @@ else
   echo "scripts/env.sh: no dtc yet — run 'make tools'" >&2
 fi
 
-unset _aegir_root _aegir_candidate _aegir_toolchain_usr _aegir_toolchain_libs
+unset _aegir_root _aegir_candidate _aegir_toolchain_shims

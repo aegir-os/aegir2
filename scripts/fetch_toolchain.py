@@ -38,14 +38,48 @@ SMOKE_SOURCE = "int aegir_toolchain_smoke(void) { return 0; }\n"
 TLS_SOURCE = "__thread int aegir_tls_probe;\nint aegir_tls_read(void) { return aegir_tls_probe; }\n"
 TLS_SYMBOL = "aegir_tls_probe"
 
+# The one wrapper every shim symlinks to. Each shim runs the usr/bin tool it
+# is named after with the toolchain's bundled runtime libraries visible to
+# *that process only* (env.sh puts shims/ on PATH; it must never export
+# LD_LIBRARY_PATH itself -- that leaks these Debian library builds into every
+# host process the build spawns, and a Fedora qemu loading this libgmp hung
+# `make build` at the kernel's dtb extraction). The wrapper locates itself
+# rather than baking absolute paths, so a moved checkout still works.
+SHIM_WRAPPER_NAME = ".with-toolchain-libs"
+SHIM_WRAPPER = """#!/bin/sh
+# Shim for one toolchain binary (see scripts/fetch_toolchain.py:make_shims).
+_tc=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec env "LD_LIBRARY_PATH=$_tc/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \\
+    "$_tc/usr/bin/$(basename -- "$0")" "$@"
+"""
+
+
+def make_shims(prefix: Path) -> None:
+    """One shim per usr/bin tool, all symlinks to a single wrapper.
+
+    Idempotent and cheap, so main() calls it on every run: prefixes fetched
+    before shims existed get theirs without a refetch.
+    """
+    bin_dir = prefix / "usr" / "bin"
+    shims = prefix / "shims"
+    shutil.rmtree(shims, ignore_errors=True)
+    shims.mkdir(parents=True)
+    wrapper = shims / SHIM_WRAPPER_NAME
+    wrapper.write_text(SHIM_WRAPPER, encoding="utf-8")
+    wrapper.chmod(0o755)
+    for tool in sorted(bin_dir.iterdir()):
+        if os.access(tool, os.X_OK):
+            (shims / tool.name).symlink_to(SHIM_WRAPPER_NAME)
+
 
 def toolchain_env(prefix: Path) -> dict[str, str]:
     """Environment for running the toolchain.
 
     Debian's cc1 links libisl/libgmp/libmpfr/libmpc shared, and a host may not
     have all of them (a Fedora host has no libisl.so.23 at all), so the copies
-    extracted alongside the toolchain are put on the search path. scripts/env.sh
-    does the same for builds.
+    extracted alongside the toolchain are put on the search path of these
+    probe processes only. Builds get the same effect from the shims that
+    make_shims() installs and scripts/env.sh puts on PATH.
     """
     environment = os.environ.copy()
     library_dir = prefix / LIBRARY_SUBDIR
@@ -193,6 +227,15 @@ def check() -> int:
             f"expected {LIBRARY_SUBDIR} under {prefix.relative_to(pins.ROOT)}",
         )
         return 1
+    for tool in (gcc, gxx):
+        shim = prefix / "shims" / tool.name
+        if not (shim.is_symlink() and os.access(shim, os.X_OK)):
+            pins.report(
+                False,
+                "toolchain shims are missing",
+                f"expected {shim.relative_to(pins.ROOT)} -- run: make tools",
+            )
+            return 1
 
     try:
         abi = check_abi(gcc, pin, prefix)
@@ -236,8 +279,11 @@ def main(argv: list[str]) -> int:
     try:
         pin = dict(pins.load_pins()["toolchain"])
         name = str(pin["name"])
+        prefix = install_prefix(pin)
         stamp = pins.read_stamp(name)
         already_pinned = sorted(str(a["sha256"]) for a in pin["artifacts"])
+        if (prefix / "usr" / "bin").is_dir():
+            make_shims(prefix)
         if (
             stamp is not None
             and stamp.get("version") == pin["version"]
@@ -246,8 +292,8 @@ def main(argv: list[str]) -> int:
         ):
             return 0
 
-        prefix = install_prefix(pin)
         fetch_artifacts(pin, prefix)
+        make_shims(prefix)
         if not (prefix / LIBRARY_SUBDIR).is_dir():
             raise pins.PinError(f"no {LIBRARY_SUBDIR} in the extracted toolchain")
         pins.write_stamp(

@@ -46,7 +46,7 @@ def preflight(target: Target) -> list[str]:
         missing.append("the vendored seL4 tree (make deps)")
     if not (pins.ROOT / "third_party/tools/venv/bin/cmake").is_file():
         missing.append("the pinned host tools (make tools)")
-    if not any(pins.ROOT.glob("third_party/toolchain/*/usr/bin/riscv64-unknown-elf-gcc")):
+    if not any(pins.ROOT.glob("third_party/toolchain/*/shims/riscv64-unknown-elf-gcc")):
         missing.append("the pinned RISC-V toolchain (make tools)")
     if shutil.which("qemu-system-riscv64") is None:
         # QEMU is the one piece taken from the host (specs/build.md's host

@@ -189,8 +189,11 @@ system-wide and no root is required.
 | `dtc` | `manifests/toolchain.toml` (kernel.org release tarball, sha256 from the project's signed `sha256sums.asc`) | `third_party/tools/bin/` |
 
 `make tools` fetches all of it; `make tools-check` re-verifies every pin
-offline. `. scripts/env.sh` puts them on `PATH` (and the toolchain's own runtime
-libraries on `LD_LIBRARY_PATH`).
+offline. `. scripts/env.sh` puts them on `PATH` — the toolchain through
+`shims/` wrappers that give each tool its bundled runtime libraries for that
+process only, never via an exported `LD_LIBRARY_PATH` (those Debian library
+builds must not leak into host processes: qemu loading the toolchain's
+`libgmp` hung a configure on Fedora).
 
 Two details worth knowing:
 
