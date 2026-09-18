@@ -51,10 +51,23 @@ constexpr uint32_t event_value(uint64_t word) noexcept
 
 /* The types a reader switches on (Linux's input-event codes, which
  * virtio-input carries unchanged): a key press or release is EV_KEY with
- * the key's code and 1 or 0 as the value; EV_SYN ends one moment's worth of
+ * the key's code and 1 or 0 as the value; pointer motion is EV_REL (a
+ * delta -- the mouse) or EV_ABS (a position -- the tablet); a pointer's
+ * button is EV_KEY with a BTN_* code; EV_SYN ends one moment's worth of
  * events. */
 constexpr uint16_t kEvSyn = 0;
 constexpr uint16_t kEvKey = 1;
+constexpr uint16_t kEvRel = 2;
+constexpr uint16_t kEvAbs = 3;
+
+/* The codes within them. X and Y are the same numbers under EV_REL and
+ * EV_ABS; the buttons are EV_KEY codes. */
+constexpr uint16_t kAxisX = 0;
+constexpr uint16_t kAxisY = 1;
+constexpr uint16_t kRelWheel = 8;
+constexpr uint16_t kBtnLeft = 0x110;
+constexpr uint16_t kBtnRight = 0x111;
+constexpr uint16_t kBtnMiddle = 0x112;
 
 }  // namespace aegir::input
 

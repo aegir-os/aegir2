@@ -93,6 +93,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-drive file=disk.img,if=none,format=raw,id=hd",
             "-device virtio-blk-device,drive=hd",
             "-device virtio-keyboard-device",
+            # The pointers: a relative mouse and an absolute tablet. Both are
+            # virtio id 18, like the keyboard -- the config space's EV_BITS
+            # says which is which (the registry's evtype key), and the ids
+            # name them for QMP's input-send-event, which is how acceptance
+            # moves and clicks them from outside.
+            "-device virtio-mouse-device,id=mouse0",
+            "-device virtio-tablet-device,id=tablet0",
             "-device virtio-gpu-device,id=gpu0",
             "-device virtio-gpu-device,id=gpu1",
             "-qmp unix:qmp.sock,server,nowait",

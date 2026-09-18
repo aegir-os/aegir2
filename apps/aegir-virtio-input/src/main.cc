@@ -1,11 +1,14 @@
 /*
- * aegir-virtio-input: the driver for the keyboard.
+ * aegir-virtio-input: the driver for the input family.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
  * virtio-input (device id 18), bound from the registry row that names this
- * binary (specs/services.md). The device has two queues, and that is what
+ * binary (specs/services.md). The id is the family: keyboard, mouse and
+ * tablet all answer to 18, and which member a transport is lives in the
+ * config space's EV_BITS -- the probe reads it to choose the instance name
+ * (kbd/mouse/tablet.virtioN), and the driver reads it to announce itself. The device has two queues, and that is what
  * the Queue object's per-instance state was for: the *event* queue is
  * primed with one device-writable buffer per descriptor -- the device only
  * ever writes the eight-byte event (virtio 1.x, 5.8.6.1) into a posted
@@ -31,6 +34,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/virtio/handshake.h>
+#include <aegir/virtio/input.h>
 #include <aegir/virtio/mmio.h>
 #include <aegir/virtio/queue.h>
 #include <sel4/sel4.h>
@@ -55,11 +59,6 @@ constexpr uint32_t kStatusQueueOffset = aegir::virtio::kQueueBytes;
 constexpr uint32_t kBuffersOffset = 2 * aegir::virtio::kQueueBytes;
 constexpr uint32_t kEventBytes = 8;
 constexpr uint32_t kBufferStride = 16;
-
-/* The device config space's selectors (virtio 1.x, 5.8.4): select chooses
- * what the 128 bytes at +8 mean, subsel the page of it, and the byte at +2
- * is how much of it is real. ID_NAME is the device's own name for itself. */
-constexpr uint32_t kCfgSelectName = 0x01;
 
 }  // namespace
 
@@ -118,22 +117,62 @@ int main(int argc, char *argv[])
 
     /* Who this device is, said by the device: the config space's ID_NAME,
      * read a byte at a time because that is the granularity the selectors
-     * work at (virtio 1.x, 5.8.4). */
+     * work at (virtio 1.x, 5.8.4). The selector layout is aegir/virtio/input.h. */
+    volatile uint8_t *const config =
+        reinterpret_cast<volatile uint8_t *>(device_address + aegir::virtio::kConfig);
     {
-        volatile uint8_t *config =
-            reinterpret_cast<volatile uint8_t *>(device_address + aegir::virtio::kConfig);
-        config[0] = kCfgSelectName;
-        config[1] = 0;
-        uint32_t const size = config[2];
+        namespace inputcfg = aegir::virtio::input;
+        config[inputcfg::kRegSelect] = inputcfg::kSelectIdName;
+        config[inputcfg::kRegSubsel] = 0;
+        uint32_t const size = config[inputcfg::kRegSize];
         aegir::debug_write("      the device says it is \"");
         for (uint32_t i = 0; i < size && i < 64; ++i) {
-            char c = static_cast<char>(config[8 + i]);
+            char c = static_cast<char>(config[inputcfg::kRegData + i]);
             if (c == '\0') {
                 break; /* the size counts the padding's NULs too */
             }
             aegir::debug_write(&c, 1);
         }
         aegir::debug_write("\"\n");
+    }
+
+    /* And which member of the family it is: the id is 18 for all of them, so
+     * the kind is read from EV_BITS -- a type whose bitmap comes back empty
+     * is a type the device never raises. ABS settles it (the tablet), then
+     * REL (the mouse), and what is left is the keyboard. The probe makes the
+     * same read to pick this process's name (the registry's `evtype` key) --
+     * the two must agree. */
+    {
+        namespace inputcfg = aegir::virtio::input;
+        auto raises = [&](uint16_t type) noexcept {
+            config[inputcfg::kRegSelect] = inputcfg::kSelectEvBits;
+            config[inputcfg::kRegSubsel] = static_cast<uint8_t>(type);
+            return config[inputcfg::kRegSize] != 0;
+        };
+        auto abs_axis = [&](uint16_t axis, uint32_t &low, uint32_t &high) noexcept {
+            config[inputcfg::kRegSelect] = inputcfg::kSelectAbsInfo;
+            config[inputcfg::kRegSubsel] = static_cast<uint8_t>(axis);
+            low = inputcfg::le32(config, inputcfg::kRegData + inputcfg::kAbsMin);
+            high = inputcfg::le32(config, inputcfg::kRegData + inputcfg::kAbsMax);
+        };
+        if (raises(aegir::input::kEvAbs)) {
+            uint32_t x_low = 0, x_high = 0, y_low = 0, y_high = 0;
+            abs_axis(aegir::input::kAxisX, x_low, x_high);
+            abs_axis(aegir::input::kAxisY, y_low, y_high);
+            aegir::debug_write("      my kind: an absolute pointer -- x ");
+            aegir::debug_write_unsigned(x_low);
+            aegir::debug_write("..");
+            aegir::debug_write_unsigned(x_high);
+            aegir::debug_write(", y ");
+            aegir::debug_write_unsigned(y_low);
+            aegir::debug_write("..");
+            aegir::debug_write_unsigned(y_high);
+            aegir::debug_write("\n");
+        } else if (raises(aegir::input::kEvRel)) {
+            write_line("my kind", "a relative pointer -- a mouse");
+        } else {
+            write_line("my kind", "a keyboard");
+        }
     }
 
     /* The two queues, before DRIVER_OK: the event queue is index 0, the
