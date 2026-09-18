@@ -1067,13 +1067,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* The displays, discovered the same way: two heads of one registry row,
-     * and the first port whose window *is* the answer (specs/services.md).
-     * What the guest can check is the protocol's part -- geometry, the glass's
-     * size from EDID, a mode applied and one refused; what the *screen* shows
-     * is read from outside (scripts/run_target.py): the driver's marker lines
-     * cue the runner's screendumps, and its keypresses pace the mode changes
-     * so each dump lands between them. */
+    /* The displays, discovered the same way: two heads of one registry row.
+     * gpu0 is the console's screen now (specs/console.md) -- its backdrop
+     * went up over the driver's bands at boot -- so the port protocol's
+     * poking happens on gpu1, the parked head: geometry, the glass's size
+     * from EDID, a mode applied and one refused. What the *screens* show is
+     * read from outside (scripts/run_target.py): the cue lines pace the
+     * runner's screendumps, and gpu0's dumps assert the console's backdrop
+     * never moved. */
     {
         aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
             aegir::registry::kPortName, aegir::registry::kPortNameLength);
@@ -1103,24 +1104,24 @@ int main(int argc, char *argv[])
             ok = wait_key(kbd, kKeyB, 1);
         }
         if (ok) {
-            /* One head shrinks; the other must not move. */
-            ok = set_mode(gpu0, 1024, 768) && info_is(gpu1, 1280, 800, 320, 200);
+            /* The parked head shrinks; the console's screen must not move. */
+            ok = set_mode(gpu1, 1024, 768) && info_is(gpu0, 1280, 800, 320, 200);
         }
         if (!ok) {
-            write("  test: FAIL set_mode 1024x768 was not applied, or the other head moved\n");
+            write("  test: FAIL set_mode 1024x768 was not applied, or the console's head moved\n");
             ++failed;
         } else {
-            write("  test: gpu.virtio0 took 1024x768; gpu.virtio1 stands at 1280x800\n");
+            write("  test: gpu.virtio1 took 1024x768; gpu.virtio0 stands at 1280x800\n");
         }
         if (ok) {
             /* 'c' says the shrunken head's dump is done; then 4K, the window's
              * whole reason for being 32 MiB. */
             aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
-            ok = wait_key(kbd, kKeyC, 1) && set_mode(gpu0, 3840, 2160);
+            ok = wait_key(kbd, kKeyC, 1) && set_mode(gpu1, 3840, 2160);
         }
         /* A mode the window cannot hold is refused, and the screen keeps what
          * it had: 8192x8192 at 32 bits a pixel is 256 MiB, eight windows. */
-        bool const refused = ok && !set_mode(gpu0, 8192, 8192) && info_is(gpu0, 3840, 2160, 320, 200);
+        bool const refused = ok && !set_mode(gpu1, 8192, 8192) && info_is(gpu1, 3840, 2160, 320, 200);
         if (!ok) {
             write("  test: FAIL set_mode 3840x2160 was not applied\n");
             ++failed;
@@ -1128,7 +1129,7 @@ int main(int argc, char *argv[])
             write("  test: FAIL a mode past the window was not refused cleanly\n");
             ++failed;
         } else {
-            write("  test: gpu.virtio0 took 3840x2160, and 8192x8192 was refused\n");
+            write("  test: gpu.virtio1 took 3840x2160, and 8192x8192 was refused\n");
         }
     }
 

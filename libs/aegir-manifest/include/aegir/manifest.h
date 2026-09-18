@@ -80,6 +80,12 @@ struct Entry {
      *  serves the archive as the Initrd: volume (specs/vfs.md). The same
      *  mapping a spawning service gets, without the spawn authority. */
     bool initrd;
+    /* The service maps frames into its own address space -- the console's
+     * pixel slices are the case (specs/console.md) -- so it is trusted with
+     * its own VSpace root and a window of free addresses, the grant a
+     * spawner gets without the spawn authority (aegir/spawn's
+     * give_vspace). */
+    bool maps;
     uint32_t line; /* the line the section started on, for messages */
 };
 

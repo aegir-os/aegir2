@@ -344,7 +344,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         print(f"    runner: FAIL the dump of {device}: {reading}", flush=True)
                         failed = True
                         continue
-                    if not bands_at_posts(width, height, pixels):
+                    if device in step.bands and not bands_at_posts(width, height, pixels):
                         print(
                             f"    runner: FAIL {device} shows {width}x{height} "
                             "without the bands at their posts",
@@ -352,7 +352,22 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         )
                         failed = True
                         continue
-                    print(f"    runner: {device} shows {width}x{height}, bands true", flush=True)
+                    for at in step.pixels:
+                        named, x, y, r, g, b = at
+                        if named != device:
+                            continue
+                        offset = (y * width + x) * 3
+                        shown = pixels[offset], pixels[offset + 1], pixels[offset + 2]
+                        if shown != (r, g, b):
+                            print(
+                                f"    runner: FAIL {device} at ({x},{y}) shows "
+                                f"{shown}, expected ({r},{g},{b})",
+                                flush=True,
+                            )
+                            failed = True
+                    if failed:
+                        continue
+                    print(f"    runner: {device} shows {width}x{height}, true to its checks", flush=True)
                     step_dims.append((width, height))
                 if step.dumps and not failed:
                     if sorted(step_dims) != sorted(step.expect):

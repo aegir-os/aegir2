@@ -126,6 +126,56 @@ void *Scratch::map(seL4_CPtr frame) noexcept
     return reinterpret_cast<void *>(address);
 }
 
+void *Scratch::map_large(seL4_CPtr frame) noexcept
+{
+    if (frame == 0) {
+        return nullptr;
+    }
+    /* A mega page lands at a fresh 2 MiB slot: whatever 4 KiB mappings the
+     * window already holds stay below it, and the cursor rounds up past
+     * them. */
+    next_ = (next_ + kLargePage - 1) & ~(kLargePage - 1);
+    while (next_ + kLargePage > limit_) {
+        if (!may_grow_) {
+            return nullptr;
+        }
+        limit_ += kLargePage;
+    }
+    uintptr_t address = next_;
+    /* One Page_Map serves every frame size on this architecture: the kernel
+     * reads the level off the frame's own size bits and only asks that the
+     * address be aligned to it (sel4_client.h's RISCVPageMap). */
+    seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                           seL4_RISCV_Default_VMAttributes);
+    /* The same FailedLookup idiom as map(): the window's tables are created
+     * as the kernel asks for them -- fewer of them here, because a mega page
+     * is a leaf one level up. */
+    unsigned attempts = 0;
+    while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
+        ++attempts;
+        seL4_Error created = seL4_NoError;
+        Account self{"scratch", 0, 0, 0};
+        seL4_CPtr const table = tables_->alloc_object(seL4_RISCV_PageTableObject,
+                                                      seL4_PageTableBits, self, &created);
+        if (table == 0) {
+            return nullptr;
+        }
+        if (seL4_RISCV_PageTable_Map(table, root_, address,
+                                     seL4_RISCV_Default_VMAttributes) != seL4_NoError) {
+            return nullptr;
+        }
+        error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                    seL4_RISCV_Default_VMAttributes);
+    }
+    if (error != seL4_NoError) {
+        last_error_ = error;
+        return nullptr;
+    }
+    next_ += kLargePage;
+    mapped_bytes_ += kLargePage;
+    return reinterpret_cast<void *>(address);
+}
+
 void Scratch::unmap(seL4_CPtr frame) noexcept
 {
     if (frame == 0) {

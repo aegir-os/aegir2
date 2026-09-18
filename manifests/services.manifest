@@ -173,6 +173,23 @@ needs     = log.main, vfs.namespace
 initrd    = true
 restart   = always
 
+# The console owns the display and the input devices, exclusively
+# (specs/console.md): what every other process sees of the screen and the
+# keyboard is what it serves. It maps the gpu's pixel window itself --
+# `maps` is the spawner's vspace grant without the spawn authority -- so
+# its memory is what page tables and, once the window protocol lands, the
+# clients' pixel slices are retyped from: a full-screen 32-bit backdrop is
+# 4 MiB at the preferred mode, and the slices grow from there.
+[console]
+binary    = aegir-console
+authority = system
+account   = system
+owns      = console.gui
+needs     = log.main, devmgr.registry
+maps      = true
+memory_kib = 8192
+restart   = always
+
 # auth owns the user database and the login port (specs/auth.md): it reads
 # the packed table from Initrd: through the namespace -- the first system
 # consumer of the VFS -- and serves auth.login from it. It is also a

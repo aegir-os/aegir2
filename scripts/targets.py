@@ -26,8 +26,10 @@ class QmpStep:
     `times` (0: every match -- a cue every session prints wants an answer
     every time, however many logins the test bed happens to do) --
     action runs -- screendump each QEMU device in `dumps` and check the PPMs
-    (dimensions are the multiset `expect`, and the driver's band pattern must
-    be at its posts), send the input `events` (QMP input-send-event dicts:
+    (dimensions are the multiset `expect`; each device named in `bands` must
+    show the driver's band pattern at its posts, and each `pixels` entry --
+    device, x, y, r, g, b -- names one pixel one dumped device must show),
+    send the input `events` (QMP input-send-event dicts:
     pointer moves and clicks -- no device is named, because with no console
     bound the events fall through to the unbound input handlers, and ours
     are), then press the key `press`, if any."""
@@ -37,6 +39,8 @@ class QmpStep:
     press: str | None = None
     dumps: tuple[str, ...] = ()
     expect: tuple[tuple[int, int], ...] = ()
+    bands: tuple[str, ...] = ()
+    pixels: tuple[tuple[str, int, int, int, int, int], ...] = ()
     events: tuple[dict, ...] = ()
 
 
@@ -162,26 +166,39 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # boot is still spawning, before the test could be listening, and
             # a key pressed then would be consumed by the keyboard check's
             # own wait. The screens have been up since the markers; what the
-            # cue paces is the reading of them.
+            # cue paces is the reading of them. gpu0 is the console's screen
+            # (specs/console.md) -- the Workbench-blue backdrop, painted over
+            # the driver's bands at boot; gpu1 is the parked head the driver
+            # protocol is exercised on, bands and all.
             QmpStep(
                 r"test: both heads answered -- the screens, please",
                 dumps=("gpu0", "gpu1"),
                 expect=((1280, 800), (1280, 800)),
+                bands=("gpu1",),
+                pixels=(
+                    ("gpu0", 10, 10, 0, 85, 170),
+                    ("gpu0", 1279, 799, 0, 85, 170),
+                ),
                 press="b",
             ),
-            # One head shrank; the other did not move.
+            # The parked head shrinks; the console's screen does not move.
             QmpStep(
                 r"gpu\.virtio\d: scanout 1024x768",
                 dumps=("gpu0", "gpu1"),
                 expect=((1024, 768), (1280, 800)),
+                bands=("gpu1",),
+                pixels=(("gpu0", 10, 10, 0, 85, 170),),
                 press="c",
             ),
-            # One head is 4K now: the window's whole reason for being 32 MiB.
-            # The other head never moved from the preferred mode.
+            # The parked head is 4K now: the window's whole reason for being
+            # 32 MiB. The console's screen never moved from the preferred
+            # mode, and its backdrop stands.
             QmpStep(
                 r"gpu\.virtio\d: scanout 3840x2160",
                 dumps=("gpu0", "gpu1"),
                 expect=((3840, 2160), (1280, 800)),
+                bands=("gpu1",),
+                pixels=(("gpu0", 10, 10, 0, 85, 170),),
             ),
         ),
     )

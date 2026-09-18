@@ -54,6 +54,14 @@ public:
      *  nullptr when the window is exhausted or the mapping is refused. */
     void *map(seL4_CPtr frame) noexcept;
 
+    /** The mega-page form: `frame` is a 2 MiB frame (seL4_RISCV_Mega_Page),
+     *  mapped at the next 2 MiB-aligned point of the window -- a mega page's
+     *  mapping needs a fresh 2 MiB slot, not a page table already carrying
+     *  4 KiB leaves (aegir/spawn's window placement says the same of the
+     *  child's side). A scanout window is a handful of these rather than
+     *  thousands of 4 KiB maps (specs/services.md). */
+    void *map_large(seL4_CPtr frame) noexcept;
+
     /** The kernel's answer to the last map that failed, because "the mapping
      *  was refused" has several causes and they mean different things. */
     uint64_t last_error() const noexcept { return static_cast<uint64_t>(last_error_); }

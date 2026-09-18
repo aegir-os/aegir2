@@ -205,6 +205,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool memory_seen = false;
     bool delegate_seen = false;
     bool initrd_seen = false;
+    bool maps_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
 
@@ -252,6 +253,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             memory_seen = false;
             delegate_seen = false;
             initrd_seen = false;
+            maps_seen = false;
             return true;
         }
 
@@ -338,6 +340,26 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             }
             failure_line = number;
             failure = "initrd is either `true` or `false`";
+            return false;
+        }
+
+        if (equals(key, "maps")) {
+            if (maps_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            maps_seen = true;
+            if (equals(value, "true")) {
+                current->maps = true;
+                return true;
+            }
+            if (equals(value, "false")) {
+                current->maps = false;
+                return true;
+            }
+            failure_line = number;
+            failure = "maps is either `true` or `false`";
             return false;
         }
 

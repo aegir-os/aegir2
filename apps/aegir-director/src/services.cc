@@ -237,19 +237,24 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             /* As many pages as were granted, retyped one after another. The allocator hands
              * out consecutive slots (alloc_slot bumps a cursor), which is what lets the
              * spawner map them as `memory_frame + i`. The queue needs two: the used ring
-             * sits a page after the rest of it. */
-            uint32_t const pages = (1u << memory_bits) / 4096u;
-            seL4_Error page_error = seL4_NoError;
-            for (uint32_t i = 0; i < pages; ++i) {
-                seL4_CPtr const frame = allocator_.carve_page(memory_cap, account, &page_error);
-                if (frame == 0) {
-                    boot.problem = "the memory a service asked for could not be turned into pages";
-                    return;
+             * sits a page after the rest of it. A `maps` service skips this: it holds
+             * its own VSpace root, so what it is handed is the untyped itself (below),
+             * whole -- it retypes and maps its own, and a region that had been split
+             * could not be handed over (RevokeFirst, the note above). */
+            if (!entry.maps) {
+                uint32_t const pages = (1u << memory_bits) / 4096u;
+                seL4_Error page_error = seL4_NoError;
+                for (uint32_t i = 0; i < pages; ++i) {
+                    seL4_CPtr const frame = allocator_.carve_page(memory_cap, account, &page_error);
+                    if (frame == 0) {
+                        boot.problem = "the memory a service asked for could not be turned into pages";
+                        return;
+                    }
+                    if (i == 0) {
+                        memory_frame = frame;
+                    }
                 }
-                 if (i == 0) {
-                     memory_frame = frame;
-                 }
-             }
+            }
          }
          /* A service that spawns is delegated what spawning takes, whoever it is
           * (specs/services.md, specs/authority.md): an untyped its children's
@@ -293,7 +298,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
          }
          if ((entry.device_manager && extra_count > 0) || memory_cap != 0 || spawner) {
              uint32_t added = (entry.device_manager && extra_count > 0 ? extra_count : 0) +
-                              (spawner ? 2 : 0);
+                              (spawner ? 2 : 0) +
+                              (entry.maps && !spawner && memory_cap != 0 ? 1 : 0);
             /* A spawning service also gets an *unbadged* copy of every port its
              * children need to call: a badged endpoint cap cannot be minted again
              * (deriveCap refuses it -- that is what "a port could not be installed"
@@ -356,6 +362,17 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                 merged[at] = spawn::PortGrant{kPoolGrant, sizeof(kPoolGrant) - 1,
                                               bootstrap::kSlotFirstDeclared + at,
                                               spawn_pool, seL4_AllRights, 0, 0};
+                ++at;
+            }
+            /* A `maps` service's memory goes the same way, by name and whole:
+             * it retypes its own page tables (and, for the console, its
+             * clients' pixel slices) out of it, and maps them through the
+             * VSpace root it was trusted with (specs/console.md). */
+            if (!spawner && entry.maps && memory_cap != 0) {
+                static char const kUntypedGrant[] = "untyped";
+                merged[at] = spawn::PortGrant{kUntypedGrant, sizeof(kUntypedGrant) - 1,
+                                              bootstrap::kSlotFirstDeclared + at,
+                                              memory_cap, seL4_AllRights, 0, memory_bits};
                 ++at;
             }
             if (spawn_needs > 0) {
@@ -520,6 +537,12 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             }
             request.device_grants = device_grants;
             request.device_grant_count = device_grant_count;
+        }
+        /* A service that maps frames into its own address space -- the
+         * console's pixel slices (specs/console.md) -- is trusted with the
+         * same VSpace root a spawner gets, without the binaries. */
+        if (entry.maps) {
+            request.give_vspace = true;
         }
         /* A service that reads the boot image itself gets the same read-only
          * mapping a spawner does, without the spawn authority: the archive
