@@ -19,6 +19,22 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class QmpStep:
+    """One outside-in action on QEMU, cued by the console. A guest cannot see
+    its own screen, so the screen is read from here: `trigger` is a regex
+    matched against console lines, and once it has matched `times` times the
+    action runs -- screendump each QEMU device in `dumps` and check the PPMs
+    (dimensions are the multiset `expect`, and the driver's band pattern must
+    be at its posts), then press the key `press`, if any."""
+
+    trigger: str
+    times: int = 1
+    press: str | None = None
+    dumps: tuple[str, ...] = ()
+    expect: tuple[tuple[int, int], ...] = ()
+
+
+@dataclass(frozen=True)
 class Target:
     name: str
     description: str
@@ -39,12 +55,11 @@ class Target:
     # own default repeated because passing anything replaces that default rather
     # than adding to it.
     qemu_args: tuple[str, ...] = field(default_factory=lambda: ("-bios none",))
-    # The acceptance check's finger, when a target's test waits for a key: the
-    # console line that is the cue, the key pressed through QEMU's QMP socket,
-    # and the socket's name (relative to the build directory, where QEMU runs).
-    # None for targets that never wait for input.
-    key_trigger: str | None = None
-    key: str | None = None
+    # The acceptance check's outside-in actions, cued by console lines and
+    # played against QEMU's QMP socket (its name is relative to the build
+    # directory, where QEMU runs). Empty for targets that never wait for
+    # input and have no screen to read.
+    qmp_steps: tuple[QmpStep, ...] = ()
     qmp_socket: str | None = None
 
 
@@ -82,9 +97,42 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-device virtio-gpu-device,id=gpu1",
             "-qmp unix:qmp.sock,server,nowait",
         ),
-        key_trigger="test: kbd.virtio0 opened -- a key, please",
-        key="a",
         qmp_socket="qmp.sock",
+        # The script the runner plays against the QMP socket, in order. The
+        # keyboard's cue is the test bed saying it waits; the screens' cues
+        # are the gpu drivers' marker lines, two heads naming themselves.
+        # After each screen moment the runner dumps both heads (the dumps are
+        # which-console-is-which agnostic: the *set* of dimensions is what is
+        # checked) and presses the key that paces the guest's next step.
+        qmp_steps=(
+            QmpStep(r"test: kbd\.virtio0 opened -- a key, please", press="a"),
+            # Both heads up at the display's preferred mode. The cue is the
+            # test bed's, not the drivers': their marker lines pass while the
+            # boot is still spawning, before the test could be listening, and
+            # a key pressed then would be consumed by the keyboard check's
+            # own wait. The screens have been up since the markers; what the
+            # cue paces is the reading of them.
+            QmpStep(
+                r"test: both heads answered -- the screens, please",
+                dumps=("gpu0", "gpu1"),
+                expect=((1280, 800), (1280, 800)),
+                press="b",
+            ),
+            # One head shrank; the other did not move.
+            QmpStep(
+                r"gpu\.virtio\d: scanout 1024x768",
+                dumps=("gpu0", "gpu1"),
+                expect=((1024, 768), (1280, 800)),
+                press="c",
+            ),
+            # One head is 4K now: the window's whole reason for being 32 MiB.
+            # The other head never moved from the preferred mode.
+            QmpStep(
+                r"gpu\.virtio\d: scanout 3840x2160",
+                dumps=("gpu0", "gpu1"),
+                expect=((3840, 2160), (1280, 800)),
+            ),
+        ),
     )
 
 

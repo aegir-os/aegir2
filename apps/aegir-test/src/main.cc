@@ -22,6 +22,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/entropy.h>
+#include <aegir/framebuffer.h>
 #include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
@@ -112,8 +113,10 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
  * skipped. `next` holds its reply until there is one, so the wait is the
  * kernel's, not a spin. */
 constexpr uint16_t kKeyA = 30; /* Linux's KEY_A, which virtio-input carries unchanged */
+constexpr uint16_t kKeyB = 48;
+constexpr uint16_t kKeyC = 46;
 
-bool wait_key(aegir::ipc::Consumer const &kbd, uint32_t value) noexcept
+bool wait_key(aegir::ipc::Consumer const &kbd, uint16_t code, uint32_t value) noexcept
 {
     for (;;) {
         aegir::ipc::Reply const event = kbd.call(aegir::input::kMethodNext, 0);
@@ -121,11 +124,36 @@ bool wait_key(aegir::ipc::Consumer const &kbd, uint32_t value) noexcept
             return false;
         }
         if (aegir::input::event_type(event.word) == aegir::input::kEvKey &&
-            aegir::input::event_code(event.word) == kKeyA &&
+            aegir::input::event_code(event.word) == code &&
             aegir::input::event_value(event.word) == value) {
             return true;
         }
     }
+}
+
+/* The framebuffer port's two questions (aegir/framebuffer.h): info answered
+ * with exactly this geometry, stride, format and glass size, and set_mode
+ * applied (true) or refused (false, the two-zero answer). */
+bool info_is(aegir::ipc::Consumer const &gpu, uint64_t width, uint64_t height,
+             uint64_t phys_width_mm, uint64_t phys_height_mm) noexcept
+{
+    uint64_t in[aegir::framebuffer::kInfoWords];
+    aegir::ipc::WordsReply const answer =
+        gpu.call_words(aegir::framebuffer::kMethodInfo, nullptr, 0, in,
+                       aegir::framebuffer::kInfoWords);
+    return answer.error == 0 && answer.count == aegir::framebuffer::kInfoWords &&
+           in[0] == width && in[1] == height && in[2] == width * 4 &&
+           in[3] == aegir::framebuffer::kFormatB8G8R8X8 && in[4] == phys_width_mm &&
+           in[5] == phys_height_mm;
+}
+
+bool set_mode(aegir::ipc::Consumer const &gpu, uint64_t width, uint64_t height) noexcept
+{
+    uint64_t const out[] = {width, height};
+    uint64_t in[2];
+    aegir::ipc::WordsReply const answer =
+        gpu.call_words(aegir::framebuffer::kMethodSetMode, out, 2, in, 2);
+    return answer.error == 0 && answer.count == 2 && in[0] == width && in[1] == height;
 }
 
 /* Walk the registry to the bound row named `name` and open it: the port the
@@ -998,13 +1026,78 @@ int main(int argc, char *argv[])
         }
         if (ok) {
             write("  test: kbd.virtio0 opened -- a key, please\n");
-            ok = wait_key(kbd, 1) && wait_key(kbd, 0);
+            ok = wait_key(kbd, kKeyA, 1) && wait_key(kbd, kKeyA, 0);
         }
         if (!ok) {
             write("  test: FAIL the keyboard did not deliver 'a', down and up\n");
             ++failed;
         } else {
             write("  test: kbd.virtio0's held reply delivered 'a', down and up\n");
+        }
+    }
+
+    /* The displays, discovered the same way: two heads of one registry row,
+     * and the first port whose window *is* the answer (specs/services.md).
+     * What the guest can check is the protocol's part -- geometry, the glass's
+     * size from EDID, a mode applied and one refused; what the *screen* shows
+     * is read from outside (scripts/run_target.py): the driver's marker lines
+     * cue the runner's screendumps, and its keypresses pace the mode changes
+     * so each dump lands between them. */
+    {
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        seL4_CPtr const gpu0_slot = static_cast<seL4_CPtr>(first_free + 12);
+        seL4_CPtr const gpu1_slot = static_cast<seL4_CPtr>(first_free + 13);
+        bool ok = registry.valid() && open_bound(registry, "gpu.virtio0", 11, gpu0_slot) &&
+                  open_bound(registry, "gpu.virtio1", 11, gpu1_slot);
+        aegir::ipc::Consumer const gpu0(gpu0_slot);
+        aegir::ipc::Consumer const gpu1(gpu1_slot);
+        if (ok) {
+            ok = info_is(gpu0, 1280, 800, 320, 200) && info_is(gpu1, 1280, 800, 320, 200);
+        }
+        if (!ok) {
+            write("  test: FAIL the two heads did not both answer 1280x800, 320x200 mm\n");
+            ++failed;
+        } else {
+            write("  test: gpu.virtio0 and gpu.virtio1 both answer 1280x800, 320x200 mm\n");
+        }
+        if (ok) {
+            /* The keyboard's port is still open above. This line is the
+             * runner's cue to dump both heads at 1280x800 -- the drivers'
+             * own markers passed long before this service could say it was
+             * listening, so the cue is ours -- and its 'b' says the dumps
+             * are done. */
+            write("  test: both heads answered -- the screens, please\n");
+            aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
+            ok = wait_key(kbd, kKeyB, 1);
+        }
+        if (ok) {
+            /* One head shrinks; the other must not move. */
+            ok = set_mode(gpu0, 1024, 768) && info_is(gpu1, 1280, 800, 320, 200);
+        }
+        if (!ok) {
+            write("  test: FAIL set_mode 1024x768 was not applied, or the other head moved\n");
+            ++failed;
+        } else {
+            write("  test: gpu.virtio0 took 1024x768; gpu.virtio1 stands at 1280x800\n");
+        }
+        if (ok) {
+            /* 'c' says the shrunken head's dump is done; then 4K, the window's
+             * whole reason for being 32 MiB. */
+            aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
+            ok = wait_key(kbd, kKeyC, 1) && set_mode(gpu0, 3840, 2160);
+        }
+        /* A mode the window cannot hold is refused, and the screen keeps what
+         * it had: 8192x8192 at 32 bits a pixel is 256 MiB, eight windows. */
+        bool const refused = ok && !set_mode(gpu0, 8192, 8192) && info_is(gpu0, 3840, 2160, 320, 200);
+        if (!ok) {
+            write("  test: FAIL set_mode 3840x2160 was not applied\n");
+            ++failed;
+        } else if (!refused) {
+            write("  test: FAIL a mode past the window was not refused cleanly\n");
+            ++failed;
+        } else {
+            write("  test: gpu.virtio0 took 3840x2160, and 8192x8192 was refused\n");
         }
     }
 

@@ -88,14 +88,14 @@ def record_flags(build_dir: Path, flags: str) -> None:
     (build_dir / ".aegir-configure").write_text(flags, encoding="utf-8")
 
 
-def send_key(socket_path: Path, key: str) -> None:
-    """One keypress through QEMU's QMP socket: the acceptance check's finger.
+def qmp_command(socket_path: Path, command: dict) -> dict:
+    """One command through QEMU's QMP socket, answered as a dict.
 
     The conversation is newline-terminated JSON each way: the server's
     greeting, capabilities negotiation, then the command itself.
     """
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(10)
+    client.settimeout(30)
     client.connect(str(socket_path))
     try:
         stream = client.makefile("rw", encoding="utf-8", newline="\n")
@@ -103,20 +103,79 @@ def send_key(socket_path: Path, key: str) -> None:
         stream.write(json.dumps({"execute": "qmp_capabilities"}) + "\n")
         stream.flush()
         stream.readline()
-        stream.write(
-            json.dumps(
-                {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": key}]}}
-            )
-            + "\n"
-        )
+        stream.write(json.dumps(command) + "\n")
         stream.flush()
-        stream.readline()
+        return json.loads(stream.readline())
     finally:
         client.close()
 
 
-def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, str]:
-    """Boot the image, streaming the console until the marker appears."""
+def send_key(socket_path: Path, key: str) -> None:
+    """One keypress through QEMU's QMP socket: the acceptance check's finger."""
+    qmp_command(
+        socket_path,
+        {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": key}]}},
+    )
+
+
+def screen_dump(socket_path: Path, device: str, filename: str) -> str | None:
+    """One console's screen, as a PPM QEMU writes: the acceptance check's eyes.
+    None when the dump happened, QMP's error text when it did not."""
+    answer = qmp_command(
+        socket_path,
+        {"execute": "screendump", "arguments": {"filename": filename, "device": device}},
+    )
+    if "error" in answer:
+        return str(answer["error"])
+    return None
+
+
+def read_ppm(path: Path) -> tuple[int, int, bytes]:
+    """A binary PPM as (width, height, rgb bytes). QEMU's screendump writes
+    exactly one shape: P6, decimal header, 255."""
+    data = path.read_bytes()
+    tokens: list[bytes] = []
+    at = 0
+    while len(tokens) < 4:
+        while data[at : at + 1].isspace():
+            at += 1
+        if data[at : at + 1] == b"#":  # a comment runs to end of line
+            while data[at : at + 1] != b"\n":
+                at += 1
+            continue
+        end = at
+        while not data[end : end + 1].isspace():
+            end += 1
+        tokens.append(data[at:end])
+        at = end
+    at += 1  # exactly one whitespace ends the header
+    magic, width, height, ceiling = tokens[0], int(tokens[1]), int(tokens[2]), int(tokens[3])
+    if magic != b"P6" or ceiling != 255:
+        raise ValueError(f"{path}: not the P6/255 PPM a screendump writes")
+    return width, height, data[at : at + width * height * 3]
+
+
+def bands_at_posts(width: int, height: int, pixels: bytes) -> bool:
+    """The driver's self-test pattern is three vertical bands, red, green and
+    blue -- so a third into the bands, mid-height, must be exactly those."""
+
+    def pixel(x: int, y: int) -> tuple[int, int, int]:
+        at = (y * width + x) * 3
+        return pixels[at], pixels[at + 1], pixels[at + 2]
+
+    return (
+        len(pixels) == width * height * 3
+        and pixel(width // 6, height // 2) == (255, 0, 0)
+        and pixel(width // 2, height // 2) == (0, 255, 0)
+        and pixel(5 * width // 6, height // 2) == (0, 0, 255)
+    )
+
+
+def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, bool, str]:
+    """Boot the image, streaming the console until the marker appears.
+
+    Answers (marker seen, an acceptance check failed, test summary): a failed
+    screen check is a failed run even when the marker arrived."""
     # The target's extra arguments belong to QEMU, not to the simulate script, so
     # they go through --extra-qemu-args as one string -- attached with `=` rather
     # than passed as a separate argument, because the value starts with `-bios`
@@ -163,12 +222,17 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     signal.signal(signal.SIGINT, _stop)
 
     seen = False
-    key_sent = False
+    failed = False
+    # The QMP script, in order: each step's trigger counts matches (two heads
+    # say the same line, so a step can want two), and fires once.
+    step_matches = [0] * len(target.qmp_steps)
+    step_done = [False] * len(target.qmp_steps)
+    step_dims: list[tuple[int, int]] = []
     summary = ""
     try:
         stream = process.stdout
         if stream is None:  # pragma: no cover - Popen above always pipes
-            return False, ""
+            return False, True, ""
         for line in stream:
             stripped = line.rstrip("\n")
             if stripped:
@@ -176,15 +240,59 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             match = TEST_SUMMARY.search(stripped)
             if match:
                 summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
-            if (
-                target.key_trigger is not None
-                and not key_sent
-                and target.key_trigger in stripped
-            ):
-                # The guest said it is waiting: press the key. Events persist
-                # in the driver's posted buffers, so the press is not a race.
-                key_sent = True
-                send_key(build_dir / str(target.qmp_socket), str(target.key))
+            for index, step in enumerate(target.qmp_steps):
+                if step_done[index] or re.search(step.trigger, stripped) is None:
+                    continue
+                step_matches[index] += 1
+                if step_matches[index] < step.times:
+                    continue
+                step_done[index] = True
+                socket_path = build_dir / str(target.qmp_socket)
+                # The screens first, then the key: the key paces the guest's
+                # next step, so everything this step checks must be read
+                # before the guest moves on.
+                for device in step.dumps:
+                    dump = f"dump-{device}-{index}.ppm"
+                    problem = screen_dump(socket_path, device, dump)
+                    if problem is not None:
+                        print(f"    runner: FAIL screendump of {device}: {problem}", flush=True)
+                        failed = True
+                        continue
+                    try:
+                        width, height, pixels = read_ppm(build_dir / dump)
+                    except (ValueError, OSError) as reading:
+                        print(f"    runner: FAIL the dump of {device}: {reading}", flush=True)
+                        failed = True
+                        continue
+                    if not bands_at_posts(width, height, pixels):
+                        print(
+                            f"    runner: FAIL {device} shows {width}x{height} "
+                            "without the bands at their posts",
+                            flush=True,
+                        )
+                        failed = True
+                        continue
+                    print(f"    runner: {device} shows {width}x{height}, bands true", flush=True)
+                    step_dims.append((width, height))
+                if step.dumps and not failed:
+                    if sorted(step_dims) != sorted(step.expect):
+                        print(
+                            f"    runner: FAIL the screens show {sorted(step_dims)}, "
+                            f"expected {sorted(step.expect)}",
+                            flush=True,
+                        )
+                        failed = True
+                    else:
+                        print(
+                            f"    runner: the screens are {sorted(step.expect)} -- as cued",
+                            flush=True,
+                        )
+                step_dims.clear()
+                if step.press is not None:
+                    # The guest said it is waiting: press the key. Events
+                    # persist in the driver's posted buffers, so the press is
+                    # not a race.
+                    send_key(socket_path, step.press)
             if target.marker in stripped:
                 seen = True
                 break
@@ -204,7 +312,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-    return seen, summary
+    return seen, failed, summary
 
 
 def main(argv: list[str]) -> int:
@@ -246,16 +354,18 @@ def main(argv: list[str]) -> int:
         return 0
 
     try:
-        seen, summary = boot_and_watch(target, build_dir, arguments.timeout)
+        seen, failed, summary = boot_and_watch(target, build_dir, arguments.timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         pins.report(False, f"{target.name} boot failed", str(exc))
         return 1
 
-    if not seen:
+    if not seen or failed:
         pins.report(
             False,
             f"{target.name} did not report success",
-            f"never saw {target.marker!r} within {arguments.timeout}s",
+            f"never saw {target.marker!r} within {arguments.timeout}s"
+            if not seen
+            else "an acceptance check failed (see the runner's lines above)",
         )
         return 1
     pins.report(True, f"{target.name} booted", summary or target.marker)
