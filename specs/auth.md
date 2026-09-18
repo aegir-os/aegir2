@@ -4,8 +4,8 @@ Status: first slice, sessions v1, homes, and session reclaim implemented
 (2026-09) — the database, the packer, the service, the login check, a login
 that starts a session under the user's badge, the home the session lands
 in, and the teardown that takes an exited session back. Elevation remains
-open; the input path is decided (the registry's `open`, at session distance,
-below).
+open; the input path landed with the pointer devices (2026-09) -- the
+registry's `open`, at session distance, below.
 
 `auth` owns two things: the record of who the users are, and the port that
 answers "is this them" — `auth.login` (boot-set row 7, `specs/services.md`).

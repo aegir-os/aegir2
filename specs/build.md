@@ -122,8 +122,13 @@ kernel's toolchain file and user targets inherit its flags.
 - The toolchain needs its own runtime libraries: Debian's `cc1` links
   `libisl`/`libgmp`/`libmpfr`/`libmpc` shared, and a Fedora host has no
   `libisl.so.23` at all. Those packages are pinned and extracted alongside the
-  compiler, and `scripts/env.sh` puts them on `LD_LIBRARY_PATH`, so the
-  toolchain does not depend on the host's idea of those libraries.
+  compiler, and `scripts/fetch_toolchain.py` writes per-process shims
+  (`third_party/toolchain/shims/`, on `PATH` via `scripts/env.sh`) that put the
+  libraries on the compiler's own `LD_LIBRARY_PATH` — never exported, so the
+  host's qemu is not fed Debian's `libgmp`. CMake caches the absolute compiler
+  path at configure time: when the shims move or appear (a fresh machine, a
+  re-fetch), wipe `out/<target>` and let the build reconfigure, or it keeps
+  invoking the path it remembered.
 - C library: **not** from the toolchain. Userland uses the vendored
   `projects/musllibc` (built by the same build) plus `projects/sel4runtime` for
   the entry point. The toolchain's own newlib/picolibc payload is irrelevant:

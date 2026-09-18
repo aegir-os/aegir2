@@ -891,7 +891,7 @@ and answers "who owns this device?" for everyone else.
   not the drivers' markers -- the markers pass while the boot is still
   spawning, and a key pressed then is consumed by the keyboard check's own
   wait before the display check is listening.
-- **decided**: the third driver's kind is a family -- pointer devices join
+- **done**: the third driver's kind is a family -- pointer devices join
   the keyboard, and the registry learns to tell them apart. virtio-mouse and
   virtio-tablet answer to the same virtio id 18 as the keyboard, so the probe
   that re-points a binding at the row the id names cannot place them: the id
@@ -906,11 +906,16 @@ and answers "who owns this device?" for everyone else.
   ABS_INFO, announcing its kind and its axes' ranges; libs/aegir-input gains
   the EV_REL/EV_ABS/BTN_* constants, no new protocol. QEMU grows two devices
   (`virtio-mouse-device,id=mouse0`, `virtio-tablet-device,id=tablet0`).
-  Acceptance injects from outside: QMP `input-send-event` against the named
-  device -- absolute moves asserted at the scaled coordinate within the
-  axis-range tolerance, relative moves asserted exactly, buttons down and up
+  Acceptance injects from outside: QMP `input-send-event` with no `device`
+  argument -- the argument names a *console*, not an input device, and
+  headless the events fall through to the unbound handlers, which sort by
+  kind: absolute to the tablet, relative to the mouse, buttons to the mouse
+  (QEMU bundles BTN into the relative handler's mask, so a tablet click is
+  not injectable headless). Nothing scales the values on that path, so
+  absolute and relative moves are both asserted exactly, buttons down and up
   through the held reply -- and every login's session opens `tablet.virtio0`
-  and waits for one pointer event of its own (specs/auth.md's input path).
+  and waits for one pointer event of its own (specs/auth.md's input path),
+  the runner answering each session's cue as it prints.
   Two notes recorded with the decision: the probe's classification is the
   first device knowledge the binder holds beyond an id, contained to the rows
   that carry `evtype`; and a session that holds `devmgr.registry` can open
@@ -1053,8 +1058,8 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: an input path so a session can be a
-shell, and resolve checks once volumes have an ownership model to check
+Still open, in the order they arrive: a shell on the input path, and
+resolve checks once volumes have an ownership model to check
 against. Session reclaim landed (`specs/auth.md`): auth observes the exit
 where it already waited for the ready, reaps the badge's handles on every
 volume the namespace names, unbinds its aliases, and revokes the pool the
