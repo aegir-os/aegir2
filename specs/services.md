@@ -102,6 +102,7 @@ restart   = always
 | `needs` | no | ports required *before* it starts — this is what fixes creation order |
 | `grants` | no | non-port custody: `irq-control`, `dtb`, later device frames |
 | `spawns` | no | the entries (or `prefix*` classes) this service may create, defaulting to none — a spawn right, not a wish |
+| `delegate_mib` | no | the MiB of untyped memory a spawning service is delegated, rounded up to a power of two — absent means the default (4) |
 | `restart` | no | `always`, `on-fault` (default), `never`, with optional backoff |
 | `priority` | no | scheduling priority |
 | `args` | no | the `argv` it is started with; a list, never a shell |
@@ -815,6 +816,64 @@ and answers "who owns this device?" for everyone else.
   page) -- and a third driver's images, queues and windows outgrew the
   spawner's 2 MiB delegation, which is 4 now (specs/authority.md's budget,
   not a capacity).
+- **decided**: the fourth driver draws -- two heads, and the first port whose
+  window *is* the answer. virtio-gpu (device id 16) arrives twice on QEMU's
+  command line (`gpu0`, `gpu1`); one registry row (`id=16 prefix=gpu
+  memory=13 window=25`) serves both, the probe re-pointing each transport at
+  it and the per-binding spawn loop starting one driver process per device --
+  `gpu.virtio0` and `gpu.virtio1`, the instance model doing what it was built
+  for. The driver runs the control queue only: `GET_DISPLAY_INFO` (honored,
+  not hardcoded), `RESOURCE_CREATE_2D`, `RESOURCE_ATTACH_BACKING`,
+  `SET_SCANOUT`, then `TRANSFER_TO_HOST_2D` and `RESOURCE_FLUSH` per frame
+  (virtio 1.x, 5.7). Its port (`libs/aegir-framebuffer`) serves `info`
+  (width, height, format, stride, and physical size in millimetres -- zero
+  when the device does not say), `flush`, and `set_mode`: a mode is refused
+  only when `width*height*4` outgrows the window, because the window is the
+  limit, not a mode list. Physical size comes from EDID
+  (`VIRTIO_GPU_CMD_GET_EDID`, feature bit `VIRTIO_GPU_F_EDID` -- the first
+  low feature bit any driver here negotiates, so the handshake learns a
+  wanted-mask parameter and the three older drivers ask for nothing);
+  `GET_DISPLAY_INFO` itself carries pixels, never metrics. Acceptance is the
+  screen, read from outside: the runner's QMP socket issues `screendump` per
+  console, and the checks are the dumped dimensions and the band colors at
+  them -- both heads at 1280x800 first, then `set_mode` shrinks `gpu.virtio0`
+  to 1024x768 and grows it to 3840x2160, each time exactly one head changing.
+  Four decisions the sizing forced, and one note for the boards:
+  - **the window rides as megapages.** 1280x800 at 32 bits a pixel is 1024
+    4 KiB frames, and every CSpace in the system holds exactly 1024 caps
+    (`kCNodeBits = 10`) -- per-page, the window path tops out near 256 KiB.
+    So a window of 21 bits or more is carved as `seL4_RISCV_Mega_Page`
+    frames (a real retype and map in this kernel), the grant carries a
+    `window_page_bits` word, and the spawner maps frames of that size; blk
+    and the partition manager keep 4 KiB. A 32 MiB window is 16 caps, not
+    8192 -- and 32 MiB is what 3840x2160x4 fits in, which is why the row
+    says `window=25`.
+  - **the delegation budget is per-service now.** A third bump of the shared
+    constant would have hidden that devicemgr's appetite is not auth's: the
+    manifest gains `delegate_mib` (absent = 4 MiB, the shared constant's last
+    value), and devicemgr declares 68 -- two 32 MiB windows, the partition
+    manager's megabyte, the filesystem image, and the drivers' images,
+    queues and windows.
+  - **the framebuffer is the shared window.** The block driver DMAs *from*
+    its window; the gpu driver DMAs *from* its window to the screen --
+    `ATTACH_BACKING` points at `window_physical`, and a client writes pixels
+    into the mapped window and calls `flush`. Only devicemgr-spawned clients
+    can map a window today, so the protocol ships ahead of its consumer; the
+    test bed exercises `info` and `set_mode` without one.
+  - **for physical boards this is the rehearsal, not the driver.** A board's
+    display is its own compatible string -- `simple-framebuffer`, or a real
+    display engine -- with its own row and driver, and none of the virtio
+    command sequence leaves this app. What carries is the seam set: the
+    megapage window (a display engine scans out of physically contiguous
+    RAM by base address -- the same carve, and 4K is the same 16
+    megapages), the port protocol (a board's `set_mode` may refuse --
+    firmware-fixed modes -- and its EDID arrives over I2C, a `needs`
+    edge), and physical millimetres in `info` (`0 = unknown` is the
+    simple-framebuffer answer). Known limits, recorded rather than
+    discovered: a fixed window has a top (8K wants `window=27`, and the
+    elastic answer -- backing renegotiated with a memory server at mode
+    change -- is a future arc), and `flush` is not vsynced (a board driver
+    will want an irq-synced flip, driver-local when it comes).
 - **next**: the VFS and the `Initrd:` volume.
 
 Devices are given to a driver the way everything else here is given: capabilities

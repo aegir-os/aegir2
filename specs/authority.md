@@ -451,11 +451,16 @@ portable one, and a driver that finds no pair polls.
 
 ### The sizes, measured
 
-- The delegation to the device manager is **2 MiB** (`kDelegatedUntypedBits = 21`):
-  the driver's image (~172 KiB of frames, its queues are static storage), its 8 KiB
-  of virtqueue, the 64 KiB shared window, the partition manager's image and the
-  1 MiB it is delegated, and the filesystem service's image handed over as bytes.
-  256 KiB, 512 KiB and 1 MiB were each measured too small rather than guessed.
+- The delegation a spawner receives is **per-service** (`delegate_mib` in the
+  manifest, `kDelegatedUntypedBits = 22` -- 4 MiB -- when absent): it was a
+  shared constant until the third driver outgrew 2 MiB, and the fourth would
+  have outgrown the third's bump, so the manifest says what each spawner's
+  appetite is. Auth holds the default. The device manager declares **68 MiB**:
+  two 32 MiB scanout windows (megapages, so the cap cost is 16 frames each --
+  32 MiB is what 3840x2160 at 32 bits a pixel fits in), the partition
+  manager's 1 MiB, the filesystem service's image handed over as bytes, and
+  the drivers' images, queues and windows. 256 KiB, 512 KiB, 1 MiB and 2 MiB
+  were each measured too small rather than guessed.
 - The partition manager's own untyped is **1 MiB**: each filesystem child costs
   its image copy (~180 KiB), its objects, and a 64 KiB window set of its own, so
   two partitions already ask for most of a megabyte.
