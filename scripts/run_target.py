@@ -73,6 +73,12 @@ def bash(command: str, cwd: Path, timeout: int) -> None:
         cwd=str(cwd),
         check=True,
         timeout=timeout,
+        # Build steps never read the terminal. Handing them /dev/null instead
+        # also takes the tty away from anything (qemu's -nographic stdio setup
+        # is the known offender) that would poke it from the background process
+        # group `timeout` puts this pipeline in -- that poke is a SIGTTOU stop,
+        # which looks exactly like a configure that hangs forever.
+        stdin=subprocess.DEVNULL,
     )
 
 
