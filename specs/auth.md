@@ -81,8 +81,8 @@ sessions exist, login becomes a challenge (`auth` issues a nonce, the caller
 answers `H(secret, nonce)`, the secret never crosses), and the protocol's
 method numbers are how that change arrives without breaking a caller. The
 nonce's entropy is the rng driver's port — `rng.virtio0`, reached through
-`devmgr.registry`'s `open` (`specs/services.md`); the exchange lands when
-there are callers to protect the secret from.
+`devmgr.registry`'s `open`, and serving `read` today (`specs/services.md`);
+the exchange lands when there are callers to protect the secret from.
 
 ## The `auth.login` protocol
 
