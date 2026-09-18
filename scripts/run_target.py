@@ -25,6 +25,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pins
@@ -175,6 +176,12 @@ def send_key(socket_path: Path, keys: str) -> bool:
             socket_path,
             {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": qcode}]}},
         )
+        # The guest's input queue is eight descriptors deep
+        # (libs/aegir-virtio's kQueueSize) and QEMU drops what does not fit:
+        # sixteen keys sent back to back arrive as a press burst at QMP
+        # speed, and the tail is lost. A typist's pace is what a queue
+        # without flow control is given.
+        time.sleep(0.05)
     return True
 
 

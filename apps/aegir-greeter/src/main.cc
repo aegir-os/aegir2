@@ -273,6 +273,7 @@ int main(int argc, char *argv[])
      * printable appends where the focus is. A click focuses what it lands
      * in -- the button asks, a field takes the focus. */
     bool accepted = false;
+    bool focus_announced = false;
     while (!accepted) {
         uint64_t event = 0;
         uint64_t event_window = 0;
@@ -283,6 +284,16 @@ int main(int argc, char *argv[])
         uint16_t const type = aegir::input::event_type(event);
         uint32_t const value = aegir::input::event_value(event);
         bool changed = false;
+        /* The focus is announced once, and it is the runner's cue to type:
+         * the click that lands it rides the mouse's queue while the keys
+         * ride the keyboard's, and which queue the console drains first is
+         * the boot's timing -- so the keys answer this line, when the
+         * routing is already the greeter's (scripts/targets.py). */
+        if (type == aegir::console::kEventFocus && value == 1 &&
+            !focus_announced) {
+            focus_announced = true;
+            write("  greeter: the window has the focus\n");
+        }
         bool submit = false;
         if (type == aegir::console::kEventKey &&
             (value & aegir::console::kKeyPressed) != 0) {

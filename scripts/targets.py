@@ -130,9 +130,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the form up -- grey window over the
             # Workbench-blue backdrop, the white name field, the dark button
-            # -- then the click focuses the window (the pointer starts at
-            # the screen's centre, which is inside it) and the credentials
-            # are typed: name, Tab, secret, Enter. The accepted login's
+            # -- then the click focuses the window and the credentials are
+            # typed: name, Tab, secret, Enter. The accepted login's
             # session is the boot's first, and auth's reap line paces the
             # second dump, which reads the backdrop restored where the form
             # stood (samples kept clear of the cursor at the centre).
@@ -146,10 +145,26 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 500, 290, 255, 255, 255),
                     ("gpu0", 434, 398, 80, 80, 80),
                 ),
+                # The click focuses the window. It is preceded by an
+                # absolute motion to the window's centre (16384 = half of
+                # the axis's 0..32767, which is the screen's 640,400), so
+                # where the click lands does not depend on where the pointer
+                # happened to start.
                 events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 16384}},
+                    {"type": "abs", "data": {"axis": "y", "value": 16384}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
+            ),
+            # The typing answers the focus, not the click: the click rides
+            # the mouse's queue and the keys the keyboard's, and which queue
+            # the console drains first is the boot's timing, not the
+            # script's -- keys drained before the click land while nothing
+            # is focused and are dropped. The greeter's line says the focus
+            # event is in its ring, so the routing is already its window's.
+            QmpStep(
+                r"greeter: the window has the focus",
                 press="rroland\taegir\n",
             ),
             QmpStep(
