@@ -268,9 +268,10 @@ that the caller can read.
 | 3 | `vfs` | system | `vfs.namespace` | `log.main` | must exist before any filesystem, so filesystems have somewhere to register |
 | 4 | `initrd` | system | `vol.initrd` | `log.main`, `vfs.namespace` | serves the boot image as `Initrd:`; needs somewhere to register, and nothing else |
 | 5 | `partition-manager` | system | `partman.partitions` | `log.main`, `vfs.namespace` | needs block devices to exist (the registry and their ports arrive as grants); launches one filesystem per partition |
-| 6 | `test` | system | — | `log.main`, `vfs.namespace` | the accumulating test bed; asks again until the volumes it checks exist |
-| 7 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace` | needs the user database, which lives on a volume that only exists once the filesystems serve |
-| 8 | *sessions* | user | — | `log.main`, `vfs.namespace` | not part of boot proper: `auth` starts one on each successful login, with the user's badge and account (`specs/auth.md`) |
+| 6 | `console` | system | `console.gui` | `log.main`, `devmgr.registry` | needs the display and the HID devices bound; needs no filesystem (`specs/console.md`) |
+| 7 | `test` | system | — | `log.main`, `vfs.namespace` | the accumulating test bed; asks again until the volumes it checks exist |
+| 8 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace`, `console.gui` | needs the user database, which lives on a volume that only exists once the filesystems serve; spawns the greeter on the console (`specs/auth.md`) |
+| 9 | *sessions* | user | — | `log.main`, `vfs.namespace`, `console.gui` | not part of boot proper: `auth` starts one on each successful login, with the user's badge and account (`specs/auth.md`) |
 
 Every `needs` above names a port that some row `owns` — which is what makes the
 table a valid manifest sketch rather than prose: a row consuming a port nobody
@@ -401,15 +402,18 @@ registration. The names are different because the mechanisms are.
   by class (`blk.*`). Classes save a manifest edit per device and need a matching
   rule; exact names are unambiguous and make a new device type a manifest change.
   Proposal: class patterns, matched literally up to the `*`.
-- **May ports carry capabilities?** `Grant` and `GrantReply` are what let a
-  capability travel inside a message or a reply. With callbacks as reverse-direction
-  ports (above), nothing in the boot set needs it: every port a process holds was
-  installed by whoever spawned it, and a driver's devices are installed the same
-  way. What would need it is two processes that did not spawn each other handing
-  each other something at run time -- hot-plug, or a shell passing a port to a
-  service it did not start. When that arrives, it belongs to *individual* ports (a
-  protocol that says it carries capabilities) rather than to every port by
-  default.
+- **May ports carry capabilities?** Decided with the console arc (2026-09):
+  **yes, for individual ports whose protocol says so**, never by default.
+  `Grant` and `GrantReply` are what let a capability travel inside a message
+  or a reply; the first protocol to say so is `console.gui` -- attaching
+  hands the client its pixel slice's frame caps one per reply, and
+  `create_window` answers with the window's minted event endpoint
+  (`specs/console.md`). The registry's `open` is the precedent: a minted cap
+  in a reply, and the gpu window's frames ride the replies the same way, one
+  cap at a time. What remains true: nothing carries capabilities without
+  declaring it, and two processes that did not spawn each other handing each
+  other something at run time -- hot-plug, a shell passing a port -- is a
+  protocol's stated property, not a facility every port grows.
 - **Who registers `Initrd:`** — proposal: director, the moment the VFS is up.
 - **Hot-plug** (a device appearing later) and **device removal** are unmodelled;
   both end up as registry updates plus spawn/stop requests.

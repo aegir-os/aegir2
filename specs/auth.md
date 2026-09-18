@@ -5,10 +5,11 @@ Status: first slice, sessions v1, homes, and session reclaim implemented
 that starts a session under the user's badge, the home the session lands
 in, and the teardown that takes an exited session back. Elevation remains
 open; the input path landed with the pointer devices (2026-09) -- the
-registry's `open`, at session distance, below.
+registry's `open`, at session distance, below. The greeter and the desktop
+are decided (the console arc, `specs/console.md`), not yet implemented.
 
 `auth` owns two things: the record of who the users are, and the port that
-answers "is this them" — `auth.login` (boot-set row 7, `specs/services.md`).
+answers "is this them" — `auth.login` (boot-set row 8, `specs/services.md`).
 This spec fixes the first slice: the database's storage format and the login
 protocol. Sessions, elevation, and what a login *answer* eventually carries
 stay in `specs/authority.md`'s open list until this slice stands.
@@ -164,7 +165,22 @@ A successful login starts a session. The decisions, taken 2026-09:
   And the grant is the whole registry, not one device: `open` carries no
   per-badge policy, so while the only sessions are smokes this is recorded as
   sufficient; authority.md's "may users hold device capabilities?" stays
-  open.
+  open. The console arc supersedes this for sessions: once console stands, a
+  session's devices are windows and event channels (`specs/console.md`), the
+  `devmgr.registry` grant leaves the session's `needs`, and what is written
+  here remains true of the smoke-era mechanism, not of the desktop's.
+- **A greeter asks; auth stays the database.** The GUI login prompt is
+  auth's face, and auth spawns it -- the pattern the system already runs:
+  the service that knows, starts it. Auth's `needs` gain `console.gui`, the
+  director hands over the `spawn:`-prefixed copy, and once the database is
+  read auth starts the greeter with the minted ports. The greeter is a pure
+  UI process -- one window, two text fields, a button, an error line; the
+  look is deliberately basic, and the toolkit's look is its own later spec.
+  It calls `auth.login` like any caller: the credential check never leaves
+  auth, and console is not a login caller. A refuse redraws the error line;
+  an accept spawns the session as below, and the greeter destroys its
+  window and exits. The session binary becomes the desktop, with
+  `console.gui` in its `needs` where the smoke carried `devmgr.registry`.
 - **Resolve stays open.** There is no volume-ownership model to check
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.
@@ -196,7 +212,10 @@ reclaim is exercised. The decisions:
   `count`/`describe`/`resolve`, because a handle is a filesystem's row and
   not a kernel object -- then the badge's aliases with `unbind`, then the
   revoke. The mechanisms were landed and tested ahead of their caller
-  (specs/vfs.md); this is the caller they were waiting for.
+  (specs/vfs.md); this is the caller they were waiting for. The console arc
+  adds one more reap to the same step: `console.gui`'s `reap` takes the
+  badge's windows and its arena slice (`specs/console.md`), before the
+  revoke, for the same reason the handles go first.
 - **Slots come back too.** The capabilities a spawn puts in auth's own
   CSpace die with the revoke, and the slot cursor returns to the mark the
   login took (`slot_mark`/`slot_release`, libs/aegir-mem) -- valid exactly

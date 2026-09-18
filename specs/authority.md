@@ -46,7 +46,7 @@ badge that fits no shape is nothing anyone minted.
 | --- | --- | --- |
 | created by | director, at boot from the manifest, or by an elevation request | auth, on a successful login, with delegated spawn authority (`specs/auth.md`) |
 | authority | exactly what its manifest entry declares: custody, ports, an account | its session's ports and volumes, and its account |
-| device capabilities | per declaration, least-authority | not declarable (`specs/services.md`); a specific device may be granted at runtime by the device manager and recorded in the account — see Open, for review |
+| device capabilities | per declaration, least-authority | not declarable (`specs/services.md`); display and input are the console's alone (`specs/console.md`); any other specific device may be granted at runtime by the device manager and recorded in the account |
 | `IRQControl` | custody is delegated to the device manager | never |
 | may spawn | yes, within its account and its declared spawn right: a service that launches children (device manager → drivers, partition manager → filesystems) declares what it may start | yes: a session spawns user processes as ordinary use — a terminal, the desktop, a launcher — and everything it starts has at most the session's authority |
 | how others see it | a system badge | a user badge — what the VFS and every other service checks |
@@ -233,9 +233,12 @@ What multiuser means here, concretely:
   manifest (see Accounts and accounting, above); what is open is only its shape —
   at what point a growth request must be confirmed instead of granted, and what
   happens at that point. Either way: no hard ceiling, and no fixed per-user quota.
-- **May users hold device capabilities?** A session's framebuffer is the obvious
-  case. If yes: granted per device by the device manager, recorded in the account,
-  revoked with the session.
+- **May users hold device capabilities?** Decided with the console arc
+  (2026-09, `specs/console.md`): **no**, for display and input -- the gpu and
+  the HID devices are the console's alone, and a session holds windows and
+  event channels instead. The smoke session's direct `tablet.virtio0` open
+  (`specs/auth.md`'s input path) was the interim, sufficient while sessions
+  were smokes. Other devices stay per runtime grant, recorded in the account.
 - **What a session contains** — shell, workbench, whatever comes next — is a later
   spec.
 - **POSIX-style uid/gid compatibility is explicitly not part of this model.** A
