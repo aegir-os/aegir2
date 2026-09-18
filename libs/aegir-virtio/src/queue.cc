@@ -155,8 +155,6 @@ void Queue::publish(Registers const &registers, uint16_t head, ChainBuf const *b
 
 UsedResult Queue::wait_used(Registers const &registers) noexcept
 {
-    UsedResult result{false, 0, 0, 0, 0, 0, 0};
-
     /* Wait for the device to say it is done -- for an entry past what the
      * driver has seen: the used index advancing, not being nonzero, which the
      * first request made true for ever. With an interrupt paired, the signal
@@ -180,8 +178,21 @@ UsedResult Queue::wait_used(Registers const &registers) noexcept
             }
         }
     }
+    return harvest(registers);
+}
+
+UsedResult Queue::poll_used(Registers const &registers) noexcept
+{
+    return harvest(registers);
+}
+
+UsedResult Queue::harvest(Registers const &registers) noexcept
+{
+    UsedResult result{false, 0, 0, 0, 0, 0, 0};
+
     /* On a timeout the raw state is the evidence, not a summary: the used
      * ring's own words, and the device's status register. */
+    volatile uint16_t *used = half_at(page_, kUsedOffset);
     result.used_flags = used[0];
     result.used_idx = used[1];
     result.device_status = registers.read(kStatus);

@@ -143,7 +143,17 @@ public:
      *  `completed` is false only on a poll timeout. */
     UsedResult wait_used(Registers const &registers) noexcept;
 
+    /** The non-blocking half of wait_used: `completed` is false when the
+     *  device has published nothing new. A driver that sleeps on an
+     *  interrupt rather than inside the queue -- an input device, whose
+     *  event queue is the thing being waited on -- harvests with this when
+     *  the signal lands. */
+    UsedResult poll_used(Registers const &registers) noexcept;
+
 private:
+    /** The shared tail: fill the raw state and consume one used entry past
+     *  `last_used_`, if there is one. */
+    UsedResult harvest(Registers const &registers) noexcept;
     volatile uint8_t *page_ = nullptr;
     uint64_t physical_ = 0;
     uint32_t index_ = 0;
