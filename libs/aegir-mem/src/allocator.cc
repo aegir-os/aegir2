@@ -108,6 +108,18 @@ void Allocator::slot_release(seL4_CPtr mark) noexcept
     }
 }
 
+void Allocator::reset() noexcept
+{
+    untyped_count_ = 0;
+    slots_first_ = 0;
+    slots_next_ = 0;
+    slots_end_ = 0;
+    slots_used_ = 0;
+    allocated_bytes_ = 0;
+    last_request_bits_ = 0;
+    last_candidate_bits_ = 0;
+}
+
 unsigned Allocator::untyped_free() const noexcept
 {
     unsigned free = 0;

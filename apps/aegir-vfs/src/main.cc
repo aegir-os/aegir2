@@ -69,6 +69,11 @@ struct Binding {
 constexpr uint64_t kAliasEveryone = ~0ULL;
 Binding *g_bindings = nullptr;
 uint32_t g_binding_count = 0;
+/* Dropped bindings, for reuse: every binding is the same size, so an
+ * unbound row serves the next bind, and the arena's bound is the most
+ * aliases ever live at once rather than ever made -- the demand the
+ * session-reclaim arc creates, met by reuse (specs/vfs.md). */
+Binding *g_binding_free = nullptr;
 
 /* The table's backing store: the memory the manifest's memory_kib granted,
  * mapped and ours, used up from the front. */
@@ -291,7 +296,12 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         port.reply_words(nullptr, 0);
         return;
     }
-    Binding *binding = static_cast<Binding *>(arena_take(sizeof(Binding)));
+    Binding *binding = g_binding_free;
+    if (binding != nullptr) {
+        g_binding_free = binding->next;
+    } else {
+        binding = static_cast<Binding *>(arena_take(sizeof(Binding)));
+    }
     if (binding == nullptr) {
         write("  vfs: no room for another alias, refused\n");
         port.reply_words(nullptr, 0);
@@ -320,8 +330,8 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
 
 /* unbind: a badge. Every binding the badge holds is dropped (specs/vfs.md's
  * Aliases) -- the session teardown's mechanism; the answer is how many
- * there were. The arena is not reclaimed: it grows on demand and a binding
- * is small, which the session-reclaim arc's budget already assumes. */
+ * there were. A dropped row joins the free list: a binding is one size, so
+ * the next bind reuses what this let go. */
 void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
                    uint32_t count) noexcept
 {
@@ -336,6 +346,8 @@ void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
         Binding *b = *at;
         if (b->badge == badge) {
             *at = b->next;
+            b->next = g_binding_free;
+            g_binding_free = b;
             --g_binding_count;
             ++dropped;
         } else {

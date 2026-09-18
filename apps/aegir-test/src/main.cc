@@ -235,19 +235,6 @@ uint64_t vol_remove(seL4_CPtr port, char const *path, uint32_t path_length) noex
     return in[0];
 }
 
-/* reap: how many of the badge's handles were dropped. */
-uint64_t vol_reap(seL4_CPtr port, uint64_t badge) noexcept
-{
-    aegir::ipc::Consumer volume(port);
-    uint64_t in[1];
-    aegir::ipc::WordsReply const answer =
-        volume.call_words(aegir::volume::kMethodReap, &badge, 1, in, 1);
-    if (answer.error != 0 || answer.count != 1) {
-        return 0;
-    }
-    return in[0];
-}
-
 /* One read, asking for refusal: true when the volume says no. */
 bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
 {
@@ -814,35 +801,83 @@ int main(int argc, char *argv[])
         write("  test: Sys:Homes/rroland/WELCOME.TXT is the session's own words\n");
     }
 
-    /* reap and unbind, the teardown mechanisms, driven directly (the caller
-     * who knows a session died is the session-reclaim arc's, specs/auth.md):
-     * the session left LEAK.TXT open in its home, and its badge is the first
-     * login of the first user. A name an open handle holds refuses remove;
-     * once the badge's handles are reaped the file dies; and unbinding the
-     * badge drops its Home: while Sys:, everyone's alias, still answers. */
+    /* The session-reclaim arc (specs/auth.md): the leaked LEAK.TXT handle
+     * is already gone -- auth reaped the badge's handles and unbound its
+     * aliases itself when the session exited, and the refused logins above
+     * are the barrier that says the reclaim has run. The proof is that the
+     * file removes with nobody's reap; the file itself persists, because a
+     * reap closes handles, it does not remove names. Sys:, everyone's
+     * alias, still answers. */
     {
-        uint64_t const session_badge = aegir::ipc::make_user_badge(0, 0);
         static char const kLeakPath[] = "Sys:Homes/rroland/LEAK.TXT";
         seL4_CPtr const leak_volume =
             resolve(kLeakPath, sizeof(kLeakPath) - 1, &rest, &rest_length,
                     static_cast<seL4_CPtr>(first_free + 8));
-        bool const held = vol_remove(leak_volume, rest, rest_length) == 0;
-        uint64_t const reaped = vol_reap(leak_volume, session_badge);
         bool const died = vol_remove(leak_volume, rest, rest_length) == 1;
-        uint64_t badge_word = session_badge;
-        uint64_t in[1] = {0};
-        aegir::ipc::WordsReply const answer = g_nmspace.call_words(
-            aegir::nmspace::kMethodUnbind, &badge_word, 1, in, 1);
-        uint64_t const unbound =
-            answer.error == 0 && answer.count == 1 ? in[0] : 0;
         bool const sys_lives =
             read_and_check(sys_volume, "AEGIR.TXT", 9, kAegirTxt,
                            text_length(kAegirTxt));
-        if (!held || reaped != 1 || !died || unbound != 1 || !sys_lives) {
-            write("  test: FAIL reap or unbind did not do their counts\n");
+        if (!died || !sys_lives) {
+            write("  test: FAIL the reaper did not come: LEAK.TXT held, or Sys: lost\n");
             ++failed;
         } else {
-            write("  test: reap drops the session's handles, unbind its aliases; Sys: is everyone's\n");
+            write("  test: the session's leaked handle was already reaped; Sys: is everyone's\n");
+        }
+        /* The slot's cap goes back: the login loop below resolves into it
+         * again, and a second resolve onto an occupied slot is refused. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          static_cast<seL4_CPtr>(first_free + 8),
+                          aegir::bootstrap::kCNodeBits);
+    }
+
+    /* The drain is closed (specs/auth.md's Session reclaim): logins past
+     * what the spawn delegation could hold unreclaimed each start a session
+     * and come back. A session charges 142 KiB -- auth's reclaim line says
+     * so -- so sixteen logins ask the 2 MiB delegation for more than twice
+     * what it holds; without the revoke and the slots' return the logins
+     * stop early. Each login gets its own barrier -- a refused login auth
+     * answers only once this session is reclaimed -- and its own
+     * fingerprint: the LEAK.TXT this session created through its Home:,
+     * leaked open, and left for the reaper. It removes only because this
+     * session made it and this session's handle is gone: a session whose
+     * Home: bind was refused leaves no file, and a handle still held
+     * refuses the remove. */
+    {
+        unsigned logins = 0;
+        unsigned reclaimed = 0;
+        static char const kLeakPath[] = "Sys:Homes/rroland/LEAK.TXT";
+        while (logins < 16 && login(auth_login, "rroland", "aegir") == 1) {
+            ++logins;
+            if (login(auth_login, "rroland", "wrong") != 0) {
+                break;
+            }
+            seL4_CPtr const leak_volume =
+                resolve(kLeakPath, sizeof(kLeakPath) - 1, &rest, &rest_length,
+                        static_cast<seL4_CPtr>(first_free + 8));
+            if (vol_remove(leak_volume, rest, rest_length) != 1) {
+                break;
+            }
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                              static_cast<seL4_CPtr>(first_free + 8),
+                              aegir::bootstrap::kCNodeBits);
+            ++reclaimed;
+        }
+        /* The last session's own words, after its barrier said the reclaim
+         * has run. */
+        seL4_CPtr const home_volume =
+            resolve(kHomePath, sizeof(kHomePath) - 1, &rest, &rest_length,
+                    static_cast<seL4_CPtr>(first_free + 9));
+        bool const wrote = read_and_check(home_volume, rest, rest_length, kWelcome,
+                                          sizeof(kWelcome) - 1);
+        if (logins != 16 || reclaimed != 16 || !wrote) {
+            write("  test: FAIL reclaim did not close the loop: ");
+            aegir::debug_write_unsigned(logins);
+            write(" logins, ");
+            aegir::debug_write_unsigned(reclaimed);
+            write(" reclaimed, of 16\n");
+            ++failed;
+        } else {
+            write("  test: 16 logins, 16 sessions run and reclaimed -- the drain is closed\n");
         }
     }
 

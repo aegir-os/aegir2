@@ -13,7 +13,12 @@
  * auth is a spawner, its memory is the untyped it was delegated, and the
  * session runs with the user's badge -- the user class bit, the row, and
  * the serial (specs/authority.md). The answer goes first, then the spawn,
- * because the caller's answer must not wait on one. No elevation, and the
+ * because the caller's answer must not wait on one. When the session is
+ * done -- the supervision wait returns -- auth is the caller who knows it
+ * died: the badge's handles are reaped on every volume the namespace
+ * names, its aliases unbound, and the pool its objects were retyped from
+ * revoked, so the next login starts with the memory and the slots back
+ * (specs/auth.md's Session reclaim). No elevation, and the
  * namespace stays open until there is a check to make (specs/auth.md).
  */
 
@@ -53,6 +58,31 @@ seL4_CPtr g_spawn_nmspace = 0;
  * what the next one needs. */
 aegir::ipc::Consumer g_nmspace;
 seL4_CPtr g_home_slot = 0;
+
+/* The session pool (specs/auth.md's Session reclaim): one untyped, carved
+ * out of the delegation at boot and kept. A session's objects are retyped
+ * from it, so an exit's one revoke frees it whole and the next login
+ * reuses it -- the wait serializes sessions, so one pool is enough. Its
+ * size is a starting grant: the reclaim log line says what a session
+ * charged, and the grant grows when that says so. */
+constexpr uint32_t kSessionPoolBits = 20; /* 1 MiB of the 2 MiB delegation */
+seL4_CPtr g_session_pool = 0;
+uint64_t g_session_pool_physical = 0;
+
+/* The allocator over the session pool: static, because the untyped table
+ * inside one is far larger than a service's stack -- and reset each login,
+ * because the revoke made the pool whole again and last session's split
+ * records belong to capabilities that no longer exist. */
+aegir::mem::Allocator g_session_mem(nullptr);
+
+/* What a session spawn needs, kept from the bootstrap block: the initrd's
+ * bytes (the binary is looked up by name), the ASID pool the address space
+ * comes from, and the end of our slot range -- a session's slots run from
+ * the login's mark to it. */
+uint64_t g_binaries_address = 0;
+uint32_t g_binaries_bytes = 0;
+seL4_CPtr g_asid_pool = 0;
+seL4_CPtr g_slots_end = 0;
 
 aegir::authdb::Row const *g_rows = nullptr;
 uint32_t g_users = 0;
@@ -199,25 +229,129 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
     }
 }
 
+/* The teardown, once the wait says the session is done (specs/auth.md's
+ * Session reclaim): the badge's handles go first -- one reap per volume
+ * the namespace names, walked through count/describe/resolve, because a
+ * handle is a filesystem's row and not a kernel object -- then its
+ * aliases, then the revoke that deletes everything the session was, and
+ * the slot cursor returns to the login's mark. Runs on the spawn-failure
+ * paths too: the Home: bind has already happened by then, and a (badge,
+ * name) pair binds once (specs/vfs.md) -- left bound, the next login's
+ * bind of the same serial would be refused. */
+void reclaim_session(uint64_t badge, seL4_CPtr mark,
+                     aegir::mem::Account const &session_account) noexcept
+{
+    uint64_t reaped = 0;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const counted =
+        g_nmspace.call_words(aegir::nmspace::kMethodCount, nullptr, 0, in, 1);
+    uint64_t const volumes = (counted.error == 0 && counted.count == 1) ? in[0] : 0;
+    for (uint64_t v = 0; v < volumes; ++v) {
+        uint64_t row_words[aegir::nmspace::kRowWords];
+        aegir::ipc::WordsReply const described =
+            g_nmspace.call_words(aegir::nmspace::kMethodDescribe, &v, 1, row_words,
+                                 aegir::nmspace::kRowWords);
+        if (described.error != 0 || described.count < aegir::nmspace::kRowWords) {
+            continue;
+        }
+        auto const &row = *reinterpret_cast<aegir::nmspace::Row const *>(row_words);
+        if (row.bound == 0) {
+            continue;
+        }
+        /* A volume's name, resolved as "NAME:" with an empty rest: the
+         * answer is the filesystem's port, minted with our badge. */
+        char path[aegir::nmspace::kNameMax + 1];
+        uint32_t name_length = 0;
+        while (name_length < aegir::nmspace::kNameMax && row.name[name_length] != '\0') {
+            path[name_length] = row.name[name_length];
+            ++name_length;
+        }
+        path[name_length] = ':';
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+        uint32_t const out_words = aegir::nmspace::pack_string(out, path, name_length + 1,
+                                                               aegir::nmspace::kPathMax);
+        uint64_t rin[aegir::nmspace::kResolveWords];
+        bool cap_arrived = false;
+        aegir::ipc::WordsReply const resolved =
+            g_nmspace.call_transfer(aegir::nmspace::kMethodResolve, out, out_words, 0, rin,
+                                    aegir::nmspace::kResolveWords, &cap_arrived);
+        if (resolved.error != 0 || !cap_arrived ||
+            !aegir::ipc::take_received_cap(g_home_slot)) {
+            continue;
+        }
+        aegir::ipc::Consumer const volume(g_home_slot);
+        uint64_t const badge_word = badge;
+        uint64_t bin[1];
+        aegir::ipc::WordsReply const answered =
+            volume.call_words(aegir::volume::kMethodReap, &badge_word, 1, bin, 1);
+        if (answered.error == 0 && answered.count == 1) {
+            reaped += bin[0];
+        }
+        /* The resolve's cap is ours to dispose of: one slot, deleted after
+         * each use, so a reclaim does not spend what the next one needs. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
+                          aegir::bootstrap::kCNodeBits);
+    }
+    uint64_t const badge_word = badge;
+    uint64_t uin[1];
+    aegir::ipc::WordsReply const unbound_reply =
+        g_nmspace.call_words(aegir::nmspace::kMethodUnbind, &badge_word, 1, uin, 1);
+    uint64_t const unbound =
+        (unbound_reply.error == 0 && unbound_reply.count == 1) ? uin[0] : 0;
+
+    /* The revoke is the memory's way back: every object the session was --
+     * CSpace, TCB, VSpace, frames, the spawn's staging -- was retyped from
+     * the pool, and with the CSpace go the minted port copies it held
+     * (specs/authority.md's retained-copy path). The pool stands free whole
+     * for the next login, and the slots past the mark are empty, so the
+     * cursor returns to it. */
+    seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, g_session_pool,
+                      aegir::bootstrap::kCNodeBits);
+    g_objects.slot_release(mark);
+    write("      auth: session reclaimed: ");
+    aegir::debug_write_unsigned(reaped);
+    write(reaped == 1 ? " handle, " : " handles, ");
+    aegir::debug_write_unsigned(unbound);
+    write(unbound == 1 ? " alias, " : " aliases, ");
+    aegir::debug_write_unsigned(session_account.bytes / 1024);
+    write(" KiB charged back to the pool\n");
+}
+
 /* A successful login starts a session (specs/auth.md): the smoke, until
  * there is an input path for anything interactive. The badge is the user
  * class bit, the row as the user id, and the serial counting what the
  * user has run (specs/authority.md); the ports are the delegatable copies
- * badged with it. Then the wait for its ready, and serving resumes --
- * there is no reclaim of an exited session yet, and the untyped draining
- * is the loud form that takes (specs/auth.md's honest gaps). */
-void start_session(aegir::spawn::Spawner &spawner, uint32_t user) noexcept
+ * badged with it. Everything the spawn puts down -- the session's objects
+ * and the spawn's own staging -- is retyped from the session pool and
+ * slotted past the mark, so the teardown after the wait takes it all
+ * back. Then the wait for its ready, and serving resumes (specs/auth.md's
+ * Session reclaim). */
+void start_session(uint32_t user) noexcept
 {
     uint64_t const badge =
         aegir::ipc::make_user_badge(user, g_serials[user]);
     /* The home first: ensured and bound before the spawn, so the session
      * never sees a Home: that does not resolve (specs/auth.md's Homes). */
     ensure_home(user, badge);
+
+    seL4_CPtr const mark = g_objects.slot_mark();
+    aegir::mem::Account session_account{"session", 0, 0, 0};
+    g_session_mem.reset();
+    if (!g_session_mem.adopt_untyped(g_session_pool, kSessionPoolBits,
+                                     g_session_pool_physical)) {
+        write("      auth: FAIL the session pool would not be adopted\n");
+        reclaim_session(badge, mark, session_account);
+        return;
+    }
+    g_session_mem.adopt_slots(mark, g_slots_end - mark, 0);
+    aegir::mem::Arena session_arena(g_session_mem, g_scratch, session_account);
+
     seL4_Error fault_error = seL4_NoError;
-    seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
-                                                   g_account, &fault_error);
+    seL4_CPtr const fault = g_session_mem.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                                       session_account, &fault_error);
     if (fault == 0) {
         write("      auth: FAIL no fault endpoint for the session\n");
+        reclaim_session(badge, mark, session_account);
         return;
     }
     aegir::spawn::PortGrant const ports[] = {
@@ -246,11 +380,20 @@ void start_session(aegir::spawn::Spawner &spawner, uint32_t user) noexcept
     request.fault_endpoint = fault;
     request.badge = badge;
 
+    /* The spawner is the session's own: over the pool and the slots past
+     * the mark, so nothing it puts down outlives the reclaim. */
+    aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
+                                      g_binaries_bytes);
+    aegir::spawn::Spawner spawner(g_session_mem, g_scratch, session_arena, initrd,
+                                  g_asid_pool,
+                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                  aegir::bootstrap::kCNodeBits);
     aegir::spawn::Process process{};
-    if (!spawner.spawn(request, g_account, process)) {
+    if (!spawner.spawn(request, session_account, process)) {
         write("      auth: FAIL spawning the session: ");
         write(spawner.problem());
         write("\n");
+        reclaim_session(badge, mark, session_account);
         return;
     }
     write("      auth: ");
@@ -262,9 +405,12 @@ void start_session(aegir::spawn::Spawner &spawner, uint32_t user) noexcept
 
     /* The ready, waited on the way the partition manager waits for a
      * filesystem's: a session that faults first leaves us here, which is
-     * what waiting on it is for. */
+     * what waiting on it is for. While sessions are short-lived the ready
+     * is also the exit -- the smoke signals as its last act -- so the wait
+     * returning is how we know the session died (specs/auth.md). */
     seL4_Wait(process.supervision, nullptr);
     write("      auth: session ready\n");
+    reclaim_session(badge, mark, session_account);
 }
 
 }  // namespace
@@ -345,6 +491,7 @@ int main(int argc, char *argv[])
      * (kernel/src/object/untyped.c). The size is the one the spawner builds
      * (kCNodeBits in libs/aegir-spawn/src/process.cc). */
     g_objects.adopt_slots(first_free, (1u << 10) - first_free, 0);
+    g_slots_end = 1u << 10;
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -494,24 +641,36 @@ int main(int argc, char *argv[])
         g_serials[u] = 0;
     }
 
+    /* The session pool (specs/auth.md's Session reclaim): carved once and
+     * kept -- a session's objects are retyped from it, and an exit's one
+     * revoke frees it whole for the next login. */
+    seL4_Error pool_error = seL4_NoError;
+    g_session_pool = g_objects.carve_untyped(kSessionPoolBits, g_account, &pool_error,
+                                             &g_session_pool_physical);
+    if (g_session_pool == 0) {
+        write("      auth: FAIL no session pool -- logins will not start "
+              "sessions\n");
+    }
+
     /* The rest of the spawn kit: the pool the sessions' address spaces come
      * from, the delegatable copies of what a session needs, and the initrd
      * the session's image is read out of (specs/auth.md). */
     uint64_t pool_slot = 0;
     uint64_t spawn_log_slot = 0;
     uint64_t spawn_nmspace_slot = 0;
-    uint64_t binaries_address = 0;
-    uint32_t binaries_bytes = 0;
-    bool const can_spawn =
+    bool const kit_complete =
         aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
         aegir::bootstrap::capability("spawn:log.main", 14, &spawn_log_slot) &&
         aegir::bootstrap::capability("spawn:vfs.namespace", 19, &spawn_nmspace_slot) &&
-        aegir::bootstrap::binaries(&binaries_address, &binaries_bytes) && binaries_bytes != 0;
+        aegir::bootstrap::binaries(&g_binaries_address, &g_binaries_bytes) &&
+        g_binaries_bytes != 0;
     g_spawn_log = static_cast<seL4_CPtr>(spawn_log_slot);
     g_spawn_nmspace = static_cast<seL4_CPtr>(spawn_nmspace_slot);
-    aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(binaries_address),
-                                      binaries_bytes);
-    if (!can_spawn || !initrd.valid()) {
+    g_asid_pool = static_cast<seL4_CPtr>(pool_slot);
+    aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
+                                      g_binaries_bytes);
+    bool const can_spawn = g_session_pool != 0 && kit_complete && initrd.valid();
+    if (!can_spawn) {
         write("      auth: no pool, delegatable ports, or initrd -- "
               "logins will not start sessions\n");
     }
@@ -521,14 +680,6 @@ int main(int argc, char *argv[])
     write(g_users == 1 ? " user, serving auth.login\n" : " users, serving auth.login\n");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
-    /* Our own CNode, at its own depth: a service's own-CNode cap is a raw
-     * copy with guard 0 and radix kCNodeBits, so the spawner addresses mint
-     * sources through it (aegir/bootstrap.h). */
-    aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd,
-                                  static_cast<seL4_CPtr>(pool_slot),
-                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                  aegir::bootstrap::kCNodeBits);
-
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
@@ -537,7 +688,7 @@ int main(int argc, char *argv[])
         if (method == aegir::auth::kMethodLogin) {
             int const user = answer_login(port, words, count);
             if (user >= 0 && can_spawn) {
-                start_session(spawner, static_cast<uint32_t>(user));
+                start_session(static_cast<uint32_t>(user));
             }
         } else {
             /* A method this version does not know is answered by saying

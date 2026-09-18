@@ -80,6 +80,15 @@ public:
     void slot_release(seL4_CPtr mark) noexcept;
 
     /**
+     * Forget every untyped record and the slot range, so the allocator can be
+     * re-adopted over a pool a revoke has made whole again (specs/auth.md's
+     * Session reclaim). Deletes nothing: the records this drops belong to
+     * capabilities the revoke already took, which is the only time forgetting
+     * them is right.
+     */
+    void reset() noexcept;
+
+    /**
      * Retype one object of `type`/`size_bits` out of untyped memory, splitting a
      * larger untyped when that is what is available, and charge it to `account`.
      * Returns 0 and writes `*error` on failure.
