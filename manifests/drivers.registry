@@ -14,9 +14,17 @@
 #   window      the shared window its port serves through, in bits; 0 is no
 #               window -- the port's answers ride in the envelope itself
 #               (aegir/entropy.h)
+#   evtype      which member of the id's family the row claims, when the id
+#               is a family (key/rel/abs for id 18, told apart by the config
+#               space's EV_BITS at the probe); absent claims any kind
 compatible=virtio,mmio id=2 prefix=blk bus=virtio binary=aegir-virtio-blk memory=14 window=16
 compatible=virtio,mmio id=4 prefix=rng bus=virtio binary=aegir-virtio-rng memory=14 window=0
-compatible=virtio,mmio id=18 prefix=kbd bus=virtio binary=aegir-virtio-input memory=15 window=0
+# The input family: one virtio id, three members, one driver binary each. The
+# probe's evtype read is what places a transport on its row, and the prefixes
+# are the names a client opens: kbd.virtio0, mouse.virtio0, tablet.virtio0.
+compatible=virtio,mmio id=18 evtype=key prefix=kbd bus=virtio binary=aegir-virtio-input memory=15 window=0
+compatible=virtio,mmio id=18 evtype=rel prefix=mouse bus=virtio binary=aegir-virtio-input memory=15 window=0
+compatible=virtio,mmio id=18 evtype=abs prefix=tablet bus=virtio binary=aegir-virtio-input memory=15 window=0
 # The display. One row serves every head: two transports on QEMU's command
 # line are two bindings of this row and one aegir-virtio-gpu process each
 # (gpu.virtio0, gpu.virtio1 -- specs/services.md). The window is the

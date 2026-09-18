@@ -33,6 +33,8 @@
 #include <aegir/registry.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
+#include <aegir/virtio/input.h>
+#include <aegir/virtio/mmio.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -90,6 +92,12 @@ struct DriverRow {
     char const *compatible;
     uint32_t compatible_length;
     uint32_t virtio_id; /* 0: the compatible alone decides; else the registers must say this */
+    /* 0: any kind of the id's family. Else which member the device must be,
+     * read from the config space's EV_BITS at the probe: 1/2/3 = key/rel/abs,
+     * the EV_KEY/EV_REL/EV_ABS numbering (aegir/input.h). virtio id 18 is the
+     * keyboard, the mouse AND the tablet -- the id is the family, the kind is
+     * config. */
+    uint8_t evtype;
     char const *name_prefix; /* instances are prefix.busN: "blk" + "virtio" -> blk.virtio0 */
     uint32_t name_prefix_length;
     char const *bus;
@@ -128,6 +136,20 @@ bool compatible_is(aegir::devtree::Device const &device, DriverRow const &row) n
     }
     for (uint32_t i = 0; i < row.compatible_length; ++i) {
         if (device.compatible[i] != row.compatible[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Two rows name the same transport. */
+bool same_compatible(DriverRow const &a, DriverRow const &b) noexcept
+{
+    if (a.compatible_length != b.compatible_length) {
+        return false;
+    }
+    for (uint32_t i = 0; i < a.compatible_length; ++i) {
+        if (a.compatible[i] != b.compatible[i]) {
             return false;
         }
     }
@@ -500,6 +522,18 @@ int main(int argc, char *argv[])
                             } else if (aegir::descriptor::key_is(field, "id")) {
                                 row.virtio_id = static_cast<uint32_t>(
                                     aegir::descriptor::number(field, &fields_ok));
+                            } else if (aegir::descriptor::key_is(field, "evtype")) {
+                                /* The words are the file's; the numbers are
+                                 * EV_KEY/EV_REL/EV_ABS (aegir/input.h). */
+                                if (aegir::descriptor::value_is(field, "key")) {
+                                    row.evtype = 1;
+                                } else if (aegir::descriptor::value_is(field, "rel")) {
+                                    row.evtype = 2;
+                                } else if (aegir::descriptor::value_is(field, "abs")) {
+                                    row.evtype = 3;
+                                } else {
+                                    fields_ok = false;
+                                }
                             } else if (aegir::descriptor::key_is(field, "prefix")) {
                                 row.name_prefix = field.value;
                                 row.name_prefix_length = field.value_length;
@@ -589,56 +623,85 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 if (binding.row->virtio_id != 0) {
-                    auto const *registers = static_cast<volatile uint32_t const *>(
-                        g_scratch.map(binding.frame));
-                    if (registers == nullptr) {
+                    volatile uint8_t *mapped =
+                        static_cast<volatile uint8_t *>(g_scratch.map(binding.frame));
+                    if (mapped == nullptr) {
                         write_line("FAIL", "a device frame could not be mapped for probing");
                         binding.frame = 0;
                         continue;
                     }
-                    uint32_t const probed_magic = registers[0x00 / 4];
-                    uint32_t const probed_id = registers[0x08 / 4];
+                    auto const *registers =
+                        reinterpret_cast<volatile uint32_t const *>(mapped);
+                    uint32_t const probed_magic = registers[aegir::virtio::kMagicValue / 4];
+                    uint32_t const probed_id = registers[aegir::virtio::kDeviceId / 4];
+                    /* The kind within the family, when a row asks for it: id
+                     * 18 is the keyboard, the mouse AND the tablet, and a
+                     * row's `evtype` key is its claim on one member -- the
+                     * answer is the config space's EV_BITS
+                     * (aegir/virtio/input.h), read while the frame is mapped.
+                     * Those selectors are the input family's own registers,
+                     * so the read happens only when the id is 18 and a row
+                     * carries evtype -- written to a block device's config
+                     * page they would be its capacity. */
+                    uint8_t probed_class = 0;
+                    if (probed_id == aegir::virtio::kDeviceIdInput) {
+                        bool asked = false;
+                        for (uint32_t r = 0; r < row_count && !asked; ++r) {
+                            asked = rows[r].virtio_id == probed_id && rows[r].evtype != 0 &&
+                                    same_compatible(rows[r], *binding.row);
+                        }
+                        if (asked) {
+                            namespace inputcfg = aegir::virtio::input;
+                            volatile uint8_t *config = mapped + aegir::virtio::kConfig;
+                            auto raises = [&](uint8_t type) noexcept {
+                                config[inputcfg::kRegSelect] = inputcfg::kSelectEvBits;
+                                config[inputcfg::kRegSubsel] = type;
+                                return config[inputcfg::kRegSize] != 0;
+                            };
+                            /* ABS settles it (the tablet), then REL (the
+                             * mouse); what is left is the keyboard -- the
+                             * driver's own announcement reads the same bits,
+                             * and the two must agree. */
+                            probed_class = raises(3) ? 3 : (raises(2) ? 2 : 1);
+                        }
+                    }
                     g_scratch.unmap(binding.frame);
-                    if (probed_magic != 0x74726976u) {
+                    if (probed_magic != aegir::virtio::kMagic) {
                         binding.frame = 0;
                         continue;
                     }
-                    if (probed_id != binding.row->virtio_id) {
-                        /* The candidate match was on the compatible string,
-                         * which every transport on the bus shares -- the first
-                         * row that claims it is not necessarily the row for
-                         * the device behind this one, and the probe is what
-                         * says which is. Find the row the id names. */
-                        DriverRow const *match = nullptr;
-                        for (uint32_t r = 0; r < row_count; ++r) {
-                            if (rows[r].virtio_id != probed_id ||
-                                rows[r].compatible_length !=
-                                    binding.row->compatible_length) {
-                                continue;
-                            }
-                            bool same = true;
-                            for (uint32_t c = 0; c < rows[r].compatible_length; ++c) {
-                                if (rows[r].compatible[c] != binding.row->compatible[c]) {
-                                    same = false;
-                                    break;
-                                }
-                            }
-                            if (same) {
-                                match = &rows[r];
-                                break;
-                            }
-                        }
-                        if (match == nullptr) {
-                            aegir::debug_write("      map: virtio device ");
-                            aegir::debug_write_unsigned(probed_id);
-                            aegir::debug_write(" at ");
-                            aegir::debug_write_hex(binding.base);
-                            aegir::debug_write(": no driver in the registry\n");
-                            binding.frame = 0;
+                    /* The row for this device: the id names the family, and
+                     * when the family's rows carry evtype the member must
+                     * match it -- an exact kind wins, a row without evtype
+                     * claims any kind. (The candidate match was on the
+                     * compatible string, which every transport on the bus
+                     * shares -- the first row that claims it is not
+                     * necessarily the row for the device behind this one, and
+                     * the probe is what says which is.) */
+                    DriverRow const *match = nullptr;
+                    for (uint32_t r = 0; r < row_count; ++r) {
+                        if (rows[r].virtio_id != probed_id ||
+                            !same_compatible(rows[r], *binding.row)) {
                             continue;
                         }
-                        binding.row = match;
+                        if (rows[r].evtype == probed_class) {
+                            match = &rows[r];
+                            break;
+                        }
+                        if (rows[r].evtype == 0 && match == nullptr) {
+                            match = &rows[r];
+                        }
                     }
+                    if (match == nullptr) {
+                        aegir::debug_write("      map: virtio device ");
+                        aegir::debug_write_unsigned(probed_id);
+                        aegir::debug_write(" at ");
+                        aegir::debug_write_hex(binding.base);
+                        aegir::debug_write(": no driver in the registry\n");
+                        binding.frame = 0;
+                        continue;
+                    }
+                    binding.row = match;
                 }
                 /* The instance name: which kind, which bus, and which one it is --
                  * blk.virtio0 rather than blkdriver, because the second device of a
