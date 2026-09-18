@@ -9,7 +9,8 @@
 
 namespace aegir::virtio {
 
-bool handshake(Registers const &registers, uint32_t *features_out) noexcept
+bool handshake(Registers const &registers, uint32_t *features_out,
+               uint32_t wanted) noexcept
 {
     /* Reset first. A device someone else has been using -- or this one, last boot -- starts
      * from zero, and the spec makes the reset step one for exactly that reason. */
@@ -42,7 +43,8 @@ bool handshake(Registers const &registers, uint32_t *features_out) noexcept
      * not use a queue until the driver confirms it. Gating this on the version register is
      * exactly the assumption that left a queue set up, notified, and untouched: the status
      * byte's sentinel came back unchanged. */
-    registers.write(kDriverFeatures, 0);
+    registers.write(kDriverFeaturesSel, 0);
+    registers.write(kDriverFeatures, features_low & wanted);
     registers.write(kDriverFeaturesSel, 1);
     registers.write(kDriverFeatures, 1); /* VIRTIO_F_VERSION_1 */
     registers.write(kDriverFeaturesSel, 0);

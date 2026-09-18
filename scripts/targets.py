@@ -56,13 +56,16 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         build_dir=f"out/{name}",
         configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}"),
         marker="AEGIR_BOOT_OK",
-        # Three real virtio devices, so the transports the tree describes are
+        # Five real virtio devices, so the transports the tree describes are
         # not all empty: an entropy source (which needs no backing file), a
         # block device (which does -- the path is relative because QEMU runs
         # with the build directory as its working directory, and the runner
-        # puts a disk there), and a keyboard. The keyboard's acceptance check
-        # needs a finger: the QMP socket is how the runner presses a key from
-        # outside the guest (scripts/run_target.py).
+        # puts a disk there), a keyboard, and two displays. The keyboard's
+        # acceptance check needs a finger, and the displays' a screen to read
+        # back: the QMP socket is both (scripts/run_target.py). The gpu ids
+        # name the consoles, which is how a screendump says which head it
+        # read. EDID is on by default on this QEMU, so each head answers how
+        # big its glass is.
         qemu_args=(
             "-bios none",
             f"-smp {cores}",
@@ -75,6 +78,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-drive file=disk.img,if=none,format=raw,id=hd",
             "-device virtio-blk-device,drive=hd",
             "-device virtio-keyboard-device",
+            "-device virtio-gpu-device,id=gpu0",
+            "-device virtio-gpu-device,id=gpu1",
             "-qmp unix:qmp.sock,server,nowait",
         ),
         key_trigger="test: kbd.virtio0 opened -- a key, please",

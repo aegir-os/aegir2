@@ -46,7 +46,7 @@ device_manager = true
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, rngdriver, kbddriver, partmgr
+spawns    = blkdriver, rngdriver, kbddriver, gpudriver, partmgr
 # What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
 # framebuffers (megapages -- specs/services.md), the partition manager's
 # megabyte, the filesystem image, and the drivers' images, queues and windows.
@@ -100,6 +100,22 @@ needs     = log.main
 device_id = 18
 # Two queues take 16 KiB; the posted buffers take a page past them.
 memory_kib = 32
+restart   = always
+
+# The display driver. virtio device 16, bound from the registry row like any
+# other -- and bound *twice*: QEMU's command line carries two transports, the
+# probe re-points both at the one row, and the spawn loop starts one process
+# per head (specs/services.md). The framebuffer is the shared window the
+# registry row declares (32 MiB of mega pages), not this memory: one control
+# queue is all the queue the driver runs.
+[gpudriver]
+binary    = aegir-virtio-gpu
+authority = system
+account   = system
+needs     = log.main
+device_id = 16
+# One queue is 8 KiB; the command and response buffers live in its page.
+memory_kib = 8
 restart   = always
 
 # The partition manager. The device manager starts it once block drivers answer,

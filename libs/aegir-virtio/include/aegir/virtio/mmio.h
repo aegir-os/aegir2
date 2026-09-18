@@ -85,6 +85,7 @@ enum DeviceId : uint32_t {
     kDeviceIdBlock = 2,
     kDeviceIdConsole = 3,
     kDeviceIdEntropy = 4,
+    kDeviceIdGpu = 16,
     kDeviceIdInput = 18,
 };
 

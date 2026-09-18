@@ -468,9 +468,13 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             request.give_vspace = true;
             request.binaries = initrd_.blob();
             request.binaries_bytes = static_cast<uint32_t>(initrd_.blob_size());
-            /* One device grant per covered child that is *for* a device, however
-             * many of them the manifest declares: count first, so the array is
-             * the manifest's size rather than a number somebody picked. */
+            /* One device grant per *device* a covered child's id answers to,
+             * however many the manifest declares and however many the bus has:
+             * two identical boards behind two transports are two grants,
+             * because the process the device manager starts for each is its
+             * own (the instance model -- specs/services.md). Count first, so
+             * the array is the bus's size rather than a number somebody
+             * picked. */
             uint32_t wanted = 0;
             for (uint32_t j = 0; j < manifest.size(); ++j) {
                 bool covered = false;
@@ -480,7 +484,11 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     }
                 });
                 if (covered && manifest[j].device_id != 0) {
-                    ++wanted;
+                    for (uint32_t d = 0; d < bus_count; ++d) {
+                        if (bus[d].id == manifest[j].device_id) {
+                            ++wanted;
+                        }
+                    }
                 }
             }
             auto *device_grants = static_cast<spawn::DeviceGrant *>(
@@ -503,9 +511,10 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                 }
                 for (uint32_t d = 0; d < bus_count; ++d) {
                     if (bus[d].id == child.device_id) {
+                        /* No break: every device the id answers to is granted,
+                         * not only the first. */
                         device_grants[device_grant_count++] =
                             spawn::DeviceGrant{bus[d].address, 4096u, bus[d].frame};
-                        break;
                     }
                 }
             }
