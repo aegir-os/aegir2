@@ -10,13 +10,12 @@
  * service the transport it asked for by device id, with the device's own address, because
  * identical transports answer identically to every register read.
  *
- * **This is where the second driver pays for the first.** Everything here and the status
- * handshake in `handshake()` below are what a virtio-rng or virtio-net driver needs
- * unchanged; what is blk-specific is the config layout at 0x100 and the request queue
- * after it. When that second driver exists, this header and the handshake move into a
- * library -- libs/aegir-virtio, naming to follow the rest -- and the driver keeps only its
- * own device. Until then it lives here, deliberately not duplicated in advance of the
- * evidence that would say where the seam is (specs/services.md).
+ * This header lived in apps/aegir-virtio-blk until the second driver (virtio-rng) made
+ * the seam a measurement rather than a guess (specs/services.md). The seam is the
+ * legacy-MMIO transport made concrete: a second transport -- virtio-pci's modern layout,
+ * if PCI is ever taken on -- arrives *beside* this one, not through it, because the ring
+ * (aegir/virtio/queue.h) and a driver's device logic are the shared parts, while the
+ * register map and queue activation are the transport's.
  */
 
 #pragma once
@@ -76,14 +75,17 @@ enum Status : uint32_t {
     kStatusFailed = 128,         /* something went wrong; the device is not usable */
 };
 
-/* Device ids, as the bus numbers them. 1, 2 and 3 are in * projects/sel4_projects_libs/libsel4vmmplatsupport/include/sel4vmmplatsupport/drivers/virtio.h;
+/* Device ids, as the bus numbers them. 1, 2 and 3 are in
+ * projects/sel4_projects_libs/libsel4vmmplatsupport/include/sel4vmmplatsupport/drivers/virtio.h;
  * 4 is the entropy device, which is what QEMU's virtio-rng-device reports and what
- * director's survey measured on this machine. */
+ * director's survey measured on this machine. 18 is the input device
+ * (virtio 1.x, 5.8). */
 enum DeviceId : uint32_t {
     kDeviceIdNet = 1,
     kDeviceIdBlock = 2,
     kDeviceIdConsole = 3,
     kDeviceIdEntropy = 4,
+    kDeviceIdInput = 18,
 };
 
 /** The magic every virtio transport answers with, little-endian, at offset 0. */

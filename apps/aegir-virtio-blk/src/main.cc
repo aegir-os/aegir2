@@ -17,14 +17,15 @@
  * a request needs one.
  */
 
-#include "queue.h"
-#include "virtio_mmio.h"
+#include "sector.h"
 
 #include <aegir/block.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/virtio/handshake.h>
+#include <aegir/virtio/mmio.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -107,68 +108,6 @@ bool clamp_allows(uint64_t badge, uint64_t first, uint32_t sectors, uint64_t cap
            first + sectors <= clamp->first + clamp->sectors;
 }
 
-/** The status handshake (virtio 1.x, 2.1.1). The device is told, in order, that we have
- *  seen it, that we know how to drive it, and what features we will use; it then either
- *  accepts the feature set -- leaving FEATURES_OK set -- or clears the bit to say it will
- *  not work with us.
- *
- *  This is what a second virtio driver needs unchanged, and so is everything above it in
- *  virtio_mmio.h: the register window is the same for every device on the bus, and only
- *  the config space and the queue after it are the device's own. */
-bool handshake(aegir::virtio::Registers const &registers, uint32_t *features_out) noexcept
-{
-    using namespace aegir::virtio;
-
-    /* Reset first. A device someone else has been using -- or this one, last boot -- starts
-     * from zero, and the spec makes the reset step one for exactly that reason. */
-    registers.write(kStatus, 0);
-    for (unsigned spin = 0; spin < 1000000 && registers.read(kStatus) != 0; ++spin) {
-    }
-
-    registers.write(kStatus, kStatusAcknowledge);
-    registers.write(kStatus, kStatusAcknowledge | kStatusDriver);
-
-    /* Features. A 64-bit value in a 32-bit register, low half first: the selector exists
-     * only on the modern interface, and a legacy transport answers the low half and ignores
-     * a selector write (virtio 1.x, 4.2.2 -- and QEMU hands out the legacy interface unless
-     * asked for modern, which is why the version is read and branched on rather than
-     * assumed). */
-    bool const modern = registers.read(kVersion) == 2;
-    uint32_t const features_low = registers.read(kDeviceFeatures);
-    uint32_t features_high = 0;
-    if (modern) {
-        registers.write(kDeviceFeaturesSel, 1);
-        features_high = registers.read(kDeviceFeatures);
-        registers.write(kDeviceFeaturesSel, 0);
-    }
-    static_cast<void>(features_high);
-
-    /* With one exception: VIRTIO_F_VERSION_1 is bit 32, and it is not a feature so much as the
-     * handshake saying which interface we understood. It is written whether or not the version
-     * register claims the modern interface, because this device's version register says 1
-     * while it answers the modern register layout -- and a device that offers that layout will
-     * not use a queue until the driver confirms it. Gating this on the version register is
-     * exactly the assumption that left a queue set up, notified, and untouched: the status
-     * byte's sentinel came back unchanged. */
-    registers.write(kDriverFeatures, 0);
-    registers.write(kDriverFeaturesSel, 1);
-    registers.write(kDriverFeatures, 1); /* VIRTIO_F_VERSION_1 */
-    registers.write(kDriverFeaturesSel, 0);
-
-    registers.write(kStatus, kStatusAcknowledge | kStatusDriver | kStatusFeaturesOk);
-
-    /* The device clears FEATURES_OK when it cannot live with what we asked for, so this
-     * read is the check rather than a formality (virtio 1.x, 2.1.1 step 6). */
-    if ((registers.read(kStatus) & kStatusFeaturesOk) == 0) {
-        return false;
-    }
-
-    if (features_out != nullptr) {
-        *features_out = features_low;
-    }
-    return true;
-}
-
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -247,7 +186,7 @@ int main(int argc, char *argv[])
     }
 
     uint32_t features = 0;
-    if (!handshake(registers, &features)) {
+    if (!aegir::virtio::handshake(registers, &features)) {
         write_line("FAIL", "the device refused the features we asked for");
         return 0;
     }
@@ -301,17 +240,19 @@ int main(int argc, char *argv[])
      * Linux does it with __GFP_ZERO for the same reason: a device reads the rings' own words,
      * indices in particular, so memory that happens to hold a nonzero used index is memory
      * that makes a driver believe the device has already answered. */
+    static aegir::virtio::Queue queue;
     volatile uint8_t *queue_page = reinterpret_cast<volatile uint8_t *>(memory_address);
     for (uint32_t i = 0; i < aegir::virtio::kQueueBytes; ++i) {
         queue_page[i] = 0;
     }
+    queue.place(queue_page, memory_physical);
     /* The clamp table's room: everything this service's memory holds past
      * the queue. */
     g_clamp_free = reinterpret_cast<uint8_t *>(memory_address) + aegir::virtio::kQueueBytes;
     g_clamp_end = reinterpret_cast<uint8_t *>(memory_address) + (1ull << memory_bits);
 
     aegir::virtio::QueueReport queue_report{};
-    aegir::virtio::set_up(registers, memory_physical, aegir::virtio::kQueueSize, &queue_report);
+    queue.set_up(registers, 0, aegir::virtio::kQueueSize, &queue_report);
     aegir::debug_write("      queue: num ");
     aegir::debug_write_unsigned(queue_report.num_back);
     aegir::debug_write(" of ");
@@ -401,7 +342,7 @@ int main(int argc, char *argv[])
         aegir::bootstrap::capability("irq.notify", 10, &irq_notification) &&
         aegir::bootstrap::capability("irq.handler", 11, &irq_handler);
     if (has_irq) {
-        aegir::virtio::use_interrupts(irq_notification, irq_handler);
+        queue.use_interrupts(irq_notification, irq_handler);
     }
     write_line("completion", has_irq ? "interrupt" : "polling");
 
@@ -429,7 +370,7 @@ int main(int argc, char *argv[])
             if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
                 for (uint32_t i = 0; i < sectors; ++i) {
                     aegir::virtio::ReadResult const result = aegir::virtio::read_sector(
-                        registers, queue_page, memory_physical, first + i,
+                        registers, queue, first + i,
                         window_physical +
                             static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes,
                         nullptr);
@@ -449,7 +390,7 @@ int main(int argc, char *argv[])
             if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
                 for (uint32_t i = 0; i < sectors; ++i) {
                     aegir::virtio::ReadResult const result = aegir::virtio::write_sector(
-                        registers, queue_page, memory_physical, first + i,
+                        registers, queue, first + i,
                         window_physical +
                             static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes);
                     if (!result.completed || result.status != 0) {
