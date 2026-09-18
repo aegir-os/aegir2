@@ -108,27 +108,32 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
     }
 }
 
-/* Wait for one key's down (value 1) or up (value 0): events that are not
- * it -- the EV_SYN that ends a moment, other keys -- are consumed and
- * skipped. `next` holds its reply until there is one, so the wait is the
- * kernel's, not a spin. */
+/* Wait for one event: events that are not it -- the EV_SYN that ends a
+ * moment, other axes or keys -- are consumed and skipped. `next` holds its
+ * reply until there is one, so the wait is the kernel's, not a spin. */
 constexpr uint16_t kKeyA = 30; /* Linux's KEY_A, which virtio-input carries unchanged */
 constexpr uint16_t kKeyB = 48;
 constexpr uint16_t kKeyC = 46;
 
-bool wait_key(aegir::ipc::Consumer const &kbd, uint16_t code, uint32_t value) noexcept
+bool wait_event(aegir::ipc::Consumer const &port, uint16_t type, uint16_t code,
+                uint32_t value) noexcept
 {
     for (;;) {
-        aegir::ipc::Reply const event = kbd.call(aegir::input::kMethodNext, 0);
+        aegir::ipc::Reply const event = port.call(aegir::input::kMethodNext, 0);
         if (event.error != 0) {
             return false;
         }
-        if (aegir::input::event_type(event.word) == aegir::input::kEvKey &&
+        if (aegir::input::event_type(event.word) == type &&
             aegir::input::event_code(event.word) == code &&
             aegir::input::event_value(event.word) == value) {
             return true;
         }
     }
+}
+
+bool wait_key(aegir::ipc::Consumer const &kbd, uint16_t code, uint32_t value) noexcept
+{
+    return wait_event(kbd, aegir::input::kEvKey, code, value);
 }
 
 /* The framebuffer port's two questions (aegir/framebuffer.h): info answered
@@ -1033,6 +1038,60 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: kbd.virtio0's held reply delivered 'a', down and up\n");
+        }
+    }
+
+    /* The tablet, discovered the same way: absolute positions in the axis's
+     * own units (0..32767 both ways, as the driver announces), so the numbers
+     * the runner sends through QMP input-send-event are the numbers that must
+     * arrive -- no display's size between. Its click is not asserted here:
+     * QEMU bundles buttons into the relative handler's mask, so a headless
+     * click falls to the mouse, and a tablet click needs a bound console --
+     * run-ui's territory (ui/input.c's qemu_input_find_handler). */
+    {
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        seL4_CPtr const tablet_slot = static_cast<seL4_CPtr>(first_free + 14);
+        bool ok = registry.valid() && open_bound(registry, "tablet.virtio0", 14, tablet_slot);
+        aegir::ipc::Consumer const tablet(tablet_slot);
+        if (ok) {
+            write("  test: tablet.virtio0 opened -- a pointer move, please\n");
+            ok = wait_event(tablet, aegir::input::kEvAbs, aegir::input::kAxisX, 10000) &&
+                 wait_event(tablet, aegir::input::kEvAbs, aegir::input::kAxisY, 20000);
+        }
+        if (!ok) {
+            write("  test: FAIL the tablet did not deliver (10000,20000)\n");
+            ++failed;
+        } else {
+            write("  test: tablet.virtio0's held reply delivered (10000,20000)\n");
+        }
+    }
+
+    /* The mouse: a click and a nudge. Buttons land here headless -- QEMU
+     * bundles BTN into the relative handler's mask, so the first (only)
+     * unbound handler carrying BTN is this one -- and relative motion passes
+     * through exactly: the deltas the runner sends are the deltas that
+     * arrive, sign and all (a negative delta rides as its two's complement
+     * word). The click is sent first, so it is waited for first. */
+    {
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        seL4_CPtr const mouse_slot = static_cast<seL4_CPtr>(first_free + 15);
+        bool ok = registry.valid() && open_bound(registry, "mouse.virtio0", 13, mouse_slot);
+        aegir::ipc::Consumer const mouse(mouse_slot);
+        if (ok) {
+            write("  test: mouse.virtio0 opened -- a nudge, please\n");
+            ok = wait_event(mouse, aegir::input::kEvKey, aegir::input::kBtnLeft, 1) &&
+                 wait_event(mouse, aegir::input::kEvKey, aegir::input::kBtnLeft, 0) &&
+                 wait_event(mouse, aegir::input::kEvRel, aegir::input::kAxisX, 120) &&
+                 wait_event(mouse, aegir::input::kEvRel, aegir::input::kAxisY,
+                            static_cast<uint32_t>(-60));
+        }
+        if (!ok) {
+            write("  test: FAIL the mouse did not deliver a left click and (+120,-60)\n");
+            ++failed;
+        } else {
+            write("  test: mouse.virtio0's held reply delivered a left click and (+120,-60)\n");
         }
     }
 

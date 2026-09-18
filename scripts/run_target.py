@@ -156,6 +156,23 @@ def send_key(socket_path: Path, key: str) -> None:
     )
 
 
+def input_send_event(socket_path: Path, events: tuple[dict, ...]) -> str | None:
+    """Pointer motion and clicks through QEMU's QMP socket: the acceptance
+    check's hand on the mouse or tablet. No device is named: with no console
+    bound (the display is `none`), events fall through to the unbound input
+    handlers -- abs lands on the tablet, rel on the mouse, btn on whichever
+    registered first (ui/input.c's qemu_input_find_handler). The events are
+    QMP's own InputEvent dicts ({type: abs/rel/btn, ...}). Returns None on
+    success, QMP's error text when it refuses."""
+    answer = qmp_command(
+        socket_path,
+        {"execute": "input-send-event", "arguments": {"events": list(events)}},
+    )
+    if "error" in answer:
+        return str(answer["error"])
+    return None
+
+
 def screen_dump(socket_path: Path, device: str, filename: str) -> str | None:
     """One console's screen, as a PPM QEMU writes: the acceptance check's eyes.
     None when the dump happened, QMP's error text when it did not."""
@@ -352,6 +369,18 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                             flush=True,
                         )
                 step_dims.clear()
+                if step.events:
+                    # The guest said it is waiting: move or click the pointer.
+                    # Events persist in the driver's posted buffers, so the
+                    # send is not a race -- but a refused send would let the
+                    # guest wait forever, so the answer is checked.
+                    problem = input_send_event(socket_path, step.events)
+                    if problem is not None:
+                        print(
+                            f"    runner: FAIL input-send-event: {problem}",
+                            flush=True,
+                        )
+                        failed = True
                 if step.press is not None:
                     # The guest said it is waiting: press the key. Events
                     # persist in the driver's posted buffers, so the press is

@@ -25,13 +25,17 @@ class QmpStep:
     matched against console lines, and once it has matched `times` times the
     action runs -- screendump each QEMU device in `dumps` and check the PPMs
     (dimensions are the multiset `expect`, and the driver's band pattern must
-    be at its posts), then press the key `press`, if any."""
+    be at its posts), send the input `events` (QMP input-send-event dicts:
+    pointer moves and clicks -- no device is named, because with no console
+    bound the events fall through to the unbound input handlers, and ours
+    are), then press the key `press`, if any."""
 
     trigger: str
     times: int = 1
     press: str | None = None
     dumps: tuple[str, ...] = ()
     expect: tuple[tuple[int, int], ...] = ()
+    events: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,13 +97,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-drive file=disk.img,if=none,format=raw,id=hd",
             "-device virtio-blk-device,drive=hd",
             "-device virtio-keyboard-device",
-            # The pointers: a relative mouse and an absolute tablet. Both are
+            # The pointers: an absolute tablet and a relative mouse. Both are
             # virtio id 18, like the keyboard -- the config space's EV_BITS
-            # says which is which (the registry's evtype key), and the ids
-            # name them for QMP's input-send-event, which is how acceptance
-            # moves and clicks them from outside.
-            "-device virtio-mouse-device,id=mouse0",
-            "-device virtio-tablet-device,id=tablet0",
+            # says which is which (the registry's evtype key). Headless
+            # injection is QMP input-send-event with NO device argument: with
+            # no console bound, events fall through to the unbound handlers
+            # (ui/input.c's qemu_input_find_handler) -- abs lands on the
+            # tablet and rel on the mouse by uniqueness, and btn lands on the
+            # relative handler, because QEMU bundles buttons into its mask;
+            # a tablet click cannot be injected without a bound console.
+            "-device virtio-tablet-device",
+            "-device virtio-mouse-device",
             "-device virtio-gpu-device,id=gpu0",
             "-device virtio-gpu-device,id=gpu1",
             "-qmp unix:qmp.sock,server,nowait",
@@ -113,6 +121,29 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         # checked) and presses the key that paces the guest's next step.
         qmp_steps=(
             QmpStep(r"test: kbd\.virtio0 opened -- a key, please", press="a"),
+            # The tablet: absolute positions in the axis's own units (0..32767
+            # both ways, as the driver announces), so the numbers sent here
+            # are the numbers the guest must see -- no display size between.
+            QmpStep(
+                r"test: tablet\.virtio0 opened -- a pointer move, please",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 10000}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20000}},
+                ),
+            ),
+            # The mouse: the click first, then the nudge -- headless, buttons
+            # route to the relative handler (QEMU bundles BTN into its mask),
+            # and the deltas pass through exactly. The guest waits for them in
+            # this order, which is the order they are queued in.
+            QmpStep(
+                r"test: mouse\.virtio0 opened -- a nudge, please",
+                events=(
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "rel", "data": {"axis": "x", "value": 120}},
+                    {"type": "rel", "data": {"axis": "y", "value": -60}},
+                ),
+            ),
             # Both heads up at the display's preferred mode. The cue is the
             # test bed's, not the drivers': their marker lines pass while the
             # boot is still spawning, before the test could be listening, and
