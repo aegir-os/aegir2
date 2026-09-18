@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -31,6 +32,27 @@ from targets import TARGETS, Target
 
 ENV_SCRIPT = pins.ROOT / "scripts" / "env.sh"
 TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) tests disabled\.")
+
+
+def preflight(target: Target, booting: bool) -> list[str]:
+    """What this machine still needs before the target can build or boot, as a
+    list of "what (which make command fixes it)". Checked here because the
+    failure otherwise surfaces as `bash returned exit status 1`: the vendored
+    tree's absence is a missing init-build.sh -- it is placed by `make deps`
+    and gitignored -- and a missing toolchain is cmake's least readable
+    error."""
+    missing: list[str] = []
+    if not (pins.ROOT / "init-build.sh").is_file() or not (pins.ROOT / "kernel").is_dir():
+        missing.append("the vendored seL4 tree (make deps)")
+    if not (pins.ROOT / "third_party/tools/venv/bin/cmake").is_file():
+        missing.append("the pinned host tools (make tools)")
+    if not any(pins.ROOT.glob("third_party/toolchain/*/usr/bin/riscv64-unknown-elf-gcc")):
+        missing.append("the pinned RISC-V toolchain (make tools)")
+    if booting and shutil.which("qemu-system-riscv64") is None:
+        # QEMU is the one piece taken from the host (specs/build.md's host
+        # prerequisites), so there is no make target that fixes it.
+        missing.append("qemu-system-riscv64 (a host package)")
+    return missing
 
 
 def bash(command: str, cwd: Path, timeout: int) -> None:
@@ -360,6 +382,11 @@ def main(argv: list[str]) -> int:
 
     target = TARGETS[arguments.target]
     build_dir = pins.ROOT / target.build_dir
+
+    missing = preflight(target, booting=not arguments.build_only)
+    if missing:
+        pins.report(False, f"{target.name} cannot build yet", "missing: " + "; ".join(missing))
+        return 1
 
     wanted_flags = " ".join(target.configure_flags)
     try:

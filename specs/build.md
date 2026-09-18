@@ -263,6 +263,9 @@ make deps         # fetch vendored sources at their pinned revisions
 make deps-check   # verify pins, patches and license files
 make build        # configure + build $(TARGET) (default: aegir)
 make run          # boot $(TARGET) under QEMU
+make run-ui       # boot $(TARGET) with a GTK window on the displays; the
+                  # acceptance keys are yours to press, and QEMU stops when the
+                  # window closes
 make envelope     # build + boot every machine in the envelope above
 make test         # build + boot sel4test, check for the success marker
 make clean

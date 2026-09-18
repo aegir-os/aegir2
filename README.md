@@ -40,6 +40,7 @@ make deps        # fetch the vendored seL4 tree at its pinned revisions
 make deps-check  # verify every vendored tree matches its pin
 make build       # configure + build Aegir's root task
 make run         # boot it under QEMU (stops once it reports online)
+make run-ui      # boot it with a GTK window on the displays; you press the keys
 make envelope    # boot every machine in the RAM/cores envelope we support
 make test        # build + boot the seL4 test suite (kernel acceptance test)
 ```
