@@ -153,12 +153,29 @@ def qmp_command(socket_path: Path, command: dict) -> dict:
         client.close()
 
 
-def send_key(socket_path: Path, key: str) -> None:
-    """One keypress through QEMU's QMP socket: the acceptance check's finger."""
-    qmp_command(
-        socket_path,
-        {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": key}]}},
-    )
+# The characters the acceptance script types, as QEMU's qcodes: a lowercase
+# letter or a digit is its own name, and the two whitespaces are QEMU's.
+# Anything else would need a shift chord, and no step types one yet.
+_PRESS_QCODES = {"\t": "tab", "\n": "ret"}
+
+
+def send_key(socket_path: Path, keys: str) -> bool:
+    """Keypresses through QEMU's QMP socket, one per character of `keys`: the
+    acceptance check's fingers. False -- and nothing sent -- when a character
+    has no qcode, because half a typed password is worse than none."""
+    qcodes: list[str] = []
+    for char in keys:
+        qcode = _PRESS_QCODES.get(char, char)
+        if not ((len(qcode) == 1 and (qcode.islower() or qcode.isdigit())) or
+                qcode in _PRESS_QCODES.values()):
+            return False
+        qcodes.append(qcode)
+    for qcode in qcodes:
+        qmp_command(
+            socket_path,
+            {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": qcode}]}},
+        )
+    return True
 
 
 def input_send_event(socket_path: Path, events: tuple[dict, ...]) -> str | None:
@@ -403,13 +420,27 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         )
                         failed = True
                 if step.press is not None:
-                    # The guest said it is waiting: press the key. Events
-                    # persist in the driver's posted buffers, so the press is
-                    # not a race.
-                    send_key(socket_path, step.press)
+                    # The guest said it is waiting: type the keys. Events
+                    # persist in the driver's posted buffers, so the presses
+                    # are not a race.
+                    if not send_key(socket_path, step.press):
+                        print(
+                            f"    runner: FAIL a character of '{step.press}' has no qcode",
+                            flush=True,
+                        )
+                        failed = True
             if target.marker in stripped:
                 seen = True
                 break
+        # A step whose cue never printed is a check that never ran: the run
+        # does not get to pass on evidence that was never taken.
+        for index, step in enumerate(target.qmp_steps):
+            if step_matches[index] == 0:
+                print(
+                    f"    runner: FAIL the cue never printed: {step.trigger}",
+                    flush=True,
+                )
+                failed = True
         stream.close()
     finally:
         # Take the whole process group down: QEMU is a child of the shell, and
