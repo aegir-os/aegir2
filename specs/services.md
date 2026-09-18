@@ -888,10 +888,18 @@ What was decided, and what it took:
   partition "did not exist" until the manager re-read the entry chunk after
   each spawn.
 
-Still open, in the order they arrive: reclaiming an exited session's objects
-(`specs/auth.md` records the gap), an input path so a session can be a shell,
-and resolve checks once volumes have an ownership model to check against.
-Home volumes landed: the system volume announces itself by partition type
+Still open, in the order they arrive: an input path so a session can be a
+shell, and resolve checks once volumes have an ownership model to check
+against. Session reclaim landed (`specs/auth.md`): auth observes the exit
+where it already waited for the ready, reaps the badge's handles on every
+volume the namespace names, unbinds its aliases, and revokes the pool the
+session's objects were retyped from -- sixteen logins run and reclaim in
+one boot, which the 2 MiB spawn delegation could never have held at once.
+The arc exposed one latent limit on the way, in the class of
+limits-that-break: the alias table's arena assumed "a binding is small"
+would cover ever-made rather than live-at-once, and the fifteenth session's
+`Home:` was refused; unbound rows are reused now. Home volumes landed: the
+system volume announces itself by partition type
 GUID, the VFS aliases it `Sys:`, and a login makes and binds `Home:`
 (`specs/auth.md`). The badge space is designed now
 (`specs/authority.md`, Identity is a badge).

@@ -80,9 +80,10 @@ filesystems have somewhere to register — `specs/services.md`).
 - **bind** — words: a badge, an alias name, the path it stands for. Reply:
   1 bound, 0 refused. See Aliases.
 - **unbind** — words: a badge. Every binding the badge holds is dropped;
-  the reply is how many. The trigger — auth calling it when a session
-  exits — lands with the session-reclaim arc, beside the volume protocol's
-  `reap`; the mechanism is landed and tested.
+  the reply is how many. auth calls it when a session exits, beside the
+  volume protocol's `reap` (`specs/auth.md`'s Session reclaim). A dropped
+  binding's row serves the next bind — a binding is one size — so the
+  table's bound is the most aliases live at once, not ever made.
 - **count / describe** — the volumes, one row per describe: name, flags,
   whether a filesystem is bound. The registry pattern
   (`libs/aegir-registry`) applied to names.
@@ -172,9 +173,8 @@ write side has **handles** — the only per-client state a filesystem holds:
   chain is freed when the last handle closes. (FAT's version of the rule:
   see below.)
 - **reap** — words: a badge. Every handle the badge holds is dropped, as
-  though closed. The reply is how many. The trigger — auth calling it when
-  a session exits — lands with the session-reclaim arc (`specs/auth.md`);
-  the mechanism is landed and tested.
+  though closed. The reply is how many. auth calls it on every volume the
+  namespace names when a session exits (`specs/auth.md`'s Session reclaim).
 
 On FAT, "the chain is freed when the last handle closes" simplifies: FAT
 has no link counts, so remove on an open file refuses while a handle names
@@ -184,9 +184,9 @@ proper home.
 A handle row is **scoped to the caller's badge**: resolve minted the
 client's copy of the volume port with its badge, so the filesystem knows
 who is calling on every method, and a handle named by any other badge is
-not one. A client that exits without closing is reaped — `reap`, above —
-once the session arc can observe the exit (specs/auth.md records the same
-shape for the session's objects).
+  not one. A client that exits without closing is reaped — `reap`, above —
+  when the session's exit is observed (`specs/auth.md`'s Session reclaim
+  does exactly that, for the badge the session ran with).
 
 Inline data bounds a call to what the envelope carries
 (`seL4_MsgMaxLength - 1` words). That is the right size for boot-time reads —
