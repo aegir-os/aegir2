@@ -12,9 +12,14 @@
  * time, down the chain, and nothing here hands any out.
  *
  * The wire: `count` answers one word; `describe` takes an index and answers
- * a Row's words, the multi-word form of the port envelope (aegir/ipc). A
- * method the port does not know is a protocol version it does not speak,
- * and the answer says so by saying nothing.
+ * a Row's words, the multi-word form of the port envelope (aegir/ipc);
+ * `open` takes an index and answers with one capability -- the bound
+ * driver's port, minted with the caller's badge, so a client finds a
+ * spawned driver's port without a static edge in the manifest
+ * (specs/services.md). Asking for an unbound row, or a row that does not
+ * exist, is the empty reply, as is a method the port does not know: a
+ * protocol version it does not speak, and the answer says so by saying
+ * nothing.
  */
 
 #pragma once
@@ -29,6 +34,8 @@ constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
 constexpr uint32_t kMethodCount = 1;    /* answer: how many devices the map holds */
 constexpr uint32_t kMethodDescribe = 2; /* in: an index; answer: a Row's words */
+constexpr uint32_t kMethodOpen = 3;     /* in: an index; answer: the bound driver's
+                                           port, minted with the caller's badge */
 
 /** One device, as the map knows it: what the tree said, which driver the
  *  registry row named, and what the join found. The strings are the map's

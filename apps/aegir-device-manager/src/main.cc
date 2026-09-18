@@ -729,21 +729,27 @@ int main(int argc, char *argv[])
                 uint64_t window_physical;
                 char const *name;
                 uint32_t name_length;
+                uint32_t binding; /* its row in the map: what `open` indexes by */
             };
             auto *bound = static_cast<BoundPort *>(arena.allocate(
                 sizeof(BoundPort) * (binding_count != 0 ? binding_count : 1)));
             uint32_t bound_count = 0;
-            /* The port the map is asked through: one endpoint, ours to receive
-             * on, served after everything is spawned. The caller half goes to
-             * the services the map is for -- the partition manager first
-             * (specs/services.md names it devmgr.registry and lists it among
-             * the partition manager's grants). */
-            seL4_Error registry_error = seL4_NoError;
+            /* The port the map is asked through is the manifest's:
+             * `owns = devmgr.registry` is what lets a service director
+             * starts hold a caller half, which an endpoint made here could
+             * never reach. The owner half carries every right, because the
+             * mints an `open` answers with keep only what the source holds
+             * (specs/services.md). The caller half goes to the services the
+             * map is for -- the partition manager first. */
+            uint64_t registry_slot = 0;
             seL4_CPtr const registry_endpoint =
-                g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
-                                       g_account, &registry_error);
+                aegir::bootstrap::capability(aegir::registry::kPortName,
+                                             aegir::registry::kPortNameLength,
+                                             &registry_slot)
+                    ? static_cast<seL4_CPtr>(registry_slot)
+                    : 0;
             if (registry_endpoint == 0) {
-                write_line("FAIL", "no memory for the registry's port");
+                write_line("FAIL", "the registry's port was not given");
             }
             /* Set when the partition manager is up: its ready arrives on the
              * supervision notification the spawn made for it -- our half of
@@ -1093,7 +1099,7 @@ int main(int argc, char *argv[])
                  * list. */
                 bound[bound_count] = BoundPort{block_port, window_client, window_children,
                                                window_pages, window_physical, binding.name,
-                                               binding.name_length};
+                                               binding.name_length, b};
                 ++bound_count;
             }
 
@@ -1298,6 +1304,10 @@ int main(int argc, char *argv[])
                 } else {
                     aegir::debug_write("      devmgr.registry: serving\n");
                     aegir::ipc::Owner registry(registry_endpoint);
+                    /* The slot an `open` mints into: one, reused, because the
+                     * reply transfers a copy and ours is deleted right after
+                     * -- the shape vfs.namespace's resolve keeps. */
+                    seL4_CPtr const mint_slot = g_objects.alloc_slot();
                     /* Ready is owed to the director once the partition manager
                      * reported its own -- or at once, when there is none. */
                     bool waiting_for_partmgr = partmgr_running;
@@ -1332,6 +1342,41 @@ int main(int argc, char *argv[])
                             registry.reply_words(
                                 reinterpret_cast<uint64_t const *>(&row),
                                 aegir::registry::kRowWords);
+                        } else if (method == aegir::registry::kMethodOpen && length == 2 &&
+                                   static_cast<uint64_t>(seL4_GetMR(1)) < binding_count) {
+                            /* The introduction: the bound driver's port,
+                             * minted with the caller's own badge so the
+                             * driver sees the true caller (specs/services.md).
+                             * The unbadged originals are ours to mint from --
+                             * an endpoint the spawner created may be minted
+                             * again. An unbound row is the empty reply, the
+                             * same as a row past the map. */
+                            uint64_t const index =
+                                static_cast<uint64_t>(seL4_GetMR(1));
+                            seL4_CPtr port = 0;
+                            if (bindings[index].spawned) {
+                                for (uint32_t j = 0; j < bound_count; ++j) {
+                                    if (bound[j].binding == index) {
+                                        port = bound[j].port;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (port == 0 || mint_slot == 0 ||
+                                seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint_slot,
+                                                aegir::bootstrap::kCNodeBits,
+                                                aegir::bootstrap::kSlotOwnCNode, port,
+                                                aegir::bootstrap::kCNodeBits,
+                                                seL4_CapRights_new(1, 0, 0, 1),
+                                                badge) != seL4_NoError) {
+                                registry.reply(0);
+                            } else {
+                                registry.reply_cap(nullptr, 0, mint_slot);
+                                /* The kernel transferred a copy; ours leaves,
+                                 * and the slot answers the next open. */
+                                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
+                                                  aegir::bootstrap::kCNodeBits);
+                            }
                         } else {
                             /* A method we do not know, or an index past the
                              * map: the answer says so by saying nothing

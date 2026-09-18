@@ -27,6 +27,10 @@ restart   = always
 binary    = aegir-device-manager
 authority = system
 account   = system
+# The map it builds is a port it owns, so a service director starts can hold
+# a caller half: count and describe ask what the machine is, and open
+# introduces the caller to the driver bound to a row (specs/services.md).
+owns      = devmgr.registry
 needs     = log.main
 restart   = always
 # The machine's devices are given to this service and to no other: a device is a
@@ -161,7 +165,7 @@ restart   = never
 binary    = aegir-test
 authority = system
 account   = boot
-needs     = log.main, vfs.namespace, auth.login
+needs     = log.main, vfs.namespace, auth.login, devmgr.registry
 restart   = never
 
 # The first session (specs/auth.md). Nothing starts it at boot -- auth

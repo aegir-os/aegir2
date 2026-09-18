@@ -8,6 +8,7 @@
 #include "ports.h"
 
 #include <aegir/bootstrap.h>
+#include <aegir/ipc/port.h>
 
 namespace aegir::director {
 
@@ -73,7 +74,15 @@ bool same_name(PortGraph::Name left, PortGraph::Name right) noexcept
  *  - `vol.initrd` is *published* by its owner: the initrd service registers
  *    the volume with the VFS itself, and minting the unbadged caller half
  *    that registration carries takes a source cap with at least those
- *    rights. */
+ *    rights.
+ *  - `devmgr.registry` answers its `open` with a capability -- the bound
+ *    driver's port, minted with the caller's badge -- so the receiving half
+ *    needs Grant for the reply to carry it (kernel/manual/parts/ipc.tex,
+ *    "Calling and Replying"), and every right such a mint derives, because
+ *    a mint keeps only what the source holds. Its callers carry the call
+ *    mark: the owner shares its receive with the supervision notification
+ *    of the children it starts, and the mark is what tells a call from a
+ *    signal (aegir/ipc/port.h's kCallMark). */
 struct Rights {
     seL4_CapRights_t owner;
     seL4_CapRights_t caller;
@@ -100,7 +109,21 @@ Rights rights_for(PortGraph::Name name) noexcept
     if (name_is(name, "vol.initrd", 10)) {
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
+    if (name_is(name, "devmgr.registry", 15)) {
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 0, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
+}
+
+/** The badge a caller half carries: the caller's own number, plus the call
+ *  mark for the one port whose owner needs it to tell a call from a signal
+ *  (aegir/ipc/port.h's kCallMark, and the rights table's comment above). */
+seL4_Word caller_badge_for(PortGraph::Name name, seL4_Word caller) noexcept
+{
+    if (name_is(name, "devmgr.registry", 15)) {
+        return caller | aegir::ipc::kCallMark;
+    }
+    return caller;
 }
 
 }  // namespace
@@ -270,7 +293,8 @@ bool PortGraph::build(manifest::Manifest const &manifest, mem::Account &account)
             Port const &port = ports_[need_port_[need_offset_[i] + j]];
             grants_[grant_offset_[i] + own_count_[i] + j] =
                 spawn::PortGrant{port.name.data, port.name.length, slot, port.endpoint,
-                                 rights_for(port.name).caller, i + 1};
+                                 rights_for(port.name).caller,
+                                 caller_badge_for(port.name, i + 1)};
             ++slot;
         }
     }

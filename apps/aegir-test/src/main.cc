@@ -21,9 +21,11 @@
 #include <aegir/authdb.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/entropy.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/nmspace.h>
+#include <aegir/registry.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -878,6 +880,88 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: 16 logins, 16 sessions run and reclaimed -- the drain is closed\n");
+        }
+    }
+
+    /* The map introduces (specs/services.md): walk the registry to the
+     * entropy driver's row, open it, and the port the answer carries must
+     * serve reads -- twice, nonzero, and never the same twice. The slot the
+     * opened cap lands in is a fresh one: a second cap onto an occupied
+     * slot is refused. */
+    {
+        bool ok = true;
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        uint64_t rng_row = 0;
+        bool found = false;
+        if (registry.valid()) {
+            aegir::ipc::Reply const count =
+                registry.call(aegir::registry::kMethodCount, 0);
+            ok = count.error == 0;
+            static char const kRngName[] = "rng.virtio0";
+            for (uint64_t i = 0; ok && !found && i < count.word; ++i) {
+                uint64_t words[aegir::registry::kRowWords];
+                aegir::ipc::WordsReply const described = registry.call_words(
+                    aegir::registry::kMethodDescribe, &i, 1, words,
+                    aegir::registry::kRowWords);
+                if (described.error != 0 ||
+                    described.count != aegir::registry::kRowWords) {
+                    ok = false;
+                    break;
+                }
+                auto const *row = reinterpret_cast<aegir::registry::Row const *>(words);
+                if (row->bound != 0 &&
+                    same_bytes(row->instance, kRngName, sizeof(kRngName) - 1) &&
+                    row->instance[sizeof(kRngName) - 1] == '\0') {
+                    rng_row = i;
+                    found = true;
+                }
+            }
+        } else {
+            ok = false;
+        }
+        seL4_CPtr const entropy_slot = static_cast<seL4_CPtr>(first_free + 10);
+        if (ok && found) {
+            bool cap_arrived = false;
+            uint64_t in[1];
+            aegir::ipc::WordsReply const opened =
+                registry.call_transfer(aegir::registry::kMethodOpen, &rng_row, 1, 0, in,
+                                       1, &cap_arrived);
+            ok = opened.error == 0 && cap_arrived &&
+                 aegir::ipc::take_received_cap(entropy_slot);
+        } else {
+            ok = false;
+        }
+        if (ok) {
+            aegir::ipc::Consumer const entropy(entropy_slot);
+            uint64_t want = 32;
+            uint64_t first_read[4];
+            uint64_t second_read[4];
+            aegir::ipc::WordsReply const r1 = entropy.call_words(
+                aegir::entropy::kMethodRead, &want, 1, first_read, 4);
+            aegir::ipc::WordsReply const r2 = entropy.call_words(
+                aegir::entropy::kMethodRead, &want, 1, second_read, 4);
+            /* The device may fill less than was asked for; what it did fill
+             * is the count's bytes, and that is what is compared. */
+            uint32_t const filled =
+                (r1.count < r2.count ? r1.count : r2.count) * 8;
+            bool nonzero = false;
+            bool differing = false;
+            if (r1.error == 0 && r2.error == 0 && filled != 0) {
+                auto const *a = reinterpret_cast<uint8_t const *>(first_read);
+                auto const *b = reinterpret_cast<uint8_t const *>(second_read);
+                for (uint32_t i = 0; i < filled; ++i) {
+                    nonzero = nonzero || a[i] != 0 || b[i] != 0;
+                    differing = differing || a[i] != b[i];
+                }
+            }
+            ok = nonzero && differing;
+        }
+        if (!ok) {
+            write("  test: FAIL the registry's open did not reach fresh entropy\n");
+            ++failed;
+        } else {
+            write("  test: devmgr.registry's open reaches rng.virtio0 -- entropy, twice, fresh\n");
         }
     }
 
