@@ -20,12 +20,15 @@
 
 #include <aegir/authdb.h>
 #include <aegir/bootstrap.h>
+#include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/entropy.h>
 #include <aegir/framebuffer.h>
 #include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
 #include <aegir/registry.h>
 #include <aegir/volume.h>
@@ -35,6 +38,12 @@
 namespace {
 
 aegir::ipc::Consumer g_nmspace;
+
+/* Static, not local: an Allocator carries the tables of what it handed
+ * out, and this service's stack is pages (the console says the same of
+ * its own). The window block's slice mapping is what they serve. */
+aegir::mem::Allocator g_test_objects(nullptr);
+aegir::mem::Scratch g_test_scratch(nullptr);
 
 void write(char const *text)
 {
@@ -114,6 +123,9 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
 constexpr uint16_t kKeyA = 30; /* Linux's KEY_A, which virtio-input carries unchanged */
 constexpr uint16_t kKeyB = 48;
 constexpr uint16_t kKeyC = 46;
+constexpr uint16_t kKeyD = 32;
+constexpr uint16_t kKeyE = 18;
+constexpr uint16_t kKeyF = 33;
 
 bool wait_event(aegir::ipc::Consumer const &port, uint16_t type, uint16_t code,
                 uint32_t value) noexcept
@@ -1169,6 +1181,87 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: gpu.virtio0's window is 16 mega pages, every frame handed over, the rest refused\n");
+        }
+    }
+
+    /* The console's window protocol, and its first client (specs/console.md):
+     * a slice of the console's arena, mapped here (this service carries the
+     * maps grant for exactly this); a white window over the blue backdrop; a
+     * red one overlapping it, on top by creation order; then the white
+     * destroyed and the backdrop redrawn beneath. What the screen shows is
+     * the runner's part -- the cues pace its dumps, and the keys say the
+     * dumps are done. */
+    {
+        aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
+            aegir::console::kPortName, aegir::console::kPortNameLength);
+        uint64_t untyped_slot = 0;
+        uint64_t vspace_slot = 0;
+        uint64_t window_base = 0;
+        uint32_t window_bytes = 0;
+        uint64_t untyped_physical = 0;
+        uint32_t untyped_bits = 0;
+        uint64_t untyped_address = 0;
+        static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &untyped_bits,
+                                                    &untyped_address));
+        bool ok = gui.valid() &&
+                  aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
+                  aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+                  aegir::bootstrap::window(&window_base, &window_bytes) &&
+                  g_test_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
+                                               untyped_bits, untyped_physical);
+        if (ok) {
+            /* The slots below +64 are this block's constants' neighbours;
+             * the allocator works past them. */
+            g_test_objects.adopt_slots(first_free + 64, (1u << 10) - (first_free + 64), 0);
+            ok = g_test_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
+                                      static_cast<uintptr_t>(window_base),
+                                      static_cast<uintptr_t>(window_base + window_bytes),
+                                      &g_test_objects);
+        }
+        uint64_t frame_bits = 0;
+        uint64_t frames = 0;
+        ok = ok && aegir::console::attach(gui, 2ull << 20, &frame_bits, &frames) &&
+             frame_bits == seL4_LargePageBits && frames == 1;
+        seL4_CPtr const slice_frame = static_cast<seL4_CPtr>(first_free + 33);
+        bool const got_frame = ok && aegir::console::frame(gui, 0, slice_frame);
+        auto *slice = static_cast<uint8_t *>(
+            got_frame ? g_test_scratch.map_large(slice_frame) : nullptr);
+        ok = got_frame && slice != nullptr;
+        uint64_t const first_window =
+            ok ? aegir::console::create_window(gui, 64, 64, 400, 300, 0) : 0;
+        ok = ok && first_window != 0;
+        aegir::ipc::Consumer const kbd(static_cast<seL4_CPtr>(first_free + 11));
+        if (ok) {
+            auto *backing = reinterpret_cast<uint32_t *>(slice);
+            for (uint32_t p = 0; p < 400 * 300; ++p) {
+                backing[p] = 0x00FFFFFF; /* white */
+            }
+            ok = aegir::console::damage(gui, first_window, 0, 0, 400, 300);
+            write("  test: a window of one's own -- the screen, please\n");
+            ok = ok && wait_key(kbd, kKeyD, 1);
+        }
+        uint64_t const second_window =
+            ok ? aegir::console::create_window(gui, 300, 200, 400, 300, 0x80000) : 0;
+        ok = ok && second_window != 0;
+        if (ok) {
+            auto *backing = reinterpret_cast<uint32_t *>(slice + 0x80000);
+            for (uint32_t p = 0; p < 400 * 300; ++p) {
+                backing[p] = 0x00FF0000; /* red */
+            }
+            ok = aegir::console::damage(gui, second_window, 0, 0, 400, 300);
+            write("  test: two windows, the newer on top -- the screen, please\n");
+            ok = ok && wait_key(kbd, kKeyE, 1);
+        }
+        if (ok) {
+            ok = aegir::console::destroy_window(gui, first_window);
+            write("  test: the first window left -- the screen, please\n");
+            ok = ok && wait_key(kbd, kKeyF, 1);
+        }
+        if (!ok) {
+            write("  test: FAIL the console's window protocol did not hold\n");
+            ++failed;
+        } else {
+            write("  test: the console composited two windows, and redrew what the destroy uncovered\n");
         }
     }
 

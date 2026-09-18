@@ -200,6 +200,45 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 bands=("gpu1",),
                 pixels=(("gpu0", 10, 10, 0, 85, 170),),
             ),
+            # The window protocol, from the test bed: a white window over
+            # the blue backdrop, then a red one overlapping on top, then the
+            # white destroyed and the backdrop redrawn beneath it. The
+            # window's rectangles: first (64,64)-(463,363), second
+            # (300,200)-(699,499).
+            QmpStep(
+                r"test: a window of one's own -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 10, 10, 0, 85, 170),
+                    ("gpu0", 100, 100, 255, 255, 255),
+                    ("gpu0", 463, 363, 255, 255, 255),
+                ),
+                press="d",
+            ),
+            QmpStep(
+                r"test: two windows, the newer on top -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 100, 100, 255, 255, 255),
+                    ("gpu0", 350, 250, 255, 0, 0),
+                    ("gpu0", 500, 400, 255, 0, 0),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+                press="e",
+            ),
+            QmpStep(
+                r"test: the first window left -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 100, 100, 0, 85, 170),
+                    ("gpu0", 350, 250, 255, 0, 0),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+                press="f",
+            ),
         ),
     )
 

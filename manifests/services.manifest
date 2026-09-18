@@ -219,7 +219,12 @@ restart   = never
 binary    = aegir-test
 authority = system
 account   = boot
-needs     = log.main, vfs.namespace, auth.login, devmgr.registry
+needs     = log.main, vfs.namespace, auth.login, devmgr.registry, console.gui
+# The window protocol's first client: it maps its arena slice itself, so it
+# gets the maps grant like the console, and the memory is what its page
+# tables for that mapping are retyped from.
+maps      = true
+memory_kib = 2048
 restart   = never
 
 # The first session (specs/auth.md). Nothing starts it at boot -- auth

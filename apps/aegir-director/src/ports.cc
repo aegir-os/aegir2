@@ -112,6 +112,13 @@ Rights rights_for(PortGraph::Name name) noexcept
     if (name_is(name, "devmgr.registry", 15)) {
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 0, 0, 1)};
     }
+    if (name_is(name, "console.gui", 11)) {
+        /* frame's answer carries a capability (specs/console.md) -- the
+         * namespace's shape, and the namespace's reason. The owner holds
+         * everything the caller's mint derives: a mint keeps only what the
+         * source holds. */
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 

@@ -26,5 +26,6 @@ target_compile_options(aegir-console PRIVATE -Wall -Wextra -Werror)
 # service maps them through (specs/console.md).
 target_link_libraries(
   aegir-console PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
-                        aegir-registry aegir-framebuffer aegir-mem sel4 muslc sel4runtime
+                        aegir-registry aegir-framebuffer aegir-console-protocol aegir-mem sel4
+                        muslc sel4runtime
 )
