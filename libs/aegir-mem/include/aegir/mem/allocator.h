@@ -57,6 +57,29 @@ public:
     seL4_CPtr alloc_slot() noexcept;
 
     /**
+     * The slot cursor as it stands, for handing a whole range back at once.
+     *
+     * `alloc_slot` above says a used slot is never freed, and that stays true
+     * one slot at a time. The exception is a range the *kernel* has emptied:
+     * when every capability past a mark was retyped from one untyped, revoking
+     * that untyped deletes them all (authority.md's retained-copy path), and
+     * the slots are empty again whether this allocator says so or not. The
+     * session-reclaim arc is the caller (specs/auth.md): mark at login, spawn,
+     * revoke, release.
+     */
+    seL4_CPtr slot_mark() const noexcept { return slots_next_; }
+
+    /**
+     * Move the cursor back to a mark taken with `slot_mark`, returning every
+     * slot past it to the free range. Valid only when a revoke has emptied
+     * those slots -- releasing a range with live capabilities in it hands the
+     * same slot out twice, and the kernel reports the second occupant as
+     * `seL4_DeleteFirst`, "the destination slot is occupied". A mark outside
+     * the range, or ahead of the cursor, is ignored rather than acted on.
+     */
+    void slot_release(seL4_CPtr mark) noexcept;
+
+    /**
      * Retype one object of `type`/`size_bits` out of untyped memory, splitting a
      * larger untyped when that is what is available, and charge it to `account`.
      * Returns 0 and writes `*error` on failure.

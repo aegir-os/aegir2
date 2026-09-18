@@ -100,6 +100,14 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
     }
 }
 
+void Allocator::slot_release(seL4_CPtr mark) noexcept
+{
+    if (mark >= slots_first_ && mark <= slots_next_) {
+        slots_used_ -= static_cast<unsigned>(slots_next_ - mark);
+        slots_next_ = mark;
+    }
+}
+
 unsigned Allocator::untyped_free() const noexcept
 {
     unsigned free = 0;
