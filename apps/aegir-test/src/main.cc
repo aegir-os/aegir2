@@ -1132,6 +1132,45 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The gpu's window, asked for and handed over (aegir/registry.h's
+     * window and window_frame): the shape the row declared -- window=25 as
+     * mega pages, sixteen of them -- and every frame arriving as a
+     * capability the receiver may map. Mapping them is the console's first
+     * act (specs/console.md); what this block proves is the asking. A frame
+     * past the count, and the keyboard's windowless row, are the empty
+     * reply. */
+    {
+        aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+            aegir::registry::kPortName, aegir::registry::kPortNameLength);
+        int64_t const gpu_row = aegir::registry::find_bound(registry, "gpu.virtio0", 11);
+        int64_t const kbd_row = aegir::registry::find_bound(registry, "kbd.virtio0", 11);
+        uint64_t page_bits = 0;
+        uint64_t pages = 0;
+        bool ok = registry.valid() && gpu_row >= 0 && kbd_row >= 0 &&
+                  aegir::registry::window_geometry(
+                      registry, static_cast<uint64_t>(gpu_row), &page_bits, &pages) &&
+                  page_bits == seL4_LargePageBits && pages == 16;
+        for (uint64_t f = 0; ok && f < pages; ++f) {
+            ok = aegir::registry::window_frame(
+                registry, static_cast<uint64_t>(gpu_row), f,
+                static_cast<seL4_CPtr>(first_free + 16 + f));
+        }
+        uint64_t unused_bits = 0;
+        uint64_t unused_pages = 0;
+        bool const refused =
+            ok && !aegir::registry::window_frame(registry, static_cast<uint64_t>(gpu_row),
+                                                 pages,
+                                                 static_cast<seL4_CPtr>(first_free + 16 + 16)) &&
+            !aegir::registry::window_geometry(registry, static_cast<uint64_t>(kbd_row),
+                                              &unused_bits, &unused_pages);
+        if (!ok || !refused) {
+            write("  test: FAIL gpu.virtio0's window did not come over whole, or a refusal answered\n");
+            ++failed;
+        } else {
+            write("  test: gpu.virtio0's window is 16 mega pages, every frame handed over, the rest refused\n");
+        }
+    }
+
     if (failed == 0) {
         write("  test: every check passed\n");
     } else {

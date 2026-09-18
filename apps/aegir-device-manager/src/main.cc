@@ -798,6 +798,9 @@ int main(int argc, char *argv[])
                                        stay mappable (kernel/src/arch/riscv/
                                        kernel/vspace.c:869-878) */
                 uint32_t window_pages;
+                uint32_t window_page_bits; /* what the frames of the window
+                                              set are: 4 KiB, or mega pages
+                                              from 2 MiB windows up */
                 uint64_t window_physical;
                 char const *name;
                 uint32_t name_length;
@@ -1180,7 +1183,8 @@ int main(int argc, char *argv[])
                  * driver has one. What the partition manager gets is this
                  * list. */
                 bound[bound_count] = BoundPort{block_port, window_client, window_children,
-                                               window_pages, window_physical, binding.name,
+                                               window_pages, window_page_bits,
+                                               window_physical, binding.name,
                                                binding.name_length, b};
                 ++bound_count;
             }
@@ -1466,6 +1470,65 @@ int main(int argc, char *argv[])
                                 registry.reply_cap(nullptr, 0, mint_slot);
                                 /* The kernel transferred a copy; ours leaves,
                                  * and the slot answers the next open. */
+                                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
+                                                  aegir::bootstrap::kCNodeBits);
+                            }
+                        } else if (method == aegir::registry::kMethodWindow &&
+                                   length == 2 &&
+                                   static_cast<uint64_t>(seL4_GetMR(1)) < binding_count) {
+                            /* The window's shape, for a client that means to
+                             * map it: page bits and page count. A row with no
+                             * window -- or one nobody drives -- is the empty
+                             * reply. */
+                            uint64_t const index =
+                                static_cast<uint64_t>(seL4_GetMR(1));
+                            uint64_t shape[2] = {0, 0};
+                            uint32_t shape_words = 0;
+                            if (bindings[index].spawned) {
+                                for (uint32_t j = 0; j < bound_count; ++j) {
+                                    if (bound[j].binding == index &&
+                                        bound[j].window_pages != 0) {
+                                        shape[0] = bound[j].window_page_bits;
+                                        shape[1] = bound[j].window_pages;
+                                        shape_words = 2;
+                                        break;
+                                    }
+                                }
+                            }
+                            registry.reply_words(shape, shape_words);
+                        } else if (method == aegir::registry::kMethodWindowFrame &&
+                                   length == 3 &&
+                                   static_cast<uint64_t>(seL4_GetMR(1)) < binding_count) {
+                            /* One frame of the window, from the pristine
+                             * client set: a copy of a cap nobody has mapped
+                             * is the receiver's to map (the mint sets above
+                             * exist because a mapped cap's copies are pinned
+                             * to its ASID). The transfer is the open shape:
+                             * copy into the reused slot, reply, delete. */
+                            uint64_t const index =
+                                static_cast<uint64_t>(seL4_GetMR(1));
+                            uint64_t const frame =
+                                static_cast<uint64_t>(seL4_GetMR(2));
+                            seL4_CPtr pristine = 0;
+                            if (bindings[index].spawned) {
+                                for (uint32_t j = 0; j < bound_count; ++j) {
+                                    if (bound[j].binding == index &&
+                                        frame < bound[j].window_pages) {
+                                        pristine = bound[j].window +
+                                                   static_cast<seL4_CPtr>(frame);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (pristine == 0 || mint_slot == 0 ||
+                                seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, mint_slot,
+                                                aegir::bootstrap::kCNodeBits,
+                                                aegir::bootstrap::kSlotOwnCNode, pristine,
+                                                aegir::bootstrap::kCNodeBits,
+                                                seL4_AllRights) != seL4_NoError) {
+                                registry.reply(0);
+                            } else {
+                                registry.reply_cap(nullptr, 0, mint_slot);
                                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
                                                   aegir::bootstrap::kCNodeBits);
                             }
