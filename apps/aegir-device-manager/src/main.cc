@@ -1463,7 +1463,12 @@ int main(int argc, char *argv[])
                                                 aegir::bootstrap::kCNodeBits,
                                                 aegir::bootstrap::kSlotOwnCNode, port,
                                                 aegir::bootstrap::kCNodeBits,
-                                                seL4_CapRights_new(1, 0, 0, 1),
+                                                /* Grant: the input protocol's
+                                                 * subscribe rides a capability
+                                                 * on the call (aegir/input.h),
+                                                 * so an opened port may carry
+                                                 * them. */
+                                                seL4_CapRights_new(1, 1, 0, 1),
                                                 badge) != seL4_NoError) {
                                 registry.reply(0);
                             } else {

@@ -253,6 +253,14 @@ int main(int argc, char *argv[])
         }
     }
     seL4_CPtr const held_slot = static_cast<seL4_CPtr>(first_free);
+    /* A subscriber's notification arrives as a capability on the call: where
+     * the kernel puts a received cap (the receive path, set once) and where
+     * the subscription keeps it. */
+    seL4_CPtr const receive_slot = static_cast<seL4_CPtr>(first_free + 1);
+    seL4_CPtr const subscriber_slot = static_cast<seL4_CPtr>(first_free + 2);
+    seL4_SetCapReceivePath(aegir::bootstrap::kSlotOwnCNode, receive_slot,
+                           aegir::bootstrap::kCNodeBits);
+    bool subscribed = false;
 
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("virtio-input", "ready");
@@ -325,6 +333,12 @@ int main(int argc, char *argv[])
                 seL4_Send(held_slot, seL4_MessageInfo_new(0, 0, 0, 1));
                 held = false;
             }
+            if (subscribed && pending_count != 0) {
+                /* The signal is the wakeup, not the event: the subscriber
+                 * drains with poll/next, and coalesced signals lose nothing
+                 * because the queue is ours. */
+                seL4_Signal(subscriber_slot);
+            }
             continue;
         }
         uint32_t const method = static_cast<uint32_t>(seL4_GetMR(0));
@@ -359,6 +373,22 @@ int main(int argc, char *argv[])
                  * told to try again (aegir/input.h). */
                 reply_empty();
             }
+        } else if (method == aegir::input::kMethodSubscribe) {
+            /* The caller's notification rode the call into the receive slot.
+             * One subscriber (aegir/input.h): a second while one stands is
+             * dropped, slot and all. */
+            if (!subscribed &&
+                seL4_CNode_Move(aegir::bootstrap::kSlotOwnCNode, subscriber_slot,
+                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::kSlotOwnCNode, receive_slot,
+                                aegir::bootstrap::kCNodeBits) == seL4_NoError) {
+                subscribed = true;
+            } else {
+                static_cast<void>(seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                                    receive_slot,
+                                                    aegir::bootstrap::kCNodeBits));
+            }
+            reply_empty();
         } else {
             /* A method we do not know is a protocol version we do not speak:
              * the reply says so by saying nothing. */

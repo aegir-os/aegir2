@@ -28,6 +28,17 @@ constexpr uint32_t kMethodPoll = 1;
  *  protocol's "try again", not an event. */
 constexpr uint32_t kMethodNext = 2;
 
+/** Subscribe: the call carries one capability -- a notification the caller
+ *  minted and badged -- and the driver signals it whenever events wait, the
+ *  bound-notification shape the driver itself waits on its interrupt with
+ *  (seL4_TCB_BindNotification): how a router that must also serve its own
+ *  port hears about events without holding a `next` it could not sit in.
+ *  The events still come from `poll`/`next`; the signal is the wakeup, and
+ *  signals coalesce -- the queue is the driver's, so nothing is lost. One
+ *  subscriber: a second subscribe while one stands answers empty and keeps
+ *  the first. */
+constexpr uint32_t kMethodSubscribe = 3;
+
 /* The event as one word: type and code are 16 bits each, value 32. */
 constexpr uint64_t pack_event(uint16_t type, uint16_t code, uint32_t value) noexcept
 {
