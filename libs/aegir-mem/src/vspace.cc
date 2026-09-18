@@ -190,4 +190,13 @@ void Scratch::unmap(seL4_CPtr frame) noexcept
     }
 }
 
+void Scratch::rewind(uintptr_t mark) noexcept
+{
+    if (mark < base_ || mark > next_) {
+        return;
+    }
+    next_ = mark;
+    last_cap_ = 0;
+}
+
 }  // namespace aegir::mem

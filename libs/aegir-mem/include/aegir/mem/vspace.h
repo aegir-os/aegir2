@@ -72,6 +72,17 @@ public:
      *  never recycles is a spawn budget nobody declared. */
     void unmap(seL4_CPtr frame) noexcept;
 
+    /** Put the cursor back to a mark taken with next(). The mappings above the
+     *  mark must already be gone: a reclaim revokes the session's pool, the
+     *  revoke deletes its frame caps, and the kernel unmaps a mapped frame
+     *  when the cap goes (finaliseCap, kernel/src/arch/riscv/object/
+     *  objecttype.c) -- so a rewind is bookkeeping only, not unmapping. It is
+     *  how a login hands the window pages its spawn staged with back to the
+     *  next login: without it the cursor climbs with every login until a map
+     *  crosses into table-less window and the FailedLookup table allocation
+     *  lands in slots the session's allocator already owns. */
+    void rewind(uintptr_t mark) noexcept;
+
     uintptr_t base() const noexcept { return base_; }
     uintptr_t limit() const noexcept { return limit_; }
     uintptr_t next() const noexcept { return next_; }

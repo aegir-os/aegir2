@@ -240,7 +240,7 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
  * paths too: the Home: bind has already happened by then, and a (badge,
  * name) pair binds once (specs/vfs.md) -- left bound, the next login's
  * bind of the same serial would be refused. */
-void reclaim_session(uint64_t badge, seL4_CPtr mark,
+void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
                      aegir::mem::Account const &session_account) noexcept
 {
     uint64_t reaped = 0;
@@ -304,11 +304,14 @@ void reclaim_session(uint64_t badge, seL4_CPtr mark,
     /* The revoke is the memory's way back: every object the session was --
      * CSpace, TCB, VSpace, frames, the spawn's staging -- was retyped from
      * the pool, and with the CSpace go the minted port copies it held
-     * (specs/authority.md's retained-copy path). The pool stands free whole
-     * for the next login, and the slots past the mark are empty, so the
-     * cursor returns to it. */
+     * (specs/authority.md's retained-copy path). The kernel unmaps a mapped
+     * frame when the cap goes (finaliseCap), so the staging's scratch-window
+     * pages are already unmapped here; the window's cursor just needs to be
+     * told. The pool stands free whole for the next login, and the slots
+     * past the mark are empty, so the cursor returns to it. */
     seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, g_session_pool,
                       aegir::bootstrap::kCNodeBits);
+    g_scratch.rewind(scratch_mark);
     g_objects.slot_release(mark);
     write("      auth: session reclaimed: ");
     aegir::debug_write_unsigned(reaped);
@@ -337,12 +340,18 @@ void start_session(uint32_t user) noexcept
     ensure_home(user, badge);
 
     seL4_CPtr const mark = g_objects.slot_mark();
+    /* The scratch window's own mark: the spawn stages the child's block and
+     * stack through it, and those pages are the session's to hand back --
+     * the rewind in reclaim_session is what keeps one login's staging from
+     * climbing the window until a table allocation collides with the
+     * session's own slots. */
+    uintptr_t const scratch_mark = g_scratch.next();
     aegir::mem::Account session_account{"session", 0, 0, 0};
     g_session_mem.reset();
     if (!g_session_mem.adopt_untyped(g_session_pool, kSessionPoolBits,
                                      g_session_pool_physical)) {
         write("      auth: FAIL the session pool would not be adopted\n");
-        reclaim_session(badge, mark, session_account);
+        reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
     g_session_mem.adopt_slots(mark, g_slots_end - mark, 0);
@@ -353,7 +362,7 @@ void start_session(uint32_t user) noexcept
                                                        session_account, &fault_error);
     if (fault == 0) {
         write("      auth: FAIL no fault endpoint for the session\n");
-        reclaim_session(badge, mark, session_account);
+        reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
     aegir::spawn::PortGrant const ports[] = {
@@ -402,7 +411,7 @@ void start_session(uint32_t user) noexcept
         write("      auth: FAIL spawning the session: ");
         write(spawner.problem());
         write("\n");
-        reclaim_session(badge, mark, session_account);
+        reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
     write("      auth: ");
@@ -419,7 +428,7 @@ void start_session(uint32_t user) noexcept
      * returning is how we know the session died (specs/auth.md). */
     seL4_Wait(process.supervision, nullptr);
     write("      auth: session ready\n");
-    reclaim_session(badge, mark, session_account);
+    reclaim_session(badge, mark, scratch_mark, session_account);
 }
 
 }  // namespace
