@@ -30,6 +30,10 @@ find_package(musllibc REQUIRED)
 # the loader cannot compile.
 find_package(util_libs REQUIRED)
 
+# C++ standard library (libc++, libcxxabi, libunwind) - built from vendored llvm-project
+# Added as a subdirectory so it builds as part of this CMake run.
+add_subdirectory(libs/aegir-libcxx)
+
 sel4_import_kernel()
 
 # Order matters here, and this is the order upstream uses.
@@ -48,15 +52,31 @@ sel4_import_libsel4()
 musllibc_setup_build_environment_with_sel4runtime()
 util_libs_import_libraries()
 
-# C++ policy shared by every Aegir target. Freestanding: no exceptions, no RTTI,
-# no thread-safe statics, and no standard library (there is none for this
-# target). Getting this wrong is silent, so it lives in one place.
-add_library(aegir-cxx-policy INTERFACE)
-target_compile_features(aegir-cxx-policy INTERFACE cxx_std_17)
+# C++ policies:
+# - aegir-cxx-policy-freestanding: no exceptions, no RTTI, no thread-safe statics.
+#   Used by kernel-adjacent code (root task, services, drivers) that must remain
+#   small and predictable.
+# - aegir-cxx-policy-hosted: full C++17 with exceptions, RTTI, thread-safe statics,
+#   linked against libc++. Used by applications (GUI, user programs).
+# Both require C++17.
+add_library(aegir-cxx-policy-freestanding INTERFACE)
+target_compile_features(aegir-cxx-policy-freestanding INTERFACE cxx_std_17)
 target_compile_options(
-  aegir-cxx-policy
+  aegir-cxx-policy-freestanding
   INTERFACE -fno-exceptions -fno-rtti -fno-threadsafe-statics -Wall -Wextra -Werror
 )
+
+add_library(aegir-cxx-policy-hosted INTERFACE)
+target_compile_features(aegir-cxx-policy-hosted INTERFACE cxx_std_17)
+target_compile_options(
+  aegir-cxx-policy-hosted
+  INTERFACE -fexceptions -frtti -fthreadsafe-statics -Wall -Wextra -Werror
+)
+target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi unwind)
+
+# Default policy alias for backward compatibility (freestanding)
+add_library(aegir-cxx-policy INTERFACE)
+target_link_libraries(aegir-cxx-policy INTERFACE aegir-cxx-policy-freestanding)
 
 add_subdirectory(libs/aegir-runtime)
 add_subdirectory(libs/aegir-devtree)
