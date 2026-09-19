@@ -22,6 +22,8 @@
   <remote name="opensbi" fetch="https://github.com/riscv"/>
   <remote name="nanopb" fetch="https://github.com/nanopb"/>
   <remote name="llvm" fetch="https://github.com/llvm"/>
+  <remote name="notofonts" fetch="https://github.com/notofonts"/>
+  <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
 
   <!-- Unused: every project below pins its own revision. -->
   <default remote="seL4" revision="master"/>
@@ -67,5 +69,11 @@
 
   <!-- LLVM project: libc++, libcxxabi, libunwind. Apache-2.0 with LLVM-exception. -->
   <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
+
+  <!-- Terminus bitmap font (multiple sizes). OFL-1.1. -->
+  <project name="terminus-font-4.49.1" path="projects/terminus-font" remote="mikebeaton" revision="8a2dd49b9a93d0b0a2c192c7961829ae3394a8d6"/>
+
+  <!-- Noto fonts: Sans (Latin), CJK, Arabic, Hebrew. OFL-1.1. -->
+  <project name="noto-fonts" path="projects/noto-fonts" remote="notofonts" revision="ffebf8c1ee449e544955a7e813c54f9b73848eac"/>
 
 </manifest>
