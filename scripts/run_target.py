@@ -191,14 +191,20 @@ def input_send_event(socket_path: Path, events: tuple[dict, ...]) -> str | None:
     bound (the display is `none`), events fall through to the unbound input
     handlers -- abs lands on the tablet, rel on the mouse, btn on whichever
     registered first (ui/input.c's qemu_input_find_handler). The events are
-    QMP's own InputEvent dicts ({type: abs/rel/btn, ...}). Returns None on
-    success, QMP's error text when it refuses."""
-    answer = qmp_command(
-        socket_path,
-        {"execute": "input-send-event", "arguments": {"events": list(events)}},
-    )
-    if "error" in answer:
-        return str(answer["error"])
+    QMP's own InputEvent dicts ({type: abs/rel/btn, ...}). One command per
+    event, at the typist's pace send_key already keeps: abs rides the
+    tablet's queue and btn the mouse's, and a burst that wakes the console
+    once for both queues is drained mouse-first whatever the send order --
+    a click meant for where the motion went lands where the pointer stood.
+    Returns None on success, QMP's error text when it refuses."""
+    for event in events:
+        answer = qmp_command(
+            socket_path,
+            {"execute": "input-send-event", "arguments": {"events": [event]}},
+        )
+        if "error" in answer:
+            return str(answer["error"])
+        time.sleep(0.05)
     return None
 
 
@@ -415,10 +421,13 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         )
                 step_dims.clear()
                 if step.events:
-                    # The guest said it is waiting: move or click the pointer.
-                    # Events persist in the driver's posted buffers, so the
-                    # send is not a race -- but a refused send would let the
-                    # guest wait forever, so the answer is checked.
+                    # The guest said it is waiting: move or click the
+                    # pointer. Events persist in the driver's posted buffers,
+                    # so the send is not a race -- but the order the console
+                    # drains two devices' queues is, so the send is one
+                    # command per event, paced (input_send_event's
+                    # docstring). A refused send would let the guest wait
+                    # forever, so the answer is checked.
                     problem = input_send_event(socket_path, step.events)
                     if problem is not None:
                         print(
