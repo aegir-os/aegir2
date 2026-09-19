@@ -2,7 +2,7 @@
 
 Status: decided (2026-09), not yet implemented. The first slice is the
 compositor, the focus model, and the greeter arc: auth's GUI login prompt,
-and the desktop stub a successful login hands the screen to.
+and the bureau stub a successful login hands the screen to.
 
 `console` is a system service in the boot set (`specs/services.md`), started
 by director, owning one port — `console.gui` — and needing `log.main` and
@@ -23,8 +23,8 @@ sees of the screen and the keyboard is what console serves.
 - **Windows from day one.** Console is a compositor, not a screen switcher:
   clients create overlapping windows, console owns the z-order, and focus is
   hit-tested (below). The Amiga screen survives as a shape of window — the
-  desktop's backdrop is a full-screen window — rather than as a separate
-  mechanism. Draggable screens, depth gadgets and the toolkit's look are
+  bureau's backdrop is a full-screen window — rather than as a separate
+  mechanism. Draggable screens, depth gadgets and the toolkit's look are gadgets and the toolkit's look are
   later arcs; the greeter's look is deliberately basic, and what the toolkit
   will look like is its own spec.
 - **Pixels never cross a message.** The window protocol is the established
@@ -130,10 +130,12 @@ the credential check never leaves auth. A refuse redraws the error line; an
 accept is auth's cue to spawn the session as it does today, and the greeter
 destroys its window and exits.
 
-The session binary a successful login starts becomes the **desktop**: a
-full-screen backdrop window — the Amiga screen, as a shape of window — with
-`console.gui` in its `needs` where the smoke carried `devmgr.registry`.
-What the desktop grows into is authority.md's later spec, unchanged.
+The session binary a login through the greeter starts is the **bureau**: a
+full-screen window, always in backdrop mode — the Amiga screen, as a shape
+of window — in Workbench grey, with `console.gui` in its `needs`. It draws
+and exits: the console owns the slice, so the window persists as the
+session's visible remainder, and reaping it is the re-login arc's.
+What the bureau grows into is authority.md's later spec, unchanged.
 
 ## What this is not
 
@@ -148,7 +150,7 @@ Headless, from outside, the way the display checks already run: the
 runner's QMP socket injects the keyboard events that type the known user's
 name and secret (characters asserted through the keymap), injects the
 tablet click on the button's coordinates, and reads the screen with
-`screendump` — the greeter's window before login, the desktop's backdrop
+`screendump` — the greeter's window before login, the bureau's backdrop
 after, and the focused window's frame where the click landed. The serial
 `auth.login` test path stays: the port, not the pixels, is the credential
 check.

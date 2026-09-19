@@ -367,7 +367,7 @@ int main(int argc, char *argv[])
      * teardown's revoke would meet any live mapping in here with a fault. */
     write("  greeter: welcome, ");
     write(form.name, form.name_length);
-    write(" -- the desktop takes it from here\n");
+    write(" -- the bureau takes it from here\n");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     aegir::halt();
 }

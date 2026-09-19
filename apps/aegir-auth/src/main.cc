@@ -336,16 +336,20 @@ void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
     write(" KiB charged back to the pool\n");
 }
 
-/* A successful login starts a session (specs/auth.md): the smoke, until
- * there is an input path for anything interactive. The badge is the user
- * class bit, the row as the user id, and the serial counting what the
- * user has run (specs/authority.md); the ports are the delegatable copies
- * badged with it. Everything the spawn puts down -- the session's objects
- * and the spawn's own staging -- is retyped from the session pool and
- * slotted past the mark, so the teardown after the wait takes it all
- * back. Then the wait for its ready, and serving resumes (specs/auth.md's
- * Session reclaim). */
-void start_session(uint32_t user) noexcept
+/* A successful login starts a session (specs/auth.md): the smoke over the
+ * serial line, the bureau when the caller is the greeter (specs/console.md's
+ * login arc). The badge is the user class bit, the row as the user id, and
+ * the serial counting what the user has run (specs/authority.md); the ports
+ * are the delegatable copies badged with it. Everything the spawn puts down
+ * -- the session's objects and the spawn's own staging -- is retyped from
+ * the session pool and slotted past the mark, so the teardown after the
+ * wait takes it all back; the bureau's mapping kit (an untyped for its page
+ * tables, its own VSpace root) is carved from the pool too. What the
+ * reclaim does NOT take is the bureau's slice: the screen is the session's
+ * visible remainder, and a console reap of the session badge is the
+ * re-login arc's to make, not today's. Then the wait for its ready, and
+ * serving resumes (specs/auth.md's Session reclaim). */
+void start_session(uint32_t user, bool bureau) noexcept
 {
     uint64_t const badge =
         aegir::ipc::make_user_badge(user, g_serials[user]);
@@ -379,6 +383,23 @@ void start_session(uint32_t user) noexcept
         reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
+    /* The bureau's mapping kit: 256 KiB of the pool for the page tables its
+     * slice mapping is retyped from, and the grant travels with its size,
+     * because a service cannot ask the kernel how large an untyped is. */
+    constexpr uint32_t kBureauUntypedBits = 18;
+    uint64_t bureau_untyped_physical = 0;
+    seL4_CPtr bureau_untyped = 0;
+    if (bureau) {
+        seL4_Error untyped_error = seL4_NoError;
+        bureau_untyped = g_session_mem.carve_untyped(kBureauUntypedBits,
+                                                     session_account, &untyped_error,
+                                                     &bureau_untyped_physical);
+        if (bureau_untyped == 0) {
+            write("      auth: FAIL no untyped for the bureau's tables\n");
+            reclaim_session(badge, mark, scratch_mark, session_account);
+            return;
+        }
+    }
     aegir::spawn::PortGrant const ports[] = {
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, g_spawn_log, seL4_CapRights_new(1, 0, 0, 1),
@@ -389,19 +410,39 @@ void start_session(uint32_t user) noexcept
         {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
+        /* The bureau's two extras (dead entries for the smoke -- the count
+         * says which are live): the console, with Grant, because frame and
+         * listen answers carry capabilities; and the untyped, whole. */
+        {aegir::console::kPortName, aegir::console::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_gui,
+         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
+        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, bureau_untyped,
+         seL4_AllRights, 0, kBureauUntypedBits},
     };
     static char const kSessionName[] = "session.smoke";
     static char const kSessionBinary[] = "aegir-session-smoke";
+    static char const kBureauName[] = "session.bureau";
+    static char const kBureauBinary[] = "aegir-bureau";
     aegir::spawn::Request request{};
-    request.name = kSessionName;
-    request.name_length = sizeof(kSessionName) - 1;
-    request.binary = kSessionBinary;
-    request.binary_length = sizeof(kSessionBinary) - 1;
+    if (bureau) {
+        request.name = kBureauName;
+        request.name_length = sizeof(kBureauName) - 1;
+        request.binary = kBureauBinary;
+        request.binary_length = sizeof(kBureauBinary) - 1;
+        request.give_vspace = true;
+        request.untyped_physical = bureau_untyped_physical;
+        request.untyped_bits = kBureauUntypedBits;
+    } else {
+        request.name = kSessionName;
+        request.name_length = sizeof(kSessionName) - 1;
+        request.binary = kSessionBinary;
+        request.binary_length = sizeof(kSessionBinary) - 1;
+    }
     request.account = g_rows[user].account;
     request.account_length = field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
-    request.port_count = 2;
+    request.port_count = bureau ? 4 : 2;
     request.fault_endpoint = fault;
     request.badge = badge;
 
@@ -445,7 +486,7 @@ void start_session(uint32_t user) noexcept
  * brokers is done. And nobody waits on it: it runs beside the serving loop
  * until its login succeeds, the loop's reap of its badge takes the windows
  * and slice back, and the process itself is one-shot -- its few pages stay
- * spent, a boot's price, until the desktop arc owns re-login. The spawn's
+ * spent, a boot's price, until the bureau arc owns re-login. The spawn's
  * staging through the scratch window ratchets the same way. */
 void start_greeter(aegir::mem::Arena &arena) noexcept
 {
@@ -816,14 +857,15 @@ int main(int argc, char *argv[])
         if (method == aegir::auth::kMethodLogin) {
             int const user = answer_login(port, words, count);
             if (user >= 0 && can_spawn) {
-                /* A login through the greeter ends the greeter's part. The
-                 * exit comes first: the wait is for the second supervision
-                 * signal, which the greeter sends as it leaves -- so its
-                 * welcome line is written before ours, never across it. Then
-                 * the windows and the slice go back before the session
-                 * starts -- console's reap, the same teardown order a
-                 * session's reclaim follows (specs/console.md). */
-                if (g_greeter_up && caller_badge == kGreeterBadge) {
+                bool const from_greeter = g_greeter_up && caller_badge == kGreeterBadge;
+                if (from_greeter) {
+                    /* A login through the greeter ends the greeter's part. The
+                     * exit comes first: the wait is for the second supervision
+                     * signal, which the greeter sends as it leaves -- so its
+                     * welcome line is written before ours, never across it. Then
+                     * the windows and the slice go back before the session
+                     * starts -- console's reap, the same teardown order a
+                     * session's reclaim follows (specs/console.md). */
                     seL4_Wait(g_greeter_supervision, nullptr);
                     uint64_t const badge_word = kGreeterBadge;
                     uint64_t bin[1];
@@ -832,7 +874,9 @@ int main(int argc, char *argv[])
                     g_greeter_up = false;
                     write("      auth: the greeter's windows are reaped\n");
                 }
-                start_session(static_cast<uint32_t>(user));
+                /* The greeter's login starts the bureau; every other caller's
+                 * starts the smoke (specs/console.md's login arc). */
+                start_session(static_cast<uint32_t>(user), from_greeter);
             }
         } else {
             /* A method this version does not know is answered by saying

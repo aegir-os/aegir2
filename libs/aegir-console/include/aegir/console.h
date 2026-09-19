@@ -44,12 +44,18 @@ constexpr uint32_t kMethodAttach = 1;
 constexpr uint32_t kMethodFrame = 2;
 
 /** Create a window: in: x and y on the screen, width and height in pixels,
- *  and the backing's offset within the caller's slice. The backing is
- *  width * height * 4 bytes, rows packed (B8G8R8X8, the framebuffer's
+ *  the backing's offset within the caller's slice, and flags. The backing
+ *  is width * height * 4 bytes, rows packed (B8G8R8X8, the framebuffer's
  *  format). Answer: one word -- the window's id, zero when refused (the
  *  backing would fall outside the slice, or the window outside the
- *  screen). New windows sit on top. */
+ *  screen). New windows sit on top, unless the backdrop flag says
+ *  otherwise. */
 constexpr uint32_t kMethodCreateWindow = 3;
+
+/** create_window's flags. Backdrop: the Amiga screen as a shape of window
+ *  -- the window enters the z-order at the bottom and nothing raises it,
+ *  so it shows only where no other window covers it (the bureau's). */
+constexpr uint64_t kWindowBackdrop = 1ull << 0;
 
 /** Damage: in: the window's id and a rectangle in window-local pixels (x,
  *  y, width, height). The rectangle's pixels, as they stand in the slice,
@@ -162,12 +168,12 @@ inline bool frame(aegir::ipc::Consumer const &gui, uint64_t index,
 /** Create a window; its id, or zero when refused. */
 inline uint64_t create_window(aegir::ipc::Consumer const &gui, uint64_t x, uint64_t y,
                               uint64_t width, uint64_t height,
-                              uint64_t backing_offset) noexcept
+                              uint64_t backing_offset, uint64_t flags = 0) noexcept
 {
-    uint64_t out[5] = {x, y, width, height, backing_offset};
+    uint64_t out[6] = {x, y, width, height, backing_offset, flags};
     uint64_t in[1];
     aegir::ipc::WordsReply const answer =
-        gui.call_words(kMethodCreateWindow, out, 5, in, 1);
+        gui.call_words(kMethodCreateWindow, out, 6, in, 1);
     if (answer.error != 0 || answer.count != 1) {
         return 0;
     }

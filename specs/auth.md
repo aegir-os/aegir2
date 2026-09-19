@@ -5,7 +5,7 @@ Status: first slice, sessions v1, homes, and session reclaim implemented
 that starts a session under the user's badge, the home the session lands
 in, and the teardown that takes an exited session back. Elevation remains
 open; the input path landed with the pointer devices (2026-09) -- the
-registry's `open`, at session distance, below. The greeter and the desktop
+registry's `open`, at session distance, below. The greeter and the bureau
 are decided (the console arc, `specs/console.md`), not yet implemented.
 
 `auth` owns two things: the record of who the users are, and the port that
@@ -168,7 +168,7 @@ A successful login starts a session. The decisions, taken 2026-09:
   open. The console arc has superseded this for sessions (2026-09): the
   devices are the console's, the smoke's tablet open is gone, and a session's
   input arrives as windows' events (`specs/console.md`). What is written here
-  remains true of the smoke-era mechanism, not of the desktop's.
+  remains true of the smoke-era mechanism, not of the bureau's.
 - **A greeter asks; auth stays the database.** The GUI login prompt is
   auth's face, and auth spawns it -- the pattern the system already runs:
   the service that knows, starts it. Auth's `needs` gain `console.gui`, the
@@ -179,8 +179,8 @@ A successful login starts a session. The decisions, taken 2026-09:
   It calls `auth.login` like any caller: the credential check never leaves
   auth, and console is not a login caller. A refuse redraws the error line;
   an accept spawns the session as below, and the greeter destroys its
-  window and exits. The session binary becomes the desktop, with
-  `console.gui` in its `needs` where the smoke carried `devmgr.registry`.
+  window and exits. The session binary becomes the bureau, with
+  `console.gui` in its `needs`.
 - **Resolve stays open.** There is no volume-ownership model to check
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.

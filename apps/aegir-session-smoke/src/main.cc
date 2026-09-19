@@ -12,7 +12,7 @@
  * name through the namespace, read what the name points at -- and the
  * evidence is the logger's lines, which render the badge of every caller.
  * Input it has none of: the devices are the console's (specs/console.md),
- * and a session's events arrive as windows' events when the desktop lands.
+ * and a session's events arrive as windows' events when the bureau lands.
  *
  * What it demonstrates:
  *   - auth's spawn kit works: this process was loaded out of the initrd
@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
 
     /* No input path of its own: the devices are the console's, exclusively
      * (specs/console.md), and a session's events arrive as windows' events
-     * when the desktop arc lands. */
+     * when the bureau arc lands. */
 
     if (log.valid()) {
         (void)log.call(aegir::log::kMethodEvent,

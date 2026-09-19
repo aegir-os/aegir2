@@ -130,11 +130,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the form up -- grey window over the
             # Workbench-blue backdrop, the white name field, the dark button
-            # -- then the click focuses the window and the credentials are
-            # typed: name, Tab, secret, Enter. The accepted login's
-            # session is the boot's first, and auth's reap line paces the
-            # second dump, which reads the backdrop restored where the form
-            # stood (samples kept clear of the cursor at the centre).
+            # -- and then the form STANDS through the test bed: the login is
+            # the run's last business, played after the boot marker.
             QmpStep(
                 r"greeter: a name and a secret, please",
                 dumps=("gpu0",),
@@ -144,42 +141,6 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 410, 230, 160, 160, 160),
                     ("gpu0", 500, 290, 255, 255, 255),
                     ("gpu0", 434, 398, 80, 80, 80),
-                ),
-                # The click focuses the window. It is preceded by an
-                # absolute motion to the window's centre (16384 = half of
-                # the axis's 0..32767, which is the screen's 640,400), so
-                # where the click lands does not depend on where the pointer
-                # happened to start.
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 16384}},
-                    {"type": "abs", "data": {"axis": "y", "value": 16384}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
-            ),
-            # The typing answers the focus, not the click: the click rides
-            # the mouse's queue and the keys the keyboard's, and which queue
-            # the console drains first is the boot's timing, not the
-            # script's -- keys drained before the click land while nothing
-            # is focused and are dropped. The greeter's line says the focus
-            # event is in its ring, so the routing is already its window's.
-            QmpStep(
-                r"greeter: the window has the focus",
-                press="rroland\taegir\n",
-            ),
-            QmpStep(
-                r"auth: the greeter's windows are reaped",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                # The backdrop where the form stood. The samples keep to the
-                # window's right strip (x > 700) -- the test bed's windows
-                # (64..463 and 300..699 wide) never reach it, and when the
-                # greeter's login lands is the greeter's to say, so the
-                # samples must be true whenever they are read.
-                pixels=(
-                    ("gpu0", 10, 10, 0, 85, 170),
-                    ("gpu0", 860, 240, 0, 85, 170),
-                    ("gpu0", 860, 520, 0, 85, 170),
                 ),
             ),
             # The console owns the input devices (specs/console.md), so the
@@ -296,6 +257,52 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 10000}},
                     {"type": "abs", "data": {"axis": "y", "value": 20000}},
+                ),
+            ),
+            # The boot marker ends the test bed's part, not the script's:
+            # the runner holds until every step has played, and the login is
+            # what remains. The click focuses the greeter's window; it lands
+            # on the window's right strip (the axis's 0..32767 maps to the
+            # screen's 1280x800, so (22033,21325) is the screen's (860,520))
+            # -- inside the window, clear of its widgets, and clear of the
+            # test bed's surviving red window, which ends at x=699.
+            QmpStep(
+                r"AEGIR_BOOT_OK",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 22033}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21325}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The typing answers the focus, not the click: the click rides
+            # the mouse's queue and the keys the keyboard's, and which queue
+            # the console drains first is the boot's timing, not the
+            # script's -- keys drained before the click land while nothing
+            # is focused and are dropped. The greeter's line says the focus
+            # event is in its ring, so the routing is already its window's.
+            QmpStep(
+                r"greeter: the window has the focus",
+                press="rroland\taegir\n",
+            ),
+            # Auth's half of the arc: the greeter's windows and slice go back
+            # before the session starts. Evidence only -- the bureau's dump
+            # below reads what the screen shows once they are gone.
+            QmpStep(r"auth: the greeter's windows are reaped"),
+            # The greeter's login starts the bureau: a full-screen window,
+            # always backdrop mode, Workbench grey, drawn once before the
+            # process exits -- the console owns the slice, so the window
+            # stands as the session's visible remainder. The samples keep
+            # clear of the red window (300..699 x, 200..499 y), which still
+            # stands above the backdrop, and of the cursor at (860,520).
+            QmpStep(
+                r"bureau: the screen is yours",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 10, 10, 170, 170, 170),
+                    ("gpu0", 860, 240, 170, 170, 170),
+                    ("gpu0", 640, 700, 170, 170, 170),
                 ),
             ),
         ),

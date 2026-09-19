@@ -119,7 +119,7 @@ that, most processes in Aegir come from someone other than director:
   device-discovery service that had to ask permission for every spawn could not
   react to a device appearing, and it would put the ownership of a driver in the
   wrong process.
-- **Sessions start user processes.** A terminal runs commands, the desktop
+- **Sessions start user processes.** A terminal runs commands, the bureau
   launches programs, a launcher runs what you pick: this is ordinary use of a
   multiuser system, it happens constantly, and it must not be a round trip to a
   privileged process. A session holds its own pool and its own account, and

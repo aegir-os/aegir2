@@ -60,23 +60,29 @@ uint64_t g_stride = 0;
  * set -- it composites through it -- and hands copies out of the pristine
  * mint set, made before any mapping, because a mapped cap's copies are
  * pinned to its ASID and useless to another address space
- * (kernel/src/arch/riscv/kernel/vspace.c:869-878). */
+ * (kernel/src/arch/riscv/kernel/vspace.c:869-878). Every cap is named by
+ * the slot the allocator handed out for it -- the carved frames at
+ * slots[0..frames), their pristine mints at slots[frames..2*frames) --
+ * because deriving one object's slot from another's by adding is
+ * adjacency reasoning, and the allocator interleaves (frame, mint) pairs. */
 struct Slice {
     uint64_t badge;
     seL4_CPtr untyped;  /* the slice's own: revoking it reclaims the whole */
-    seL4_CPtr pristine; /* base of the unmapped copy set, one slot per frame */
     uint64_t frames;
     uintptr_t base; /* where the console reads the slice */
     seL4_CPtr events; /* the client's event notification, ours to signal */
     bool listening;   /* the notification's mint went out (one per client) */
     Slice *next;
+    seL4_CPtr slots[]; /* carved at [f], pristine mints at [frames + f] */
 };
 
 /* A window: a rectangle on the screen and where its pixels live in the
  * owner's slice. The list is in z order, bottom first; create appends, so
- * new windows sit on top. A window is invisible until its first damage --
- * the backing is the client's to paint first, and retyped frames arrive
- * dirty, so compositing one earlier would show memory, not pixels. */
+ * new windows sit on top -- except a backdrop window, which enters at the
+ * bottom and, with no raise in the model, stays there. A window is
+ * invisible until its first damage -- the backing is the client's to
+ * paint first, and retyped frames arrive dirty, so compositing one
+ * earlier would show memory, not pixels. */
 struct Window {
     uint64_t id;
     uint64_t owner; /* the badge create_window arrived with */
@@ -86,6 +92,7 @@ struct Window {
     uint64_t height;
     uint64_t offset; /* the backing's offset within the owner's slice */
     bool shown;      /* the first damage happened */
+    bool backdrop;   /* kWindowBackdrop at create: the bottom of the z-order */
     Window *next;
 };
 
@@ -659,13 +666,16 @@ int main(int argc, char *argv[])
             seL4_Recv(static_cast<seL4_CPtr>(gui_slot), &badge);
         uint32_t const length =
             static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
-        if ((badge >> 32) != 0) {
-            /* A wakeup, not a call: the device mints are badged with a bit
-             * above any service number, because a notification that wakes a
-             * blocked receive sets the badge register only -- the message
-             * registers keep whatever the last call left (notification.c's
-             * sendSignal), so the badge is the only thing to read. Bits
-             * 32..34 name the devices whose queues moved. */
+        if ((badge & (7ull << 32)) != 0) {
+            /* A wakeup, not a call: the device mints are badged with bits
+             * 32..34, above any service number, because a notification that
+             * wakes a blocked receive sets the badge register only -- the
+             * message registers keep whatever the last call left
+             * (notification.c's sendSignal), so the badge is the only thing
+             * to read. The test is those three bits exactly, not "any high
+             * bit": a user badge carries its class at bit 62
+             * (specs/authority.md), and a session's call -- the bureau's --
+             * is a call. */
             for (uint32_t d = 0; d < 3; ++d) {
                 if ((badge & (1ull << (32 + d))) != 0) {
                     drain(d);
@@ -695,10 +705,17 @@ int main(int argc, char *argv[])
             uint64_t slice_physical = 0;
             seL4_CPtr const untyped =
                 g_objects.carve_untyped(bits, account, &carve_error, &slice_physical);
-            seL4_CPtr carved_base = 0;
-            seL4_CPtr pristine_base = 0;
+            /* The slice's home first, room for the two slot sets in it:
+             * the carve loop's caps each go to the entry allocated for
+             * them, because a cap is named by its own path -- never by one
+             * derived from a neighbour's. */
+            auto *slice = static_cast<Slice *>(
+                untyped != 0
+                    ? arena.allocate(sizeof(Slice) +
+                                     2 * frames * sizeof(seL4_CPtr))
+                    : nullptr);
             uintptr_t base = 0;
-            bool carved = untyped != 0;
+            bool carved = slice != nullptr;
             for (uint64_t f = 0; carved && f < frames; ++f) {
                 seL4_Error page_error = seL4_NoError;
                 seL4_CPtr const frame = g_objects.carve_page(
@@ -713,14 +730,11 @@ int main(int argc, char *argv[])
                     carved = false;
                     break;
                 }
-                if (f == 0) {
-                    carved_base = frame;
-                    pristine_base = pristine;
-                }
+                slice->slots[f] = frame;
+                slice->slots[frames + f] = pristine;
             }
             for (uint64_t f = 0; carved && f < frames; ++f) {
-                void *const mapped = g_scratch.map_large(carved_base +
-                                                         static_cast<seL4_CPtr>(f));
+                void *const mapped = g_scratch.map_large(slice->slots[f]);
                 if (mapped == nullptr) {
                     carved = false;
                     break;
@@ -729,19 +743,16 @@ int main(int argc, char *argv[])
                     base = reinterpret_cast<uintptr_t>(mapped);
                 }
             }
-            auto *slice = static_cast<Slice *>(
-                carved ? arena.allocate(sizeof(Slice)) : nullptr);
             /* The client's event channel: one notification, console's to
              * signal, and the ring -- the slice's last page, zeroed here
              * because retyped frames arrive dirty. */
             seL4_Error notify_error = seL4_NoError;
             seL4_CPtr const events =
-                slice != nullptr
-                    ? g_objects.alloc_object(seL4_NotificationObject,
-                                             seL4_NotificationBits, account,
-                                             &notify_error)
-                    : 0;
-            if (slice == nullptr || events == 0) {
+                carved ? g_objects.alloc_object(seL4_NotificationObject,
+                                                seL4_NotificationBits, account,
+                                                &notify_error)
+                       : 0;
+            if (!carved || events == 0) {
                 gui.reply(0);
                 continue;
             }
@@ -749,7 +760,7 @@ int main(int argc, char *argv[])
                 reinterpret_cast<uint8_t *>(base), frames << seL4_LargePageBits);
             ring[0] = 0;
             ring[1] = 0;
-            *slice = Slice{badge, untyped, pristine_base, frames, base,
+            *slice = Slice{badge, untyped, frames, base,
                            events, false, g_slices};
             g_slices = slice;
             uint64_t shape[2] = {seL4_LargePageBits, frames};
@@ -761,7 +772,7 @@ int main(int argc, char *argv[])
                 seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, mint_slot,
                                 aegir::bootstrap::kCNodeBits,
                                 aegir::bootstrap::kSlotOwnCNode,
-                                slice->pristine + static_cast<seL4_CPtr>(index),
+                                slice->slots[slice->frames + index],
                                 aegir::bootstrap::kCNodeBits,
                                 seL4_AllRights) != seL4_NoError) {
                 gui.reply(0);
@@ -770,12 +781,14 @@ int main(int argc, char *argv[])
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
                                   aegir::bootstrap::kCNodeBits);
             }
-        } else if (method == aegir::console::kMethodCreateWindow && length == 6) {
+        } else if (method == aegir::console::kMethodCreateWindow && length == 7) {
             uint64_t const x = static_cast<uint64_t>(seL4_GetMR(1));
             uint64_t const y = static_cast<uint64_t>(seL4_GetMR(2));
             uint64_t const width = static_cast<uint64_t>(seL4_GetMR(3));
             uint64_t const height = static_cast<uint64_t>(seL4_GetMR(4));
             uint64_t const offset = static_cast<uint64_t>(seL4_GetMR(5));
+            uint64_t const flags = static_cast<uint64_t>(seL4_GetMR(6));
+            bool const backdrop = (flags & aegir::console::kWindowBackdrop) != 0;
             Slice const *slice = find_slice(badge);
             bool const fits =
                 slice != nullptr && width != 0 && height != 0 &&
@@ -790,13 +803,21 @@ int main(int argc, char *argv[])
                 continue;
             }
             *window = Window{++g_next_id, badge, x, y, width, height, offset,
-                             false, nullptr};
-            /* Append: the list is bottom first, and a new window is on top. */
-            Window **tail = &g_windows;
-            while (*tail != nullptr) {
-                tail = &(*tail)->next;
+                             false, backdrop, nullptr};
+            /* The list is bottom first: a plain window appends and sits on
+             * top; a backdrop enters at the head, beneath everything, and
+             * nothing raises it (a button-down focuses, and does not
+             * raise). */
+            if (backdrop) {
+                window->next = g_windows;
+                g_windows = window;
+            } else {
+                Window **tail = &g_windows;
+                while (*tail != nullptr) {
+                    tail = &(*tail)->next;
+                }
+                *tail = window;
             }
-            *tail = window;
             gui.reply(window->id);
         } else if (method == aegir::console::kMethodDamage && length == 6) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
@@ -878,7 +899,7 @@ int main(int argc, char *argv[])
              * the memory is the console's to carve again. The console's own
              * allocator never gives slots back, so the dead pristine and
              * notification slots stay spent; a console that reaps daily is
-             * the desktop arc's problem. */
+             * the bureau arc's problem. */
             uint64_t const target = static_cast<uint64_t>(seL4_GetMR(1));
             Window **link = &g_windows;
             while (*link != nullptr) {

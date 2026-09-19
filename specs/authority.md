@@ -48,7 +48,7 @@ badge that fits no shape is nothing anyone minted.
 | authority | exactly what its manifest entry declares: custody, ports, an account | its session's ports and volumes, and its account |
 | device capabilities | per declaration, least-authority | not declarable (`specs/services.md`); display and input are the console's alone (`specs/console.md`); any other specific device may be granted at runtime by the device manager and recorded in the account |
 | `IRQControl` | custody is delegated to the device manager | never |
-| may spawn | yes, within its account and its declared spawn right: a service that launches children (device manager → drivers, partition manager → filesystems) declares what it may start | yes: a session spawns user processes as ordinary use — a terminal, the desktop, a launcher — and everything it starts has at most the session's authority |
+| may spawn | yes, within its account and its declared spawn right: a service that launches children (device manager → drivers, partition manager → filesystems) declares what it may start | yes: a session spawns user processes as ordinary use — a terminal, the bureau, a launcher — and everything it starts has at most the session's authority |
 | how others see it | a system badge | a user badge — what the VFS and every other service checks |
 
 The kernel enforces the floor of this model and nothing above it:
@@ -81,7 +81,7 @@ they are:
   brief ("the device manager should launch block drivers") taken literally — the
   service that knows *what* should exist is the service that creates it.
 - **Users spawn user processes.** A session is created with user authority, a pool
-  and an account, and a terminal, desktop or launcher starts processes from it
+  and an account, and a terminal, bureau or launcher starts processes from it
   without asking anyone. Everything a session spawns has at most the session's
   authority, and is charged to the user's account.
 - **Elevation is the only user→system path.** A sudo-like tool asks `auth`, which

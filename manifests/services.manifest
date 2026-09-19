@@ -177,9 +177,12 @@ restart   = always
 # (specs/console.md): what every other process sees of the screen and the
 # keyboard is what it serves. It maps the gpu's pixel window itself --
 # `maps` is the spawner's vspace grant without the spawn authority -- so
-# its memory is what page tables and, once the window protocol lands, the
-# clients' pixel slices are retyped from: a full-screen 32-bit backdrop is
-# 4 MiB at the preferred mode, and the slices grow from there.
+# its memory is what page tables and the clients' pixel slices are retyped
+# from: the test bed's 2 MiB, the greeter's 2, and the bureau's 4 -- a
+# full-screen 32-bit backdrop is 4 MiB at the preferred mode. A carve's
+# watermark is the console's to spend, not to take back, until the
+# re-login arc -- so the greeter's slice stays spent after the reap, and
+# the budget carries the boot's three slices at once.
 [console]
 binary    = aegir-console
 authority = system
@@ -187,7 +190,7 @@ account   = system
 owns      = console.gui
 needs     = log.main, devmgr.registry
 maps      = true
-memory_kib = 8192
+memory_kib = 16384
 restart   = always
 
 # auth owns the user database and the login port (specs/auth.md): it reads
@@ -242,7 +245,7 @@ restart   = never
 # The first session (specs/auth.md). Nothing starts it at boot -- auth
 # starts one when a login succeeds, with the user's badge and account.
 # Input it has none of: the devices are the console's (specs/console.md),
-# and a session's events arrive as windows' events when the desktop lands.
+# and a session's events arrive as windows' events when the bureau lands.
 # The entry is what declares a session's needs, which is what drives the
 # delegatable copies its spawner is given.
 [session.smoke]
@@ -250,4 +253,18 @@ binary    = aegir-session-smoke
 authority = user
 account   = user
 needs     = log.main, vfs.namespace
+restart   = never
+
+# The bureau (specs/console.md's login arc): the session a login through the
+# greeter starts -- the Amiga screen as a shape of window, always backdrop
+# mode, Workbench grey. It draws and exits; the console owns the slice, so
+# the window persists, and the screen is the session's visible remainder.
+# console.gui is what sets it apart from the smoke: a bureau maps its slice
+# and paints it, which is also why the spawn carries the vspace and untyped
+# grants the smoke never needs.
+[session.bureau]
+binary    = aegir-bureau
+authority = user
+account   = user
+needs     = log.main, vfs.namespace, console.gui
 restart   = never
