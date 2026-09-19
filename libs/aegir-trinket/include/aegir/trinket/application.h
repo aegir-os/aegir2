@@ -1,0 +1,113 @@
+/*
+ * Trinket Application - main entry point and event loop.
+ *
+ * Copyright (c) 2026 Robert Roland
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef AEGIR_TRINKET_APPLICATION_H
+#define AEGIR_TRINKET_APPLICATION_H
+
+#include <aegir/trinket/point.h>
+#include <aegir/trinket/font.h>
+#include <aegir/trinket/theme.h>
+#include <aegir/trinket/worker.h>
+#include <aegir/console.h>
+#include <functional>
+#include <memory>
+#include <vector>
+
+namespace aegir::trinket {
+
+struct DisplayInfo {
+    uint64_t width_px = 0;
+    uint64_t height_px = 0;
+    uint32_t physical_width_mm = 0;
+    uint32_t physical_height_mm = 0;
+    float scale = 1.0f;       // DPI / 96.0
+    float dpi = 96.0f;
+};
+
+class Application {
+public:
+    static Application* instance();
+    static Application& create(int argc, char** argv);
+    ~Application();
+
+    // Non-copyable, movable
+    Application(const Application&) = delete;
+    Application& operator=(const Application&) = delete;
+
+    // Main event loop
+    int exec();
+    void quit(int exit_code = 0);
+    int exit_code() const { return exit_code_; }
+
+    // Theme
+    void set_theme(std::unique_ptr<Theme> theme);
+    Theme& theme() const { return *theme_; }
+    void set_default_font(std::unique_ptr<Font> font);
+    Font& default_font() const { return *default_font_; }
+
+    // Locale
+    void set_locale(const Locale& locale);
+    const Locale& locale() const { return Locale::global(); }
+
+    // Main thread event posting
+    void post_event(std::function<void()>&& fn);
+    void schedule_timer(int64_t delay_ms, std::function<void()>&& fn);
+
+    // Worker pool
+    WorkerPool& workers() { return workers_; }
+
+    // Window management
+    void register_window(Window* window);
+    void unregister_window(Window* window);
+    std::vector<Window*> windows() const;
+
+    // Display info from GPU driver
+    const DisplayInfo& display_info() const { return display_info_; }
+
+    // Console GUI port
+    aegir::ipc::Consumer& gui_port() { return gui_port_; }
+    void set_gui_port(aegir::ipc::Consumer port);
+
+    // Font loading from resources
+    std::unique_ptr<Font> load_font(std::string_view family, int size_pts);
+    std::unique_ptr<Font> load_builtin_font(std::string_view name, int size_pts);
+
+    // Resource paths
+    std::string resource_path(std::string_view relative) const;
+
+private:
+    friend class Window;
+
+    Application();
+    void init_display_info();
+    void process_events();
+    void process_timers();
+    void process_posted_events();
+    void dispatch_gui_event();
+
+    static Application* instance_;
+    int exit_code_ = 0;
+    bool running_ = false;
+
+    std::unique_ptr<Theme> theme_;
+    std::unique_ptr<Font> default_font_;
+    WorkerPool workers_;
+    std::vector<Window*> windows_;
+    DisplayInfo display_info_;
+    aegir::ipc::Consumer gui_port_;
+
+    struct PostedEvent {
+        std::function<void()> fn;
+        int64_t due_time = 0;  // 0 = immediate
+    };
+    std::vector<PostedEvent> posted_events_;
+    std::mutex posted_mutex_;
+};
+
+} // namespace aegir::trinket
+
+#endif // AEGIR_TRINKET_APPLICATION_H

@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
+  <remote name="llvm" fetch="https://github.com/llvm"/>
+  <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
   <remote name="nanopb" fetch="https://github.com/nanopb"/>
+  <remote name="notofonts" fetch="https://github.com/notofonts"/>
   <remote name="opensbi" fetch="https://github.com/riscv"/>
   <remote name="seL4" fetch="https://github.com/seL4"/>
   
   <default remote="seL4" revision="master"/>
   
+  <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
   <project name="musllibc.git" path="projects/musllibc" revision="b0005f86fecbd6d0257b15363a5b013446914265" upstream="sel4" dest-branch="sel4"/>
   <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
+  <project name="noto-fonts" path="projects/noto-fonts" remote="notofonts" revision="ffebf8c1ee449e544955a7e813c54f9b73848eac"/>
   <project name="opensbi" path="tools/opensbi" remote="opensbi" revision="234ed8e427f4d92903123199f6590d144e0d9351"/>
   <project name="seL4.git" path="kernel" revision="6e7c3b733d296cfd88d5fbf635c96e447a882374"/>
   <project name="seL4_libs.git" path="projects/seL4_libs" revision="d8abd95e7114c852f6636e3084eb1f66091a75ee"/>
@@ -20,5 +25,6 @@
   <project name="sel4test.git" path="projects/sel4test" revision="60b7b47ee0a67f56e15951735a6aa9d270d47f55">
     <linkfile src="easy-settings.cmake" dest="easy-settings.cmake"/>
   </project>
+  <project name="terminus-font-4.49.1" path="projects/terminus-font" remote="mikebeaton" revision="8a2dd49b9a93d0b0a2c192c7961829ae3394a8d6"/>
   <project name="util_libs.git" path="projects/util_libs" revision="6e55b3c62687779692150e1de411ce61b9d2919a"/>
 </manifest>

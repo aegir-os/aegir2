@@ -46,7 +46,7 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-fs-initrd>"
     "$<TARGET_FILE:aegir-console>"
     "$<TARGET_FILE:aegir-greeter>"
-    "$<TARGET_FILE:aegir-bureau>"
+    "$<TARGET_FILE:aegir-bureau-app>"
     "$<TARGET_FILE:aegir-auth>"
     "$<TARGET_FILE:aegir-session-smoke>"
     "$<TARGET_FILE:aegir-test>"

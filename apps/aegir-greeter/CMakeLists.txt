@@ -26,7 +26,7 @@ target_compile_options(aegir-greeter PRIVATE -Wall -Wextra -Werror)
 # field widths, aegir-mem the allocator and the window it maps its slice
 # through (the spawn kit's give_vspace grant).
 target_link_libraries(
-  aegir-greeter PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc
+  aegir-greeter PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-runtime aegir-bootstrap aegir-ipc
                         aegir-input aegir-console-protocol aegir-authdb aegir-namespace
                         aegir-mem sel4 muslc sel4runtime
 )

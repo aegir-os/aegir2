@@ -30,9 +30,10 @@ find_package(musllibc REQUIRED)
 # the loader cannot compile.
 find_package(util_libs REQUIRED)
 
-# C++ standard library (libc++, libcxxabi, libunwind) - built from vendored llvm-project
-# Added as a subdirectory so it builds as part of this CMake run.
-add_subdirectory(libs/aegir-libcxx)
+# Import libc++ static libraries built by LLVM runtimes build system
+# These are STATIC IMPORTED targets (cxx, cxxabi, unwind) created by
+# scripts/build_libcxx.sh and installed to build/libcxx-install/
+include(libs/aegir-libcxx/imported.cmake)
 
 sel4_import_kernel()
 
@@ -98,6 +99,10 @@ add_subdirectory(libs/aegir-log)
 add_subdirectory(libs/aegir-manifest)
 add_subdirectory(libs/aegir-spawn)
 add_subdirectory(libs/aegir-virtio)
+add_subdirectory(libs/aegir-trinket)
+add_subdirectory(libs/aegir-bureau)
+add_subdirectory(libs/aegir-datatypes)
+add_subdirectory(libs/aegir-classes)
 # aegir-hello is director's smoke client, so it is built before the task that
 # packs it into its initrd.
 add_subdirectory(apps/aegir-device-manager)
