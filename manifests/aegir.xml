@@ -24,7 +24,7 @@
   <remote name="llvm" fetch="https://github.com/llvm"/>
   <remote name="notofonts" fetch="https://github.com/notofonts"/>
   <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
-  <remote name="musl" fetch="https://github.com/bminor/musl"/>
+  <remote name="musl" fetch="git://git.musl-libc.org/musl"/>
 
   <!-- Unused: every project below pins its own revision. -->
   <default remote="seL4" revision="master"/>
