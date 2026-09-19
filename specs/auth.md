@@ -6,7 +6,7 @@ that starts a session under the user's badge, the home the session lands
 in, and the teardown that takes an exited session back. Elevation remains
 open; the input path landed with the pointer devices (2026-09) -- the
 registry's `open`, at session distance, below. The greeter and the bureau
-are decided (the console arc, `specs/console.md`), not yet implemented.
+landed with the console arc (2026-09, `specs/console.md`).
 
 `auth` owns two things: the record of who the users are, and the port that
 answers "is this them" — `auth.login` (boot-set row 8, `specs/services.md`).
@@ -178,9 +178,12 @@ A successful login starts a session. The decisions, taken 2026-09:
   look is deliberately basic, and the toolkit's look is its own later spec.
   It calls `auth.login` like any caller: the credential check never leaves
   auth, and console is not a login caller. A refuse redraws the error line;
-  an accept spawns the session as below, and the greeter destroys its
-  window and exits. The session binary becomes the bureau, with
-  `console.gui` in its `needs`.
+  an accept ends the greeter's part -- it welcomes the user, signals, and
+  exits, and auth, waiting on that exit, reaps its badge (the console's
+  `reap`: the window and the slice) before the session starts. The session
+  binary is the caller's to choose: the bureau when the caller is the
+  greeter, with `console.gui` in its `needs`; the smoke over the serial
+  line.
 - **Resolve stays open.** There is no volume-ownership model to check
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.
@@ -212,10 +215,12 @@ reclaim is exercised. The decisions:
   `count`/`describe`/`resolve`, because a handle is a filesystem's row and
   not a kernel object -- then the badge's aliases with `unbind`, then the
   revoke. The mechanisms were landed and tested ahead of their caller
-  (specs/vfs.md); this is the caller they were waiting for. The console arc
-  adds one more reap to the same step: `console.gui`'s `reap` takes the
-  badge's windows and its arena slice (`specs/console.md`), before the
-  revoke, for the same reason the handles go first.
+  (specs/vfs.md); this is the caller they were waiting for. The console
+  arc's `reap` joins the same order where windows must go: the greeter's
+  badge is reaped through `console.gui` before its login's session starts
+  (`specs/console.md`). A session's own slice is deliberately NOT reaped --
+  the bureau's backdrop is the session's visible remainder, and taking it
+  down is the re-login arc's.
 - **Slots come back too.** The capabilities a spawn puts in auth's own
   CSpace die with the revoke, and the slot cursor returns to the mark the
   login took (`slot_mark`/`slot_release`, libs/aegir-mem) -- valid exactly

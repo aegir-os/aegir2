@@ -1,8 +1,8 @@
 # console: the display, the pointer, and the windows
 
-Status: decided (2026-09), not yet implemented. The first slice is the
-compositor, the focus model, and the greeter arc: auth's GUI login prompt,
-and the bureau stub a successful login hands the screen to.
+Status: landed (2026-09): the compositor, the focus model, the event
+channel, and the greeter arc — auth's GUI login prompt, and the bureau
+stub a successful login hands the screen to.
 
 `console` is a system service in the boot set (`specs/services.md`), started
 by director, owning one port — `console.gui` — and needing `log.main` and
@@ -24,7 +24,7 @@ sees of the screen and the keyboard is what console serves.
   clients create overlapping windows, console owns the z-order, and focus is
   hit-tested (below). The Amiga screen survives as a shape of window — the
   bureau's backdrop is a full-screen window — rather than as a separate
-  mechanism. Draggable screens, depth gadgets and the toolkit's look are gadgets and the toolkit's look are
+  mechanism. Draggable screens, depth gadgets and the toolkit's look are
   later arcs; the greeter's look is deliberately basic, and what the toolkit
   will look like is its own spec.
 - **Pixels never cross a message.** The window protocol is the established
@@ -54,23 +54,29 @@ method console does not know is answered by saying nothing.
   the client maps them into its own address window with its own VSpace
   root, the way every service already maps what it is given.
 - `frame`. In: the index within the slice. Out: that frame's capability.
-- `create_window`. In: position and size in screen pixels, and the backing's
-  offset within the caller's slice. Out: the window's id. Console
+- `create_window`. In: position and size in screen pixels, the backing's
+  offset within the caller's slice, and flags. Out: the window's id. Console
   clip-checks the backing against the slice: a window whose pixels would
-  fall outside it is refused.
+  fall outside it is refused. The one flag is `backdrop`: the window enters
+  the z-order at the bottom and, with no raise in the focus model, stays
+  there — the bureau's shape.
 - `listen`. Out: one capability — the client's event notification (below).
   One channel per client; a second listen is refused.
 - `damage`. In: the window's id and a rectangle in window-local pixels. The
   rectangle's pixels, as they stand in the slice, are composited to the
   screen: painter's algorithm, clipped against the windows above, then the
-  gpu driver's `flush`. A tear-free flip is the driver's business when a
-  device that has one arrives; compositing here is copy, not yet blend.
+  gpu driver's `flush`. The first damage is also what *shows* a window:
+  before it the rectangle is composited as if the window were not there —
+  the backing is the client's to paint first, and retyped frames arrive
+  dirty. A tear-free flip is the driver's business when a device that has
+  one arrives; compositing here is copy, not yet blend.
 - `destroy_window`. In: the id. The window leaves the z-order and its
   damage is everyone else's redraw.
-- `reap`. System authority's call — auth's, on session reclaim: every
-  window the badge held is destroyed and its slice is free whole. This
-  joins the reclaim order (`specs/auth.md`): reap the badge's windows and
-  its handles, unbind its aliases, then revoke.
+- `reap`. System authority's call — auth's, when a badge's windows must go:
+  every window the badge held is destroyed and its slice is free whole.
+  Today's caller is the login arc (the greeter, reaped before its login's
+  session starts); a session's own slice is the re-login arc's to take down
+  (`specs/auth.md`).
 
 ## The event channel
 
@@ -127,8 +133,10 @@ read auth starts the greeter with the minted ports. The greeter is a pure
 UI process: one window, two text fields, a button, an error line. It calls
 `auth.login` over the existing port — console is not a login caller, and
 the credential check never leaves auth. A refuse redraws the error line; an
-accept is auth's cue to spawn the session as it does today, and the greeter
-destroys its window and exits.
+accept is the greeter's cue to welcome the user and exit, and auth's —
+waiting on that exit, so the welcome is written before the teardown — to
+reap the greeter's badge (window and slice, the session reclaim's order)
+and start the session.
 
 The session binary a login through the greeter starts is the **bureau**: a
 full-screen window, always in backdrop mode — the Amiga screen, as a shape
@@ -147,10 +155,13 @@ windows); the toolkit. Each is easier with the compositor standing.
 ## Acceptance
 
 Headless, from outside, the way the display checks already run: the
-runner's QMP socket injects the keyboard events that type the known user's
-name and secret (characters asserted through the keymap), injects the
-tablet click on the button's coordinates, and reads the screen with
-`screendump` — the greeter's window before login, the bureau's backdrop
-after, and the focused window's frame where the click landed. The serial
-`auth.login` test path stays: the port, not the pixels, is the credential
-check.
+runner's QMP socket reads the greeter's form with `screendump` — and the
+form stands through the test bed, the login played after the boot marker —
+then injects the motion and click that focus the window, and, paced on the
+greeter's focus line (the click and the keys ride different queues, and
+which drains first is the boot's timing, not the script's), the keys that
+type the known user's name and secret (characters asserted through the
+keymap). The bureau's Workbench grey is read back where the form stood, the
+samples kept clear of the test bed's surviving window and of the cursor.
+The serial `auth.login` test path stays: the port, not the pixels, is the
+credential check.
