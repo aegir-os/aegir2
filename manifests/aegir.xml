@@ -21,6 +21,7 @@
   <remote name="seL4" fetch="https://github.com/seL4"/>
   <remote name="opensbi" fetch="https://github.com/riscv"/>
   <remote name="nanopb" fetch="https://github.com/nanopb"/>
+  <remote name="llvm" fetch="https://github.com/llvm"/>
 
   <!-- Unused: every project below pins its own revision. -->
   <default remote="seL4" revision="master"/>
@@ -63,5 +64,8 @@
 
   <!-- Protocol buffers, pulled in by the release manifest. Zlib. -->
   <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
+
+  <!-- LLVM project: libc++, libcxxabi, libunwind. Apache-2.0 with LLVM-exception. -->
+  <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
 
 </manifest>

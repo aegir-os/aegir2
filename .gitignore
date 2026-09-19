@@ -8,6 +8,7 @@
 /projects/sel4runtime/
 /projects/sel4_projects_libs/
 /projects/sel4test/
+/projects/llvm-project/
 /tools/seL4/
 /tools/opensbi/
 /tools/nanopb/
