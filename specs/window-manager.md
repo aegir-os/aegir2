@@ -80,15 +80,19 @@ this arc.
   revealed and uncovered. Compositing the whole window per motion was what
   left a drag trailing the cursor, which moves only its 8×8. A move of a
   window that is not topmost falls back to the union composite.
-- **Depth is a gadget and `lower`.** A decorated window's titlebar carries a
-  depth gadget at its right — the "back" arrow — and the console gains
-  `lower` (the window to the bottom among the plain windows, above every
-  backdrop). The titlebar elsewhere still raises: a drag or a resize brings
-  the window forward, the gadget sends it back. This is the Amiga depth
-  pair, front and back.
-- **Close/zoom gadgets and the WM server are deferred.** Close and zoom want
-  the client's own protocol; a `bureau.wm` server is policy the console does
-  not need yet. Each arrives with the client that asks.
+- **The titlebar carries three gadgets.** Packed at its right: close, zoom
+  and depth. Close calls the client's `on_close_requested` and hides the
+  window; zoom toggles between where the window was and the whole screen,
+  its titlebar at the top; depth lowers the window to the bottom among the
+  plain windows (the console gains `lower`). The titlebar elsewhere still
+  raises: a drag or a resize brings the window forward, the gadgets act
+  deliberately. Depth is on by default; a client asks for close and zoom
+  (`set_gadgets`), because a login window should not be closable and the
+  bureau's backdrop has no titlebar at all. A zoom is a move and a resize in
+  the order that keeps the intermediate state on the screen — shrink before
+  moving, grow after.
+- **The WM server is deferred.** A `bureau.wm` server is policy the console
+  does not need yet; it arrives with the client that asks.
 
 ## The shape
 
@@ -121,10 +125,11 @@ repaints.
 A pointer-down in the titlebar begins a drag and raises; motion moves the
 window through `console::move`. A pointer-down in the bottom-right grip
 begins a resize; motion resizes through `console::resize`, bounded by
-`min_size_` and the screen. The titlebar's depth gadget — a plate and a down
-chevron at the right — lowers the window through `console::lower`. The up
-ends either gesture. A pointer-down anywhere else in the content is the
-widgets', as before.
+`min_size_` and the screen. A pointer-down on a titlebar gadget — close,
+zoom or depth, at the right — acts: `close()` (the client's
+`on_close_requested`), `zoom()` (the toggle above), or `console::lower`.
+The up ends either gesture. A pointer-down anywhere else in the content is
+the widgets', as before.
 
 ### The clients
 
@@ -134,10 +139,9 @@ and so has no titlebar — the Amiga screen is not a window with a frame.
 
 ## What this is not
 
-Close, zoom and roll-up gadgets; a window list or TaskX; the `bureau.wm`
-server and the `bureau.menu` server (`specs/trinket.md`'s `MenuBar`); themed
-decorations beyond the XEN titlebar and depth gadget the theme carries. Each
-is its own arc.
+Roll-up gadgets; a window list or TaskX; the `bureau.wm` server and the
+`bureau.menu` server (`specs/trinket.md`'s `MenuBar`); themed decorations
+beyond the XEN titlebar and gadgets the theme carries. Each is its own arc.
 
 ## Acceptance
 

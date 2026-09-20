@@ -50,6 +50,23 @@ void collect_focusables(Widget* widget, std::vector<Widget*>& out) {
     if (widget->focusable()) out.push_back(widget);
 }
 
+/* One titlebar gadget: a plate and its glyph -- an X for close, a square for
+ * zoom, a down chevron for depth. */
+void draw_gadget(Canvas& canvas, Rect const& r, int kind, Color ink,
+                 Color plate) {
+    canvas.fill_rect(r, plate);
+    Point const c = r.center();
+    if (kind == 1) {
+        canvas.draw_line({c.x - 3, c.y - 3}, {c.x + 3, c.y + 3}, ink);
+        canvas.draw_line({c.x - 3, c.y + 3}, {c.x + 3, c.y - 3}, ink);
+    } else if (kind == 2) {
+        canvas.draw_rect({c.x - 4, c.y - 4, 8, 8}, ink);
+    } else {
+        canvas.draw_line({c.x - 3, c.y - 2}, {c.x, c.y + 2}, ink);
+        canvas.draw_line({c.x, c.y + 2}, {c.x + 3, c.y - 2}, ink);
+    }
+}
+
 }  // namespace
 
 Window::Window(Application& app)
@@ -306,9 +323,17 @@ void Window::dispatch_pointer(uint64_t event) {
         return;
     }
 
-    /* The depth gadget lowers; the titlebar elsewhere drags and raises. */
-    if (decorated_ && depth_gadget_rect().contains(pos)) {
-        (void)aegir::console::lower(app_.gui_port(), console_window_id_);
+    /* A titlebar gadget: close, zoom or depth. The titlebar elsewhere drags and
+     * raises. */
+    int const gadget = gadget_at(pos);
+    if (gadget != 0) {
+        if (gadget == 1) {
+            close();
+        } else if (gadget == 2) {
+            zoom();
+        } else {
+            (void)aegir::console::lower(app_.gui_port(), console_window_id_);
+        }
         return;
     }
 
@@ -351,14 +376,91 @@ Rect Window::frame_for(const Rect& content) const {
     return {content.x, content.y - bar, content.width, content.height + bar};
 }
 
-/* The depth gadget: the "back" arrow, at the titlebar's right. Clicking it
- * lowers the window (specs/window-manager.md). */
-Rect Window::depth_gadget_rect() const {
+void Window::set_gadgets(bool close, bool zoom, bool depth) {
+    gadget_close_ = close;
+    gadget_zoom_ = zoom;
+    gadget_depth_ = depth;
+    repaint();
+}
+
+/* The gadgets sit at the titlebar's right, packed from the edge; index 0 is
+ * the rightmost (depth), then zoom, then close (specs/window-manager.md). */
+Rect Window::gadget_rect(int index_from_right) const {
     Theme& theme = app_.theme();
     int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
     int const pad = theme.metric(MetricRole::TITLEBAR_PADDING_H);
+    int const gap = theme.metric(MetricRole::SPACING_SMALL);
     int const bar = titlebar_height();
-    return {rect_.width - pad - size, (bar - size) / 2, size, size};
+    int const right = rect_.width - pad - (index_from_right + 1) * size -
+                      index_from_right * gap;
+    return {right, (bar - size) / 2, size, size};
+}
+
+int Window::gadget_at(Point p) const {
+    if (!decorated_) return 0;
+    int index = 0;
+    if (gadget_depth_) {
+        if (gadget_rect(index).contains(p)) return 3;
+        ++index;
+    }
+    if (gadget_zoom_) {
+        if (gadget_rect(index).contains(p)) return 2;
+        ++index;
+    }
+    if (gadget_close_) {
+        if (gadget_rect(index).contains(p)) return 1;
+        ++index;
+    }
+    return 0;
+}
+
+/* Move and resize the console window to `frame`, in the order that keeps the
+ * intermediate state on the screen: shrink before moving, grow after. */
+bool Window::apply_frame(const Rect& frame, bool growing) {
+    if (console_window_id_ == 0) return false;
+    if (growing) {
+        if (!aegir::console::move(app_.gui_port(), console_window_id_,
+                                  static_cast<uint64_t>(frame.x),
+                                  static_cast<uint64_t>(frame.y))) {
+            return false;
+        }
+        return aegir::console::resize(app_.gui_port(), console_window_id_,
+                                      static_cast<uint64_t>(frame.width),
+                                      static_cast<uint64_t>(frame.height));
+    }
+    if (!aegir::console::resize(app_.gui_port(), console_window_id_,
+                                static_cast<uint64_t>(frame.width),
+                                static_cast<uint64_t>(frame.height))) {
+        return false;
+    }
+    return aegir::console::move(app_.gui_port(), console_window_id_,
+                                static_cast<uint64_t>(frame.x),
+                                static_cast<uint64_t>(frame.y));
+}
+
+/* Zoom toggles between where the window was and the whole screen, its
+ * titlebar at the top. The screen's size is the bound a resize may reach
+ * (specs/window-manager.md). */
+void Window::zoom() {
+    if (!zoomed_) {
+        DisplayInfo const& display = app_.display_info();
+        int const bar = titlebar_height();
+        if (display.width_px == 0 || display.height_px == 0) return;
+        Rect const target{0, bar, static_cast<int>(display.width_px),
+                          static_cast<int>(display.height_px) - bar};
+        if (target.width <= 0 || target.height <= 0) return;
+        if (!apply_frame(frame_for(target), true)) return;
+        saved_rect_ = rect_;
+        rect_ = target;
+        zoomed_ = true;
+    } else {
+        if (!apply_frame(frame_for(saved_rect_), false)) return;
+        rect_ = saved_rect_;
+        zoomed_ = false;
+    }
+    if (content_) content_->set_rect({0, 0, rect_.width, rect_.height});
+    if (on_moved_resized) on_moved_resized(rect_);
+    repaint();
 }
 
 uint64_t Window::backing_bytes() const {
@@ -408,16 +510,22 @@ void Window::repaint() {
         std::string const title = utf32_to_utf8(title_);
         theme.draw_titlebar(frame_canvas, {0, 0, frame.width, bar}, title.c_str(),
                             active_);
-        /* The depth gadget: a plate and a down chevron, the "back" arrow. */
-        Rect const gadget = depth_gadget_rect();
-        frame_canvas.fill_rect(gadget, theme.color(ColorRole::BUTTON_BG));
         Color const ink = active_ ? theme.color(ColorRole::TITLEBAR_TEXT)
                                   : theme.color(ColorRole::TITLEBAR_TEXT_INACTIVE);
-        Point const centre = gadget.center();
-        frame_canvas.draw_line({centre.x - 3, centre.y - 2},
-                               {centre.x, centre.y + 2}, ink);
-        frame_canvas.draw_line({centre.x, centre.y + 2},
-                               {centre.x + 3, centre.y - 2}, ink);
+        Color const plate = theme.color(ColorRole::BUTTON_BG);
+        int index = 0;
+        if (gadget_depth_) {
+            draw_gadget(frame_canvas, gadget_rect(index), 3, ink, plate);
+            ++index;
+        }
+        if (gadget_zoom_) {
+            draw_gadget(frame_canvas, gadget_rect(index), 2, ink, plate);
+            ++index;
+        }
+        if (gadget_close_) {
+            draw_gadget(frame_canvas, gadget_rect(index), 1, ink, plate);
+            ++index;
+        }
     }
     if (content_) {
         content_->dispatch_layout();

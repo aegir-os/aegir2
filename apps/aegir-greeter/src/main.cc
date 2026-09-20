@@ -122,6 +122,9 @@ int main(int argc, char *argv[])
     Window window(app);
     window.set_title("Aegir");
     window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
+    /* Zoom and depth: a login form may be zoomed to the screen or sent back;
+     * a close gadget on a login window is the demo's, not this one's. */
+    window.set_gadgets(false, true, true);
 
     auto panel = std::make_unique<Panel>(Panel::Style::FLAT);
     panel->set_background(theme.color(ColorRole::WINDOW_BG));

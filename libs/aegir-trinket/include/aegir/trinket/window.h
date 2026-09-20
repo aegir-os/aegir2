@@ -39,6 +39,12 @@ public:
     void set_decorated(bool decorated);  // Default true
     bool decorated() const { return decorated_; }
 
+    // Which titlebar gadgets a decorated window carries: close, zoom (toggle
+    // full screen) and depth (send to back). Depth is on by default; a client
+    // asks for the others (specs/window-manager.md). They sit at the
+    // titlebar's right, close then zoom then depth.
+    void set_gadgets(bool close, bool zoom, bool depth);
+
     void set_resizable(bool resizable) { resizable_ = resizable; }
     bool resizable() const { return resizable_; }
 
@@ -130,6 +136,13 @@ private:
     int resize_start_width_ = 0;
     int resize_start_height_ = 0;
 
+    // The titlebar gadgets, and the zoom's saved rectangle.
+    bool gadget_close_ = false;
+    bool gadget_zoom_ = false;
+    bool gadget_depth_ = true;
+    bool zoomed_ = false;
+    Rect saved_rect_;
+
     // Bureau window IDs
     uint64_t console_window_id_ = 0;
     uint64_t frame_window_id_ = 0;
@@ -137,7 +150,13 @@ private:
     // Internal
     int titlebar_height() const;
     Rect frame_for(const Rect& content) const;
-    Rect depth_gadget_rect() const;
+    // The gadget at `p` (frame-local): 0 none, 1 close, 2 zoom, 3 depth.
+    int gadget_at(Point p) const;
+    Rect gadget_rect(int index_from_right) const;
+    void zoom();
+    // Move and resize the console window to `frame`; shrink before moving,
+    // grow after, so an intermediate state is never off the screen.
+    bool apply_frame(const Rect& frame, bool growing);
     void create_bureau_window();
     void destroy_bureau_window();
     void update_bureau_window();
