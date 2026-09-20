@@ -128,7 +128,17 @@ void Window::close() {
 }
 
 void Window::damage(const Rect& r) {
-    static_cast<void>(r);  // tier 1 repaints the whole window
+    /* The rectangle arrives in the content's coordinates; the frame is the
+     * content plus the titlebar above it. An empty rectangle is the whole
+     * window; otherwise the event's damages are unioned into one repaint. */
+    Rect frame_rect = r;
+    if (frame_rect.empty()) {
+        Rect const frame = frame_for(rect_);
+        frame_rect = {0, 0, frame.width, frame.height};
+    } else {
+        frame_rect.y += titlebar_height();
+    }
+    damage_rect_ = damage_rect_.empty() ? frame_rect : damage_rect_.united(frame_rect);
     repaint();
 }
 
@@ -357,6 +367,13 @@ void Window::repaint() {
 
     Rect const frame = frame_for(rect_);
     int const bar = titlebar_height();
+    /* Only the region an event damaged is painted and handed the console:
+     * repainting the whole frame on every keystroke is what made typing
+     * crawl (specs/trinket.md deferred this; specs/window-manager.md's
+     * partial damage). An empty damage is the whole frame, window-local. */
+    Rect const damage =
+        damage_rect_.empty() ? Rect{0, 0, frame.width, frame.height} : damage_rect_;
+    damage_rect_ = {};
     uint32_t* const pixels =
         reinterpret_cast<uint32_t*>(app_.slice() + backing_offset_);
 
@@ -366,6 +383,7 @@ void Window::repaint() {
      * offset by the titlebar, so its coordinates are its own. */
     Theme& theme = app_.theme();
     Canvas frame_canvas(pixels, frame.width, frame.height, frame.width);
+    frame_canvas.set_clip_rect(damage);
     frame_canvas.fill_rect({0, 0, frame.width, frame.height},
                            theme.color(ColorRole::WINDOW_BG));
     if (bar > 0) {
@@ -387,17 +405,21 @@ void Window::repaint() {
         content_->dispatch_layout();
         Canvas content_canvas(pixels + static_cast<size_t>(bar) * frame.width,
                               rect_.width, rect_.height, frame.width);
-        content_->dispatch_paint(content_canvas,
-                                 PaintEvent{{0, 0, rect_.width, rect_.height}});
+        /* The content's own space: the damage shifts down by the titlebar. */
+        content_->dispatch_paint(
+            content_canvas,
+            PaintEvent{{damage.x, damage.y - bar, damage.width, damage.height}});
     }
     if (bar > 0) {
         theme.draw_window_frame(frame_canvas, {0, 0, frame.width, frame.height},
                                 active_);
     }
 
-    (void)aegir::console::damage(app_.gui_port(), console_window_id_, 0, 0,
-                                 static_cast<uint64_t>(frame.width),
-                                 static_cast<uint64_t>(frame.height));
+    (void)aegir::console::damage(app_.gui_port(), console_window_id_,
+                                 static_cast<uint64_t>(damage.x),
+                                 static_cast<uint64_t>(damage.y),
+                                 static_cast<uint64_t>(damage.width),
+                                 static_cast<uint64_t>(damage.height));
 }
 
 void Window::create_bureau_window() {
@@ -438,6 +460,9 @@ void Window::create_bureau_window() {
     }
 
     register_menubar();
+    /* The first paint is the whole frame: damages recorded before the window
+     * existed (a set_content before show) are not a region to clip to. */
+    damage_rect_ = {};
     repaint();
 }
 

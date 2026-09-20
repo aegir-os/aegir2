@@ -27,10 +27,14 @@ namespace aegir::framebuffer {
 constexpr uint32_t kMethodInfo = 1;
 constexpr uint32_t kInfoWords = 6;
 
-/** Flush: the window's pixels, as they stand, go to the screen. No words; the
- *  answer is empty. Not vsynced -- a tear-free flip is the driver's business,
- *  when a device that has one arrives. */
+/** Flush: four words -- x, y, width and height, a rectangle of the window in
+ *  pixels. Those pixels, as they stand, go to the screen; the region is
+ *  clipped to the window. The answer is empty. A keystroke or a drag pushes
+ *  its own rectangle, not the whole screen -- copying the screen per event is
+ *  what made the console lag. Not vsynced -- a tear-free flip is the driver's
+ *  business, when a device that has one arrives. */
 constexpr uint32_t kMethodFlush = 2;
+constexpr uint32_t kFlushWords = 4;
 
 /** Set mode: two words, width and height in pixels. The driver re-points the
  *  scanout at a new resource backed by the same window and answers with the

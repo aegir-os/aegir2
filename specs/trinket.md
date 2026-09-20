@@ -27,12 +27,16 @@ consumer (the bureau, menus, dialogs) has a working base.
   adoption and `aegir::heap::init` happen before the static `Application` is
   constructed. This is the cxx-smoke's ordering (`apps/aegir-cxx-smoke`), and
   it is load-bearing.
-- **A window repaints whole.** Tier 1 dispatches `content_->dispatch_paint`
-  over the window's `Canvas` on any damage and then calls `console::damage`
-  with the window's rectangle. 480×360 is 172800 words and the keystroke that
-  caused it costs more than the fill — the greeter's own reasoning, kept.
-  Partial damage and a damage-rect union are a later optimization, not a
-  correctness need.
+- **A window repaints what changed.** Tier 1 dispatched
+  `content_->dispatch_paint` over the whole window on any damage, and this arc
+  began that way. It did not survive a real client: typing a character and
+  dragging a window were both visibly slow, so the window now unions an
+  event's damages into one rectangle, clips its paint to it, and hands that
+  rectangle to `console::damage` — and the console's `flush` carries the same
+  rectangle to the driver, which transfers only it (`specs/window-manager.md`,
+  `aegir/framebuffer.h`). The composite still walks the windows bottom-to-top
+  for every changed pixel, because a window's slice lookup per pixel was the
+  other half of the lag.
 - **The look is XEN/Workbench, in the theme.** `theme_xen.cc` already carries
   the palette and metrics; this arc makes them visible. The greeter's
   acceptance pixels change from its hand-picked greys to the theme's roles.

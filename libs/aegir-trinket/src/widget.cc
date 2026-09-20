@@ -71,7 +71,7 @@ void Widget::damage(const Rect& r) {
     if (parent_ != nullptr) {
         parent_->damage(r);
     } else if (window_ != nullptr) {
-        window_->damage();
+        window_->damage(r);
     }
 }
 

@@ -58,6 +58,13 @@ this arc.
     resize stays inside it. It is arena memory spent for headroom, and the
     alternative (a resize that outgrows its backing) is a window that cannot
     grow.
+- **A repaint and a flush carry the rectangle that changed.** The toolkit
+  unions an event's damages, clips its paint to the union, and hands that
+  rectangle to `console::damage`; the console composites it and the driver
+  transfers and flushes only it (`specs/console.md`, `aegir/framebuffer.h`).
+  The whole-window repaint on every keystroke, and the whole-screen transfer
+  on every event, were the lag a real client found first; a window's slice is
+  resolved once at create, not per pixel.
 - **Depth is a gadget and `lower`.** A decorated window's titlebar carries a
   depth gadget at its right — the "back" arrow — and the console gains
   `lower` (the window to the bottom among the plain windows, above every

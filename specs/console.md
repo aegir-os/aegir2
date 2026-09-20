@@ -69,7 +69,9 @@ method console does not know is answered by saying nothing.
 - `damage`. In: the window's id and a rectangle in window-local pixels. The
   rectangle's pixels, as they stand in the slice, are composited to the
   screen: painter's algorithm, clipped against the windows above, then the
-  gpu driver's `flush`. The first damage is also what *shows* a window:
+  gpu driver's `flush` of that rectangle — the whole screen per event was
+  the lag that partial damage and a region flush removed. The first damage
+  is also what *shows* a window:
   before it the rectangle is composited as if the window were not there —
   the backing is the client's to paint first, and retyped frames arrive
   dirty. A tear-free flip is the driver's business when a device that has

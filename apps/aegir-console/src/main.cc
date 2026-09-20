@@ -54,6 +54,17 @@ uint64_t g_width = 0;
 uint64_t g_height = 0;
 uint64_t g_stride = 0;
 
+/* Push a changed rectangle of the screen to the display: the driver transfers
+ * and flushes only this region (aegir/framebuffer.h). The whole screen per
+ * event -- 4 MiB copied to the device -- was what made typing and dragging
+ * crawl. */
+void flush(uint64_t x, uint64_t y, uint64_t width, uint64_t height) noexcept
+{
+    uint64_t rect[aegir::framebuffer::kFlushWords] = {x, y, width, height};
+    (void)g_gpu.call_words(aegir::framebuffer::kMethodFlush, rect,
+                           aegir::framebuffer::kFlushWords, nullptr, 0);
+}
+
 /* A client's slice of the arena: megapage frames retyped from a child
  * untyped of the slice's own, so a reap revokes exactly one client's
  * pixels (authority.md's retained-copy path). The console maps the carved
@@ -93,6 +104,12 @@ struct Window {
     uint64_t offset; /* the backing's offset within the owner's slice */
     bool shown;      /* the first damage happened */
     bool backdrop;   /* kWindowBackdrop at create: the bottom of the z-order */
+    /* The owner's slice, resolved once at create: the composite reads it for
+     * every pixel it covers, and a linear find_slice there was the walk that
+     * made dragging and typing crawl. `reap` destroys a badge's windows
+     * before it revokes the slice, so this stays valid while the window is
+     * in the list. */
+    Slice *slice;
     Window *next;
 };
 
@@ -251,11 +268,15 @@ void cursor_erase() noexcept
 /* The position has already moved when this runs: the erase happened in
  * route(), before the update, because the save-under only restores where
  * the cursor actually was. What is left here is the draw at the new spot,
- * the flush, and the event. */
-void pointer_moved() noexcept
+ * the flush of the old and new cursor rectangles, and the event. */
+void pointer_moved(uint64_t old_x, uint64_t old_y) noexcept
 {
     cursor_draw();
-    (void)g_gpu.call(aegir::framebuffer::kMethodFlush, 0);
+    uint64_t const left = old_x < g_pointer_x ? old_x : g_pointer_x;
+    uint64_t const top = old_y < g_pointer_y ? old_y : g_pointer_y;
+    uint64_t const right = (old_x > g_pointer_x ? old_x : g_pointer_x) + kCursorSize;
+    uint64_t const bottom = (old_y > g_pointer_y ? old_y : g_pointer_y) + kCursorSize;
+    flush(left, top, right - left, bottom - top);
     Window *const target =
         g_grab != nullptr ? g_grab : window_at(g_pointer_x, g_pointer_y);
     if (target != nullptr) {
@@ -329,6 +350,8 @@ void route(uint32_t device, uint64_t word) noexcept
          * -- erase after the update and the old pixels stay (trails) while
          * the new spot gets the old spot's saved pixels. */
         cursor_erase();
+        uint64_t const old_x = g_pointer_x;
+        uint64_t const old_y = g_pointer_y;
         int64_t const next =
             static_cast<int64_t>(code == aegir::input::kAxisX ? g_pointer_x
                                                               : g_pointer_y) +
@@ -343,18 +366,20 @@ void route(uint32_t device, uint64_t word) noexcept
         } else {
             g_pointer_y = clamped;
         }
-        pointer_moved();
+        pointer_moved(old_x, old_y);
     } else if (device == kHidTablet && type == aegir::input::kEvAbs) {
         /* Absolute, in the axis's own units (0..32767): scaled to the
          * screen, the numbers pass through unchanged from the injector.
          * Cursor down first, as for the relative axis above. */
         cursor_erase();
+        uint64_t const old_x = g_pointer_x;
+        uint64_t const old_y = g_pointer_y;
         if (code == aegir::input::kAxisX) {
             g_pointer_x = (static_cast<uint64_t>(value) * g_width) >> 15;
         } else {
             g_pointer_y = (static_cast<uint64_t>(value) * g_height) >> 15;
         }
-        pointer_moved();
+        pointer_moved(old_x, old_y);
     } else if (device != kHidKbd && type == aegir::input::kEvKey &&
                code >= aegir::input::kBtnLeft && code <= aegir::input::kBtnMiddle) {
         pointer_button(code, value);
@@ -404,7 +429,7 @@ void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
                     yy < w->y || yy >= w->y + w->height) {
                     continue;
                 }
-                Slice const *slice = find_slice(w->owner);
+                Slice const *slice = w->slice;
                 if (slice == nullptr) {
                     continue;
                 }
@@ -416,7 +441,7 @@ void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
         }
     }
     cursor_draw();
-    (void)g_gpu.call(aegir::framebuffer::kMethodFlush, 0);
+    flush(sx, sy, ex - sx, ey - sy);
 }
 
 }  // namespace
@@ -630,7 +655,7 @@ int main(int argc, char *argv[])
         }
     }
     cursor_draw();
-    (void)gpu.call(aegir::framebuffer::kMethodFlush, 0);
+    flush(0, 0, width, height);
     aegir::debug_write("      console: the backdrop is up -- gpu.virtio0, ");
     aegir::debug_write_unsigned(width);
     aegir::debug_write("x");
@@ -789,7 +814,7 @@ int main(int argc, char *argv[])
             uint64_t const offset = static_cast<uint64_t>(seL4_GetMR(5));
             uint64_t const flags = static_cast<uint64_t>(seL4_GetMR(6));
             bool const backdrop = (flags & aegir::console::kWindowBackdrop) != 0;
-            Slice const *slice = find_slice(badge);
+            Slice *slice = find_slice(badge);
             bool const fits =
                 slice != nullptr && width != 0 && height != 0 &&
                 x + width <= g_width && y + height <= g_height &&
@@ -803,7 +828,7 @@ int main(int argc, char *argv[])
                 continue;
             }
             *window = Window{++g_next_id, badge, x, y, width, height, offset,
-                             false, backdrop, nullptr};
+                             false, backdrop, slice, nullptr};
             /* The list is bottom first: a plain window appends and sits on
              * top; a backdrop enters at the head, beneath everything, and
              * nothing raises it (a button-down focuses, and does not

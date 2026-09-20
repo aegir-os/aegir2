@@ -67,14 +67,24 @@ void paint_bands() noexcept
     }
 }
 
-/* The frame's trip to the screen: what is in the window becomes the
- * resource's contents, and the flush is what the display shows. */
-bool present(aegir::virtio::Registers const &registers, aegir::virtio::Queue &queue) noexcept
+/* The frame's trip to the screen: the given region of the window becomes the
+ * resource's contents, and the flush is what the display shows. The region is
+ * what changed -- a keystroke or a drag pushes its rectangle, not the whole
+ * screen; copying all 4 MiB per event was the console's lag. */
+bool present(aegir::virtio::Registers const &registers, aegir::virtio::Queue &queue,
+             uint32_t x, uint32_t y, uint32_t width, uint32_t height) noexcept
 {
+    if (width == 0 || height == 0) {
+        return true;
+    }
     aegir::virtio::TransferToHost2d transfer{};
     transfer.hdr.type = aegir::virtio::kGpuCmdTransferToHost2d;
-    transfer.r.width = g_width;
-    transfer.r.height = g_height;
+    transfer.r.x = x;
+    transfer.r.y = y;
+    transfer.r.width = width;
+    transfer.r.height = height;
+    transfer.offset = static_cast<uint64_t>(y) * g_width * 4 +
+                      static_cast<uint64_t>(x) * 4;
     transfer.resource_id = g_resource;
     aegir::virtio::CtrlHeader answer{};
     aegir::virtio::GpuResult result =
@@ -86,8 +96,10 @@ bool present(aegir::virtio::Registers const &registers, aegir::virtio::Queue &qu
 
     aegir::virtio::Flush flush{};
     flush.hdr.type = aegir::virtio::kGpuCmdResourceFlush;
-    flush.r.width = g_width;
-    flush.r.height = g_height;
+    flush.r.x = x;
+    flush.r.y = y;
+    flush.r.width = width;
+    flush.r.height = height;
     flush.resource_id = g_resource;
     result = aegir::virtio::control(registers, queue, &flush, sizeof(flush), &answer,
                                     sizeof(answer));
@@ -296,7 +308,7 @@ int main(int argc, char *argv[])
         return 0;
     }
     paint_bands();
-    if (!present(registers, queue)) {
+    if (!present(registers, queue, 0, 0, g_width, g_height)) {
         write_line("FAIL", "the first frame would not flush");
         return 0;
     }
@@ -329,17 +341,25 @@ int main(int argc, char *argv[])
      * Calls serialize at the endpoint, so one outstanding control command is
      * structural, not a lock. */
     for (;;) {
-        uint64_t words[2];
+        uint64_t words[4];
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = port.receive_words(words, 2, &count, &badge);
+        uint32_t const method = port.receive_words(words, 4, &count, &badge);
         if (method == aegir::framebuffer::kMethodInfo) {
             uint64_t const answer[] = {g_width, g_height, g_width * 4,
                                        aegir::virtio::kGpuFormatB8G8R8X8, g_phys_width_mm,
                                        g_phys_height_mm};
             port.reply_words(answer, aegir::framebuffer::kInfoWords);
-        } else if (method == aegir::framebuffer::kMethodFlush) {
-            (void)present(registers, queue);
+        } else if (method == aegir::framebuffer::kMethodFlush && count == 4) {
+            /* The rectangle is clipped to the screen; the driver transfers and
+             * flushes only what changed */
+            uint32_t const x = words[0] < g_width ? static_cast<uint32_t>(words[0]) : g_width;
+            uint32_t const y = words[1] < g_height ? static_cast<uint32_t>(words[1]) : g_height;
+            uint32_t const width =
+                x + words[2] <= g_width ? static_cast<uint32_t>(words[2]) : g_width - x;
+            uint32_t const height =
+                y + words[3] <= g_height ? static_cast<uint32_t>(words[3]) : g_height - y;
+            (void)present(registers, queue, x, y, width, height);
             port.reply(0);
         } else if (method == aegir::framebuffer::kMethodSetMode && count == 2) {
             uint64_t applied[] = {0, 0};
@@ -349,7 +369,7 @@ int main(int argc, char *argv[])
                 apply_mode(registers, queue, static_cast<uint32_t>(words[0]),
                            static_cast<uint32_t>(words[1]))) {
                 paint_bands();
-                if (present(registers, queue)) {
+                if (present(registers, queue, 0, 0, g_width, g_height)) {
                     applied[0] = g_width;
                     applied[1] = g_height;
                     aegir::debug_write("      ");

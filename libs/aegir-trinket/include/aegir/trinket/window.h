@@ -105,6 +105,10 @@ private:
     // claimed once and reused.
     uint64_t backing_offset_ = ~0ull;
 
+    // The region to repaint and to hand the console, frame-local. Empty means
+    // the whole frame; one event's damages are unioned before the repaint.
+    Rect damage_rect_;
+
     // The widget within the content tree that keys go to.
     Widget* focused_ = nullptr;
 
