@@ -18,7 +18,6 @@ add_library(aegir-trinket STATIC
     src/application.cc
     src/canvas.cc
     src/widget.cc
-    src/container.cc
     src/layout.cc
     src/label.cc
     src/button.cc

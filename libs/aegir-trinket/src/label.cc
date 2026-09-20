@@ -30,22 +30,26 @@ void Label::set_text(std::string_view text) {
 void Label::on_paint(Canvas& canvas, const PaintEvent& event) {
     Widget::on_paint(canvas, event);
 
-    if (text_.empty() || !font_) return;
+    /* A label with no font of its own uses the application's, the way a
+     * TextBox and a Button already do; otherwise a client that never calls
+     * set_font draws nothing. */
+    Font* const font = font_ ? font_ : Application::instance()->default_font();
+    if (text_.empty() || font == nullptr) return;
 
     // Elide text if needed
     if (text_dirty_ || elided_text_.empty()) {
         if (ellipsis_ && word_wrap_ == WordWrap::NONE) {
-            Size text_size = font_->measure(text_);
+            Size text_size = font->measure(text_);
             if (text_size.width > rect_.width) {
                 // Simple elision: truncate and add ...
                 std::u32string ellipsis = U"...";
-                Size ellipsis_size = font_->measure(ellipsis);
+                Size ellipsis_size = font->measure(ellipsis);
                 int available = rect_.width - ellipsis_size.width;
                 if (available > 0) {
                     elided_text_.clear();
                     int width = 0;
                     for (char32_t cp : text_) {
-                        const Glyph* g = font_->glyph(cp);
+                        const Glyph* g = font->glyph(cp);
                         int adv = g ? g->advance : 0;
                         if (width + adv > available) break;
                         elided_text_.push_back(cp);
@@ -68,21 +72,22 @@ void Label::on_paint(Canvas& canvas, const PaintEvent& event) {
     if (display_text.empty()) return;
 
     // Calculate position based on alignment
-    Size text_size = font_->measure(display_text);
+    Size text_size = font->measure(display_text);
     int x = rect_.x;
     if (alignment_ == Alignment::CENTER) {
         x += (rect_.width - text_size.width) / 2;
     } else if (alignment_ == Alignment::RIGHT) {
         x += rect_.width - text_size.width;
     }
-    int y = rect_.y + (rect_.height + font_->ascent() - font_->descent()) / 2;
+    int y = rect_.y + (rect_.height + font->ascent() - font->descent()) / 2;
 
-    canvas.draw_text({x, y}, display_text, font_, text_color_, BidiDirection::LTR);
+    canvas.draw_text({x, y}, display_text, font, text_color_, BidiDirection::LTR);
 }
 
 Size Label::preferred_size() const {
-    if (!font_ || text_.empty()) return {0, font_ ? font_->height() : 0};
-    return font_->measure(text_);
+    Font* const font = font_ ? font_ : Application::instance()->default_font();
+    if (font == nullptr || text_.empty()) return {0, font ? font->height() : 0};
+    return font->measure(text_);
 }
 
 } // namespace aegir::trinket

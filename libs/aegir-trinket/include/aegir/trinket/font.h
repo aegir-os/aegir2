@@ -41,6 +41,8 @@ struct PositionedGlyph {
     uint32_t cluster = 0;  // For BiDi mapping
 };
 
+class BitmapFont;
+
 class Font {
 public:
     virtual ~Font() = default;
@@ -54,6 +56,12 @@ public:
     // Glyph lookup
     virtual const Glyph* glyph(uint32_t codepoint) const = 0;
     virtual const Glyph* find_glyph(uint32_t codepoint) const;
+
+    // The bitmap atlas this font draws from, when it is a bitmap font, and null
+    // otherwise. The canvas blits through this rather than casting a Font* to a
+    // BitmapFont*: a fallback chain or a future outline font is not one, and the
+    // cast is undefined behaviour when the glyph is not.
+    virtual const BitmapFont* as_bitmap() const { return nullptr; }
 
     // Text measurement (simple, no shaping)
     virtual Size measure(std::u32string_view text) const;
@@ -98,6 +106,7 @@ public:
     int line_gap() const override { return line_gap_; }
 
     const Glyph* glyph(uint32_t codepoint) const override;
+    const BitmapFont* as_bitmap() const override { return this; }
 
     // Atlas access for rendering
     struct Atlas {

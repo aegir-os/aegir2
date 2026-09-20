@@ -260,7 +260,9 @@ void Canvas::draw_text(Point pos, std::u32string_view text, Font* font, Color co
         if (!g || !g->valid) continue;
 
         // Draw glyph from atlas
-        const auto& atlas = static_cast<const BitmapFont*>(font)->atlas();
+        const BitmapFont* const bitmap = font->as_bitmap();
+        if (bitmap == nullptr) continue;
+        const auto& atlas = bitmap->atlas();
         if (atlas.pixels.empty()) continue;
 
         int gw = g->width;
