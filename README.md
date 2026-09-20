@@ -64,4 +64,40 @@ development sandbox — see `specs/build.md`.
 Aegir's own code is MIT (`LICENSE`). Vendored components keep their own
 licenses — see `THIRD-PARTY.md`.
 
+## AI Usage
+
+This project was created with significant use of LLMs. Which model varied
+based on task, and experimentation with many models. If you're curious,
+you can see the contents of `specs/` to see a lot of the decisions that
+went into what's here. Some of them were hand-written, some of them
+are written by the LLM based on Plan mode conversations. And if you read
+the AGENTS.md file, you can see some of the pain points that came up during
+this project.
+
+## Project "decrees"
+
+1. No telemetry will ever be present in the OS or provided applications.
+1. The OS and provided apps will never "phone home" - the only exception
+   to this will be a (at some future date) system updater, and even then,
+   it will be at the user's discretion when that occurs.
+1. A LLM agent harness will never be provided as a part of the base,
+   working distribution of the system. Developers can write or port their
+   own as desired.
+... this may be extended at any time ...
+
+## Note from the author:
+
+I understand, and agree with, many of the arguments against LLM usage. This
+project isn't the place to discuss them, however.
+
+The use of an LLM here helped me create something I've wanted for a long time,
+but was always out of reach. I did this project because it was fun for me.
+I hope you find it enjoyable to use.
+
+Please don't file issues about the use of an LLM here. I'm not open to
+a criticism of the LLM usage. I am open to bugs, new features, etc, like
+any other open source project. If you do file issues that are critical of
+the LLM usage, you'll be given one warning, the issue will be locked, and
+closed.
+
 [sel4]: https://sel4.systems/
