@@ -24,7 +24,6 @@
   <remote name="llvm" fetch="https://github.com/llvm"/>
   <remote name="notofonts" fetch="https://github.com/notofonts"/>
   <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
-  <remote name="musl" fetch="git://git.musl-libc.org/musl"/>
 
   <!-- Unused: every project below pins its own revision. -->
   <default remote="seL4" revision="master"/>
@@ -42,8 +41,14 @@
     <linkfile src="cmake-tool/griddle" dest="griddle"/>
   </project>
 
-  <!-- Complete musl C library. MIT. Full feature set: locale, threads, iconv, etc. -->
-  <project name="musl" path="projects/musl" remote="musl" revision="9fa28ece75d8a2191de7c5bb53bed224c5947417"/>
+  <!--
+    musl is not a git project here. Its official git server is not a reliable
+    fetch target (git:// is blocked on some hosts; the https URL is a web view,
+    not a git remote), so it is pinned as the official release tarball, fetched
+    and signature-verified by scripts/fetch_sources.py. See
+    manifests/sources.toml for the pin and manifests/musl-signing-key.asc for
+    the key.
+  -->
 
   <!-- C runtime and entry point for userland binaries. BSD-2-Clause. -->
   <project name="sel4runtime.git" path="projects/sel4runtime" revision="86489cf6efab9f314964e79468c036e9035394c7"/>

@@ -267,9 +267,11 @@ built from source. Everything else is fetched on demand:
   platform flow calls it in both directions, and built from source because the
   host has neither `dtc` nor a way to install one.
 - Provided by the host and used directly: `cpio`, `xxd`, `xmllint`, `flex`,
-  `bison`, `python3`, `make`, `git`, `repo`, `qemu-system-riscv64`. `repo` is
-  the launcher only; the tool code it downloads is pinned (see
-  `specs/third_party.md`).
+  `bison`, `python3`, `make`, `git`, `repo`, `qemu-system-riscv64`, and `gpg`.
+  `repo` is the launcher only; the tool code it downloads is pinned (see
+  `specs/third_party.md`). `gpg` verifies the musl release tarball's signature
+  (`manifests/sources.toml`), so a `make deps` without it fails rather than
+  accepting the tarball on its hash alone.
 - Known gaps, to be resolved only if a build actually needs them: `patch`,
   `gperf`. Our own patch application uses `git apply`, so `patch` is not
   required for that.

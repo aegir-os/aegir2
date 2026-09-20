@@ -13,6 +13,7 @@ import json
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import tomllib
 import urllib.error
 import urllib.request
@@ -30,6 +31,7 @@ PATCH_ROOT = THIRD_PARTY / "patches"
 STAMP_ROOT = THIRD_PARTY / "stamps"
 
 PINS_FILE = MANIFESTS / "toolchain.toml"
+SOURCES_FILE = MANIFESTS / "sources.toml"
 REQUIREMENTS_FILE = MANIFESTS / "requirements-tools.txt"
 MANIFEST_AEGIR = MANIFESTS / "aegir.xml"
 MANIFEST_PINNED = MANIFESTS / "aegir-pinned.xml"
@@ -161,6 +163,74 @@ def load_pins() -> dict[str, Any]:
         raise PinError(f"missing pin file: {PINS_FILE}") from exc
 
 
+def load_sources() -> list[dict[str, Any]]:
+    """Return the pinned tarball sources (manifests/sources.toml).
+
+    Empty when the file is absent, so a tree with no tarball sources needs no
+    special case.
+    """
+    try:
+        with SOURCES_FILE.open("rb") as handle:
+            data = tomllib.load(handle)
+    except FileNotFoundError:
+        return []
+    sources = data.get("source", [])
+    if not isinstance(sources, list):
+        raise PinError(f"{SOURCES_FILE}: `source` must be a list of tables")
+    return sources
+
+
+def verify_signature(archive: Path, signature: Path, key_file: Path, fingerprint: str) -> None:
+    """Verify `archive` against a detached signature with a pinned key.
+
+    A throwaway keyring is built from `key_file`, so the host's keyring and
+    trust database are neither read nor written. `fingerprint` is the full
+    fingerprint (no spaces) gpg reports for the signing key, and a signature
+    by any other key is a failure even when gpg calls it good.
+    """
+    if shutil.which("gpg") is None:
+        raise PinError("gpg is required to verify a source's release signature")
+    with tempfile.TemporaryDirectory() as scratch:
+        keyring = Path(scratch) / "keyring.gpg"
+        imported = subprocess.run(
+            [
+                "gpg",
+                "--batch",
+                "--no-default-keyring",
+                "--keyring",
+                str(keyring),
+                "--import",
+                str(key_file),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if imported.returncode != 0:
+            raise PinError(f"cannot import signing key {key_file}: {imported.stderr.strip()}")
+        verified = subprocess.run(
+            [
+                "gpg",
+                "--batch",
+                "--no-default-keyring",
+                "--keyring",
+                str(keyring),
+                "--status-fd",
+                "1",
+                "--verify",
+                str(signature),
+                str(archive),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    if verified.returncode != 0:
+        raise PinError(f"signature verification failed for {archive.name}: {verified.stderr.strip()}")
+    if f"VALIDSIG {fingerprint}" not in verified.stdout:
+        raise PinError(f"{archive.name} is not signed by the pinned key {fingerprint}")
+
+
 def sha256_file(path: Path) -> str:
     """Return the hex sha256 of a file, streaming so size does not matter."""
     digest = hashlib.sha256()
@@ -231,7 +301,7 @@ def patches() -> list[tuple[str, Path]]:
     """
     if not PATCH_ROOT.is_dir():
         return []
-    known = set(load_projects())
+    known = set(load_projects()) | {source["path"] for source in load_sources()}
     found: list[tuple[str, Path]] = []
     for patch in sorted(PATCH_ROOT.rglob("*.patch")):
         component = patch.parent.relative_to(PATCH_ROOT).as_posix()

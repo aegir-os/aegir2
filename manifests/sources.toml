@@ -1,0 +1,27 @@
+# Pinned target sources fetched as release tarballs.
+#
+# Most vendored trees come from git through repo (manifests/aegir.xml). musl
+# does not: its official git server is not a reliable fetch target (git:// is
+# blocked on some hosts, and the https URL redirects to a cgit web view rather
+# than a git remote), and the official release tarball is the canonical
+# artifact with better provenance. It is pinned here by sha256 and verified
+# against musl's own detached signature before it is extracted.
+#
+# The public key is committed at manifests/musl-signing-key.asc. Verification
+# builds a throwaway keyring from it, so the host's keyring is untouched.
+
+[[source]]
+name = "musl"
+version = "1.2.6"
+path = "projects/musl"
+url = "https://musl.libc.org/releases/musl-1.2.6.tar.gz"
+sha256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+archive = "musl-1.2.6.tar.gz"
+signature_url = "https://musl.libc.org/releases/musl-1.2.6.tar.gz.asc"
+signature_sha256 = "8a696228404cd4bae6379cf7538fc5d18c133b0ada54a41c1c6cef31d3c22ab6"
+signature_archive = "musl-1.2.6.tar.gz.asc"
+signing_key = "manifests/musl-signing-key.asc"
+# The key's full fingerprint, as gpg --status-fd reports it (no spaces).
+signing_fingerprint = "836489290BB6B70F99FFDA0556BCDB593020450F"
+# The single top-level directory the tarball extracts, moved to `path`.
+extract_dir = "musl-1.2.6"

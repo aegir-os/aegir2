@@ -2,7 +2,6 @@
 <manifest>
   <remote name="llvm" fetch="https://github.com/llvm"/>
   <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
-  <remote name="musl" fetch="git://git.musl-libc.org/musl"/>
   <remote name="nanopb" fetch="https://github.com/nanopb"/>
   <remote name="notofonts" fetch="https://github.com/notofonts"/>
   <remote name="opensbi" fetch="https://github.com/riscv"/>
@@ -11,7 +10,6 @@
   <default remote="seL4" revision="master"/>
   
   <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
-  <project name="musl" path="projects/musl" remote="musl" revision="9fa28ece75d8a2191de7c5bb53bed224c5947417" upstream="v1.2.6" dest-branch="v1.2.6"/>
   <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
   <project name="noto-fonts" path="projects/noto-fonts" remote="notofonts" revision="ffebf8c1ee449e544955a7e813c54f9b73848eac"/>
   <project name="opensbi" path="tools/opensbi" remote="opensbi" revision="234ed8e427f4d92903123199f6590d144e0d9351"/>

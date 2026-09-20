@@ -33,6 +33,7 @@ import pins
 REPO = "repo"
 SYNC_JOBS = str(max(1, (os.cpu_count() or 2) // 2))
 PATCH_SCRIPT = pins.ROOT / "scripts" / "apply_patches.py"
+FETCH_SOURCES_SCRIPT = pins.ROOT / "scripts" / "fetch_sources.py"
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:
@@ -126,6 +127,9 @@ def main(argv: list[str]) -> int:
             sync(arguments.force)
         record()
         if not arguments.record_only:
+            # Tarball sources are fetched before the patches: a patch may target
+            # one of them (musl's syscall redirection does).
+            run([sys.executable, str(FETCH_SOURCES_SCRIPT)])
             run([sys.executable, str(PATCH_SCRIPT)])
     except (pins.PinError, subprocess.SubprocessError) as exc:
         pins.report(False, "dependency sync failed", str(exc))

@@ -92,6 +92,49 @@ def check_local_changes(failures: list[str]) -> None:
             failures.append(path)
 
 
+def check_sources(failures: list[str]) -> None:
+    """Tarball sources are verified by content hash and signature, not by git."""
+    for source in pins.load_sources():
+        path = source["path"]
+        target = pins.ROOT / path
+        if not target.is_dir():
+            pins.report(False, f"{path} is missing", "run: make deps")
+            failures.append(path)
+            continue
+        stamp = pins.read_stamp(f"source-{source['name']}")
+        if not stamp or stamp.get("sha256") != source["sha256"]:
+            pins.report(False, f"{path} was not fetched from its pinned tarball", "run: make deps")
+            failures.append(path)
+            continue
+        archive = pins.DOWNLOAD / source["archive"]
+        signature = pins.DOWNLOAD / source["signature_archive"]
+        if not archive.is_file() or pins.sha256_file(archive) != source["sha256"]:
+            pins.report(False, f"{source['name']} tarball is missing or changed", "run: make deps")
+            failures.append(path)
+            continue
+        if not signature.is_file() or pins.sha256_file(signature) != source["signature_sha256"]:
+            pins.report(False, f"{source['name']} signature is missing or changed", "run: make deps")
+            failures.append(path)
+            continue
+        try:
+            pins.verify_signature(
+                archive,
+                signature,
+                pins.ROOT / source["signing_key"],
+                source["signing_fingerprint"],
+            )
+        except pins.PinError as exc:
+            pins.report(False, f"{source['name']} signature does not verify", str(exc))
+            failures.append(path)
+            continue
+        license_files = pins.license_files(target)
+        pins.report(
+            True,
+            f"{path} from {source['name']} {source['version']}",
+            f"license: {license_files[0] if license_files else 'none'}",
+        )
+
+
 def check_record(failures: list[str]) -> None:
     """The committed `repo manifest -r` record must match the manifest."""
     if not pins.MANIFEST_PINNED.is_file():
@@ -122,12 +165,15 @@ def main() -> int:
     for path, revision in sorted(projects.items()):
         check_project(path, revision, failures)
     check_record(failures)
+    check_sources(failures)
     check_local_changes(failures)
 
     if failures:
         print(f"\n{len(failures)} problem(s); see FAIL lines above", flush=True)
         return 1
-    print(f"\nall {len(projects)} projects match their pins", flush=True)
+    sources = pins.load_sources()
+    tail = f" and {len(sources)} source(s)" if sources else ""
+    print(f"\nall {len(projects)} projects{tail} match their pins", flush=True)
     return 0
 
 

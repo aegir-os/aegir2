@@ -14,6 +14,7 @@ upstream release manifest (`manifests/upstream-16.0.0.xml`, from
 | `kernel/` | [seL4/seL4](https://github.com/seL4/seL4) | `GPL-2.0-only` | The microkernel (privileged); shipped as a separate program |
 | `tools/seL4/` | [seL4/seL4_tools](https://github.com/seL4/seL4_tools) | `BSD-2-Clause` | CMake build system + ELF loader (`elfloader-tool`) |
 | `projects/musllibc/` | [seL4/musllibc](https://github.com/seL4/musllibc) | `MIT` | C standard library for userland (seL4 `sel4` branch) |
+| `projects/musl/` | [musl](https://musl.libc.org/) | `MIT` | Upstream musl release (signed tarball), the hosted C++ runtime's C library (`specs/cxx.md`) |
 | `projects/sel4runtime/` | [seL4/sel4runtime](https://github.com/seL4/sel4runtime) | `BSD-2-Clause` | C runtime / entry point for userland |
 | `projects/util_libs/` | [seL4/util_libs](https://github.com/seL4/util_libs) | `BSD-2-Clause` | Platform support libraries (`libplatsupport`, …) |
 | `projects/seL4_libs/` | [seL4/seL4_libs](https://github.com/seL4/seL4_libs) | `BSD-2-Clause` | libsel4* convenience libraries (see below) |
