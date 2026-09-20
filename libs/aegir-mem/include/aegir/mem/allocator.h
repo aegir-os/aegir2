@@ -255,6 +255,14 @@ private:
      *  need: one slot is outstanding at a time. */
     void slot_failed(seL4_CPtr slot) noexcept;
 
+    /** A record whose untyped an object consumed is dead: its memory is gone and
+     *  the kernel will never let it be retyped again. Compact it away -- swap the
+     *  last live entry into its place and shrink -- so the fixed table is a
+     *  ceiling on *live free untypeds*, not on every object ever allocated. This
+     *  is the table growing on demand in the only sense a bootstrap structure
+     *  can: fragmentation is what it holds, and fragmentation is bounded. */
+    void release_entry(int index) noexcept;
+
     /** Halve `untyped_[index]` until its free remainder is exactly `size_bits` wide.
      *  `last_child`, when given, receives the capability of the last leaf the
      *  halving made -- or 0 when nothing had to be split. The leaf is the piece a

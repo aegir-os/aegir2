@@ -100,6 +100,17 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
     }
 }
 
+void Allocator::release_entry(int index) noexcept
+{
+    if (index < 0 || index >= static_cast<int>(untyped_count_)) {
+        return;
+    }
+    --untyped_count_;
+    if (index != static_cast<int>(untyped_count_)) {
+        untyped_[index] = untyped_[untyped_count_];
+    }
+}
+
 void Allocator::slot_release(seL4_CPtr mark) noexcept
 {
     if (mark >= slots_first_ && mark <= slots_next_) {
@@ -248,8 +259,8 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     }
 
     /* The untyped was split to exactly the memory the object costs, so the
-     * object consumed it. */
-    untyped_[index].used = 1;
+     * object consumed it: the record is dead and goes away. */
+    release_entry(index);
     account.bytes += 1ull << wanted;
     account.objects += 1;
     allocated_bytes_ += 1ull << wanted;
@@ -364,7 +375,7 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
     if (physical_out != nullptr) {
         *physical_out = untyped_[taken].physical;
     }
-    untyped_[taken].used = 1;
+    release_entry(taken);
     account.bytes += 1ull << size_bits;
     account.objects += 1;
     allocated_bytes_ += 1ull << size_bits;
