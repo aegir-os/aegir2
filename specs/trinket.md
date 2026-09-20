@@ -111,8 +111,11 @@ generalizes, but attaching more than one frame waits for a client that needs
 it); alpha and blend beyond the canvas's existing per-pixel path; the
 screen-size query (the bureau's full-screen window needs it, so it arrives
 with the bureau arc); locale and BiDi/RTL (`specs/cxx.md`); a real worker
-thread (`specs/cxx.md`'s threading milestone — `WorkerPool` stays lazy). Each
-is easier with the toolkit standing.
+thread (`specs/cxx.md`'s threading milestone — `WorkerPool` stays lazy); a
+clock for `schedule_timer` — the runtime has no user-accessible monotonic
+clock, so the event loop consults the clock only when a timer is pending, and
+a real source arrives with the threading milestone. Each is easier with the
+toolkit standing.
 
 ## Acceptance
 

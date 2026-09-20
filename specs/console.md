@@ -25,8 +25,9 @@ sees of the screen and the keyboard is what console serves.
   hit-tested (below). The Amiga screen survives as a shape of window — the
   bureau's backdrop is a full-screen window — rather than as a separate
   mechanism. Draggable screens, depth gadgets and the toolkit's look are
-  later arcs; the greeter's look is deliberately basic, and what the toolkit
-  will look like is its own spec.
+  later arcs; the greeter's look was deliberately basic here, and the toolkit
+  that replaced it — its console integration, its XEN look, its embedded font
+  — is `specs/trinket.md`.
 - **Pixels never cross a message.** The window protocol is the established
   shared-window shape (`specs/services.md`: bulk data never crosses the
   message), turned around: console carves one **arena** per client out of

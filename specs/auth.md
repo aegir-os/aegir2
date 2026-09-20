@@ -174,8 +174,9 @@ A successful login starts a session. The decisions, taken 2026-09:
   the service that knows, starts it. Auth's `needs` gain `console.gui`, the
   director hands over the `spawn:`-prefixed copy, and once the database is
   read auth starts the greeter with the minted ports. The greeter is a pure
-  UI process -- one window, two text fields, a button, an error line; the
-  look is deliberately basic, and the toolkit's look is its own later spec.
+  UI process -- one window, two text fields, a button, an error line; it is
+  the toolkit's first client now, and its form, look and console integration
+  are `specs/trinket.md`.
   It calls `auth.login` like any caller: the credential check never leaves
   auth, and console is not a login caller. A refuse redraws the error line;
   an accept ends the greeter's part -- it welcomes the user, signals, and
