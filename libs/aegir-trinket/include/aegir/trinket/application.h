@@ -74,6 +74,13 @@ public:
     aegir::ipc::Consumer& gui_port() { return gui_port_; }
     void set_gui_port(aegir::ipc::Consumer port);
 
+    // The mapped console slice and a window's backing within it. A Window
+    // claims a region once and keeps its offset; the region stops short of the
+    // event ring in the slice's last page.
+    uint8_t* slice() const { return slice_; }
+    uint64_t slice_bytes() const { return slice_bytes_; }
+    uint64_t claim_backing(uint64_t bytes);
+
     // Font loading from resources
     std::unique_ptr<Font> load_font(std::string_view family, int size_pts);
     std::unique_ptr<Font> load_builtin_font(std::string_view name, int size_pts);
@@ -85,11 +92,11 @@ private:
     friend class Window;
 
     Application();
-    void init_display_info();
-    void process_events();
+    bool start_console();
+    bool process_events();
     void process_timers();
     void process_posted_events();
-    void dispatch_gui_event();
+    void dispatch_gui_event(uint64_t event, uint64_t window);
     int64_t now_ms() const;
 
     static Application* instance_;
@@ -102,6 +109,13 @@ private:
     std::vector<Window*> windows_;
     DisplayInfo display_info_;
     aegir::ipc::Consumer gui_port_;
+
+    // The console state: the slice mapped into this process's window, the
+    // event notification, and the backing allocator's cursor.
+    uint8_t* slice_ = nullptr;
+    uint64_t slice_bytes_ = 0;
+    uint64_t backing_next_ = 0;
+    seL4_CPtr events_ = 0;
 
     struct PostedEvent {
         std::function<void()> fn;

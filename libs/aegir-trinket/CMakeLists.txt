@@ -34,15 +34,20 @@ add_library(aegir-trinket STATIC
 target_include_directories(aegir-trinket PUBLIC include)
 
 # Dependencies: the hosted policy (which brings libc++ and full musl), the
-# console window protocol, input's event words, the framebuffer, and the log.
+# console window protocol, input's event words, the log, and the memory the
+# application adopts -- aegir-bootstrap for the spawn kit's block, aegir-mem
+# for the allocator and the window the slice is mapped through, and aegir-heap
+# for the freeing heap the standard library allocates from.
 target_link_libraries(aegir-trinket PUBLIC
     aegir-cxx-policy-hosted
     aegir-runtime
     aegir-console-protocol
     aegir-input
-    aegir-framebuffer
     aegir-log
     aegir-ipc
+    aegir-bootstrap
+    aegir-mem
+    aegir-heap
     sel4
 )
 

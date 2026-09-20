@@ -6,6 +6,7 @@
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/layout.h>
+#include <aegir/trinket/window.h>
 #include <algorithm>
 
 namespace aegir::trinket {
@@ -62,20 +63,15 @@ Size Widget::preferred_size() const {
 
 void Widget::damage(const Rect& r) {
     if (r.empty()) return;
-    Rect damage_rect = r;
-    if (damage_rect.width == 0 && damage_rect.height == 0) {
-        damage_rect = rect_;
-    }
-    // Convert to parent coordinates
-    if (parent_) {
-        damage_rect.x += parent_->rect_.x;
-        damage_rect.y += parent_->rect_.y;
-        parent_->damage(damage_rect);
-    } else if (Application::instance()) {
-        // Top-level widget - post to application
-        Application::instance()->post_event([damage_rect]() {
-            // Handled by window's damage system
-        });
+    /* Tier 1 repaints the window whole, so the rectangle is not tracked and
+     * the coordinate model does not matter: a damage climbs to the content
+     * root and asks the window for a repaint. A widget built before it is
+     * given a window (during layout, say) has nowhere to send it and does
+     * nothing. */
+    if (parent_ != nullptr) {
+        parent_->damage(r);
+    } else if (window_ != nullptr) {
+        window_->damage();
     }
 }
 

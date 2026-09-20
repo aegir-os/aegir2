@@ -20,6 +20,7 @@ namespace aegir::trinket {
 class Canvas;
 class Container;
 class Application;
+class Window;
 
 enum class MouseButton { LEFT = 1, MIDDLE = 2, RIGHT = 4 };
 enum class KeyCode {
@@ -129,12 +130,16 @@ public:
 protected:
     friend class Container;
     friend class Application;
+    friend class Window;
 
     Rect rect_;
     bool visible_ = true;
     bool enabled_ = true;
     bool focused_ = false;
     Container* parent_ = nullptr;
+    // The window this widget's tree belongs to, set on the content root by
+    // Window::set_content. A damage at the root is the window's to repaint.
+    Window* window_ = nullptr;
     std::u32string tooltip_;
     std::string object_name_;
     std::u32string accessible_name_;

@@ -55,7 +55,12 @@ void Window::set_decorated(bool decorated) {
 void Window::set_content(std::unique_ptr<Widget> content) {
     content_ = std::move(content);
     if (content_) {
+        /* The content root is the tree's link to this window: a damage that
+         * climbs to it is a repaint request here. */
+        content_->window_ = this;
         content_->set_rect({0, 0, rect_.width, rect_.height});
+        content_->dispatch_layout();
+        repaint();
     }
 }
 
@@ -83,17 +88,8 @@ void Window::close() {
 }
 
 void Window::damage(const Rect& r) {
-    if (!visible_ || !console_window_id_) return;
-
-    Rect damage_rect = r.empty() ? Rect{0, 0, rect_.width, rect_.height} : r;
-    uint64_t const words[5] = {console_window_id_,
-                               static_cast<uint64_t>(damage_rect.x),
-                               static_cast<uint64_t>(damage_rect.y),
-                               static_cast<uint64_t>(damage_rect.width),
-                               static_cast<uint64_t>(damage_rect.height)};
-    aegir::ipc::WordsReply const reply =
-        app_.gui_port().call_words(aegir::console::kMethodDamage, words, 5, nullptr, 0);
-    static_cast<void>(reply);
+    static_cast<void>(r);  // tier 1 repaints the whole window
+    repaint();
 }
 
 void Window::on_focus_gained() {
@@ -106,8 +102,39 @@ void Window::on_focus_lost() {
     if (on_focus_changed) on_focus_changed(false);
 }
 
+void Window::repaint() {
+    if (!visible_ || console_window_id_ == 0 || app_.slice() == nullptr) return;
+
+    uint32_t* const pixels =
+        reinterpret_cast<uint32_t*>(app_.slice() + backing_offset_);
+    canvas_ = Canvas(pixels, rect_.width, rect_.height, rect_.width);
+
+    if (content_) {
+        content_->dispatch_layout();
+        content_->dispatch_paint(canvas_, PaintEvent{{0, 0, rect_.width, rect_.height}});
+    }
+
+    (void)aegir::console::damage(app_.gui_port(), console_window_id_, 0, 0,
+                                 static_cast<uint64_t>(rect_.width),
+                                 static_cast<uint64_t>(rect_.height));
+}
+
 void Window::create_bureau_window() {
-    if (!app_.gui_port().valid()) return;
+    if (console_window_id_ != 0) return;
+    /* Before Application::exec attaches the slice there is nothing to draw
+     * into; exec creates the windows that were shown early, so a show() before
+     * it is not an error. */
+    if (!app_.gui_port().valid() || app_.slice() == nullptr) return;
+
+    uint64_t const bytes = static_cast<uint64_t>(rect_.width) *
+                           static_cast<uint64_t>(rect_.height) * 4ull;
+    if (backing_offset_ == ~0ull) {
+        backing_offset_ = app_.claim_backing(bytes);
+    }
+    if (backing_offset_ == ~0ull) {
+        aegir::debug_write("Window: no backing left in the slice\n");
+        return;
+    }
 
     uint64_t flags = 0;
     if (!decorated_) {
@@ -118,7 +145,7 @@ void Window::create_bureau_window() {
     console_window_id_ = aegir::console::create_window(
         app_.gui_port(),
         rect_.x, rect_.y, rect_.width, rect_.height,
-        0,  // backing offset - will be allocated per-window
+        backing_offset_,
         flags);
 
     if (console_window_id_ == 0) {
@@ -126,11 +153,8 @@ void Window::create_bureau_window() {
         return;
     }
 
-    // Allocate backing slice for this window
-    // In a real implementation, this would use the console's attach/frame protocol
-    // For now, we rely on the window's content to paint into its own slice
-
     register_menubar();
+    repaint();
 }
 
 void Window::destroy_bureau_window() {

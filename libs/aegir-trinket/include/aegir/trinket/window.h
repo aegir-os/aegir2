@@ -10,6 +10,7 @@
 
 #include <aegir/trinket/widget.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/canvas.h>
 #include <aegir/trinket/unicode.h>
 #include <aegir/console.h>
 #include <functional>
@@ -64,9 +65,10 @@ public:
     void on_focus_gained();
     void on_focus_lost();
 
-    // Request damage (repaint)
+    // Request damage (repaint). Tier 1 repaints the whole window on any
+    // damage: 480x360 is 172800 words and the event that caused it costs more
+    // than the fill.
     void damage(const Rect& r = {});
-    void damage() { damage(rect_); }
 
     Application& application() { return app_; }
 
@@ -83,6 +85,11 @@ private:
     Size max_size_ = {8192, 8192};
     std::unique_ptr<Widget> content_;
 
+    // The window's backing: an offset into the application's console slice,
+    // claimed once and reused, and a canvas over it.
+    uint64_t backing_offset_ = ~0ull;
+    Canvas canvas_;
+
     // Bureau window IDs
     uint64_t console_window_id_ = 0;
     uint64_t frame_window_id_ = 0;
@@ -91,6 +98,7 @@ private:
     void create_bureau_window();
     void destroy_bureau_window();
     void update_bureau_window();
+    void repaint();
     void register_menubar();
     void unregister_menubar();
 };
