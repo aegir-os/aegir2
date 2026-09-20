@@ -125,7 +125,9 @@ constexpr uint16_t kKeyB = 48; /* Linux's KEY_*, which virtio-input carries unch
 constexpr uint16_t kKeyC = 46;
 constexpr uint16_t kKeyD = 32;
 constexpr uint16_t kKeyE = 18;
+constexpr uint16_t kKeyF = 33;
 constexpr uint16_t kKeyG = 34;
+constexpr uint16_t kKeyH = 35;
 
 bool wait_ring(volatile uint64_t *ring, seL4_CPtr events, uint16_t type,
                uint64_t window, uint64_t *event) noexcept
@@ -1228,6 +1230,19 @@ int main(int argc, char *argv[])
             ok = aegir::console::damage(gui, second_window, 0, 0, 400, 300);
             write("  test: two windows, the newer on top -- the screen, please\n");
             ok = ok && wait_ring_key(ring, events, first_window, kKeyE, 'e');
+        }
+        if (ok) {
+            /* The depth gadget's two calls (specs/window-manager.md): the
+             * white raised over the red, then lowered beneath it again. The
+             * white is the focused window, so the keys pace it. */
+            ok = aegir::console::raise(gui, first_window);
+            write("  test: the white one raised -- the screen, please\n");
+            ok = ok && wait_ring_key(ring, events, first_window, kKeyF, 'f');
+        }
+        if (ok) {
+            ok = aegir::console::lower(gui, first_window);
+            write("  test: the white one lowered -- the screen, please\n");
+            ok = ok && wait_ring_key(ring, events, first_window, kKeyH, 'h');
         }
         if (ok) {
             ok = aegir::console::destroy_window(gui, first_window);

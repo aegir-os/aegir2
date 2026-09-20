@@ -145,6 +145,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 10, 10, 0, 85, 170),
                     ("gpu0", 410, 205, 224, 224, 224),
                     ("gpu0", 408, 206, 0, 0, 0),
+                    ("gpu0", 864, 210, 0, 0, 0),
                     ("gpu0", 410, 230, 204, 204, 204),
                     ("gpu0", 500, 290, 255, 255, 255),
                     ("gpu0", 424, 288, 0, 120, 215),
@@ -233,6 +234,34 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 10, 10, 0, 85, 170),
                 ),
                 press="e",
+            ),
+            # The depth (specs/window-manager.md): the white raised over the
+            # red, then lowered beneath it. The overlap (300..463 x,
+            # 200..363 y) reads white while it is up and red once it is down;
+            # the region only one window covers does not change.
+            QmpStep(
+                r"test: the white one raised -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 100, 100, 255, 255, 255),
+                    ("gpu0", 350, 250, 255, 255, 255),
+                    ("gpu0", 500, 400, 255, 0, 0),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+                press="f",
+            ),
+            QmpStep(
+                r"test: the white one lowered -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 100, 100, 255, 255, 255),
+                    ("gpu0", 350, 250, 255, 0, 0),
+                    ("gpu0", 500, 400, 255, 0, 0),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+                press="h",
             ),
             QmpStep(
                 r"test: the first window left -- the screen, please",

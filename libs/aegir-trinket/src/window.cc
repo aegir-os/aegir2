@@ -282,6 +282,12 @@ void Window::dispatch_pointer(uint64_t event) {
         return;
     }
 
+    /* The depth gadget lowers; the titlebar elsewhere drags and raises. */
+    if (decorated_ && depth_gadget_rect().contains(pos)) {
+        (void)aegir::console::lower(app_.gui_port(), console_window_id_);
+        return;
+    }
+
     /* A pointer-down in the titlebar begins a drag and raises: a deliberate
      * act brings the window forward, where a click alone only focuses it. */
     if (decorated_ && pos.y < bar) {
@@ -315,6 +321,16 @@ int Window::titlebar_height() const {
 Rect Window::frame_for(const Rect& content) const {
     int const bar = titlebar_height();
     return {content.x, content.y - bar, content.width, content.height + bar};
+}
+
+/* The depth gadget: the "back" arrow, at the titlebar's right. Clicking it
+ * lowers the window (specs/window-manager.md). */
+Rect Window::depth_gadget_rect() const {
+    Theme& theme = app_.theme();
+    int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
+    int const pad = theme.metric(MetricRole::TITLEBAR_PADDING_H);
+    int const bar = titlebar_height();
+    return {rect_.width - pad - size, (bar - size) / 2, size, size};
 }
 
 uint64_t Window::backing_bytes() const {
@@ -356,6 +372,16 @@ void Window::repaint() {
         std::string const title = utf32_to_utf8(title_);
         theme.draw_titlebar(frame_canvas, {0, 0, frame.width, bar}, title.c_str(),
                             active_);
+        /* The depth gadget: a plate and a down chevron, the "back" arrow. */
+        Rect const gadget = depth_gadget_rect();
+        frame_canvas.fill_rect(gadget, theme.color(ColorRole::BUTTON_BG));
+        Color const ink = active_ ? theme.color(ColorRole::TITLEBAR_TEXT)
+                                  : theme.color(ColorRole::TITLEBAR_TEXT_INACTIVE);
+        Point const centre = gadget.center();
+        frame_canvas.draw_line({centre.x - 3, centre.y - 2},
+                               {centre.x, centre.y + 2}, ink);
+        frame_canvas.draw_line({centre.x, centre.y + 2},
+                               {centre.x + 3, centre.y - 2}, ink);
     }
     if (content_) {
         content_->dispatch_layout();

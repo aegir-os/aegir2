@@ -1008,6 +1008,28 @@ int main(int argc, char *argv[])
             uint64_t const tallest = old_height > height ? old_height : height;
             repaint(window->x, window->y, widest, tallest);
             gui.reply(0);
+        } else if (method == aegir::console::kMethodLower && length == 2) {
+            uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
+            Window **link = &g_windows;
+            while (*link != nullptr && (*link)->id != id) {
+                link = &(*link)->next;
+            }
+            Window *const window = *link;
+            if (window == nullptr || window->owner != badge || window->backdrop) {
+                gui.reply(0);
+                continue;
+            }
+            /* To the bottom among the plain windows: unlink, then insert
+             * past the last backdrop -- the head of the list is the bottom. */
+            *link = window->next;
+            Window **after = &g_windows;
+            while (*after != nullptr && (*after)->backdrop) {
+                after = &(*after)->next;
+            }
+            window->next = *after;
+            *after = window;
+            repaint(window->x, window->y, window->width, window->height);
+            gui.reply(0);
         } else if (method == aegir::console::kMethodInfo && length == 1) {
             /* The screen's size, whatever mode the driver settled on: the
              * bureau sizes its backdrop from it (specs/bureau.md). */

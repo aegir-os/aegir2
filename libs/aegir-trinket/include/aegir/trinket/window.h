@@ -125,6 +125,7 @@ private:
     // Internal
     int titlebar_height() const;
     Rect frame_for(const Rect& content) const;
+    Rect depth_gadget_rect() const;
     void create_bureau_window();
     void destroy_bureau_window();
     void update_bureau_window();

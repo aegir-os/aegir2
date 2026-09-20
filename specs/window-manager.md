@@ -58,22 +58,26 @@ this arc.
     resize stays inside it. It is arena memory spent for headroom, and the
     alternative (a resize that outgrows its backing) is a window that cannot
     grow.
-- **Depth gadgets, close/zoom gadgets, and the WM server are deferred.** A
-  depth gadget wants `lower` and a TaskX-style list; close and zoom want the
-  client's own protocol; a `bureau.wm` server is policy the console does not
-  need yet. Each arrives with the client that asks.
+- **Depth is a gadget and `lower`.** A decorated window's titlebar carries a
+  depth gadget at its right — the "back" arrow — and the console gains
+  `lower` (the window to the bottom among the plain windows, above every
+  backdrop). The titlebar elsewhere still raises: a drag or a resize brings
+  the window forward, the gadget sends it back. This is the Amiga depth
+  pair, front and back.
+- **Close/zoom gadgets and the WM server are deferred.** Close and zoom want
+  the client's own protocol; a `bureau.wm` server is policy the console does
+  not need yet. Each arrives with the client that asks.
 
 ## The shape
 
 ### `console.gui`'s `move`, `raise` and `resize`
 
 `kMethodMove = 9` (id, x, y) and `kMethodRaise = 10` (id), after `info`;
-`kMethodResize = 11` (id, width, height), after them.
-`aegir::console::move(gui, id, x, y)`, `aegir::console::raise(gui, id)` and
-`aegir::console::resize(gui, id, w, h)` are the client walks. A move or a
-resize whose frame would fall off the screen, or a resize past the client's
-slice, is refused (the same clip-check `create_window` makes); a raise of a
-backdrop is refused.
+`kMethodResize = 11` (id, width, height) and `kMethodLower = 12` (id), after
+them. `aegir::console::move`, `raise`, `resize` and `lower` are the client
+walks. A move or a resize whose frame would fall off the screen, or a resize
+past the client's slice, is refused (the same clip-check `create_window`
+makes); a raise or lower of a backdrop is refused.
 
 ### The toolkit's decorated `Window`
 
@@ -94,8 +98,10 @@ repaints.
 A pointer-down in the titlebar begins a drag and raises; motion moves the
 window through `console::move`. A pointer-down in the bottom-right grip
 begins a resize; motion resizes through `console::resize`, bounded by
-`min_size_` and the screen. The up ends either gesture. A pointer-down
-anywhere else in the content is the widgets', as before.
+`min_size_` and the screen. The titlebar's depth gadget — a plate and a down
+chevron at the right — lowers the window through `console::lower`. The up
+ends either gesture. A pointer-down anywhere else in the content is the
+widgets', as before.
 
 ### The clients
 
@@ -105,10 +111,10 @@ and so has no titlebar — the Amiga screen is not a window with a frame.
 
 ## What this is not
 
-Depth gadgets and explicit lower; close, zoom and roll-up gadgets; a window
-list or TaskX; the `bureau.wm` server and the `bureau.menu` server
-(`specs/trinket.md`'s `MenuBar`); themed decorations beyond the XEN titlebar
-the theme already carries. Each is its own arc.
+Close, zoom and roll-up gadgets; a window list or TaskX; the `bureau.wm`
+server and the `bureau.menu` server (`specs/trinket.md`'s `MenuBar`); themed
+decorations beyond the XEN titlebar and depth gadget the theme carries. Each
+is its own arc.
 
 ## Acceptance
 
@@ -118,10 +124,12 @@ check: its background (`TITLEBAR_BG`) and its title text where the titlebar
 stands. The client-side frame is what those pixels prove: the toolkit drew a
 titlebar into its own backing and derived the frame the console composites.
 
-The test bed exercises `move` and `resize` end to end, where the console's
-window protocol already lives: the red window to the top-left, read back
-there with the backdrop repainted where it stood, and then resized, read
-back at its new rectangle with the uncovered strip repainted.
+The test bed exercises `move`, `resize` and depth end to end, where the
+console's window protocol already lives: the red window to the top-left, read
+back there with the backdrop repainted where it stood, then resized, read back
+at its new rectangle with the uncovered strip repainted, and then the white
+raised over it and lowered beneath it, the overlap reading white while it is
+up and red once it is down.
 
 The drag and the grip are read in the source and exercised at the keyboard
 (`make run-ui`): their automated test lands with the WM's own test client,

@@ -105,6 +105,13 @@ constexpr uint32_t kMethodRaise = 10;
  *  composited (specs/window-manager.md). The answer is empty. */
 constexpr uint32_t kMethodResize = 11;
 
+/** Lower: in the window's id. The window goes to the bottom of the z-order
+ *  among the plain windows -- above every backdrop, below every other
+ *  window (the Amiga depth gadget's back arrow). A backdrop lowers onto
+ *  itself and is refused. The window's rectangle is composited. The answer
+ *  is empty. */
+constexpr uint32_t kMethodLower = 12;
+
 /* The event channel. The ring is the slice's last 4 KiB page: the console
  * mapped the whole slice when it carved it, so appending is writing memory
  * it already has, and the client maps the page with the rest. Word 0 is
@@ -260,6 +267,14 @@ inline bool resize(aegir::ipc::Consumer const &gui, uint64_t window,
     uint64_t out[3] = {window, width, height};
     uint64_t in[1];
     aegir::ipc::WordsReply const answer = gui.call_words(kMethodResize, out, 3, in, 1);
+    return answer.error == 0;
+}
+
+/** Lower a window to the bottom of the z-order (above the backdrops). False
+ *  when refused. */
+inline bool lower(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
+{
+    aegir::ipc::Reply const answer = gui.call(kMethodLower, window);
     return answer.error == 0;
 }
 
