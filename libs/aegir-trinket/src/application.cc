@@ -183,6 +183,11 @@ int Application::exec() {
         }
     }
 
+    /* Events a window's creation produced -- a requested focus, say -- are
+     * dispatched before the client's on_started, so the cue it prints there
+     * reflects them rather than racing them. */
+    process_events();
+
     if (on_started) on_started();
 
     // Event loop

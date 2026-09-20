@@ -130,11 +130,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the toolkit's XEN look up
             # (specs/trinket.md, specs/window-manager.md): the
-            # Workbench-blue backdrop, the window's grey titlebar and its
-            # "Aegir" title (inactive -- the window is not focused until the
-            # click), the window's light grey, the white name field with its
-            # focused blue border, the black label text, and the button's
-            # grey. Then the form
+            # Workbench-blue backdrop, the window's active (blue) titlebar
+            # and its white "Aegir" title -- the greeter asks for the focus
+            # at startup -- its white depth chevron, the window's light grey,
+            # the white name field with its focused blue border, the black
+            # label text, and the button's grey. Then the form
             # STANDS through the test bed: the login is the run's last
             # business, played after the boot marker.
             QmpStep(
@@ -143,9 +143,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 0, 85, 170),
-                    ("gpu0", 410, 205, 224, 224, 224),
-                    ("gpu0", 408, 206, 0, 0, 0),
-                    ("gpu0", 864, 210, 0, 0, 0),
+                    ("gpu0", 410, 205, 0, 120, 215),
+                    ("gpu0", 408, 206, 255, 255, 255),
+                    ("gpu0", 864, 210, 255, 255, 255),
                     ("gpu0", 410, 230, 204, 204, 204),
                     ("gpu0", 500, 290, 255, 255, 255),
                     ("gpu0", 424, 288, 0, 120, 215),

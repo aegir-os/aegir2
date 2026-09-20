@@ -164,9 +164,11 @@ int main(int argc, char *argv[])
 
     window.set_content(std::move(panel));
     /* The name field takes the first keystroke, as the serial prompt took the
-     * name before it. */
+     * name before it; and the window takes the console's focus, so the form
+     * is ready to type into without a click first. */
     window.set_focus(name);
     window.show();
+    window.request_focus();
 
     auto attempt_login = [&]() {
         uint64_t const answer = login(auth_login, name->text_utf8(), secret->text_utf8());
@@ -189,14 +191,18 @@ int main(int argc, char *argv[])
     name->on_submit = [&]() { attempt_login(); };
     secret->on_submit = [&]() { attempt_login(); };
 
-    bool focus_announced = false;
+    bool started_focused = false;
     window.on_focus_changed = [&](bool focused) {
-        /* The focus is announced once, and it is the runner's cue to type
-         * (scripts/targets.py). */
-        if (focused && !focus_announced) {
-            focus_announced = true;
-            write("  greeter: the window has the focus\n");
+        if (!focused) return;
+        /* The window is focused by default (request_focus), so the first gain
+         * is not the runner's cue to type: the test bed's click takes the
+         * focus away, and the login's click takes it back, and that second
+         * gain is the cue (scripts/targets.py). */
+        if (!started_focused) {
+            started_focused = true;
+            return;
         }
+        write("  greeter: the window has the focus\n");
     };
 
     /* The supervision signal is the spawner's clock: this one says the form

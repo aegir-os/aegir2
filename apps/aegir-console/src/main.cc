@@ -217,30 +217,73 @@ void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
     seL4_Signal(slice->events);
 }
 
-/* The cursor is software (specs/console.md): an 8x8 arrow composited over
- * the output, with what is under it saved and restored around every move
- * and repaint. */
-constexpr uint64_t kCursorSize = 8;
-constexpr uint8_t kCursorShape[kCursorSize] = {0x80, 0xC0, 0xE0, 0xF0,
-                                               0xF8, 0xE0, 0xA0, 0x90};
-uint32_t g_cursor_under[kCursorSize * kCursorSize];
+/* The cursor is software (specs/console.md): a 16x16 arrow composited over
+ * the output, with what is under it saved and restored around every move and
+ * repaint. It is white with a black border and a dark shadow one pixel down
+ * and right, so it stays visible on a white surface. The touched box is the
+ * arrow plus one pixel each way (border and shadow), which is what the
+ * save-under holds. */
+constexpr uint64_t kCursorSize = 16;
+constexpr uint16_t kCursorShape[kCursorSize] = {
+    0x4000, 0xC000, 0xA000, 0x9000, 0x8800, 0x8400, 0x8200, 0x8100,
+    0x8080, 0x8040, 0x8020, 0x81F0, 0x8800, 0x9400, 0xC400, 0x0C00};
+constexpr uint64_t kCursorSpan = kCursorSize + 2;
+uint32_t g_cursor_under[kCursorSpan * kCursorSpan];
+int64_t g_cursor_origin_x = 0;
+int64_t g_cursor_origin_y = 0;
 bool g_cursor_drawn = false;
+
+bool cursor_set(int mx, int my) noexcept
+{
+    if (mx < 0 || my < 0 || mx >= static_cast<int>(kCursorSize) ||
+        my >= static_cast<int>(kCursorSize)) {
+        return false;
+    }
+    return (kCursorShape[my] & (0x8000u >> mx)) != 0;
+}
+
+/* The pixel at arrow-local (mx, my): the fill is white, the edge one pixel
+ * around it is black, and the mask shifted down-right is a dark shadow.
+ * 0xFFFFFFFF means leave the screen alone. */
+uint32_t cursor_pixel(int mx, int my) noexcept
+{
+    if (cursor_set(mx, my)) {
+        return 0x00FFFFFFu;
+    }
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if ((dx != 0 || dy != 0) && cursor_set(mx + dx, my + dy)) {
+                return 0x00000000u;
+            }
+        }
+    }
+    if (cursor_set(mx - 1, my - 1)) {
+        return 0x00404040u;
+    }
+    return 0xFFFFFFFFu;
+}
 
 void cursor_draw() noexcept
 {
-    for (uint64_t y = 0; y < kCursorSize; ++y) {
-        for (uint64_t x = 0; x < kCursorSize; ++x) {
-            uint64_t const sx = g_pointer_x + x;
-            uint64_t const sy = g_pointer_y + y;
-            uint32_t *const out =
-                reinterpret_cast<uint32_t *>(g_screen + sy * g_stride);
-            if (sx >= g_width || sy >= g_height) {
-                g_cursor_under[y * kCursorSize + x] = 0;
+    g_cursor_origin_x = static_cast<int64_t>(g_pointer_x) - 1;
+    g_cursor_origin_y = static_cast<int64_t>(g_pointer_y) - 1;
+    for (uint64_t dy = 0; dy < kCursorSpan; ++dy) {
+        for (uint64_t dx = 0; dx < kCursorSpan; ++dx) {
+            int64_t const sx = g_cursor_origin_x + static_cast<int64_t>(dx);
+            int64_t const sy = g_cursor_origin_y + static_cast<int64_t>(dy);
+            uint64_t const index = dy * kCursorSpan + dx;
+            if (sx < 0 || sy < 0 || sx >= static_cast<int64_t>(g_width) ||
+                sy >= static_cast<int64_t>(g_height)) {
+                g_cursor_under[index] = 0;
                 continue;
             }
-            g_cursor_under[y * kCursorSize + x] = out[sx];
-            if ((kCursorShape[y] & (0x80 >> x)) != 0) {
-                out[sx] = 0x00FFFFFF;
+            auto *const out =
+                reinterpret_cast<uint32_t *>(g_screen + sy * g_stride);
+            g_cursor_under[index] = out[sx];
+            uint32_t const colour = cursor_pixel(static_cast<int>(dx) - 1,
+                                                 static_cast<int>(dy) - 1);
+            if (colour != 0xFFFFFFFFu) {
+                out[sx] = colour;
             }
         }
     }
@@ -252,15 +295,16 @@ void cursor_erase() noexcept
     if (!g_cursor_drawn) {
         return;
     }
-    for (uint64_t y = 0; y < kCursorSize; ++y) {
-        for (uint64_t x = 0; x < kCursorSize; ++x) {
-            uint64_t const sx = g_pointer_x + x;
-            uint64_t const sy = g_pointer_y + y;
-            if (sx >= g_width || sy >= g_height) {
+    for (uint64_t dy = 0; dy < kCursorSpan; ++dy) {
+        for (uint64_t dx = 0; dx < kCursorSpan; ++dx) {
+            int64_t const sx = g_cursor_origin_x + static_cast<int64_t>(dx);
+            int64_t const sy = g_cursor_origin_y + static_cast<int64_t>(dy);
+            if (sx < 0 || sy < 0 || sx >= static_cast<int64_t>(g_width) ||
+                sy >= static_cast<int64_t>(g_height)) {
                 continue;
             }
             auto *out = reinterpret_cast<uint32_t *>(g_screen + sy * g_stride);
-            out[sx] = g_cursor_under[y * kCursorSize + x];
+            out[sx] = g_cursor_under[dy * kCursorSpan + dx];
         }
     }
     g_cursor_drawn = false;
@@ -273,11 +317,13 @@ void cursor_erase() noexcept
 void pointer_moved(uint64_t old_x, uint64_t old_y) noexcept
 {
     cursor_draw();
-    uint64_t const left = old_x < g_pointer_x ? old_x : g_pointer_x;
-    uint64_t const top = old_y < g_pointer_y ? old_y : g_pointer_y;
-    uint64_t const right = (old_x > g_pointer_x ? old_x : g_pointer_x) + kCursorSize;
-    uint64_t const bottom = (old_y > g_pointer_y ? old_y : g_pointer_y) + kCursorSize;
-    flush(left, top, right - left, bottom - top);
+    uint64_t const min_x = old_x < g_pointer_x ? old_x : g_pointer_x;
+    uint64_t const min_y = old_y < g_pointer_y ? old_y : g_pointer_y;
+    uint64_t const max_x = (old_x > g_pointer_x ? old_x : g_pointer_x) + kCursorSpan;
+    uint64_t const max_y = (old_y > g_pointer_y ? old_y : g_pointer_y) + kCursorSpan;
+    uint64_t const left = min_x > 0 ? min_x - 1 : 0;
+    uint64_t const top = min_y > 0 ? min_y - 1 : 0;
+    flush(left, top, max_x - left, max_y - top);
     Window *const target =
         g_grab != nullptr ? g_grab : window_at(g_pointer_x, g_pointer_y);
     if (target != nullptr) {
@@ -1169,6 +1215,24 @@ int main(int argc, char *argv[])
             window->next = *after;
             *after = window;
             repaint(window->x, window->y, window->width, window->height);
+            gui.reply(0);
+        } else if (method == aegir::console::kMethodFocus && length == 2) {
+            uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
+            Window *const window = find_window(id);
+            /* A backdrop is the screen, not a thing to focus; and a window
+             * already focused has nothing to change. No raise: focus and
+             * depth stay separate (specs/console.md). */
+            if (window == nullptr || window->owner != badge || window->backdrop ||
+                g_focused == window) {
+                gui.reply(0);
+                continue;
+            }
+            if (g_focused != nullptr) {
+                deliver(g_focused->owner, aegir::console::kEventFocus, 0, 0,
+                        g_focused->id);
+            }
+            g_focused = window;
+            deliver(window->owner, aegir::console::kEventFocus, 0, 1, window->id);
             gui.reply(0);
         } else if (method == aegir::console::kMethodInfo && length == 1) {
             /* The screen's size, whatever mode the driver settled on: the

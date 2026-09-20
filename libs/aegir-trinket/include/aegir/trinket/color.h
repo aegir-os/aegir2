@@ -69,14 +69,17 @@ struct Color {
     }
     constexpr bool operator!=(const Color& other) const { return !(*this == other); }
 
-    // Alpha blending (over operator, both premultiplied)
+    // Alpha blending (over operator, both premultiplied). The result is the
+    // source plus the destination attenuated by the source's coverage; an
+    // opaque source is itself. The old form divided by 255 twice and turned
+    // opaque white into (1,1,1).
     static Color blend(Color src, Color dst) {
         uint8_t a = src.a + ((255 - src.a) * dst.a) / 255;
         if (a == 0) return {0, 0, 0, 0};
         return {
-            static_cast<uint8_t>(((src.r * 255 + dst.r * (255 - src.a)) / 255 * 255 / a + 127) / 255),
-            static_cast<uint8_t>(((src.g * 255 + dst.g * (255 - src.a)) / 255 * 255 / a + 127) / 255),
-            static_cast<uint8_t>(((src.b * 255 + dst.b * (255 - src.a)) / 255 * 255 / a + 127) / 255),
+            static_cast<uint8_t>(src.r + (dst.r * (255 - src.a)) / 255),
+            static_cast<uint8_t>(src.g + (dst.g * (255 - src.a)) / 255),
+            static_cast<uint8_t>(src.b + (dst.b * (255 - src.a)) / 255),
             a
         };
     }

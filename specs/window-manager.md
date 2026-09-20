@@ -37,7 +37,11 @@ this arc.
 - **Focus stays click-to-focus and does not raise.** `specs/console.md`'s
   Amiga semantics: a button-down focuses, and does not raise. Raising is the
   client's explicit call, and the toolkit makes it on a titlebar-down — a
-  deliberate act, not a side effect of focus.
+  deliberate act, not a side effect of focus. A client that wants to *start*
+  focused asks: the console gains `focus` (no raise), and the toolkit's
+  `Window::request_focus` sends it, kept until the window exists. The
+  greeter asks, so its form is ready to type into without a click; the
+  bureau's backdrop does not, because the screen is not a thing to focus.
 - **Dragging is the toolkit's.** The console already grabs the pointer for the
   length of a button-down and delivers motion to the window holding the grab,
   frame-local for an ordinary window but in **screen coordinates for the grab
@@ -91,11 +95,12 @@ this arc.
 ### `console.gui`'s `move`, `raise` and `resize`
 
 `kMethodMove = 9` (id, x, y) and `kMethodRaise = 10` (id), after `info`;
-`kMethodResize = 11` (id, width, height) and `kMethodLower = 12` (id), after
-them. `aegir::console::move`, `raise`, `resize` and `lower` are the client
-walks. A move or a resize whose frame would fall off the screen, or a resize
-past the client's slice, is refused (the same clip-check `create_window`
-makes); a raise or lower of a backdrop is refused.
+`kMethodResize = 11` (id, width, height), `kMethodLower = 12` (id) and
+`kMethodFocus = 13` (id), after them. `aegir::console::move`, `raise`,
+`resize`, `lower` and `focus` are the client walks. A move or a resize whose
+frame would fall off the screen, or a resize past the client's slice, is
+refused (the same clip-check `create_window` makes); a raise, lower or focus
+of a backdrop is refused.
 
 ### The toolkit's decorated `Window`
 

@@ -127,6 +127,13 @@ void Window::close() {
     }
 }
 
+void Window::request_focus() {
+    want_focus_ = true;
+    if (console_window_id_ != 0) {
+        (void)aegir::console::focus(app_.gui_port(), console_window_id_);
+    }
+}
+
 void Window::damage(const Rect& r) {
     /* The rectangle arrives in the content's coordinates; the frame is the
      * content plus the titlebar above it. An empty rectangle is the whole
@@ -471,6 +478,9 @@ void Window::create_bureau_window() {
     }
 
     register_menubar();
+    if (want_focus_) {
+        (void)aegir::console::focus(app_.gui_port(), console_window_id_);
+    }
     /* The first paint is the whole frame: damages recorded before the window
      * existed (a set_content before show) are not a region to clip to. */
     damage_rect_ = {};

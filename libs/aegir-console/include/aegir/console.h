@@ -112,6 +112,12 @@ constexpr uint32_t kMethodResize = 11;
  *  is empty. */
 constexpr uint32_t kMethodLower = 12;
 
+/** Focus: in the window's id. The window takes the keyboard and the active
+ *  look, without raising -- a client that wants to start focused asks
+ *  (specs/window-manager.md). A backdrop, and a window already focused, are
+ *  refused. The answer is empty. */
+constexpr uint32_t kMethodFocus = 13;
+
 /* The event channel. The ring is the slice's last 4 KiB page: the console
  * mapped the whole slice when it carved it, so appending is writing memory
  * it already has, and the client maps the page with the rest. Word 0 is
@@ -275,6 +281,13 @@ inline bool resize(aegir::ipc::Consumer const &gui, uint64_t window,
 inline bool lower(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
 {
     aegir::ipc::Reply const answer = gui.call(kMethodLower, window);
+    return answer.error == 0;
+}
+
+/** Ask the console to focus a window (no raise). False when refused. */
+inline bool focus(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
+{
+    aegir::ipc::Reply const answer = gui.call(kMethodFocus, window);
     return answer.error == 0;
 }
 

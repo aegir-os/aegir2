@@ -56,6 +56,11 @@ public:
     bool visible() const { return visible_; }
     void close();
 
+    // Ask the console to focus this window, without raising it. A client that
+    // wants to start focused calls this before exec; the request is kept
+    // until the window exists (specs/window-manager.md).
+    void request_focus();
+
     // Bureau integration
     uint64_t console_window_id() const { return console_window_id_; }
     uint64_t frame_window_id() const { return frame_window_id_; }
@@ -97,6 +102,7 @@ private:
     bool decorated_ = true;
     bool resizable_ = true;
     bool visible_ = false;
+    bool want_focus_ = false;
     Size min_size_ = {200, 150};
     Size max_size_ = {8192, 8192};
     std::unique_ptr<Widget> content_;

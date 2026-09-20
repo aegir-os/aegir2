@@ -124,7 +124,9 @@ Console owns the pointer: it tracks the position (the tablet's absolute
 events are the natural feed; the mouse's relative ones integrate to the
 same point), hit-tests the topmost window, and draws the cursor itself,
 composited over the output — software for v1; virtio-gpu's hardware cursor
-commands are noted, not taken.
+commands are noted, not taken. The cursor is a 16×16 arrow: white, with a
+black border one pixel around it and a dark shadow one pixel down and right,
+so a white pointer stays visible on a white surface.
 
 Focus is **click-to-focus**, Amiga semantics: a button-down inside a window
 makes it the focus, and does not raise it — depth arrangement arrives with
