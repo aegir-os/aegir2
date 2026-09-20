@@ -26,6 +26,7 @@
 #include <aegir/registry.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
+#include <string.h>
 
 namespace {
 
@@ -417,16 +418,15 @@ void drain(uint32_t device) noexcept
 
 /* Composite a screen rectangle: every pixel is the topmost window covering
  * it, or the backdrop. The windows are walked bottom to top, so the last
- * coverer wins. The cursor comes off for the repaint and goes back on
- * after: it rides over everything. */
-void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
+ * coverer wins. */
+void composite_rect(uint64_t sx, uint64_t sy, uint64_t width,
+                    uint64_t height) noexcept
 {
     if (sx >= g_width || sy >= g_height) {
         return;
     }
     uint64_t const ex = sx + width > g_width ? g_width : sx + width;
     uint64_t const ey = sy + height > g_height ? g_height : sy + height;
-    cursor_erase();
     for (uint64_t yy = sy; yy < ey; ++yy) {
         auto *out =
             reinterpret_cast<uint32_t *>(g_screen + yy * g_stride);
@@ -448,8 +448,122 @@ void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
             out[xx] = pixel;
         }
     }
+}
+
+/* Composite a rectangle and push it, with the cursor off and on around it. */
+void repaint(uint64_t sx, uint64_t sy, uint64_t width, uint64_t height) noexcept
+{
+    if (sx >= g_width || sy >= g_height) {
+        return;
+    }
+    uint64_t const ex = sx + width > g_width ? g_width : sx + width;
+    uint64_t const ey = sy + height > g_height ? g_height : sy + height;
+    cursor_erase();
+    composite_rect(sx, sy, width, height);
     cursor_draw();
     flush(sx, sy, ex - sx, ey - sy);
+}
+
+/* The part of the rectangle at (ax, ay) that the equally-sized rectangle at
+ * (kx, ky) does not cover -- for a pure translate that is the x-side band
+ * outside the overlap, plus the y-band inside it. */
+void composite_uncovered(uint64_t kx, uint64_t ax, uint64_t ay, uint64_t width,
+                         uint64_t height, int64_t dx, int64_t dy) noexcept
+{
+    uint64_t const ox0 = kx > ax ? kx : ax;
+    uint64_t const ox1 = kx + width < ax + width ? kx + width : ax + width;
+    if (dx > 0) {
+        composite_rect(ax + width - static_cast<uint64_t>(dx), ay,
+                       static_cast<uint64_t>(dx), height);
+    } else if (dx < 0) {
+        composite_rect(ax, ay, static_cast<uint64_t>(-dx), height);
+    }
+    if (ox0 >= ox1) {
+        return;
+    }
+    if (dy > 0) {
+        composite_rect(ox0, ay + height - static_cast<uint64_t>(dy), ox1 - ox0,
+                       static_cast<uint64_t>(dy));
+    } else if (dy < 0) {
+        composite_rect(ox0, ay, ox1 - ox0, static_cast<uint64_t>(-dy));
+    }
+}
+
+/* A window moved: shift the overlap with a memmove and recomposite only the
+ * strips the move left or revealed. Compositing the whole union per motion --
+ * the window's entire area every time -- is why a drag trailed the cursor:
+ * the cursor's 8x8 was cheap, the window's 184k pixels were not. The shift is
+ * sound only where the moved window was, and is, the topmost (a drag raises
+ * it); otherwise the union is recomposited the general way. */
+void repaint_move(Window *window, uint64_t old_x, uint64_t old_y) noexcept
+{
+    uint64_t const nx = window->x;
+    uint64_t const ny = window->y;
+    int64_t const dx = static_cast<int64_t>(nx) - static_cast<int64_t>(old_x);
+    int64_t const dy = static_cast<int64_t>(ny) - static_cast<int64_t>(old_y);
+    if (dx == 0 && dy == 0) {
+        return;
+    }
+    uint64_t const ux = old_x < nx ? old_x : nx;
+    uint64_t const uy = old_y < ny ? old_y : ny;
+    uint64_t const uright =
+        old_x + window->width > nx + window->width ? old_x + window->width
+                                                   : nx + window->width;
+    uint64_t const ubottom =
+        old_y + window->height > ny + window->height ? old_y + window->height
+                                                     : ny + window->height;
+
+    if (window->next != nullptr || !window->shown) {
+        repaint(ux, uy, uright - ux, ubottom - uy);
+        return;
+    }
+
+    cursor_erase();
+    int64_t const ix0 = static_cast<int64_t>(old_x) > static_cast<int64_t>(nx)
+                            ? static_cast<int64_t>(old_x)
+                            : static_cast<int64_t>(nx);
+    int64_t const iy0 = static_cast<int64_t>(old_y) > static_cast<int64_t>(ny)
+                            ? static_cast<int64_t>(old_y)
+                            : static_cast<int64_t>(ny);
+    int64_t const ix1 =
+        static_cast<int64_t>(old_x + window->width) <
+                static_cast<int64_t>(nx + window->width)
+            ? static_cast<int64_t>(old_x + window->width)
+            : static_cast<int64_t>(nx + window->width);
+    int64_t const iy1 =
+        static_cast<int64_t>(old_y + window->height) <
+                static_cast<int64_t>(ny + window->height)
+            ? static_cast<int64_t>(old_y + window->height)
+            : static_cast<int64_t>(ny + window->height);
+    if (ix0 < ix1 && iy0 < iy1) {
+        size_t const bytes = static_cast<size_t>(ix1 - ix0) * 4;
+        /* Rows ahead of the destination: downward, bottom-up; upward, top-down.
+         * memmove carries the horizontal overlap. */
+        if (dy > 0) {
+            for (int64_t y = iy1 - 1; y >= iy0; --y) {
+                uint32_t *dst =
+                    reinterpret_cast<uint32_t *>(g_screen + y * g_stride) + ix0;
+                uint32_t const *src = reinterpret_cast<uint32_t const *>(
+                    g_screen + (y - dy) * g_stride) + (ix0 - dx);
+                memmove(dst, src, bytes);
+            }
+        } else {
+            for (int64_t y = iy0; y < iy1; ++y) {
+                uint32_t *dst =
+                    reinterpret_cast<uint32_t *>(g_screen + y * g_stride) + ix0;
+                uint32_t const *src = reinterpret_cast<uint32_t const *>(
+                    g_screen + (y - dy) * g_stride) + (ix0 - dx);
+                memmove(dst, src, bytes);
+            }
+        }
+    }
+    /* The revealed strip (new not old) composites the moved window; the
+     * uncovered strip (old not new) composites what is beneath it. */
+    composite_uncovered(old_x, nx, ny, window->width, window->height, dx, dy);
+    composite_uncovered(nx, old_x, old_y, window->width, window->height, -dx,
+                        -dy);
+    cursor_draw();
+    flush(ux, uy, uright - ux, ubottom - uy);
 }
 
 }  // namespace
@@ -977,20 +1091,13 @@ int main(int argc, char *argv[])
                 gui.reply(0);
                 continue;
             }
-            /* Repaint the union of the old and the new rectangle: the
-             * vacated area shows what is beneath, the new shows the moved
-             * window (specs/window-manager.md). */
-            uint64_t const left = window->x < x ? window->x : x;
-            uint64_t const top = window->y < y ? window->y : y;
-            uint64_t const right = window->x + window->width > x + window->width
-                                       ? window->x + window->width
-                                       : x + window->width;
-            uint64_t const bottom = window->y + window->height > y + window->height
-                                        ? window->y + window->height
-                                        : y + window->height;
+            /* Move the window and recomposite: the overlap is shifted and only the
+             * strips are redrawn (repaint_move, specs/window-manager.md). */
+            uint64_t const old_x = window->x;
+            uint64_t const old_y = window->y;
             window->x = x;
             window->y = y;
-            repaint(left, top, right - left, bottom - top);
+            repaint_move(window, old_x, old_y);
             gui.reply(0);
         } else if (method == aegir::console::kMethodRaise && length == 2) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));

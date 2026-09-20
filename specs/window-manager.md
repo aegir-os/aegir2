@@ -69,6 +69,13 @@ this arc.
   The whole-window repaint on every keystroke, and the whole-screen transfer
   on every event, were the lag a real client found first; a window's slice is
   resolved once at create, not per pixel.
+- **A move shifts; it does not recomposite.** Moving a window still changes
+  every pixel of the union, but where the moved window was and is the
+  topmost, the new screen there is the old screen shifted by the move: the
+  console memmoves the overlap and recomposites only the strips the move
+  revealed and uncovered. Compositing the whole window per motion was what
+  left a drag trailing the cursor, which moves only its 8×8. A move of a
+  window that is not topmost falls back to the union composite.
 - **Depth is a gadget and `lower`.** A decorated window's titlebar carries a
   depth gadget at its right — the "back" arrow — and the console gains
   `lower` (the window to the bottom among the plain windows, above every
