@@ -15,4 +15,4 @@ add_library(aegir-volume INTERFACE)
 target_include_directories(aegir-volume INTERFACE include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers have
 # to come from a link (specs/build.md).
-target_link_libraries(aegir-volume INTERFACE aegir-cxx-policy sel4 muslc)
+target_link_libraries(aegir-volume INTERFACE aegir-cxx-policy sel4 aegir-c-headers)

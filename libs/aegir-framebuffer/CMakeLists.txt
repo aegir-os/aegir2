@@ -16,4 +16,4 @@ add_library(aegir-framebuffer INTERFACE)
 target_include_directories(aegir-framebuffer INTERFACE include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers
 # have to come from a link (specs/build.md).
-target_link_libraries(aegir-framebuffer INTERFACE aegir-cxx-policy muslc)
+target_link_libraries(aegir-framebuffer INTERFACE aegir-cxx-policy aegir-c-headers)

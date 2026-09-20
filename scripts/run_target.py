@@ -88,9 +88,11 @@ def bash(command: str, cwd: Path, timeout: int) -> None:
     )
 
 
-def configure(target: Target, build_dir: Path, timeout: int) -> None:
+def configure(target: Target, build_dir: Path, timeout: int, extra_flags: str = "") -> None:
     build_dir.mkdir(parents=True, exist_ok=True)
     flags = " ".join(target.configure_flags)
+    if extra_flags:
+        flags = f"{flags} {extra_flags}".strip()
     root = ENV_SCRIPT.parent.parent
     if target.source_dir == ".":
         relative = os.path.relpath(root, build_dir)
@@ -114,6 +116,30 @@ def configure(target: Target, build_dir: Path, timeout: int) -> None:
 
 def build(target: Target, build_dir: Path, timeout: int) -> None:
     bash("ninja", build_dir, timeout)
+
+
+def hosted_cxx() -> bool:
+    """Whether the hosted C++ runtime is wanted for this build.
+
+    An environment switch rather than a target property, because it selects a
+    runtime, not a machine: `AEGIR_HOSTED_CXX=1 make build`. It becomes a cmake
+    cache option of the same name, and the runtime bootstrap below keys off it.
+    """
+    value = os.environ.get("AEGIR_HOSTED_CXX", "").strip().lower()
+    return value not in ("", "0", "off", "no", "false")
+
+
+def build_runtimes(target: Target, timeout: int) -> None:
+    """Build the hosted runtime's two vendored pieces for this target.
+
+    Run before configure because cmake imports them (libs/aegir-musl,
+    libs/aegir-libcxx) and refuses to configure without them. Both scripts are
+    idempotent: an existing install is left alone, so this is cheap after the
+    first build of a target (and `make clean` is what forces a rebuild).
+    """
+    root = ENV_SCRIPT.parent.parent
+    bash(f"bash scripts/build_musl.sh {target.name}", root, timeout)
+    bash(f"bash scripts/build_libcxx.sh {target.name}", root, timeout)
 
 
 def configured_flags(build_dir: Path) -> str:
@@ -507,7 +533,15 @@ def main(argv: list[str]) -> int:
         return 1
 
     wanted_flags = " ".join(target.configure_flags)
+    hosted = hosted_cxx()
+    # Always passed explicitly, ON or OFF: the cmake cache keeps a value set by
+    # a previous build, so omitting the flag would leave a hosted tree hosted
+    # when the environment says otherwise (and vice versa).
+    extra_flags = f"-DAEGIR_HOSTED_CXX={'ON' if hosted else 'OFF'}"
+    wanted_flags = f"{wanted_flags} {extra_flags}".strip()
     try:
+        if hosted:
+            build_runtimes(target, arguments.timeout)
         stamp = configured_flags(build_dir)
         if (
             arguments.reconfigure
@@ -515,7 +549,7 @@ def main(argv: list[str]) -> int:
             or (stamp != "" and stamp != wanted_flags)
         ):
             print(f"INFO  (re)configuring {target.name} as: {wanted_flags or 'defaults'}", flush=True)
-            configure(target, build_dir, arguments.timeout)
+            configure(target, build_dir, arguments.timeout, extra_flags)
             record_flags(build_dir, wanted_flags)
         elif stamp == "":
             # An existing build directory from before this record existed: adopt

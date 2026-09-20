@@ -15,4 +15,4 @@ add_library(aegir-bootstrap STATIC src/bootstrap.cc)
 target_include_directories(aegir-bootstrap PUBLIC include)
 # sel4runtime carries sel4runtime/auxv.h, which is what a child reads its own
 # vector through; muslc is where <stdint.h> comes from (specs/build.md).
-target_link_libraries(aegir-bootstrap PUBLIC aegir-cxx-policy sel4 sel4runtime muslc)
+target_link_libraries(aegir-bootstrap PUBLIC aegir-cxx-policy sel4 sel4runtime aegir-c-headers)

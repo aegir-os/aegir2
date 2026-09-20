@@ -16,5 +16,5 @@ target_include_directories(aegir-spawn PUBLIC include)
 # cpio is util_libs' reader for the initrd: the archive format is not ours to
 # reimplement, but where it sits and what its flat names mean are (specs/services.md).
 target_link_libraries(
-  aegir-spawn PUBLIC aegir-cxx-policy aegir-bootstrap aegir-mem sel4 sel4runtime muslc cpio
+  aegir-spawn PUBLIC aegir-cxx-policy aegir-bootstrap aegir-mem sel4 sel4runtime aegir-c-headers cpio
 )

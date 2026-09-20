@@ -16,4 +16,4 @@ add_library(aegir-registry INTERFACE)
 target_include_directories(aegir-registry INTERFACE include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers have
 # to come from a link (specs/build.md).
-target_link_libraries(aegir-registry INTERFACE aegir-cxx-policy sel4 muslc)
+target_link_libraries(aegir-registry INTERFACE aegir-cxx-policy sel4 aegir-c-headers)

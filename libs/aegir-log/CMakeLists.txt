@@ -12,4 +12,4 @@ project(aegir-log CXX)
 add_library(aegir-log INTERFACE)
 
 target_include_directories(aegir-log INTERFACE include)
-target_link_libraries(aegir-log INTERFACE aegir-cxx-policy muslc)
+target_link_libraries(aegir-log INTERFACE aegir-cxx-policy aegir-c-headers)

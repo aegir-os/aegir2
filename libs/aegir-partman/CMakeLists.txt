@@ -15,4 +15,4 @@ add_library(aegir-partman INTERFACE)
 target_include_directories(aegir-partman INTERFACE include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers have
 # to come from a link (specs/build.md).
-target_link_libraries(aegir-partman INTERFACE aegir-cxx-policy sel4 muslc)
+target_link_libraries(aegir-partman INTERFACE aegir-cxx-policy sel4 aegir-c-headers)

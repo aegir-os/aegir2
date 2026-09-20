@@ -18,4 +18,4 @@ target_include_directories(aegir-virtio PUBLIC include)
 # sel4runtime brings the kernel's generated configuration headers (it links
 # sel4_autoconf PUBLIC); muslc supplies <stdint.h>: user code is compiled
 # -nostdinc, so C headers have to come from a link (specs/build.md).
-target_link_libraries(aegir-virtio PUBLIC aegir-cxx-policy sel4 sel4runtime muslc)
+target_link_libraries(aegir-virtio PUBLIC aegir-cxx-policy sel4 sel4runtime aegir-c-headers)

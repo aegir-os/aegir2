@@ -29,7 +29,7 @@ if(AEGIR_HOSTED_CXX)
   target_link_libraries(
     aegir-greeter PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-runtime aegir-bootstrap aegir-ipc
                           aegir-input aegir-console-protocol aegir-authdb aegir-namespace
-                          aegir-mem sel4 muslc sel4runtime
+                          aegir-mem sel4 sel4runtime
   )
 else()
   # No hosted runtime yet: a placeholder keeps director's manifest validation

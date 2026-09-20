@@ -18,4 +18,4 @@ target_include_directories(aegir-console-protocol INTERFACE include)
 # have to come from a link (specs/build.md). aegir-ipc is the envelope, and
 # aegir-input the event word's packing.
 target_link_libraries(aegir-console-protocol INTERFACE aegir-cxx-policy aegir-ipc
-                                                       aegir-input muslc)
+                                                       aegir-input aegir-c-headers)

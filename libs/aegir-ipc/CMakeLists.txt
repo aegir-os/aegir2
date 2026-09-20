@@ -13,4 +13,4 @@ project(aegir-ipc CXX)
 add_library(aegir-ipc STATIC src/port.cc)
 
 target_include_directories(aegir-ipc PUBLIC include)
-target_link_libraries(aegir-ipc PUBLIC aegir-cxx-policy aegir-bootstrap sel4 sel4runtime muslc)
+target_link_libraries(aegir-ipc PUBLIC aegir-cxx-policy aegir-bootstrap sel4 sel4runtime aegir-c-headers)

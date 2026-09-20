@@ -44,6 +44,7 @@ find_package(util_libs REQUIRED)
 # bootstrap (scripts/build_libcxx.sh) and installed per target.
 if(AEGIR_HOSTED_CXX)
   include(libs/aegir-libcxx/imported.cmake)
+  include(libs/aegir-musl/imported.cmake)
 endif()
 
 sel4_import_kernel()
@@ -64,6 +65,18 @@ sel4_import_libsel4()
 musllibc_setup_build_environment_with_sel4runtime()
 util_libs_import_libraries()
 
+# The C *headers* a library needs to compile, without choosing the C library
+# itself. The archive is the final target's choice, and the tree has two: seL4's
+# musllibc for the freestanding path, and the vendored full musl for hosted
+# targets. A library links this to reach <stdint.h> and friends; the final
+# target links exactly one libc. The directory is seL4 musl's, which compiles
+# against either -- both are musl -- and a hosted target's full-musl include
+# directory is a plain -I, searched before this system one.
+add_library(aegir-c-headers INTERFACE)
+target_include_directories(
+  aegir-c-headers SYSTEM INTERFACE $<TARGET_PROPERTY:muslc,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
 # C++ policies:
 # - aegir-cxx-policy-freestanding: no exceptions, no RTTI, no thread-safe statics.
 #   Used by kernel-adjacent code (root task, services, drivers) that must remain
@@ -79,13 +92,30 @@ target_compile_options(
 )
 
 if(AEGIR_HOSTED_CXX)
+  # Tier 1 (specs/cxx.md): the hosted standard library, with exceptions and RTTI
+  # still off so the user-code policy matches the libc++ archive's own
+  # _LIBCPP_ODR_SIGNATURE (libcxx/include/__config). Thread-safe statics are off
+  # for the same single-threaded reason as the freestanding policy. -D_GNU_SOURCE
+  # is what makes musl's headers declare the POSIX surface libc++ uses;
+  # _LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS works around GCC 14's
+  # unusable __remove_pointer builtin (see scripts/build_libcxx.sh). The policy
+  # links the full musl and libc++ because choosing the hosted runtime *is* the
+  # policy's job.
   add_library(aegir-cxx-policy-hosted INTERFACE)
   target_compile_features(aegir-cxx-policy-hosted INTERFACE cxx_std_17)
   target_compile_options(
     aegir-cxx-policy-hosted
-    INTERFACE -fexceptions -frtti -fthreadsafe-statics -Wall -Wextra -Werror
+    INTERFACE
+      -fno-exceptions
+      -fno-rtti
+      -fno-threadsafe-statics
+      -D_GNU_SOURCE
+      -D_LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS
+      -Wall
+      -Wextra
+      -Werror
   )
-  target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi unwind)
+  target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi unwind musl_full)
 endif()
 
 # Default policy alias for backward compatibility (freestanding)
@@ -113,6 +143,7 @@ add_subdirectory(libs/aegir-manifest)
 add_subdirectory(libs/aegir-spawn)
 add_subdirectory(libs/aegir-virtio)
 if(AEGIR_HOSTED_CXX)
+  add_subdirectory(libs/aegir-heap)
   add_subdirectory(libs/aegir-trinket)
   add_subdirectory(libs/aegir-bureau)
   add_subdirectory(libs/aegir-datatypes)

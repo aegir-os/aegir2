@@ -17,4 +17,4 @@ target_include_directories(aegir-entropy INTERFACE include)
 # aegir-ipc for the envelope the ceiling is derived from; <stdint.h> comes
 # from muslc: user code is compiled -nostdinc, so C headers have to come from
 # a link (specs/build.md).
-target_link_libraries(aegir-entropy INTERFACE aegir-cxx-policy aegir-ipc sel4 muslc)
+target_link_libraries(aegir-entropy INTERFACE aegir-cxx-policy aegir-ipc sel4 aegir-c-headers)

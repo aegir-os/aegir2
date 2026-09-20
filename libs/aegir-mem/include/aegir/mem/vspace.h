@@ -66,6 +66,15 @@ public:
      *  was refused" has several causes and they mean different things. */
     uint64_t last_error() const noexcept { return static_cast<uint64_t>(last_error_); }
 
+    /** Map `frame` at exactly `address` instead of at the window cursor. The
+     *  address must be page-aligned and inside the window, and this does not
+     *  move the cursor -- aegir-heap's caller, which claims the top of the
+     *  window and places each page where the allocator behind musl decides
+     *  it goes, which is not the cursor's monotonic path. The missing page
+     *  tables are created the same way map() creates them, and charged to
+     *  the same throwaway account. */
+    bool map_at(uintptr_t address, seL4_CPtr frame) noexcept;
+
     /** Remove one mapping. The frame cap stays ours. Unmapping the *most recently*
      *  mapped frame hands its window page back: filling frames is a strict
      *  map-write-unmap rhythm (child_vspace.cc's populate), and a window that

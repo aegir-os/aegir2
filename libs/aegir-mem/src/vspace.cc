@@ -176,6 +176,39 @@ void *Scratch::map_large(seL4_CPtr frame) noexcept
     return reinterpret_cast<void *>(address);
 }
 
+bool Scratch::map_at(uintptr_t address, seL4_CPtr frame) noexcept
+{
+    if (frame == 0 || (address & (kPage - 1)) != 0 ||
+        address < base_ || address + kPage > limit_) {
+        return false;
+    }
+    seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                           seL4_RISCV_Default_VMAttributes);
+    unsigned attempts = 0;
+    while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
+        ++attempts;
+        seL4_Error created = seL4_NoError;
+        Account self{"scratch", 0, 0, 0};
+        seL4_CPtr const table = tables_->alloc_object(seL4_RISCV_PageTableObject,
+                                                      seL4_PageTableBits, self, &created);
+        if (table == 0) {
+            return false;
+        }
+        if (seL4_RISCV_PageTable_Map(table, root_, address,
+                                     seL4_RISCV_Default_VMAttributes) != seL4_NoError) {
+            return false;
+        }
+        error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                    seL4_RISCV_Default_VMAttributes);
+    }
+    if (error != seL4_NoError) {
+        last_error_ = error;
+        return false;
+    }
+    mapped_bytes_ += kPage;
+    return true;
+}
+
 void Scratch::unmap(seL4_CPtr frame) noexcept
 {
     if (frame == 0) {
