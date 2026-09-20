@@ -19,18 +19,19 @@ namespace aegir::trinket {
 std::u32string utf8_to_utf32(std::string_view utf8);
 std::string utf32_to_utf8(std::u32string_view utf32);
 
-// Codepoint iteration
+// Codepoint iteration. The iterator points at the next codepoint to read:
+// `operator*` decodes it and `operator++` steps past it. It must not decode
+// and advance together -- the range-for's end-check runs after `++`, so a
+// step that both loads the last codepoint and moves to the end drops it.
 struct Utf8Iterator {
     const char* ptr = nullptr;
     const char* end = nullptr;
-    uint32_t codepoint = 0;
 
     Utf8Iterator() = default;
-    Utf8Iterator(std::string_view sv) : ptr(sv.data()), end(sv.data() + sv.size()) { next(); }
+    Utf8Iterator(std::string_view sv) : ptr(sv.data()), end(sv.data() + sv.size()) {}
 
-    /* The end sentinel: the same end pointer, no codepoint. A default-built
-     * iterator cannot serve -- its `ptr` is indeterminate, so `!=` never
-     * becomes false and a range-for over it does not terminate. */
+    /* The end sentinel: the same end pointer. A default-built iterator cannot
+     * serve -- its `ptr` is indeterminate, so `!=` never becomes false. */
     static Utf8Iterator end_of(std::string_view sv) {
         Utf8Iterator it;
         it.ptr = sv.data() + sv.size();
@@ -39,25 +40,35 @@ struct Utf8Iterator {
     }
 
     bool operator!=(const Utf8Iterator& other) const { return ptr != other.ptr; }
-    uint32_t operator*() const { return codepoint; }
-    Utf8Iterator& operator++() { next(); return *this; }
+    uint32_t operator*() const { return decode(); }
+    Utf8Iterator& operator++() { ptr += width(); return *this; }
 
 private:
-    void next() {
-        if (ptr >= end) { codepoint = 0; return; }
-        unsigned char c = *ptr;
-        if (c < 0x80) { codepoint = c; ptr += 1; }
-        else if ((c & 0xE0) == 0xC0 && ptr + 1 < end) {
-            codepoint = ((c & 0x1F) << 6) | (ptr[1] & 0x3F); ptr += 2;
+    uint32_t decode() const {
+        if (ptr >= end) return 0;
+        unsigned char const c = static_cast<unsigned char>(*ptr);
+        if (c < 0x80) return c;
+        if ((c & 0xE0) == 0xC0 && ptr + 1 < end) {
+            return ((c & 0x1F) << 6) | (ptr[1] & 0x3F);
         }
-        else if ((c & 0xF0) == 0xE0 && ptr + 2 < end) {
-            codepoint = ((c & 0x0F) << 12) | ((ptr[1] & 0x3F) << 6) | (ptr[2] & 0x3F); ptr += 3;
+        if ((c & 0xF0) == 0xE0 && ptr + 2 < end) {
+            return ((c & 0x0F) << 12) | ((ptr[1] & 0x3F) << 6) | (ptr[2] & 0x3F);
         }
-        else if (ptr + 3 < end) {
-            codepoint = ((c & 0x07) << 18) | ((ptr[1] & 0x3F) << 12) |
-                        ((ptr[2] & 0x3F) << 6) | (ptr[3] & 0x3F); ptr += 4;
+        if ((c & 0xF8) == 0xF0 && ptr + 3 < end) {
+            return ((c & 0x07) << 18) | ((ptr[1] & 0x3F) << 12) |
+                   ((ptr[2] & 0x3F) << 6) | (ptr[3] & 0x3F);
         }
-        else { codepoint = 0xFFFD; ptr = end; }
+        return 0xFFFD;
+    }
+
+    size_t width() const {
+        if (ptr >= end) return 1;
+        unsigned char const c = static_cast<unsigned char>(*ptr);
+        if (c < 0x80) return 1;
+        if ((c & 0xE0) == 0xC0 && ptr + 1 < end) return 2;
+        if ((c & 0xF0) == 0xE0 && ptr + 2 < end) return 3;
+        if ((c & 0xF8) == 0xF0 && ptr + 3 < end) return 4;
+        return 1;  // an invalid lead advances one byte
     }
 };
 

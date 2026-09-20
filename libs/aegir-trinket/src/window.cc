@@ -196,15 +196,18 @@ void Window::dispatch_pointer(uint64_t event) {
                     static_cast<int>((value >> 16) & 0xffff)};
 
     bool const up = (code & aegir::console::kButtonRelease) != 0;
-    uint16_t const button = code & ~aegir::console::kButtonRelease;
+    uint16_t const button =
+        static_cast<uint16_t>(code & ~aegir::console::kButtonRelease);
     MouseEvent mouse;
     mouse.pos = pos;
     mouse.global_pos = pos;  // window-local is all the toolkit has
+    /* The console passes the HID button codes through (aegir/input.h): left
+     * is 0x110, not 1. Motion (no button) is not dispatched in tier 1. */
     switch (button) {
-    case 1: mouse.button = MouseButton::LEFT; break;
-    case 2: mouse.button = MouseButton::RIGHT; break;
-    case 4: mouse.button = MouseButton::MIDDLE; break;
-    default: return;  // motion (no button) is not dispatched in tier 1
+    case aegir::input::kBtnLeft: mouse.button = MouseButton::LEFT; break;
+    case aegir::input::kBtnRight: mouse.button = MouseButton::RIGHT; break;
+    case aegir::input::kBtnMiddle: mouse.button = MouseButton::MIDDLE; break;
+    default: return;
     }
 
     Widget* const target = hit_test(content_.get(), pos);
