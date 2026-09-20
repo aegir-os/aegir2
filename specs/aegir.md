@@ -36,6 +36,8 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/auth.md` — the user database's format and the login port's protocol.
 - `specs/console.md` — the display, the pointer, the windows, and the greeter.
 - `specs/build.md` — build environment, targets, and what our image is made of.
+- `specs/cxx.md` — the hosted C++ runtime: the vendored musl and libc++, the
+  freeing heap, and the two build switches that gate them.
 - `specs/third_party.md` — how third-party code is pinned, fetched and patched.
 - `specs/userland.md` — what Aegir's userland is, and what it is not.
 

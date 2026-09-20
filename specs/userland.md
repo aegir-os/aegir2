@@ -59,10 +59,10 @@ Resolved, or re-framed, by the first root task (M4):
   the current build needs one, and
   `musllibc_set_environment_flags()` is applied globally by the cmake-tool, so
   whether a target can opt out cleanly is still open.
-- **C++ standard library posture is not an open question**: freestanding C++
-  (see `specs/build.md`) means no `std::` containers and no iostreams until we
-  deliberately vendor a standard library. Recorded as a posture, not as
-  something to find out.
+- **C++ standard library posture.** Freestanding C++ (see `specs/build.md`) is
+  still what director and the services use: no `std::` containers, no
+  iostreams. The userland that opts in now links a vendored libc++ and a freeing
+  heap, gated by `AEGIR_HOSTED_CXX`; the decision is `specs/cxx.md`.
 
 ## The C/C++ boundary, recorded from building it
 

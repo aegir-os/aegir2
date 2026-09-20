@@ -129,15 +129,18 @@ kernel's toolchain file and user targets inherit its flags.
   path at configure time: when the shims move or appear (a fresh machine, a
   re-fetch), wipe `out/<target>` and let the build reconfigure, or it keeps
   invoking the path it remembered.
-- C library: **not** from the toolchain. Userland uses the vendored
-  `projects/musllibc` (built by the same build) plus `projects/sel4runtime` for
-  the entry point. The toolchain's own newlib/picolibc payload is irrelevant:
-  seL4 does not use it.
-- C++: the C++ frontend works, but there is no target `libstdc++`/`libc++`.
-  C++ code is therefore **freestanding**: compiled with `-fno-exceptions
-  -fno-rtti -fno-threadsafe-statics` and without the standard library. The
-  standard-library question is a separate, deferred milestone; it is orthogonal
-  to the compiler choice below.
+- C library: **not** from the toolchain. The freestanding path (director and the
+  services) uses the vendored `projects/musllibc` (built by the same build) plus
+  `projects/sel4runtime` for the entry point; the hosted path links the vendored
+  upstream musl instead. Two libcs, one per binary — no binary links both. The
+  decision is `specs/cxx.md`. The toolchain's own newlib/picolibc payload is
+  irrelevant: seL4 does not use it.
+- C++: the C++ frontend works, and the standard library is now vendored for the
+  userland that opts in. Freestanding C++ (`-fno-exceptions -fno-rtti
+  -fno-threadsafe-statics`, no standard library) is still what director and the
+  services use; hosted targets link libc++ and compile `-O2`. The decision, and
+  the build policy behind the `-O2`, is `specs/cxx.md`. The compiler choice
+  below is unchanged.
 
   Establishing this cost four separate discoveries, all now encoded in the
   build rather than in anyone's memory:
@@ -181,6 +184,13 @@ deferred decision is cheap:
   `objcopy`/`readelf`.
 - Our `lp64d` ABI already matches the container's existing clang `libgcc.a`
   wiring (`rv64imafdc/lp64d`), so the clang path would need no extra plumbing.
+- The hosted C++ runtime (`specs/cxx.md`) gave the decision a concrete data
+  point. libc++'s `always_inline` containers make a 33 KiB stack frame under GCC
+  at `-O0`; Clang 22 compiles the same code cleanly and compactly at every
+  optimization level (224 bytes at `-O0`, 112 at `-O2`) and would not need the
+  `__chash` patch the GCC build carries. Switching still needs `lld` and a
+  build-system change, so it remains deferred — but now with a measured reason
+  to do it.
 
 ## Build environment
 
