@@ -126,7 +126,7 @@ int main(int argc, char *argv[])
     panel->set_background(theme.color(ColorRole::WINDOW_BG));
     panel->set_layout(nullptr);
 
-    auto name_label = std::make_unique<Label>("name:");
+    auto name_label = std::make_unique<Label>("Username:");
     name_label->set_text_color(theme.color(ColorRole::TEXT));
     name_label->set_rect({kFieldX, kNameLabelY, 60, 12});
     panel->add_child(std::move(name_label));
@@ -137,7 +137,7 @@ int main(int argc, char *argv[])
     TextBox *const name = name_box.get();
     panel->add_child(std::move(name_box));
 
-    auto secret_label = std::make_unique<Label>("secret:");
+    auto secret_label = std::make_unique<Label>("Password:");
     secret_label->set_text_color(theme.color(ColorRole::TEXT));
     secret_label->set_rect({kFieldX, kSecretLabelY, 60, 12});
     panel->add_child(std::move(secret_label));
@@ -156,7 +156,7 @@ int main(int argc, char *argv[])
     Label *const error = error_label.get();
     panel->add_child(std::move(error_label));
 
-    auto submit_button = std::make_unique<Button>("log in");
+    auto submit_button = std::make_unique<Button>("Login");
     submit_button->set_rect({kButtonX, kButtonY, kButtonWidth, kButtonHeight});
     Button *const button = submit_button.get();
     panel->add_child(std::move(submit_button));
