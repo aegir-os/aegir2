@@ -83,6 +83,7 @@ this project.
 1. A LLM agent harness will never be provided as a part of the base,
    working distribution of the system. Developers can write or port their
    own as desired.
+
 ... this may be extended at any time ...
 
 ## Note from the author:
