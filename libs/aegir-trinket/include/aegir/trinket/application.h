@@ -53,7 +53,10 @@ public:
     void set_theme(std::unique_ptr<Theme> theme);
     Theme& theme() const { return *theme_; }
     void set_default_font(std::unique_ptr<Font> font);
-    Font* default_font() const { return default_font_.get(); }
+    // The application's font, loaded from the embedded default the first time
+    // a widget asks: a client whose windows draw no text (the bureau's
+    // backdrop) never pays for the atlas.
+    Font* default_font();
 
     // Locale
     void set_locale(const Locale& locale);

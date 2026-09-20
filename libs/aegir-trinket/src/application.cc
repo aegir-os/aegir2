@@ -32,11 +32,10 @@ namespace {
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 
-/* One megapage of console arena holds a window's backing and the event ring in
- * its last page (specs/console.md), and the heap claims 8 MiB at the top of
- * the process's own address window. The window the spawn kit grants is 1 GiB
- * (aegir/spawn's process.cc), so the two do not meet. */
-constexpr uint64_t kSliceBytes = 2ull << 20;
+/* The console arena's slice is sized from the windows at exec (each backing
+ * plus the event ring's page, rounded up to megapages), and the heap claims
+ * 8 MiB at the top of the process's own address window. The window the spawn
+ * kit grants is 1 GiB (aegir/spawn's process.cc), so the two do not meet. */
 constexpr uint64_t kHeapBytes = 8ull << 20;
 
 /* The mapping authority the spawn kit installs: the delegated untyped (page
@@ -121,19 +120,41 @@ Application* Application::instance() {
 bool Application::start_console() {
     if (!gui_port_.valid()) return false;
 
-    seL4_CPtr const frame_slot = g_objects.alloc_slot();
-    events_ = g_objects.alloc_slot();
+    /* The slice is sized from the windows: each backing is width * height * 4
+     * (the console's B8G8R8X8), plus the event ring's page, rounded up to
+     * whole megapages. A greeter's one window is one; a full-screen 1280x800
+     * backdrop is two. */
+    uint64_t bytes = aegir::console::kEventRingBytes;
+    for (Window* win : windows_) {
+        if (win->visible()) bytes += win->backing_bytes();
+    }
+    uint64_t const frame_bytes = 1ull << seL4_LargePageBits;
+    bytes = (bytes + frame_bytes - 1) & ~(frame_bytes - 1);
+    uint64_t const wanted = bytes >> seL4_LargePageBits;
+
     uint64_t frame_bits = 0;
     uint64_t frames = 0;
-    bool ok = frame_slot != 0 && events_ != 0 &&
-              aegir::console::attach(gui_port_, kSliceBytes, &frame_bits,
-                                     &frames) &&
-              frame_bits == seL4_LargePageBits && frames == 1 &&
-              aegir::console::frame(gui_port_, 0, frame_slot) &&
-              aegir::console::listen(gui_port_, events_);
-    slice_ = ok ? static_cast<uint8_t*>(g_scratch.map_large(frame_slot)) : nullptr;
-    slice_bytes_ = kSliceBytes;
-    return ok && slice_ != nullptr;
+    if (!aegir::console::attach(gui_port_, bytes, &frame_bits, &frames) ||
+        frame_bits != seL4_LargePageBits || frames != wanted) {
+        return false;
+    }
+
+    /* The frames map one after another: the backing is one range. */
+    for (uint64_t i = 0; i < frames; ++i) {
+        seL4_CPtr const slot = g_objects.alloc_slot();
+        if (slot == 0 || !aegir::console::frame(gui_port_, i, slot)) return false;
+        void* const mapped = g_scratch.map_large(slot);
+        if (mapped == nullptr) return false;
+        if (i == 0) {
+            slice_ = static_cast<uint8_t*>(mapped);
+        } else if (static_cast<uint8_t*>(mapped) != slice_ + i * frame_bytes) {
+            return false;
+        }
+    }
+    slice_bytes_ = bytes;
+
+    events_ = g_objects.alloc_slot();
+    return events_ != 0 && aegir::console::listen(gui_port_, events_);
 }
 
 int Application::exec() {
@@ -143,12 +164,6 @@ int Application::exec() {
     if (!start_console()) {
         aegir::debug_write("trinket: FAIL the console's channel would not open\n");
         return 1;
-    }
-
-    // Load default font
-    default_font_ = load_builtin_font("Terminus", 12);
-    if (!default_font_) {
-        aegir::debug_write("Warning: Could not load default font\n");
     }
 
     // Show all windows
@@ -189,6 +204,16 @@ void Application::set_theme(std::unique_ptr<Theme> theme) {
 
 void Application::set_default_font(std::unique_ptr<Font> font) {
     default_font_ = std::move(font);
+}
+
+Font* Application::default_font() {
+    if (!default_font_) {
+        default_font_ = load_builtin_font("Terminus", 12);
+        if (!default_font_) {
+            aegir::debug_write("Warning: Could not load default font\n");
+        }
+    }
+    return default_font_.get();
 }
 
 void Application::set_locale(const Locale& locale) {

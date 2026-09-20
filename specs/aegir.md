@@ -37,6 +37,7 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/console.md` — the display, the pointer, the windows, and the greeter.
 - `specs/trinket.md` — the GUI toolkit: console integration, the look, and the
   greeter rebuilt on it.
+- `specs/bureau.md` — the session's desktop, and the screen-size query.
 - `specs/build.md` — build environment, targets, and what our image is made of.
 - `specs/cxx.md` — the hosted C++ runtime: the vendored musl and libc++, the
   freeing heap, and the two build switches that gate them.

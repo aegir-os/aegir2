@@ -30,6 +30,14 @@ public:
     void set_rect(Rect r);  // In screen coordinates (logical pixels)
     Rect rect() const { return rect_; }
 
+    // The bytes the window's backing needs: width * height * 4, rows packed
+    // (the console's B8G8R8X8). Application sizes its slice from the sum over
+    // its visible windows.
+    uint64_t backing_bytes() const {
+        return static_cast<uint64_t>(rect_.width) *
+               static_cast<uint64_t>(rect_.height) * 4ull;
+    }
+
     void set_decorated(bool decorated);  // Default true
     bool decorated() const { return decorated_; }
 

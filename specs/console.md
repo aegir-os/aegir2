@@ -63,6 +63,9 @@ method console does not know is answered by saying nothing.
   there — the bureau's shape.
 - `listen`. Out: one capability — the client's event notification (below).
   One channel per client; a second listen is refused.
+- `info`. In: nothing. Out: the screen's width and height in pixels — the
+  mode the driver settled on. A full-screen window must match it, and a
+  client that guesses is refused at `create_window` (`specs/bureau.md`).
 - `damage`. In: the window's id and a rectangle in window-local pixels. The
   rectangle's pixels, as they stand in the slice, are composited to the
   screen: painter's algorithm, clipped against the windows above, then the
@@ -144,7 +147,7 @@ full-screen window, always in backdrop mode — the Amiga screen, as a shape
 of window — in Workbench grey, with `console.gui` in its `needs`. It draws
 and exits: the console owns the slice, so the window persists as the
 session's visible remainder, and reaping it is the re-login arc's.
-What the bureau grows into is authority.md's later spec, unchanged.
+What the bureau is, and what it grows into, is `specs/bureau.md`.
 
 ## What this is not
 

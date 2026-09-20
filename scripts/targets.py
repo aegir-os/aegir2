@@ -293,18 +293,23 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # before the session starts. Evidence only -- the bureau's dump
             # below reads what the screen shows once they are gone.
             QmpStep(r"auth: the greeter's windows are reaped"),
-            # The greeter's login starts the bureau: a full-screen window,
-            # always backdrop mode, Workbench grey, drawn once before the
-            # process exits -- the console owns the slice, so the window
-            # stands as the session's visible remainder. The samples keep
-            # clear of the red window (300..699 x, 200..499 y), which still
-            # stands above the backdrop, and of the cursor at (860,520).
+            # The greeter's login starts the bureau (specs/bureau.md): a
+            # trinket full-screen window, always backdrop mode, the theme's
+            # Workbench grey, painted before the process halts -- the console
+            # owns the slice, so the window stands as the session's visible
+            # remainder. The samples keep clear of the red window
+            # (300..699 x, 200..499 y), which still stands above the
+            # backdrop, and of the cursor at (860,520); the corners are the
+            # backdrop's own, and prove it covers the screen.
             QmpStep(
                 r"bureau: the screen is yours",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 170, 170, 170),
+                    ("gpu0", 1279, 0, 170, 170, 170),
+                    ("gpu0", 0, 799, 170, 170, 170),
+                    ("gpu0", 1279, 799, 170, 170, 170),
                     ("gpu0", 860, 240, 170, 170, 170),
                     ("gpu0", 640, 700, 170, 170, 170),
                 ),

@@ -80,6 +80,13 @@ constexpr uint32_t kMethodReap = 6;
  *  have been one blocked receive too many. */
 constexpr uint32_t kMethodListen = 7;
 
+/** Info: the screen's size, the protocol's next method. In: nothing.
+ *  Answer: two words -- width and height in pixels. The bureau's
+ *  full-screen window needs it (specs/bureau.md); a client that asks for
+ *  the wrong size is refused at create_window, so the query is how a
+ *  backdrop covers the screen whatever mode the driver settled on. */
+constexpr uint32_t kMethodInfo = 8;
+
 /* The event channel. The ring is the slice's last 4 KiB page: the console
  * mapped the whole slice when it carved it, so appending is writing memory
  * it already has, and the client maps the page with the rest. Word 0 is
@@ -163,6 +170,20 @@ inline bool frame(aegir::ipc::Consumer const &gui, uint64_t index,
     aegir::ipc::WordsReply const answered =
         gui.call_transfer(kMethodFrame, &index, 1, 0, in, 1, &cap_arrived);
     return answered.error == 0 && cap_arrived && aegir::ipc::take_received_cap(slot);
+}
+
+/** Ask the screen's size. False when refused. */
+inline bool info(aegir::ipc::Consumer const &gui, uint64_t *width,
+                 uint64_t *height) noexcept
+{
+    uint64_t in[2];
+    aegir::ipc::WordsReply const answer = gui.call_words(kMethodInfo, nullptr, 0, in, 2);
+    if (answer.error != 0 || answer.count != 2) {
+        return false;
+    }
+    *width = in[0];
+    *height = in[1];
+    return true;
 }
 
 /** Create a window; its id, or zero when refused. */

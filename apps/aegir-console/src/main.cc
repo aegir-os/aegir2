@@ -934,6 +934,11 @@ int main(int argc, char *argv[])
                                   dead->events, aegir::bootstrap::kCNodeBits);
             }
             gui.reply(0);
+        } else if (method == aegir::console::kMethodInfo && length == 1) {
+            /* The screen's size, whatever mode the driver settled on: the
+             * bureau sizes its backdrop from it (specs/bureau.md). */
+            uint64_t const size[2] = {g_width, g_height};
+            gui.reply_words(size, 2);
         } else {
             /* A method we do not know: the answer says so by saying nothing
              * (aegir/console.h). */

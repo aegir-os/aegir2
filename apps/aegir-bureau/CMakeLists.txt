@@ -25,7 +25,7 @@ if(AEGIR_TOOLKIT)
   # is the window protocol it speaks, aegir-mem the allocator and the window it
   # maps its slice through (the session spawn's give_vspace grant).
   target_link_libraries(
-    aegir-bureau-app PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-bureau-lib aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+    aegir-bureau-app PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                             aegir-console-protocol aegir-mem sel4 sel4runtime
   )
 else()

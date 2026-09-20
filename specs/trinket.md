@@ -109,8 +109,8 @@ Window decorations, title bars, dragging, resizing, depth gadgets, menus and
 the menu server; multiple windows per process (the backing allocator
 generalizes, but attaching more than one frame waits for a client that needs
 it); alpha and blend beyond the canvas's existing per-pixel path; the
-screen-size query (the bureau's full-screen window needs it, so it arrives
-with the bureau arc); locale and BiDi/RTL (`specs/cxx.md`); a real worker
+screen-size query (it landed with the bureau arc, `specs/bureau.md`); locale
+and BiDi/RTL (`specs/cxx.md`); a real worker
 thread (`specs/cxx.md`'s threading milestone — `WorkerPool` stays lazy); a
 clock for `schedule_timer` — the runtime has no user-accessible monotonic
 clock, so the event loop consults the clock only when a timer is pending, and
