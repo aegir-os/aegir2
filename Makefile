@@ -11,6 +11,21 @@ PYTHON ?= python3
 # memory/cores envelope (scripts/targets.py); `make envelope` walks them.
 TARGET ?= aegir
 
+# The hosted C++ runtime and the GUI toolkit are build switches, not target
+# properties (specs/cxx.md), both off by default: the flag-off path is the
+# freestanding root task and services, and the greeter and bureau are
+# placeholders there. Turn them on per invocation with `make run-ui TOOLKIT=1`
+# (which implies the hosted runtime), or set AEGIR_HOSTED_CXX / AEGIR_TOOLKIT in
+# the environment. They are exported to scripts/run_target.py, which passes them
+# to cmake and builds the runtime when they are on.
+HOSTED_CXX ?= $(AEGIR_HOSTED_CXX)
+TOOLKIT ?= $(AEGIR_TOOLKIT)
+ifeq ($(TOOLKIT),1)
+HOSTED_CXX := 1
+endif
+export AEGIR_HOSTED_CXX := $(HOSTED_CXX)
+export AEGIR_TOOLKIT := $(TOOLKIT)
+
 # Wall-clock limits. Generous, but finite.
 TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800

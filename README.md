@@ -45,6 +45,12 @@ make envelope    # boot every machine in the RAM/cores envelope we support
 make test        # build + boot the seL4 test suite (kernel acceptance test)
 ```
 
+The hosted C++ runtime and the GUI toolkit are off by default (the flag-off
+build is the freestanding root task and services, where the greeter and bureau
+are placeholders). `make run-ui TOOLKIT=1` builds both, so the greeter draws its
+login form; `make build HOSTED_CXX=1` builds only the runtime and its smoke
+client. See `specs/cxx.md`.
+
 `make build` and `make run` act on `TARGET`, which defaults to `aegir` -- the
 floor of the envelope (2 GiB, one core). `make run TARGET=aegir-8g-smp4` boots
 the upper end; `scripts/targets.py` holds the list.
