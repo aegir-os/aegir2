@@ -47,5 +47,11 @@ target_link_libraries(aegir-trinket PUBLIC
     sel4
 )
 
-# Copy font resources to build directory for runtime access
-file(COPY resources/fonts/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/resources/fonts/)
+# The toolkit's font resources are vendored under projects/terminus-font and
+# projects/noto-fonts; staging them into the build belongs with font loading
+# (libs/aegir-trinket/src/font.cc's load_terminus), which is still a stub. This
+# directory is not tracked -- git does not store an empty one -- so copy it only
+# when it is present, or a fresh checkout fails to configure.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
+  file(COPY resources/fonts/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/resources/fonts/)
+endif()
