@@ -10,6 +10,7 @@
   <default remote="seL4" revision="master"/>
   
   <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
+  <project name="musllibc.git" path="projects/musllibc" revision="b0005f86fecbd6d0257b15363a5b013446914265" upstream="sel4" dest-branch="sel4"/>
   <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
   <project name="noto-fonts" path="projects/noto-fonts" remote="notofonts" revision="ffebf8c1ee449e544955a7e813c54f9b73848eac"/>
   <project name="opensbi" path="tools/opensbi" remote="opensbi" revision="234ed8e427f4d92903123199f6590d144e0d9351"/>
