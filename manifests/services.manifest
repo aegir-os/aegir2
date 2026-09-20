@@ -251,9 +251,6 @@ authority = system
 account   = boot
 maps      = true
 memory_kib = 4096
-# libc++'s hash-table code is always-inlined and needs a large frame; this is
-# sized for the heaviest check, not for a real application's stack.
-stack_kib  = 64
 restart   = never
 
 # The first session (specs/auth.md). Nothing starts it at boot -- auth

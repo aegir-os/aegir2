@@ -1,0 +1,20 @@
+From: Aegir <dev@aegir.invalid>
+Subject: [PATCH] libcxx: initialize __chash for GCC's flow analysis
+
+GCC's -Wmaybe-uninitialized cannot see that __chash is assigned in the block
+below the call to __rehash_unique, so at -O1 and above it refuses the file
+under -Werror and the hosted userland cannot be optimized. Initializing it
+silences a false positive by making the code explicit; upstream does the same.
+
+diff --git a/libcxx/include/__hash_table b/libcxx/include/__hash_table
+--- a/libcxx/include/__hash_table
++++ b/libcxx/include/__hash_table
+@@ -1478,7 +1478,7 @@
+   size_type __bc  = bucket_count();
+   bool __inserted = false;
+   __next_pointer __nd;
+-  size_t __chash;
++  size_t __chash = 0;
+   if (__bc != 0) {
+     __chash = std::__constrain_hash(__hash, __bc);
+     __nd    = __bucket_list_[__chash];

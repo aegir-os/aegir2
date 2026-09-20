@@ -109,11 +109,22 @@ if(AEGIR_HOSTED_CXX)
   # unusable __remove_pointer builtin (see scripts/build_libcxx.sh). The policy
   # links the full musl and libc++ because choosing the hosted runtime *is* the
   # policy's job.
+  #
+  # -O2 is not optional here. libc++'s containers are always-inline, and at -O0
+  # GCC gives every inlined call its own stack slots and never reuses them: one
+  # unordered_map insertion made a 33 KiB frame and overflowed a service's
+  # stack. Optimized, the same function is a few hundred bytes. This is what
+  # Linux and BSD do -- their packages and their libc++ are built -O2 -- and it
+  # is why the frame problem does not exist there. GCC at -O1+ trips a
+  # -Wmaybe-uninitialized false positive in libc++'s __hash_table, fixed by the
+  # tracked patch third_party/patches/projects/llvm-project (see
+  # scripts/build_libcxx.sh); -O0 would avoid the warning but keep the frame.
   add_library(aegir-cxx-policy-hosted INTERFACE)
   target_compile_features(aegir-cxx-policy-hosted INTERFACE cxx_std_17)
   target_compile_options(
     aegir-cxx-policy-hosted
     INTERFACE
+      -O2
       -fno-exceptions
       -fno-rtti
       -fno-threadsafe-statics

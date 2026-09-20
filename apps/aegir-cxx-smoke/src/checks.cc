@@ -8,10 +8,11 @@
  * (see checks.h): libsel4 declares `strcpy` with C++ linkage and musl's
  * <string.h>, which libc++ pulls in, declares it with C linkage.
  *
- * Each check is its own noinline function on purpose. Inlined into one `run()`,
- * the standard library's templates made a single 36 KiB stack frame -- far more
- * than the containers themselves need -- so the process overflowed the stack
- * the spawner gave it. One function per check keeps every frame small.
+ * Each check is its own function for clarity. The stack-frame problem they
+ * once papered over is fixed in the hosted policy: -O2 lets the compiler reuse
+ * stack slots across libc++'s always-inline code, where -O0 gave one
+ * unordered_map insertion a 33 KiB frame (see aegir-cxx-policy-hosted in the
+ * top-level CMakeLists.txt).
  */
 
 #include "checks.h"
@@ -40,7 +41,7 @@ void report(bool ok, char const *what)
 }
 
 /* Raw malloc/free: this is musl's own path, before any container. */
-[[gnu::noinline]] void check_malloc()
+void check_malloc()
 {
     void *raw = std::malloc(4096);
     report(raw != nullptr, "malloc returns memory");
@@ -59,7 +60,7 @@ void report(bool ok, char const *what)
 }
 
 /* std::string: growth reallocation, so free and malloc both run. */
-[[gnu::noinline]] void check_string()
+void check_string()
 {
     std::string text = "aegir";
     for (int i = 0; i < 200; ++i) {
@@ -70,7 +71,7 @@ void report(bool ok, char const *what)
 }
 
 /* std::vector: element construction and a growth sequence. */
-[[gnu::noinline]] void check_vector()
+void check_vector()
 {
     std::vector<int> values;
     for (int i = 0; i < 4000; ++i) {
@@ -81,7 +82,7 @@ void report(bool ok, char const *what)
 }
 
 /* std::unordered_map: node allocation, hashing, and lookup. */
-[[gnu::noinline]] void check_map()
+void check_map()
 {
     std::unordered_map<std::string, int> counts;
     counts["one"] = 1;
@@ -93,7 +94,7 @@ void report(bool ok, char const *what)
 
 /* Free and reallocate the same size: mallocng's groups should hand the chunk
  * back, which is what makes this heap freeing rather than a bump. */
-[[gnu::noinline]] void check_reuse()
+void check_reuse()
 {
     void *first = std::malloc(256);
     std::free(first);

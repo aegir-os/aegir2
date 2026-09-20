@@ -24,16 +24,38 @@ from pathlib import Path
 import pins
 
 
-def is_applied(repository: Path, patch: Path) -> bool:
-    """True if the tree already contains this patch."""
+def is_applied(component: str, patch: Path) -> bool:
+    """True if the tree already contains this patch.
+
+    The patch is applied from the Aegir root with `--directory=<component>`,
+    not from inside the vendored tree. A component that is not its own git
+    repository (a tree extracted without its repo-tool gitdir, say) would
+    otherwise make `git apply` walk up to Aegir's repository and silently do
+    nothing; applying from a repository we know is real, with the component as
+    a prefix, is the same edit either way and never no-ops.
+    """
     return (
-        pins.git(repository, "apply", "--reverse", "--check", str(patch), check=False).returncode
+        pins.git(
+            pins.ROOT,
+            "apply",
+            "--directory",
+            component,
+            "--reverse",
+            "--check",
+            str(patch),
+            check=False,
+        ).returncode
         == 0
     )
 
 
-def applies_cleanly(repository: Path, patch: Path) -> bool:
-    return pins.git(repository, "apply", "--check", str(patch), check=False).returncode == 0
+def applies_cleanly(component: str, patch: Path) -> bool:
+    return (
+        pins.git(
+            pins.ROOT, "apply", "--directory", component, "--check", str(patch), check=False
+        ).returncode
+        == 0
+    )
 
 
 def apply_all(check_only: bool) -> int:
@@ -50,14 +72,14 @@ def apply_all(check_only: bool) -> int:
             pins.report(False, f"{relative} targets a missing project", component)
             failures += 1
             continue
-        if is_applied(repository, patch):
+        if is_applied(component, patch):
             pins.report(True, f"{relative} already applied")
             continue
         if check_only:
             pins.report(False, f"{relative} is NOT applied", "run: make deps")
             failures += 1
             continue
-        if not applies_cleanly(repository, patch):
+        if not applies_cleanly(component, patch):
             pins.report(
                 False,
                 f"{relative} does not apply to {component}",
@@ -65,7 +87,7 @@ def apply_all(check_only: bool) -> int:
             )
             failures += 1
             continue
-        pins.git(repository, "apply", str(patch))
+        pins.git(pins.ROOT, "apply", "--directory", component, str(patch))
         pins.report(True, f"applied {relative}", component)
 
     return 1 if failures else 0
