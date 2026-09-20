@@ -240,11 +240,8 @@ std::unique_ptr<Font> Application::load_font(std::string_view family, int size_p
 }
 
 std::unique_ptr<Font> Application::load_builtin_font(std::string_view name, int size_pts) {
-    static_cast<void>(size_pts);  // font resources are a later milestone
     if (name == "Terminus") {
-        // TODO: Load from resources/fonts/terminus/
-        // For now, return null - will be implemented when font loading works
-        return nullptr;
+        return Font::load_terminus(size_pts, display_info_.scale);
     }
     return nullptr;
 }
