@@ -224,8 +224,14 @@ void Window::dispatch_pointer(uint64_t event) {
     int const bar = titlebar_height();
     if (button == 0) {
         if (dragging_) {
-            int const nx = rect_.x + pos.x - drag_offset_x_;
-            int const ny = rect_.y + pos.y - drag_offset_y_;
+            /* The console sends the pointer's *screen* position during a grab
+             * (specs/window-manager.md): the frame's origin is that minus
+             * where the pointer sat in the frame when the drag began. Using
+             * the window's own origin here was the "throw", because a queued
+             * event's coordinates are relative to where the window was when
+             * the console delivered it, not where it is now. */
+            int const nx = pos.x - drag_offset_x_;
+            int const ny = pos.y - drag_offset_y_ + bar;
             if (nx != rect_.x || ny != rect_.y) {
                 Rect const moved{nx, ny, rect_.width, rect_.height};
                 Rect const frame = frame_for(moved);
@@ -241,8 +247,11 @@ void Window::dispatch_pointer(uint64_t event) {
         } else if (resizing_) {
             int const min_w = min_size_.width > 0 ? min_size_.width : 1;
             int const min_h = min_size_.height > 0 ? min_size_.height : 1;
-            int const wanted_w = rect_.width + (pos.x - resize_offset_x_);
-            int const wanted_h = rect_.height + (pos.y - resize_offset_y_);
+            /* The pointer's screen delta from where the resize began, added
+             * to the size it began at: absolute, so a queued motion reads
+             * against a fixed origin. */
+            int const wanted_w = resize_start_width_ + (pos.x - resize_origin_x_);
+            int const wanted_h = resize_start_height_ + (pos.y - resize_origin_y_);
             int const w = wanted_w < min_w ? min_w : wanted_w;
             int const h = wanted_h < min_h ? min_h : wanted_h;
             if (w != rect_.width || h != rect_.height) {
@@ -254,8 +263,6 @@ void Window::dispatch_pointer(uint64_t event) {
                                            static_cast<uint64_t>(frame.height))) {
                     rect_.width = w;
                     rect_.height = h;
-                    resize_offset_x_ = pos.x;
-                    resize_offset_y_ = pos.y;
                     if (content_) content_->set_rect({0, 0, w, h});
                     if (on_moved_resized) on_moved_resized(rect_);
                     repaint();
@@ -312,8 +319,12 @@ void Window::dispatch_pointer(uint64_t event) {
     if (decorated_ && pos.x >= rect_.width - kResizeGrip &&
         pos.y >= bar + rect_.height - kResizeGrip) {
         resizing_ = true;
-        resize_offset_x_ = pos.x;
-        resize_offset_y_ = pos.y;
+        /* The pointer's screen position: the down is window-local, and the
+         * frame's origin is (rect_.x, rect_.y - bar). */
+        resize_origin_x_ = rect_.x + pos.x;
+        resize_origin_y_ = rect_.y - bar + pos.y;
+        resize_start_width_ = rect_.width;
+        resize_start_height_ = rect_.height;
         (void)aegir::console::raise(app_.gui_port(), console_window_id_);
         return;
     }

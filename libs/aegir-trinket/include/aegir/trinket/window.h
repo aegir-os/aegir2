@@ -119,8 +119,10 @@ private:
     int drag_offset_x_ = 0;
     int drag_offset_y_ = 0;
     bool resizing_ = false;
-    int resize_offset_x_ = 0;
-    int resize_offset_y_ = 0;
+    int resize_origin_x_ = 0;  // the pointer's screen position when the resize began
+    int resize_origin_y_ = 0;
+    int resize_start_width_ = 0;
+    int resize_start_height_ = 0;
 
     // Bureau window IDs
     uint64_t console_window_id_ = 0;

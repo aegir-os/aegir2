@@ -111,8 +111,11 @@ The vocabulary is console's (`libs/aegir-console`), three kinds to start:
   to character is a property of the system's HID layer, not of every client
   that takes text. Unmapped codes carry a zero character.
 - **pointer** — motion and buttons, in **window-local coordinates**,
-  delivered to the window under the cursor, and to the grab-held window for
-  the length of a drag.
+  delivered to the window under the cursor; and, for the length of a drag, to
+  the grab-held window in **screen coordinates**, because a window the drag
+  is moving has no stable frame to be local to (an event queued while the
+  window was elsewhere reads against the wrong origin, which is what an
+  overshooting "thrown" drag was).
 - **focus** — in and out. What a text field listens for.
 
 ## Focus and the pointer

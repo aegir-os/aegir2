@@ -40,10 +40,14 @@ this arc.
   deliberate act, not a side effect of focus.
 - **Dragging is the toolkit's.** The console already grabs the pointer for the
   length of a button-down and delivers motion to the window holding the grab,
-  window-local (`apps/aegir-console`). The toolkit begins a drag on a
+  frame-local for an ordinary window but in **screen coordinates for the grab
+  holder** (`apps/aegir-console`): a window the drag is itself moving has no
+  stable frame, so an event queued while it was elsewhere would read against
+  the wrong origin — the "thrown" drag. The toolkit begins a drag on a
   titlebar-down, raises, and on each motion computes the frame's new position
-  and calls `move`; the up ends the drag. Nothing in the console changes for
-  this — the grab and the motion are already there.
+  from the pointer's screen position and the offset where the drag began; the
+  up ends the drag. Nothing in the console's grab changes for this — only the
+  coordinates it carries.
 - **Resizing is a grip and a `resize`.** A decorated window carries a grip
   in its bottom-right corner; a drag there changes the window's size, and the
   console gains `resize` (in the id and the new width and height,

@@ -280,10 +280,18 @@ void pointer_moved(uint64_t old_x, uint64_t old_y) noexcept
     Window *const target =
         g_grab != nullptr ? g_grab : window_at(g_pointer_x, g_pointer_y);
     if (target != nullptr) {
-        deliver(target->owner, aegir::console::kEventPointer, 0,
-                static_cast<uint32_t>((g_pointer_x - target->x) |
-                                      ((g_pointer_y - target->y) << 16)),
-                target->id);
+        /* During a grab the window itself is moving, so window-local
+         * coordinates have no stable frame: an event queued while the window
+         * was somewhere else reads against the wrong origin, and a drag that
+         * used it overshot ("threw") the window. The grab holder is sent the
+         * pointer's *screen* position instead; an ungrab is window-local, as
+         * it always was (specs/window-manager.md). */
+        uint32_t const where =
+            g_grab != nullptr
+                ? static_cast<uint32_t>(g_pointer_x | (g_pointer_y << 16))
+                : static_cast<uint32_t>((g_pointer_x - target->x) |
+                                        ((g_pointer_y - target->y) << 16));
+        deliver(target->owner, aegir::console::kEventPointer, 0, where, target->id);
     }
 }
 
