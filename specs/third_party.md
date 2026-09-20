@@ -47,9 +47,11 @@ musl is the case that forced this: its official git server serves `git://`
 than a git remote, so `repo` cannot fetch it. The official release tarball is
 also the canonical artifact, so the pin is stronger for it — a content hash and
 a signature, not a mirror's commit. The signing key is committed at
-`manifests/musl-signing-key.asc` and used through a throwaway keyring, so the
-host's keyring is neither read nor written; `gpg` is therefore a host
-prerequisite (see `specs/build.md`).
+`manifests/musl-signing-key.asc`; verification dearmors it here and hands the
+result to `gpgv`, the standalone verifier, which takes a keyring file directly
+and never reads the host's keyring, trust database or keyboxd (`gpg`'s
+`--keyring` is silently ignored when a host runs keyboxd, which is why `gpg` is
+not used). `gpgv` is therefore the host prerequisite (see `specs/build.md`).
 
 ### Sources of truth
 

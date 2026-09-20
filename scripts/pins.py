@@ -7,6 +7,7 @@ on a bare host with nothing but python3.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -180,44 +181,54 @@ def load_sources() -> list[dict[str, Any]]:
     return sources
 
 
+def dearmor(text: str) -> bytes:
+    """Decode an ASCII-armored OpenPGP block to the binary form gpgv reads.
+
+    gpgv takes a binary keyring and not an armored key, and gpg's own
+    --dearmor can be disturbed by a host's keyboxd configuration, so the decode
+    is done here: strip the armor header, base64-decode the body, and drop the
+    CRC line. The signature check is what proves the key, so the armor's own
+    CRC is not re-checked.
+    """
+    body: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("-----BEGIN "):
+            inside = True
+            continue
+        if line.startswith("-----END "):
+            break
+        if not inside or not line or line.startswith("="):
+            continue
+        body.append(line.strip())
+    if not body:
+        raise PinError("no ASCII-armored OpenPGP block found")
+    return base64.b64decode("".join(body))
+
+
 def verify_signature(archive: Path, signature: Path, key_file: Path, fingerprint: str) -> None:
     """Verify `archive` against a detached signature with a pinned key.
 
-    A throwaway keyring is built from `key_file`, so the host's keyring and
-    trust database are neither read nor written. `fingerprint` is the full
-    fingerprint (no spaces) gpg reports for the signing key, and a signature
-    by any other key is a failure even when gpg calls it good.
+    `gpgv` is used rather than `gpg`: it is the standalone verifier, takes a
+    keyring file directly, and never reads the host's keyring, trust database
+    or keyboxd -- the `--keyring` option of `gpg` is silently ignored when a
+    host runs keyboxd, which is what made verification fail on some machines.
+    The key is dearmored here, so `gpg` is not needed at all. `fingerprint` is
+    the full fingerprint (no spaces); a signature by any other key is a failure
+    even when gpgv calls it good.
     """
-    if shutil.which("gpg") is None:
-        raise PinError("gpg is required to verify a source's release signature")
+    if shutil.which("gpgv") is None:
+        raise PinError("gpgv is required to verify a source's release signature")
     with tempfile.TemporaryDirectory() as scratch:
         keyring = Path(scratch) / "keyring.gpg"
-        imported = subprocess.run(
-            [
-                "gpg",
-                "--batch",
-                "--no-default-keyring",
-                "--keyring",
-                str(keyring),
-                "--import",
-                str(key_file),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if imported.returncode != 0:
-            raise PinError(f"cannot import signing key {key_file}: {imported.stderr.strip()}")
+        keyring.write_bytes(dearmor(key_file.read_text(encoding="ascii")))
         verified = subprocess.run(
             [
-                "gpg",
-                "--batch",
-                "--no-default-keyring",
+                "gpgv",
                 "--keyring",
                 str(keyring),
                 "--status-fd",
                 "1",
-                "--verify",
                 str(signature),
                 str(archive),
             ],
