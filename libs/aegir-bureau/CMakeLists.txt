@@ -14,9 +14,10 @@ add_library(aegir-bureau-lib STATIC
 
 target_include_directories(aegir-bureau-lib PUBLIC include)
 
-# Dependencies: Trinket, console, trinket's hosted policy
+# Dependencies: Trinket, the console protocol, and the runtime's debug console.
 target_link_libraries(aegir-bureau-lib PUBLIC
     aegir-trinket
-    console
+    aegir-console-protocol
+    aegir-runtime
     aegir-cxx-policy-hosted
 )

@@ -6,14 +6,9 @@
 
 namespace aegir::classes {
 
-Registry& Registry::instance() {
-    static Registry instance;
-    return instance;
-}
-
 void Registry::register_class(std::unique_ptr<Class> cls) {
     if (cls) {
-        classes_[cls->name_] = std::move(cls);
+        classes_[cls->name()] = std::move(cls);
     }
 }
 

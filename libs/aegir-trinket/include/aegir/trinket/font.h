@@ -11,11 +11,14 @@
 #ifndef AEGIR_TRINKET_FONT_H
 #define AEGIR_TRINKET_FONT_H
 
+#include <aegir/trinket/bidi.h>
 #include <aegir/trinket/color.h>
+#include <aegir/trinket/locale.h>
 #include <aegir/trinket/point.h>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace aegir::trinket {

@@ -71,9 +71,9 @@ struct Color {
         uint8_t a = src.a + ((255 - src.a) * dst.a) / 255;
         if (a == 0) return {0, 0, 0, 0};
         return {
-            static_cast<uint8_t>((src.r * 255 + dst.r * (255 - src.a)) / 255 * 255 / a + 127) / 255,
-            static_cast<uint8_t>((src.g * 255 + dst.g * (255 - src.a)) / 255 * 255 / a + 127) / 255,
-            static_cast<uint8_t>((src.b * 255 + dst.b * (255 - src.a)) / 255 * 255 / a + 127) / 255,
+            static_cast<uint8_t>(((src.r * 255 + dst.r * (255 - src.a)) / 255 * 255 / a + 127) / 255),
+            static_cast<uint8_t>(((src.g * 255 + dst.g * (255 - src.a)) / 255 * 255 / a + 127) / 255),
+            static_cast<uint8_t>(((src.b * 255 + dst.b * (255 - src.a)) / 255 * 255 / a + 127) / 255),
             a
         };
     }
@@ -89,20 +89,36 @@ struct Color {
         };
     }
 
-    // Common colors (opaque, non-premultiplied for readability)
-    static constexpr Color TRANSPARENT = {0, 0, 0, 0};
-    static constexpr Color BLACK       = {0, 0, 0, 255};
-    static constexpr Color WHITE       = {255, 255, 255, 255};
-    static constexpr Color RED         = {255, 0, 0, 255};
-    static constexpr Color GREEN       = {0, 255, 0, 255};
-    static constexpr Color BLUE        = {0, 0, 255, 255};
-    static constexpr Color YELLOW      = {255, 255, 0, 255};
-    static constexpr Color CYAN        = {0, 255, 255, 255};
-    static constexpr Color MAGENTA     = {255, 0, 255, 255};
-    static constexpr Color GRAY        = {128, 128, 128, 255};
-    static constexpr Color DARK_GRAY   = {64, 64, 64, 255};
-    static constexpr Color LIGHT_GRAY  = {192, 192, 192, 255};
+    // Common colors (opaque, non-premultiplied for readability). Declared
+    // here and defined below the class: a static constexpr member of the
+    // enclosing class type cannot carry its initializer inside the body, where
+    // the type is still incomplete.
+    static const Color TRANSPARENT;
+    static const Color BLACK;
+    static const Color WHITE;
+    static const Color RED;
+    static const Color GREEN;
+    static const Color BLUE;
+    static const Color YELLOW;
+    static const Color CYAN;
+    static const Color MAGENTA;
+    static const Color GRAY;
+    static const Color DARK_GRAY;
+    static const Color LIGHT_GRAY;
 };
+
+constexpr Color Color::TRANSPARENT{0, 0, 0, 0};
+constexpr Color Color::BLACK{0, 0, 0, 255};
+constexpr Color Color::WHITE{255, 255, 255, 255};
+constexpr Color Color::RED{255, 0, 0, 255};
+constexpr Color Color::GREEN{0, 255, 0, 255};
+constexpr Color Color::BLUE{0, 0, 255, 255};
+constexpr Color Color::YELLOW{255, 255, 0, 255};
+constexpr Color Color::CYAN{0, 255, 255, 255};
+constexpr Color Color::MAGENTA{255, 0, 255, 255};
+constexpr Color Color::GRAY{128, 128, 128, 255};
+constexpr Color Color::DARK_GRAY{64, 64, 64, 255};
+constexpr Color Color::LIGHT_GRAY{192, 192, 192, 255};
 
 } // namespace aegir::trinket
 

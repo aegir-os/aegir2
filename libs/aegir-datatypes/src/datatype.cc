@@ -55,12 +55,8 @@ int64_t FileStream::size() {
 }
 
 // MemoryStream
-MemoryStream::MemoryStream() = default;
-
 MemoryStream::MemoryStream(std::vector<uint8_t>&& data)
     : data_(std::move(data)) {}
-
-MemoryStream::~MemoryStream() = default;
 
 bool MemoryStream::read(void* buffer, size_t size, size_t& bytes_read) {
     if (pos_ >= data_.size()) { bytes_read = 0; return false; }

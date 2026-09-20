@@ -23,17 +23,13 @@ struct WorkerPool::ThreadData {
 
 WorkerPool::WorkerPool(int num_threads)
     : num_threads_(std::max(1, num_threads)) {
-    threads_.resize(num_threads_);
-
-    // Create seL4 TCBs for each worker thread
-    // Note: In a real implementation, we'd use seL4 primitives
-    // For now, use std::thread as a placeholder
-
-    for (int i = 0; i < num_threads_; ++i) {
-        threads_[i] = std::make_unique<ThreadData>();
-        threads_[i]->pool = this;
-        threads_[i]->std_thread = std::thread(&WorkerPool::run_loop, this);
-    }
+    /* The pool's shape is here, the threads are not: starting one needs a
+     * working clone, which the hosted syscall shim does not answer yet, and
+     * std::thread's constructor would abort with exceptions off
+     * (specs/cxx.md's threading milestone). Keeping the constructor from
+     * spawning means an Application can be built; nothing in tier 1 submits
+     * work. */
+    threads_.clear();
 }
 
 WorkerPool::~WorkerPool() {

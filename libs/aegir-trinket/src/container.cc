@@ -2,7 +2,7 @@
  * Trinket Container implementation.
  */
 
-#include <aegir/trinket/container.h>
+#include <aegir/trinket/widget.h>
 
 namespace aegir::trinket {
 

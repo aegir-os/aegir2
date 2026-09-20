@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace aegir::classes {
 
@@ -86,8 +88,13 @@ public:
     Object() = default;
     virtual ~Object() = default;
 
-    // Dispatcher - called by class system
-    virtual uintptr_t dispatch(Message* msg) = 0;
+    // Dispatcher - called by class system. The default answers nothing, so the
+    // base is concrete and Class::create can make one; a real class overrides
+    // it through its Dispatcher.
+    virtual uintptr_t dispatch(Message* msg) {
+        static_cast<void>(msg);
+        return 0;
+    }
 
     // Helper methods
     template<typename T>
