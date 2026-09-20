@@ -44,38 +44,58 @@ this arc.
   titlebar-down, raises, and on each motion computes the frame's new position
   and calls `move`; the up ends the drag. Nothing in the console changes for
   this — the grab and the motion are already there.
-- **Resizing, depth gadgets, close/zoom gadgets, and the WM server are
-  deferred.** A resize needs a grip and a console `resize`; depth gadgets need
-  raise and lower as user acts; a `bureau.wm` server is policy the console
-  does not need yet. Each arrives with the client that asks.
+- **Resizing is a grip and a `resize`.** A decorated window carries a grip
+  in its bottom-right corner; a drag there changes the window's size, and the
+  console gains `resize` (in the id and the new width and height,
+  clip-checked like `move`, the old and new rectangles composited). The
+  content keeps its coordinate space: the grip is frame-local, the resize
+  changes the frame, and the window re-lays-out its content at the new size.
+  - **The backing is reserved at the screen-bounded maximum.** `attach`
+    carves one slice per badge and a second is refused, so the slice cannot
+    grow at run time. `Application` already sizes it from the visible
+    windows; a resizable window therefore asks for its *maximum* backing —
+    the screen's size, the largest frame the console will accept — and a
+    resize stays inside it. It is arena memory spent for headroom, and the
+    alternative (a resize that outgrows its backing) is a window that cannot
+    grow.
+- **Depth gadgets, close/zoom gadgets, and the WM server are deferred.** A
+  depth gadget wants `lower` and a TaskX-style list; close and zoom want the
+  client's own protocol; a `bureau.wm` server is policy the console does not
+  need yet. Each arrives with the client that asks.
 
 ## The shape
 
-### `console.gui`'s `move` and `raise`
+### `console.gui`'s `move`, `raise` and `resize`
 
-`kMethodMove = 9` (id, x, y) and `kMethodRaise = 10` (id), after `info`.
-`aegir::console::move(gui, id, x, y)` and `aegir::console::raise(gui, id)` are
-the client walks. A move whose frame would fall off the screen is refused
-(the same clip-check `create_window` makes); a raise of a backdrop is
-refused.
+`kMethodMove = 9` (id, x, y) and `kMethodRaise = 10` (id), after `info`;
+`kMethodResize = 11` (id, width, height), after them.
+`aegir::console::move(gui, id, x, y)`, `aegir::console::raise(gui, id)` and
+`aegir::console::resize(gui, id, w, h)` are the client walks. A move or a
+resize whose frame would fall off the screen, or a resize past the client's
+slice, is refused (the same clip-check `create_window` makes); a raise of a
+backdrop is refused.
 
 ### The toolkit's decorated `Window`
 
 `Window` with `decorated_` (the default) draws its frame into the backing:
 the theme's `TITLEBAR_BG`/`TITLEBAR_TEXT` strip at the top, the title text
 from `set_title` (the active colour while focused), and the theme's
-`draw_window_frame` around the whole rectangle. The content is painted below
-the titlebar: the content root's rectangle is `{0, titlebar_height, width,
-height}` in frame-local coordinates, so every widget rect stays frame-local
-and the hit test descends unchanged.
+`draw_window_frame` around the whole rectangle. The content is painted
+through a canvas offset by the titlebar, so the content keeps its own
+coordinate space: the content root's rectangle is `{0, 0, width, height}`
+and the widgets never hear about the titlebar. Pointer coordinates are
+translated the same way before the hit test.
 
-`backing_bytes()` is the frame's: `width * (height + titlebar_height) * 4`. A
-client sets its content rectangle as before; `set_rect` moves the frame,
-fires `on_moved_resized`, and repaints. `set_title` repaints.
+`backing_bytes()` is the screen-bounded maximum of the frame — the largest a
+resize may reach. A client sets its content rectangle as before; `set_rect`
+moves the frame, fires `on_moved_resized`, and repaints. `set_title`
+repaints.
 
 A pointer-down in the titlebar begins a drag and raises; motion moves the
-window through `console::move`; the up ends it. A pointer-down in the content
-is the widgets', as before.
+window through `console::move`. A pointer-down in the bottom-right grip
+begins a resize; motion resizes through `console::resize`, bounded by
+`min_size_` and the screen. The up ends either gesture. A pointer-down
+anywhere else in the content is the widgets', as before.
 
 ### The clients
 
@@ -85,10 +105,10 @@ and so has no titlebar — the Amiga screen is not a window with a frame.
 
 ## What this is not
 
-Resizing and resize grips; depth gadgets and explicit lower; close, zoom and
-roll-up gadgets; a window list or TaskX; the `bureau.wm` server and the
-`bureau.menu` server (`specs/trinket.md`'s `MenuBar`); themed decorations
-beyond the XEN titlebar the theme already carries. Each is its own arc.
+Depth gadgets and explicit lower; close, zoom and roll-up gadgets; a window
+list or TaskX; the `bureau.wm` server and the `bureau.menu` server
+(`specs/trinket.md`'s `MenuBar`); themed decorations beyond the XEN titlebar
+the theme already carries. Each is its own arc.
 
 ## Acceptance
 
@@ -98,9 +118,14 @@ check: its background (`TITLEBAR_BG`) and its title text where the titlebar
 stands. The client-side frame is what those pixels prove: the toolkit drew a
 titlebar into its own backing and derived the frame the console composites.
 
-The move, raise and drag are read in the source and exercised at the keyboard
-(`make run-ui`): the automated drag lands with the WM's own test client, and
-deliberately not here, because a drag moves the very window the login is
+The test bed exercises `move` and `resize` end to end, where the console's
+window protocol already lives: the red window to the top-left, read back
+there with the backdrop repainted where it stood, and then resized, read
+back at its new rectangle with the uncovered strip repainted.
+
+The drag and the grip are read in the source and exercised at the keyboard
+(`make run-ui`): their automated test lands with the WM's own test client,
+and deliberately not here, because a drag moves the very window the login is
 paced against and would make this arc's acceptance depend on the next one's.
-The console's grab and window-local motion, which the drag rides on, are the
-console's and exercised since its arc.
+The console's grab and window-local motion, which both gestures ride on, are
+the console's and exercised since its arc.

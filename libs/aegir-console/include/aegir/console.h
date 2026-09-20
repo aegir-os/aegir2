@@ -99,6 +99,12 @@ constexpr uint32_t kMethodMove = 9;
  *  is composited. The answer is empty. */
 constexpr uint32_t kMethodRaise = 10;
 
+/** Resize: in the window's id and its new width and height. The rectangle
+ *  is clip-checked the way create_window's is -- off the screen, or past
+ *  the client's own slice, is refused. The old and new rectangles are
+ *  composited (specs/window-manager.md). The answer is empty. */
+constexpr uint32_t kMethodResize = 11;
+
 /* The event channel. The ring is the slice's last 4 KiB page: the console
  * mapped the whole slice when it carved it, so appending is writing memory
  * it already has, and the client maps the page with the rest. Word 0 is
@@ -244,6 +250,16 @@ inline bool move(aegir::ipc::Consumer const &gui, uint64_t window, uint64_t x,
 inline bool raise(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
 {
     aegir::ipc::Reply const answer = gui.call(kMethodRaise, window);
+    return answer.error == 0;
+}
+
+/** Resize a window to width x height. False when refused. */
+inline bool resize(aegir::ipc::Consumer const &gui, uint64_t window,
+                   uint64_t width, uint64_t height) noexcept
+{
+    uint64_t out[3] = {window, width, height};
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer = gui.call_words(kMethodResize, out, 3, in, 1);
     return answer.error == 0;
 }
 

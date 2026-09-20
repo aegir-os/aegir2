@@ -18,6 +18,10 @@ namespace aegir::trinket {
 
 namespace {
 
+/* The resize grip's size, frame-local, in the bottom-right corner of the
+ * content (specs/window-manager.md). */
+constexpr int kResizeGrip = 16;
+
 /* The topmost widget under `p`, window-local. Rects are window-absolute (the
  * layouts place children against the container's own rect), so the same point
  * descends the tree unchanged. */
@@ -203,11 +207,11 @@ void Window::dispatch_pointer(uint64_t event) {
     Point const pos{static_cast<int>(value & 0xffff),
                     static_cast<int>((value >> 16) & 0xffff)};
 
-    /* Motion carries no button. During a drag it moves the frame: the
-     * console delivers motion to the grab holder window-local, and the
-     * pointer's screen position is the frame's origin plus that. */
+    /* Motion carries no button. During a gesture it moves or resizes the
+     * frame: the console delivers motion to the grab holder frame-local. */
     uint16_t const button =
         static_cast<uint16_t>(code & ~aegir::console::kButtonRelease);
+    int const bar = titlebar_height();
     if (button == 0) {
         if (dragging_) {
             int const nx = rect_.x + pos.x - drag_offset_x_;
@@ -224,6 +228,29 @@ void Window::dispatch_pointer(uint64_t event) {
                     if (on_moved_resized) on_moved_resized(moved);
                 }
             }
+        } else if (resizing_) {
+            int const min_w = min_size_.width > 0 ? min_size_.width : 1;
+            int const min_h = min_size_.height > 0 ? min_size_.height : 1;
+            int const wanted_w = rect_.width + (pos.x - resize_offset_x_);
+            int const wanted_h = rect_.height + (pos.y - resize_offset_y_);
+            int const w = wanted_w < min_w ? min_w : wanted_w;
+            int const h = wanted_h < min_h ? min_h : wanted_h;
+            if (w != rect_.width || h != rect_.height) {
+                Rect const resized{rect_.x, rect_.y, w, h};
+                Rect const frame = frame_for(resized);
+                /* Off the screen is refused; the window stops growing. */
+                if (aegir::console::resize(app_.gui_port(), console_window_id_,
+                                           static_cast<uint64_t>(frame.width),
+                                           static_cast<uint64_t>(frame.height))) {
+                    rect_.width = w;
+                    rect_.height = h;
+                    resize_offset_x_ = pos.x;
+                    resize_offset_y_ = pos.y;
+                    if (content_) content_->set_rect({0, 0, w, h});
+                    if (on_moved_resized) on_moved_resized(rect_);
+                    repaint();
+                }
+            }
         }
         return;
     }
@@ -231,7 +258,6 @@ void Window::dispatch_pointer(uint64_t event) {
     bool const up = (code & aegir::console::kButtonRelease) != 0;
     /* The console's coordinates are frame-local; the content starts below the
      * titlebar, so widget dispatch works in the content's own space. */
-    int const bar = titlebar_height();
     Point const content_pos{pos.x, pos.y - bar};
     MouseEvent mouse;
     mouse.pos = content_pos;
@@ -246,8 +272,9 @@ void Window::dispatch_pointer(uint64_t event) {
     }
 
     if (up) {
-        if (dragging_) {
+        if (dragging_ || resizing_) {
             dragging_ = false;
+            resizing_ = false;
             return;
         }
         Widget* const target = hit_test(content_.get(), content_pos);
@@ -261,6 +288,16 @@ void Window::dispatch_pointer(uint64_t event) {
         dragging_ = true;
         drag_offset_x_ = pos.x;
         drag_offset_y_ = pos.y;
+        (void)aegir::console::raise(app_.gui_port(), console_window_id_);
+        return;
+    }
+
+    /* The bottom-right grip begins a resize. */
+    if (decorated_ && pos.x >= rect_.width - kResizeGrip &&
+        pos.y >= bar + rect_.height - kResizeGrip) {
+        resizing_ = true;
+        resize_offset_x_ = pos.x;
+        resize_offset_y_ = pos.y;
         (void)aegir::console::raise(app_.gui_port(), console_window_id_);
         return;
     }
@@ -281,7 +318,20 @@ Rect Window::frame_for(const Rect& content) const {
 }
 
 uint64_t Window::backing_bytes() const {
-    Rect const frame = frame_for(rect_);
+    /* The screen-bounded maximum: attach carves one slice per badge and a
+     * second is refused, so a resizable window reserves the largest frame the
+     * console will accept (specs/window-manager.md). */
+    int content_width = rect_.width;
+    int content_height = rect_.height;
+    DisplayInfo const& display = app_.display_info();
+    if (display.width_px > 0 && display.height_px > 0) {
+        content_width = static_cast<int>(display.width_px);
+        content_height = static_cast<int>(display.height_px) - titlebar_height();
+        if (content_height < 1) {
+            content_height = static_cast<int>(display.height_px);
+        }
+    }
+    Rect const frame = frame_for({0, 0, content_width, content_height});
     return static_cast<uint64_t>(frame.width) *
            static_cast<uint64_t>(frame.height) * 4ull;
 }

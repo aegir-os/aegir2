@@ -980,6 +980,34 @@ int main(int argc, char *argv[])
             *tail = window;
             repaint(window->x, window->y, window->width, window->height);
             gui.reply(0);
+        } else if (method == aegir::console::kMethodResize && length == 4) {
+            uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
+            uint64_t const width = static_cast<uint64_t>(seL4_GetMR(2));
+            uint64_t const height = static_cast<uint64_t>(seL4_GetMR(3));
+            Window *const window = find_window(id);
+            Slice const *slice =
+                window != nullptr ? find_slice(window->owner) : nullptr;
+            bool const fits =
+                window != nullptr && window->owner == badge && width != 0 &&
+                height != 0 && window->x + width <= g_width &&
+                window->y + height <= g_height &&
+                window->offset + width * height * 4 <=
+                    (slice != nullptr ? slice->frames << seL4_LargePageBits : 0);
+            if (!fits) {
+                gui.reply(0);
+                continue;
+            }
+            /* The origin does not move, so the union of the old and the new
+             * rectangle is just the larger of the two: the area the window
+             * grew into, or the strip it left if it shrank. */
+            uint64_t const old_width = window->width;
+            uint64_t const old_height = window->height;
+            window->width = width;
+            window->height = height;
+            uint64_t const widest = old_width > width ? old_width : width;
+            uint64_t const tallest = old_height > height ? old_height : height;
+            repaint(window->x, window->y, widest, tallest);
+            gui.reply(0);
         } else if (method == aegir::console::kMethodInfo && length == 1) {
             /* The screen's size, whatever mode the driver settled on: the
              * bureau sizes its backdrop from it (specs/bureau.md). */

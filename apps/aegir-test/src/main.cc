@@ -1287,6 +1287,12 @@ int main(int argc, char *argv[])
             ok = aegir::console::move(gui, second_window, 64, 64);
             write("  test: the red one moved -- the screen, please\n");
         }
+        if (ok) {
+            /* The resize (specs/window-manager.md): the red one shrinks, and
+             * the strip it leaves reads as backdrop. */
+            ok = aegir::console::resize(gui, second_window, 200, 150);
+            write("  test: the red one resized -- the screen, please\n");
+        }
         if (!ok) {
             write("  test: FAIL the console's window protocol did not hold\n");
             ++failed;

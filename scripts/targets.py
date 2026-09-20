@@ -283,6 +283,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 350, 450, 0, 85, 170),
                 ),
             ),
+            # The resize (specs/window-manager.md): the red one shrinks to
+            # 200x150 at (64,64), and the strips it leaves -- past its right
+            # and bottom edges -- read as backdrop.
+            QmpStep(
+                r"test: the red one resized -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 100, 100, 255, 0, 0),
+                    ("gpu0", 300, 100, 0, 85, 170),
+                    ("gpu0", 100, 300, 0, 85, 170),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+            ),
             # The boot marker ends the test bed's part, not the script's:
             # the runner holds until every step has played, and the login is
             # what remains. The click focuses the greeter's window; it lands
@@ -318,9 +332,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # Workbench grey, painted before the process halts -- the console
             # owns the slice, so the window stands as the session's visible
             # remainder. The samples keep clear of the red window
-            # (64..463 x, 64..363 y, where the move put it), which still
-            # stands above the backdrop, and of the cursor at (860,520); the
-            # corners are the backdrop's own, and prove it covers the screen.
+            # (64..263 x, 64..213 y, where the move and resize left it),
+            # which still stands above the backdrop, and of the cursor at
+            # (860,520); the corners are the backdrop's own, and prove it
+            # covers the screen.
             QmpStep(
                 r"bureau: the screen is yours",
                 dumps=("gpu0",),

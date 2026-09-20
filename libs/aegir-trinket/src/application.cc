@@ -120,6 +120,16 @@ Application* Application::instance() {
 bool Application::start_console() {
     if (!gui_port_.valid()) return false;
 
+    /* The screen's size is the bound a window's backing may reserve and a
+     * resize may reach, so it is asked before the slice is sized
+     * (specs/window-manager.md). */
+    uint64_t screen_width = 0;
+    uint64_t screen_height = 0;
+    if (aegir::console::info(gui_port_, &screen_width, &screen_height)) {
+        display_info_.width_px = screen_width;
+        display_info_.height_px = screen_height;
+    }
+
     /* The slice is sized from the windows: each backing is width * height * 4
      * (the console's B8G8R8X8), plus the event ring's page, rounded up to
      * whole megapages. A greeter's one window is one; a full-screen 1280x800

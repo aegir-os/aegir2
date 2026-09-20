@@ -108,11 +108,15 @@ private:
     // The widget within the content tree that keys go to.
     Widget* focused_ = nullptr;
 
-    // Console focus (the titlebar's active colour), and the titlebar drag.
+    // Console focus (the titlebar's active colour), and the titlebar drag and
+    // the resize grip.
     bool active_ = false;
     bool dragging_ = false;
     int drag_offset_x_ = 0;
     int drag_offset_y_ = 0;
+    bool resizing_ = false;
+    int resize_offset_x_ = 0;
+    int resize_offset_y_ = 0;
 
     // Bureau window IDs
     uint64_t console_window_id_ = 0;
