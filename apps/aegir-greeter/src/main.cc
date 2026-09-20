@@ -120,6 +120,7 @@ int main(int argc, char *argv[])
     Theme &theme = app.theme();
 
     Window window(app);
+    window.set_title("Aegir");
     window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
 
     auto panel = std::make_unique<Panel>(Panel::Style::FLAT);

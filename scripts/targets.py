@@ -129,9 +129,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the toolkit's XEN look up
-            # (specs/trinket.md): the Workbench-blue backdrop, the window's
-            # light grey, the white name field with its focused blue border,
-            # the black label text, and the button's grey. Then the form
+            # (specs/trinket.md, specs/window-manager.md): the
+            # Workbench-blue backdrop, the window's grey titlebar and its
+            # "Aegir" title (inactive -- the window is not focused until the
+            # click), the window's light grey, the white name field with its
+            # focused blue border, the black label text, and the button's
+            # grey. Then the form
             # STANDS through the test bed: the login is the run's last
             # business, played after the boot marker.
             QmpStep(
@@ -140,6 +143,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 0, 85, 170),
+                    ("gpu0", 410, 205, 224, 224, 224),
+                    ("gpu0", 408, 206, 0, 0, 0),
                     ("gpu0", 410, 230, 204, 204, 204),
                     ("gpu0", 500, 290, 255, 255, 255),
                     ("gpu0", 424, 288, 0, 120, 215),
@@ -263,6 +268,21 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 20000}},
                 ),
             ),
+            # The move (specs/window-manager.md): the red window to the
+            # top-left, clear of the greeter's window and of the login's
+            # click. The console repainted the vacated and the new
+            # rectangle, so the red reads at its new place and the backdrop
+            # where it stood.
+            QmpStep(
+                r"test: the red one moved -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 10, 10, 0, 85, 170),
+                    ("gpu0", 100, 100, 255, 0, 0),
+                    ("gpu0", 350, 450, 0, 85, 170),
+                ),
+            ),
             # The boot marker ends the test bed's part, not the script's:
             # the runner holds until every step has played, and the login is
             # what remains. The click focuses the greeter's window; it lands
@@ -298,9 +318,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # Workbench grey, painted before the process halts -- the console
             # owns the slice, so the window stands as the session's visible
             # remainder. The samples keep clear of the red window
-            # (300..699 x, 200..499 y), which still stands above the
-            # backdrop, and of the cursor at (860,520); the corners are the
-            # backdrop's own, and prove it covers the screen.
+            # (64..463 x, 64..363 y, where the move put it), which still
+            # stands above the backdrop, and of the cursor at (860,520); the
+            # corners are the backdrop's own, and prove it covers the screen.
             QmpStep(
                 r"bureau: the screen is yours",
                 dumps=("gpu0",),

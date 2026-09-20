@@ -1279,6 +1279,14 @@ int main(int argc, char *argv[])
             }
             ok = moved;
         }
+        if (ok) {
+            /* The move (specs/window-manager.md): the console repaints the
+             * union of the old and new rectangles, and the window reads at
+             * its new place. The red one goes to the top-left, clear of the
+             * greeter's window and of the login's click. */
+            ok = aegir::console::move(gui, second_window, 64, 64);
+            write("  test: the red one moved -- the screen, please\n");
+        }
         if (!ok) {
             write("  test: FAIL the console's window protocol did not hold\n");
             ++failed;

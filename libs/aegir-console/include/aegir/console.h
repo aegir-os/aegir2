@@ -87,6 +87,18 @@ constexpr uint32_t kMethodListen = 7;
  *  backdrop covers the screen whatever mode the driver settled on. */
 constexpr uint32_t kMethodInfo = 8;
 
+/** Move: in the window's id and its new x and y on the screen. The
+ *  rectangle is clip-checked the way create_window's is; a move that
+ *  would fall off the screen is refused. The old and new rectangles are
+ *  composited (specs/window-manager.md). The answer is empty. */
+constexpr uint32_t kMethodMove = 9;
+
+/** Raise: in the window's id. The window goes to the top of the z-order.
+ *  A backdrop cannot be raised -- it stays at the bottom (specs/console.md)
+ *  -- and the refusal says so by the empty answer. The window's rectangle
+ *  is composited. The answer is empty. */
+constexpr uint32_t kMethodRaise = 10;
+
 /* The event channel. The ring is the slice's last 4 KiB page: the console
  * mapped the whole slice when it carved it, so appending is writing memory
  * it already has, and the client maps the page with the rest. Word 0 is
@@ -215,6 +227,23 @@ inline bool damage(aegir::ipc::Consumer const &gui, uint64_t window, uint64_t x,
 inline bool destroy_window(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
 {
     aegir::ipc::Reply const answer = gui.call(kMethodDestroyWindow, window);
+    return answer.error == 0;
+}
+
+/** Move a window to (x, y) on the screen. False when refused. */
+inline bool move(aegir::ipc::Consumer const &gui, uint64_t window, uint64_t x,
+                 uint64_t y) noexcept
+{
+    uint64_t out[3] = {window, x, y};
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer = gui.call_words(kMethodMove, out, 3, in, 1);
+    return answer.error == 0;
+}
+
+/** Raise a window to the top of the z-order. False when refused. */
+inline bool raise(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
+{
+    aegir::ipc::Reply const answer = gui.call(kMethodRaise, window);
     return answer.error == 0;
 }
 

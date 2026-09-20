@@ -27,16 +27,14 @@ public:
     void set_title(std::string_view title);
     const std::u32string& title() const { return title_; }
 
-    void set_rect(Rect r);  // In screen coordinates (logical pixels)
+    void set_rect(Rect r);  // The content's rectangle, in screen coordinates
     Rect rect() const { return rect_; }
 
-    // The bytes the window's backing needs: width * height * 4, rows packed
-    // (the console's B8G8R8X8). Application sizes its slice from the sum over
-    // its visible windows.
-    uint64_t backing_bytes() const {
-        return static_cast<uint64_t>(rect_.width) *
-               static_cast<uint64_t>(rect_.height) * 4ull;
-    }
+    // The bytes the window's backing needs. The backing is the *frame*: a
+    // decorated window adds the titlebar above the content, so its backing is
+    // (height + titlebar_height) tall. Application sizes its slice from the
+    // sum over its visible windows.
+    uint64_t backing_bytes() const;
 
     void set_decorated(bool decorated);  // Default true
     bool decorated() const { return decorated_; }
@@ -104,18 +102,25 @@ private:
     std::unique_ptr<Widget> content_;
 
     // The window's backing: an offset into the application's console slice,
-    // claimed once and reused, and a canvas over it.
+    // claimed once and reused.
     uint64_t backing_offset_ = ~0ull;
-    Canvas canvas_;
 
     // The widget within the content tree that keys go to.
     Widget* focused_ = nullptr;
+
+    // Console focus (the titlebar's active colour), and the titlebar drag.
+    bool active_ = false;
+    bool dragging_ = false;
+    int drag_offset_x_ = 0;
+    int drag_offset_y_ = 0;
 
     // Bureau window IDs
     uint64_t console_window_id_ = 0;
     uint64_t frame_window_id_ = 0;
 
     // Internal
+    int titlebar_height() const;
+    Rect frame_for(const Rect& content) const;
     void create_bureau_window();
     void destroy_bureau_window();
     void update_bureau_window();

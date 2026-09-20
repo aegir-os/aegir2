@@ -934,6 +934,52 @@ int main(int argc, char *argv[])
                                   dead->events, aegir::bootstrap::kCNodeBits);
             }
             gui.reply(0);
+        } else if (method == aegir::console::kMethodMove && length == 4) {
+            uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
+            uint64_t const x = static_cast<uint64_t>(seL4_GetMR(2));
+            uint64_t const y = static_cast<uint64_t>(seL4_GetMR(3));
+            Window *const window = find_window(id);
+            if (window == nullptr || window->owner != badge ||
+                x + window->width > g_width || y + window->height > g_height) {
+                gui.reply(0);
+                continue;
+            }
+            /* Repaint the union of the old and the new rectangle: the
+             * vacated area shows what is beneath, the new shows the moved
+             * window (specs/window-manager.md). */
+            uint64_t const left = window->x < x ? window->x : x;
+            uint64_t const top = window->y < y ? window->y : y;
+            uint64_t const right = window->x + window->width > x + window->width
+                                       ? window->x + window->width
+                                       : x + window->width;
+            uint64_t const bottom = window->y + window->height > y + window->height
+                                        ? window->y + window->height
+                                        : y + window->height;
+            window->x = x;
+            window->y = y;
+            repaint(left, top, right - left, bottom - top);
+            gui.reply(0);
+        } else if (method == aegir::console::kMethodRaise && length == 2) {
+            uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
+            Window **link = &g_windows;
+            while (*link != nullptr && (*link)->id != id) {
+                link = &(*link)->next;
+            }
+            Window *const window = *link;
+            /* A backdrop stays at the bottom: a raise of one is refused. */
+            if (window == nullptr || window->owner != badge || window->backdrop) {
+                gui.reply(0);
+                continue;
+            }
+            *link = window->next;
+            Window **tail = &g_windows;
+            while (*tail != nullptr) {
+                tail = &(*tail)->next;
+            }
+            window->next = nullptr;
+            *tail = window;
+            repaint(window->x, window->y, window->width, window->height);
+            gui.reply(0);
         } else if (method == aegir::console::kMethodInfo && length == 1) {
             /* The screen's size, whatever mode the driver settled on: the
              * bureau sizes its backdrop from it (specs/bureau.md). */

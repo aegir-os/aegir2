@@ -65,13 +65,13 @@ process behind it changed.
 
 ## What this is not
 
-Window decorations, title bars, dragging, resizing, depth gadgets and the
-window manager; menus and the menu server; desktop icons and a launcher;
-re-login — reaping a session's slice and starting the greeter again
-(`specs/auth.md`); more than one window. Each arrives with the arc that
-serves it, and each is easier with the bureau standing. The session's own
-slice is deliberately not reaped (`specs/auth.md`): the backdrop is what the
-session leaves on the screen.
+Window resizing, depth gadgets and the `bureau.wm` server; menus and the menu
+server; desktop icons and a launcher; re-login — reaping a session's slice and
+starting the greeter again (`specs/auth.md`); more than one window. The
+titlebar, dragging, and the console's move/raise are
+`specs/window-manager.md`. Each is easier with the bureau standing. The
+session's own slice is deliberately not reaped (`specs/auth.md`): the backdrop
+is what the session leaves on the screen.
 
 ## Acceptance
 

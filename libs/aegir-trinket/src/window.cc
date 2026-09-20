@@ -60,12 +60,12 @@ Window::~Window() {
 
 void Window::set_title(std::u32string_view title) {
     title_ = std::u32string(title);
-    update_bureau_window();
+    repaint();
 }
 
 void Window::set_title(std::string_view title) {
     title_ = utf8_to_utf32(title);
-    update_bureau_window();
+    repaint();
 }
 
 void Window::set_rect(Rect r) {
@@ -79,7 +79,6 @@ void Window::set_rect(Rect r) {
 void Window::set_decorated(bool decorated) {
     if (decorated_ != decorated) {
         decorated_ = decorated;
-        // Recreate window with new decoration state
         if (visible_) {
             destroy_bureau_window();
             create_bureau_window();
@@ -91,7 +90,9 @@ void Window::set_content(std::unique_ptr<Widget> content) {
     content_ = std::move(content);
     if (content_) {
         /* The content root is the tree's link to this window: a damage that
-         * climbs to it is a repaint request here. */
+         * climbs to it is a repaint request here. Its rectangle is the
+         * content's own coordinate space; the window translates the canvas
+         * when it paints, so widgets do not know about the titlebar. */
         content_->window_ = this;
         content_->set_rect({0, 0, rect_.width, rect_.height});
         content_->dispatch_layout();
@@ -128,12 +129,19 @@ void Window::damage(const Rect& r) {
 }
 
 void Window::on_focus_gained() {
-    // Swap menubar content
-    // This would be handled by Bureau's menubar server
+    /* The titlebar's active colour follows the console's focus. */
+    if (!active_) {
+        active_ = true;
+        repaint();
+    }
     if (on_focus_changed) on_focus_changed(true);
 }
 
 void Window::on_focus_lost() {
+    if (active_) {
+        active_ = false;
+        repaint();
+    }
     if (on_focus_changed) on_focus_changed(false);
 }
 
@@ -195,14 +203,41 @@ void Window::dispatch_pointer(uint64_t event) {
     Point const pos{static_cast<int>(value & 0xffff),
                     static_cast<int>((value >> 16) & 0xffff)};
 
-    bool const up = (code & aegir::console::kButtonRelease) != 0;
+    /* Motion carries no button. During a drag it moves the frame: the
+     * console delivers motion to the grab holder window-local, and the
+     * pointer's screen position is the frame's origin plus that. */
     uint16_t const button =
         static_cast<uint16_t>(code & ~aegir::console::kButtonRelease);
+    if (button == 0) {
+        if (dragging_) {
+            int const nx = rect_.x + pos.x - drag_offset_x_;
+            int const ny = rect_.y + pos.y - drag_offset_y_;
+            if (nx != rect_.x || ny != rect_.y) {
+                Rect const moved{nx, ny, rect_.width, rect_.height};
+                Rect const frame = frame_for(moved);
+                /* A move off the screen is refused; the window stops at the
+                 * edge and the drag goes on. */
+                if (aegir::console::move(app_.gui_port(), console_window_id_,
+                                         static_cast<uint64_t>(frame.x),
+                                         static_cast<uint64_t>(frame.y))) {
+                    rect_ = moved;
+                    if (on_moved_resized) on_moved_resized(moved);
+                }
+            }
+        }
+        return;
+    }
+
+    bool const up = (code & aegir::console::kButtonRelease) != 0;
+    /* The console's coordinates are frame-local; the content starts below the
+     * titlebar, so widget dispatch works in the content's own space. */
+    int const bar = titlebar_height();
+    Point const content_pos{pos.x, pos.y - bar};
     MouseEvent mouse;
-    mouse.pos = pos;
-    mouse.global_pos = pos;  // window-local is all the toolkit has
+    mouse.pos = content_pos;
+    mouse.global_pos = content_pos;  // content-local is all the toolkit has
     /* The console passes the HID button codes through (aegir/input.h): left
-     * is 0x110, not 1. Motion (no button) is not dispatched in tier 1. */
+     * is 0x110, not 1. */
     switch (button) {
     case aegir::input::kBtnLeft: mouse.button = MouseButton::LEFT; break;
     case aegir::input::kBtnRight: mouse.button = MouseButton::RIGHT; break;
@@ -210,31 +245,83 @@ void Window::dispatch_pointer(uint64_t event) {
     default: return;
     }
 
-    Widget* const target = hit_test(content_.get(), pos);
-    if (target == nullptr) return;
     if (up) {
-        target->dispatch_mouse_up(mouse);
-    } else {
-        if (target->focusable()) set_focus(target);
-        target->dispatch_mouse_down(mouse);
+        if (dragging_) {
+            dragging_ = false;
+            return;
+        }
+        Widget* const target = hit_test(content_.get(), content_pos);
+        if (target != nullptr) target->dispatch_mouse_up(mouse);
+        return;
     }
+
+    /* A pointer-down in the titlebar begins a drag and raises: a deliberate
+     * act brings the window forward, where a click alone only focuses it. */
+    if (decorated_ && pos.y < bar) {
+        dragging_ = true;
+        drag_offset_x_ = pos.x;
+        drag_offset_y_ = pos.y;
+        (void)aegir::console::raise(app_.gui_port(), console_window_id_);
+        return;
+    }
+
+    Widget* const target = hit_test(content_.get(), content_pos);
+    if (target == nullptr) return;
+    if (target->focusable()) set_focus(target);
+    target->dispatch_mouse_down(mouse);
+}
+
+int Window::titlebar_height() const {
+    return decorated_ ? app_.theme().metric(MetricRole::TITLEBAR_HEIGHT) : 0;
+}
+
+Rect Window::frame_for(const Rect& content) const {
+    int const bar = titlebar_height();
+    return {content.x, content.y - bar, content.width, content.height + bar};
+}
+
+uint64_t Window::backing_bytes() const {
+    Rect const frame = frame_for(rect_);
+    return static_cast<uint64_t>(frame.width) *
+           static_cast<uint64_t>(frame.height) * 4ull;
 }
 
 void Window::repaint() {
     if (!visible_ || console_window_id_ == 0 || app_.slice() == nullptr) return;
 
+    Rect const frame = frame_for(rect_);
+    int const bar = titlebar_height();
     uint32_t* const pixels =
         reinterpret_cast<uint32_t*>(app_.slice() + backing_offset_);
-    canvas_ = Canvas(pixels, rect_.width, rect_.height, rect_.width);
 
+    /* The client-side frame: the window's own surface, the titlebar over the
+     * content, and the theme's border around the whole rectangle
+     * (specs/window-manager.md). The content is painted through a canvas
+     * offset by the titlebar, so its coordinates are its own. */
+    Theme& theme = app_.theme();
+    Canvas frame_canvas(pixels, frame.width, frame.height, frame.width);
+    frame_canvas.fill_rect({0, 0, frame.width, frame.height},
+                           theme.color(ColorRole::WINDOW_BG));
+    if (bar > 0) {
+        std::string const title = utf32_to_utf8(title_);
+        theme.draw_titlebar(frame_canvas, {0, 0, frame.width, bar}, title.c_str(),
+                            active_);
+    }
     if (content_) {
         content_->dispatch_layout();
-        content_->dispatch_paint(canvas_, PaintEvent{{0, 0, rect_.width, rect_.height}});
+        Canvas content_canvas(pixels + static_cast<size_t>(bar) * frame.width,
+                              rect_.width, rect_.height, frame.width);
+        content_->dispatch_paint(content_canvas,
+                                 PaintEvent{{0, 0, rect_.width, rect_.height}});
+    }
+    if (bar > 0) {
+        theme.draw_window_frame(frame_canvas, {0, 0, frame.width, frame.height},
+                                active_);
     }
 
     (void)aegir::console::damage(app_.gui_port(), console_window_id_, 0, 0,
-                                 static_cast<uint64_t>(rect_.width),
-                                 static_cast<uint64_t>(rect_.height));
+                                 static_cast<uint64_t>(frame.width),
+                                 static_cast<uint64_t>(frame.height));
 }
 
 void Window::create_bureau_window() {
@@ -244,8 +331,7 @@ void Window::create_bureau_window() {
      * it is not an error. */
     if (!app_.gui_port().valid() || app_.slice() == nullptr) return;
 
-    uint64_t const bytes = static_cast<uint64_t>(rect_.width) *
-                           static_cast<uint64_t>(rect_.height) * 4ull;
+    uint64_t const bytes = backing_bytes();
     if (backing_offset_ == ~0ull) {
         backing_offset_ = app_.claim_backing(bytes);
     }
@@ -260,9 +346,13 @@ void Window::create_bureau_window() {
         flags = aegir::console::kWindowBackdrop;
     }
 
+    /* The console's window is the frame; the content sits below the titlebar
+     * inside it (specs/window-manager.md). */
+    Rect const frame = frame_for(rect_);
     console_window_id_ = aegir::console::create_window(
         app_.gui_port(),
-        rect_.x, rect_.y, rect_.width, rect_.height,
+        static_cast<uint64_t>(frame.x), static_cast<uint64_t>(frame.y),
+        static_cast<uint64_t>(frame.width), static_cast<uint64_t>(frame.height),
         backing_offset_,
         flags);
 
@@ -288,10 +378,11 @@ void Window::destroy_bureau_window() {
 }
 
 void Window::update_bureau_window() {
-    if (console_window_id_) {
-        // Update window position/size
-        // This would require a new console protocol method
-    }
+    if (console_window_id_ == 0) return;
+    Rect const frame = frame_for(rect_);
+    (void)aegir::console::move(app_.gui_port(), console_window_id_,
+                               static_cast<uint64_t>(frame.x),
+                               static_cast<uint64_t>(frame.y));
 }
 
 void Window::register_menubar() {
