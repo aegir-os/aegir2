@@ -219,10 +219,9 @@ void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
 
 /* The cursor is software (specs/console.md): a 16x16 arrow composited over
  * the output, with what is under it saved and restored around every move and
- * repaint. It is white with a black border and a dark shadow one pixel down
- * and right, so it stays visible on a white surface. The touched box is the
- * arrow plus one pixel each way (border and shadow), which is what the
- * save-under holds. */
+ * repaint. It is white with a black border one pixel around it, so it stays
+ * visible on a white surface. The touched box is the arrow plus one pixel
+ * each way (the border), which is what the save-under holds. */
 constexpr uint64_t kCursorSize = 16;
 constexpr uint16_t kCursorShape[kCursorSize] = {
     0x4000, 0xC000, 0xA000, 0x9000, 0x8800, 0x8400, 0x8200, 0x8100,
@@ -242,8 +241,8 @@ bool cursor_set(int mx, int my) noexcept
     return (kCursorShape[my] & (0x8000u >> mx)) != 0;
 }
 
-/* The pixel at arrow-local (mx, my): the fill is white, the edge one pixel
- * around it is black, and the mask shifted down-right is a dark shadow.
+/* The pixel at arrow-local (mx, my): the fill is white and the edge one pixel
+ * around it is black, so a white pointer stays visible on a white surface.
  * 0xFFFFFFFF means leave the screen alone. */
 uint32_t cursor_pixel(int mx, int my) noexcept
 {
@@ -256,9 +255,6 @@ uint32_t cursor_pixel(int mx, int my) noexcept
                 return 0x00000000u;
             }
         }
-    }
-    if (cursor_set(mx - 1, my - 1)) {
-        return 0x00404040u;
     }
     return 0xFFFFFFFFu;
 }
