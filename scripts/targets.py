@@ -128,19 +128,23 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         qmp_steps=(
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
-            # input cue. The dump reads the form up -- grey window over the
-            # Workbench-blue backdrop, the white name field, the dark button
-            # -- and then the form STANDS through the test bed: the login is
-            # the run's last business, played after the boot marker.
+            # input cue. The dump reads the toolkit's XEN look up
+            # (specs/trinket.md): the Workbench-blue backdrop, the window's
+            # light grey, the white name field with its focused blue border,
+            # the black label text, and the button's grey. Then the form
+            # STANDS through the test bed: the login is the run's last
+            # business, played after the boot marker.
             QmpStep(
                 r"greeter: a name and a secret, please",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 0, 85, 170),
-                    ("gpu0", 410, 230, 160, 160, 160),
+                    ("gpu0", 410, 230, 204, 204, 204),
                     ("gpu0", 500, 290, 255, 255, 255),
-                    ("gpu0", 434, 398, 80, 80, 80),
+                    ("gpu0", 424, 288, 0, 120, 215),
+                    ("gpu0", 424, 265, 0, 0, 0),
+                    ("gpu0", 434, 398, 224, 224, 224),
                 ),
             ),
             # The console owns the input devices (specs/console.md), so the

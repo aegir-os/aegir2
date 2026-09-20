@@ -158,6 +158,8 @@ int Application::exec() {
         }
     }
 
+    if (on_started) on_started();
+
     // Event loop
     while (running_) {
         bool const drained = process_events();
@@ -286,6 +288,24 @@ void Application::dispatch_gui_event(uint64_t event, uint64_t window) {
 }
 
 void Application::process_timers() {
+    /* A timer is the only thing that needs the clock, and there is no
+     * user-accessible monotonic clock yet: musl's clock_gettime is refused
+     * (aegir-heap answers memory syscalls), and with exceptions off libc++'s
+     * steady_clock terminates on the error. So the loop asks only when a
+     * timer is actually pending -- tier 1 schedules none. A real clock source
+     * arrives with the threading milestone (specs/trinket.md). */
+    {
+        std::lock_guard<std::mutex> lock(posted_mutex_);
+        bool timed = false;
+        for (const PostedEvent& event : posted_events_) {
+            if (event.due_time > 0) {
+                timed = true;
+                break;
+            }
+        }
+        if (!timed) return;
+    }
+
     int64_t now = now_ms();
     std::vector<PostedEvent> remaining;
     remaining.reserve(posted_events_.size());

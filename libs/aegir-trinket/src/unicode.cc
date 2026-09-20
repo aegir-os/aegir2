@@ -6,6 +6,30 @@
 
 namespace aegir::trinket {
 
+namespace {
+
+/* One codepoint as UTF-8, appended. The replacement path uses it so the
+ * caller's replacement character is what actually appears. */
+void append_utf8(std::string& out, char32_t cp) {
+    if (cp < 0x80) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+}  // namespace
+
 std::u32string utf8_to_utf32(std::string_view utf8) {
     std::u32string result;
     result.reserve(utf8.size());
@@ -63,9 +87,7 @@ std::string replace_invalid_utf8(std::string_view sv, char32_t replacement) {
                 ptr += 2;
             } else {
                 // Overlong encoding
-                result.push_back(static_cast<char>(0xEF));
-                result.push_back(static_cast<char>(0xBF));
-                result.push_back(static_cast<char>(0xBD));
+                append_utf8(result, replacement);
                 ptr += 2;
             }
         } else if ((c & 0xF0) == 0xE0 && ptr + 2 < end) {
@@ -74,9 +96,7 @@ std::string replace_invalid_utf8(std::string_view sv, char32_t replacement) {
                 result.append(ptr, 3);
                 ptr += 3;
             } else {
-                result.push_back(static_cast<char>(0xEF));
-                result.push_back(static_cast<char>(0xBF));
-                result.push_back(static_cast<char>(0xBD));
+                append_utf8(result, replacement);
                 ptr += 3;
             }
         } else if ((c & 0xF8) == 0xF0 && ptr + 3 < end) {
@@ -86,16 +106,12 @@ std::string replace_invalid_utf8(std::string_view sv, char32_t replacement) {
                 result.append(ptr, 4);
                 ptr += 4;
             } else {
-                result.push_back(static_cast<char>(0xEF));
-                result.push_back(static_cast<char>(0xBF));
-                result.push_back(static_cast<char>(0xBD));
+                append_utf8(result, replacement);
                 ptr += 4;
             }
         } else {
             // Invalid
-            result.push_back(static_cast<char>(0xEF));
-            result.push_back(static_cast<char>(0xBF));
-            result.push_back(static_cast<char>(0xBD));
+            append_utf8(result, replacement);
             ptr += 1;
         }
     }

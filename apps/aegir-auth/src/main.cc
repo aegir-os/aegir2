@@ -81,7 +81,7 @@ seL4_CPtr g_home_slot = 0;
  * reuses it -- the wait serializes sessions, so one pool is enough. Its
  * size is a starting grant: the reclaim log line says what a session
  * charged, and the grant grows when that says so. */
-constexpr uint32_t kSessionPoolBits = 20; /* 1 MiB of the 2 MiB delegation */
+constexpr uint32_t kSessionPoolBits = 20; /* 1 MiB of the 4 MiB delegation */
 seL4_CPtr g_session_pool = 0;
 uint64_t g_session_pool_physical = 0;
 
@@ -500,10 +500,12 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
                                                    seL4_EndpointBits,
                                                    greeter_account, &error);
     uint64_t untyped_physical = 0;
-    /* 256 KiB: the page tables the greeter's own mapping of its console
-     * slice is retyped from, and nothing else -- everything else it touches
-     * is already mapped (the spawn) or the console's (the slice). */
-    constexpr uint32_t kGreeterUntypedBits = 18;
+    /* 1 MiB: the page tables the greeter's own mapping of its console slice is
+     * retyped from, and the pages its freeing heap grows into. The toolkit and
+     * its embedded font allocate -- the atlas and the glyph table alone are a
+     * few hundred kilobytes -- where the raw greeter it replaced allocated
+     * nothing, so 256 KiB ran out and the greeter died before its form. */
+    constexpr uint32_t kGreeterUntypedBits = 20;
     seL4_CPtr const untyped = g_objects.carve_untyped(kGreeterUntypedBits,
                                                       greeter_account, &error,
                                                       &untyped_physical);

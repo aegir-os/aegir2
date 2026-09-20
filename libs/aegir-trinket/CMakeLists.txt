@@ -41,6 +41,7 @@ add_library(aegir-trinket STATIC
     src/menubar.cc
     src/window.cc
     src/font.cc
+    src/unicode.cc
     src/locale.cc
     src/theme_xen.cc
     src/worker.cc

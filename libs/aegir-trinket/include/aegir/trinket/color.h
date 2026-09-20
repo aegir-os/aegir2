@@ -25,9 +25,12 @@ struct Color {
     constexpr Color() = default;
     constexpr Color(uint8_t r_, uint8_t g_, uint8_t b_, uint8_t a_ = 255)
         : r(r_), g(g_), b(b_), a(a_) {}
-    constexpr Color(uint32_t rgba)  // 0xRRGGBBAA or 0x00RRGGBB
-        : r((rgba >> 24) & 0xFF), g((rgba >> 16) & 0xFF),
-          b((rgba >> 8) & 0xFF), a(rgba & 0xFF) {}
+    // 0x00RRGGBB, the framebuffer's word (B8G8R8X8: a pixel has no alpha).
+    // The RGBA fields above are the blending representation; this is storage,
+    // and the console composites the backing verbatim (specs/console.md).
+    constexpr Color(uint32_t rgb)
+        : r((rgb >> 16) & 0xFF), g((rgb >> 8) & 0xFF),
+          b(rgb & 0xFF), a(255) {}
 
     // Create from non-premultiplied sRGB
     static Color from_rgb(uint8_t r_, uint8_t g_, uint8_t b_, uint8_t a_ = 255) {
@@ -46,12 +49,12 @@ struct Color {
     constexpr uint8_t g_unpremul() const { return a == 0 ? 0 : (g * 255 + a / 2) / a; }
     constexpr uint8_t b_unpremul() const { return a == 0 ? 0 : (b * 255 + a / 2) / a; }
 
-    // As 0xRRGGBBAA (premultiplied)
+    // The framebuffer's word, 0x00RRGGBB (unpremultiplied, no alpha byte).
+    // A Canvas writes this, and reads it back with the constructor above.
     constexpr uint32_t to_uint32() const {
-        return (static_cast<uint32_t>(r) << 24) |
-               (static_cast<uint32_t>(g) << 16) |
-               (static_cast<uint32_t>(b) << 8) |
-               static_cast<uint32_t>(a);
+        return (static_cast<uint32_t>(r_unpremul()) << 16) |
+               (static_cast<uint32_t>(g_unpremul()) << 8) |
+               static_cast<uint32_t>(b_unpremul());
     }
 
     // As 0x00RRGGBB (for framebuffer, ignores alpha)

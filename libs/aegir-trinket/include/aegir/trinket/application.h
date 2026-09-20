@@ -45,6 +45,10 @@ public:
     void quit(int exit_code = 0);
     int exit_code() const { return exit_code_; }
 
+    // Called by exec once the windows are created and painted: a client's cue
+    // that its form is on the screen.
+    std::function<void()> on_started;
+
     // Theme
     void set_theme(std::unique_ptr<Theme> theme);
     Theme& theme() const { return *theme_; }

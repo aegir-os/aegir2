@@ -84,7 +84,7 @@ void Button::on_paint(Canvas& canvas, const PaintEvent&) {
                                     : theme.color(ColorRole::DISABLED_TEXT);
         Size text_size = font->measure(text_);
         int x = r.x + (r.width - text_size.width) / 2;
-        int y = r.y + (r.height + font->ascent() - font->descent()) / 2;
+        int y = r.y + (r.height - font->height()) / 2;
         canvas.draw_text({x, y}, text_, font, text_color);
     }
 }

@@ -83,7 +83,7 @@ void TextBox::on_paint(Canvas& canvas, const PaintEvent& event) {
     int padding_h = theme.metric(MetricRole::INPUT_PADDING_H);
     int padding_v = theme.metric(MetricRole::INPUT_PADDING_V);
     int text_x = r.x + padding_h;
-    int text_y = r.y + padding_v + font->ascent();
+    int text_y = r.y + padding_v;
 
     // Selection
     if (has_selection()) {
@@ -102,19 +102,24 @@ void TextBox::on_paint(Canvas& canvas, const PaintEvent& event) {
     // Text color
     Color text_color = read_only_ ? theme.color(ColorRole::DISABLED_TEXT) : theme.color(ColorRole::INPUT_TEXT);
 
+    /* The secret echoes as bullets: what is typed is the credential's, not
+     * the screen's (specs/trinket.md). */
+    std::u32string const display =
+        password_mode_ ? std::u32string(text_.size(), U'*') : text_;
+
     // Draw text (or placeholder)
-    if (!text_.empty()) {
-        canvas.draw_text({text_x, text_y}, text_, font, text_color);
+    if (!display.empty()) {
+        canvas.draw_text({text_x, text_y}, display, font, text_color);
     } else if (!placeholder_.empty()) {
         canvas.draw_text({text_x, text_y}, placeholder_, font, theme.color(ColorRole::INPUT_PLACEHOLDER));
     }
 
     // Cursor
     if (focused_ && !read_only_) {
-        std::u32string before = text_.substr(0, cursor_);
+        std::u32string before = display.substr(0, cursor_);
         Size before_size = font->measure(before);
         int cx = text_x + before_size.width;
-        int cy = text_y - font->ascent();
+        int cy = text_y;
         int ch = font->height();
         canvas.draw_vline(cy, cy + ch, cx, theme.color(ColorRole::ACCENT));
     }

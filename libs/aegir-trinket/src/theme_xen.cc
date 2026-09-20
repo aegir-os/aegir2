@@ -241,7 +241,7 @@ public:
         if (font && label) {
             Color text_color = disabled ? color(ColorRole::DISABLED_TEXT) : color(ColorRole::MENU_TEXT);
             int x = rect.x + metric(MetricRole::MENU_PADDING_H);
-            int y = rect.y + (rect.height + font->ascent() - font->descent()) / 2;
+            int y = rect.y + (rect.height - font->height()) / 2;
             canvas.draw_text({x, y}, utf8_to_utf32(label),
                              font, text_color);
         }
@@ -265,7 +265,7 @@ public:
         Font* font = Application::instance()->default_font();
         if (font && title) {
             int x = rect.x + metric(MetricRole::TITLEBAR_PADDING_H);
-            int y = rect.y + (rect.height + font->ascent() - font->descent()) / 2;
+            int y = rect.y + (rect.height - font->height()) / 2;
             canvas.draw_text({x, y}, utf8_to_utf32(title),
                              font, text);
         }
@@ -304,7 +304,7 @@ public:
         Font* font = Application::instance()->default_font();
         if (font && text) {
             int x = rect.x + 6;
-            int y = rect.y + (rect.height + font->ascent() - font->descent()) / 2;
+            int y = rect.y + (rect.height - font->height()) / 2;
             canvas.draw_text({x, y}, utf8_to_utf32(text),
                              font, color(ColorRole::TOOLTIP_TEXT));
         }

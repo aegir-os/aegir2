@@ -47,10 +47,15 @@ set(KernelMaxNumNodes 1 CACHE STRING "CPU cores the kernel is built for")
 # hello root task) and kernel assertions.
 set(KernelDebugBuild ON CACHE BOOL "Kernel debug build")
 
-# Root CNode size, as 2^13 slots. The value follows upstream's sel4test
-# project, which sets 13 for its root task and notes that it is "large enough
-# for DTB, timer caps, etc" but "may need to be increased in the future"
-# (projects/sel4test/CMakeLists.txt). It is headroom, not a requirement: the
-# kernel's own default is 12, and this root task boots and reaches its marker
-# with 12 as well. Raise it when the root task's own capability use needs more.
-set(KernelRootCNodeSizeBits 13 CACHE INTERNAL "")
+# Root CNode size, as 2^16 slots. Upstream's sel4test project sets 13 for its
+# root task and notes that it is "large enough for DTB, timer caps, etc" but
+# "may need to be increased in the future"
+# (projects/sel4test/CMakeLists.txt). The root task's own capability use needs
+# more: director gives each spawning child a copy of the initrd, one frame cap
+# per page (aegir-spawn's process.cc -- a frame cap remembers the one address
+# space it is mapped in, so a second child gets a copy), and the hosted greeter
+# and bureau carry their debug sections into the initrd. At 13 (8192 slots) the
+# initrd's pages alone filled the CNode; 16 is the kernel's own upstream
+# default, and the comment above says to raise it when the root task needs it.
+# The cost is a megabyte of capability memory, which the floor has.
+set(KernelRootCNodeSizeBits 16 CACHE INTERNAL "")

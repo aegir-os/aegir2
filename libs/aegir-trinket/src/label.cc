@@ -79,7 +79,7 @@ void Label::on_paint(Canvas& canvas, const PaintEvent& event) {
     } else if (alignment_ == Alignment::RIGHT) {
         x += rect_.width - text_size.width;
     }
-    int y = rect_.y + (rect_.height + font->ascent() - font->descent()) / 2;
+    int y = rect_.y + (rect_.height - font->height()) / 2;
 
     canvas.draw_text({x, y}, display_text, font, text_color_, BidiDirection::LTR);
 }

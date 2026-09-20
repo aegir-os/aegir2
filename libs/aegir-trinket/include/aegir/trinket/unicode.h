@@ -21,12 +21,22 @@ std::string utf32_to_utf8(std::u32string_view utf32);
 
 // Codepoint iteration
 struct Utf8Iterator {
-    const char* ptr;
-    const char* end;
+    const char* ptr = nullptr;
+    const char* end = nullptr;
     uint32_t codepoint = 0;
 
     Utf8Iterator() = default;
     Utf8Iterator(std::string_view sv) : ptr(sv.data()), end(sv.data() + sv.size()) { next(); }
+
+    /* The end sentinel: the same end pointer, no codepoint. A default-built
+     * iterator cannot serve -- its `ptr` is indeterminate, so `!=` never
+     * becomes false and a range-for over it does not terminate. */
+    static Utf8Iterator end_of(std::string_view sv) {
+        Utf8Iterator it;
+        it.ptr = sv.data() + sv.size();
+        it.end = it.ptr;
+        return it;
+    }
 
     bool operator!=(const Utf8Iterator& other) const { return ptr != other.ptr; }
     uint32_t operator*() const { return codepoint; }
@@ -54,7 +64,7 @@ private:
 struct Utf8Range {
     std::string_view sv;
     Utf8Iterator begin() const { return Utf8Iterator(sv); }
-    Utf8Iterator end() const { return Utf8Iterator(); }
+    Utf8Iterator end() const { return Utf8Iterator::end_of(sv); }
 };
 
 inline Utf8Range utf8_iterate(std::string_view sv) { return Utf8Range{sv}; }
