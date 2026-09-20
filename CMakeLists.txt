@@ -22,6 +22,15 @@ include(settings.cmake)
 
 project(aegir C CXX ASM)
 
+# The hosted C++ runtime -- vendored full musl, libc++/libcxxabi/libunwind, and
+# the toolkit that needs them. OFF is the default so the tree configures and
+# boots with only the freestanding path (director and the services), before the
+# runtime has been built. The greeter and bureau fall back to freestanding
+# placeholders while it is OFF (apps/aegir-greeter, apps/aegir-bureau), because
+# director refuses to boot when a manifest entry names a binary the initrd does
+# not carry (apps/aegir-director/src/services.cc).
+option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and the GUI toolkit" OFF)
+
 find_package(seL4 REQUIRED)
 find_package(elfloader-tool REQUIRED)
 find_package(musllibc REQUIRED)
@@ -30,10 +39,12 @@ find_package(musllibc REQUIRED)
 # the loader cannot compile.
 find_package(util_libs REQUIRED)
 
-# Import libc++ static libraries built by LLVM runtimes build system
-# These are STATIC IMPORTED targets (cxx, cxxabi, unwind) created by
-# scripts/build_libcxx.sh and installed to build/libcxx-install/
-include(libs/aegir-libcxx/imported.cmake)
+# Import libc++ static libraries built by the LLVM runtimes build. These are
+# STATIC IMPORTED targets (cxx, cxxabi, unwind) produced by the runtime
+# bootstrap (scripts/build_libcxx.sh) and installed per target.
+if(AEGIR_HOSTED_CXX)
+  include(libs/aegir-libcxx/imported.cmake)
+endif()
 
 sel4_import_kernel()
 
@@ -67,13 +78,15 @@ target_compile_options(
   INTERFACE -fno-exceptions -fno-rtti -fno-threadsafe-statics -Wall -Wextra -Werror
 )
 
-add_library(aegir-cxx-policy-hosted INTERFACE)
-target_compile_features(aegir-cxx-policy-hosted INTERFACE cxx_std_17)
-target_compile_options(
-  aegir-cxx-policy-hosted
-  INTERFACE -fexceptions -frtti -fthreadsafe-statics -Wall -Wextra -Werror
-)
-target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi unwind)
+if(AEGIR_HOSTED_CXX)
+  add_library(aegir-cxx-policy-hosted INTERFACE)
+  target_compile_features(aegir-cxx-policy-hosted INTERFACE cxx_std_17)
+  target_compile_options(
+    aegir-cxx-policy-hosted
+    INTERFACE -fexceptions -frtti -fthreadsafe-statics -Wall -Wextra -Werror
+  )
+  target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi unwind)
+endif()
 
 # Default policy alias for backward compatibility (freestanding)
 add_library(aegir-cxx-policy INTERFACE)
@@ -99,10 +112,12 @@ add_subdirectory(libs/aegir-log)
 add_subdirectory(libs/aegir-manifest)
 add_subdirectory(libs/aegir-spawn)
 add_subdirectory(libs/aegir-virtio)
-add_subdirectory(libs/aegir-trinket)
-add_subdirectory(libs/aegir-bureau)
-add_subdirectory(libs/aegir-datatypes)
-add_subdirectory(libs/aegir-classes)
+if(AEGIR_HOSTED_CXX)
+  add_subdirectory(libs/aegir-trinket)
+  add_subdirectory(libs/aegir-bureau)
+  add_subdirectory(libs/aegir-datatypes)
+  add_subdirectory(libs/aegir-classes)
+endif()
 # aegir-hello is director's smoke client, so it is built before the task that
 # packs it into its initrd.
 add_subdirectory(apps/aegir-device-manager)
