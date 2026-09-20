@@ -5,6 +5,7 @@
 #include <aegir/trinket/widget.h>
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/layout.h>
 #include <algorithm>
 
 namespace aegir::trinket {
@@ -54,6 +55,10 @@ void Widget::on_key_up(const KeyEvent&) {}
 void Widget::on_focus_gained() {}
 void Widget::on_focus_lost() {}
 void Widget::on_layout() {}
+
+Size Widget::preferred_size() const {
+    return rect_.size();
+}
 
 void Widget::damage(const Rect& r) {
     if (r.empty()) return;
@@ -140,10 +145,9 @@ void Widget::dispatch_focus_lost() {
 }
 
 void Widget::dispatch_layout() {
+    /* A widget's own layout hook; the Container override is what arranges its
+     * children, because layout_ belongs to Container. */
     on_layout();
-    if (layout_) {
-        layout_->layout(*static_cast<Container*>(this));
-    }
 }
 
 // Container implementation

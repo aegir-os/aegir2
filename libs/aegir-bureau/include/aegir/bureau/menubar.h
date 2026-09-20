@@ -8,8 +8,10 @@
 #ifndef AEGIR_BUREAU_MENUBAR_H
 #define AEGIR_BUREAU_MENUBAR_H
 
+#include <aegir/ipc/port.h>
 #include <aegir/trinket/unicode.h>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 

@@ -80,6 +80,11 @@ public:
     Container* parent_container() const { return parent_; }
     virtual bool is_container() const { return false; }
 
+    // The size this widget wants, which layouts arrange it at. The base has no
+    // content, so it asks for what it already is; a label or a button overrides
+    // it with the size of what it draws.
+    virtual Size preferred_size() const;
+
     // Focus
     bool focused() const { return focused_; }
     void set_focused(bool f);
@@ -97,8 +102,10 @@ public:
     virtual void on_focus_lost();
     virtual void on_layout();  // Called after parent layout
 
-    // Damage / repaint
-    void damage(const Rect& r = {});
+    // Damage / repaint. The no-argument form damages the whole widget; the Rect
+    // form damages a region. Two overloads, not one default argument: a default
+    // argument makes `damage()` ambiguous against the no-argument form.
+    void damage(const Rect& r);
     void damage() { damage(rect_); }
 
     // Style (can be overridden by theme)

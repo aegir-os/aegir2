@@ -115,6 +115,13 @@ private:
     Atlas atlas_;
     std::vector<Glyph> glyphs_;  // Indexed by codepoint (sparse: use unordered_map for large fonts)
     std::vector<std::pair<uint32_t, Glyph>> glyph_map_;  // Sorted for binary search
+
+    // BDF parse state: ENCODING and BBX arrive before the BITMAP lines that
+    // belong to them, so they are carried between lines.
+    uint32_t current_encoding_ = 0;
+    Glyph current_glyph_{};
+
+    static int hex_val(char c) noexcept;
 };
 
 } // namespace aegir::trinket

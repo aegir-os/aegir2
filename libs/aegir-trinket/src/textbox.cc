@@ -14,7 +14,7 @@ TextBox::TextBox() = default;
 TextBox::~TextBox() = default;
 
 void TextBox::set_text(std::u32string_view text) {
-    text_ = text;
+    text_ = std::u32string(text);
     cursor_ = std::min(cursor_, text_.size());
     damage();
 }
@@ -30,7 +30,7 @@ std::string TextBox::text_utf8() const {
 }
 
 void TextBox::set_placeholder(std::u32string_view text) {
-    placeholder_ = text;
+    placeholder_ = std::u32string(text);
     damage();
 }
 
@@ -135,7 +135,6 @@ void TextBox::on_key_down(const KeyEvent& event) {
     if (!enabled_ || read_only_) return;
 
     bool changed = false;
-    size_t old_cursor = cursor_;
 
     switch (event.code) {
         case KeyCode::LEFT:
@@ -193,7 +192,7 @@ void TextBox::on_key_down(const KeyEvent& event) {
                 ++cursor_;
                 changed = true;
             } else if (on_submit) {
-                on_submit(text_);
+                on_submit();
             }
             break;
         case KeyCode::ESCAPE:

@@ -16,7 +16,7 @@ Label::Label(std::string_view text) : text_(utf8_to_utf32(text)) {}
 Label::~Label() = default;
 
 void Label::set_text(std::u32string_view text) {
-    text_ = text;
+    text_ = std::u32string(text);
     text_dirty_ = true;
     damage();
 }

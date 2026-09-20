@@ -13,22 +13,17 @@ namespace aegir::trinket {
 Button::Button(std::u32string_view text, Type type)
     : text_(text), type_(type) {}
 
-Button::Button(std::string_view text, Type type) : type_(type), text_(utf8_to_utf32(text)) {}
+Button::Button(std::string_view text, Type type) : text_(utf8_to_utf32(text)), type_(type) {}
 
 Button::~Button() = default;
 
 void Button::set_text(std::u32string_view text) {
-    text_ = text;
+    text_ = std::u32string(text);
     damage();
 }
 
 void Button::set_text(std::string_view text) {
     text_ = utf8_to_utf32(text);
-    damage();
-}
-
-void Button::set_icon(std::u32string_view icon) {
-    icon_ = icon;
     damage();
 }
 

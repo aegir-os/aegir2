@@ -8,7 +8,9 @@
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/translation.h>
+#include <aegir/trinket/window.h>
 #include <aegir/console.h>
+#include <aegir/framebuffer.h>
 #include <aegir/ipc/port.h>
 #include <aegir/debug.h>
 #include <sel4/sel4.h>
@@ -21,6 +23,8 @@ namespace aegir::trinket {
 Application* Application::instance_ = nullptr;
 
 Application& Application::create(int argc, char** argv) {
+    static_cast<void>(argc);
+    static_cast<void>(argv);
     static Application app;
     instance_ = &app;
     return app;
@@ -85,26 +89,14 @@ void Application::set_theme(std::unique_ptr<Theme> theme) {
     theme_ = std::move(theme);
 }
 
-Theme& Application::theme() const {
-    return *theme_;
-}
-
 void Application::set_default_font(std::unique_ptr<Font> font) {
     default_font_ = std::move(font);
-}
-
-Font& Application::default_font() const {
-    return *default_font_;
 }
 
 void Application::set_locale(const Locale& locale) {
     Locale::set_global(locale);
     // Reload translations for new locale
     // TODO: Load translation files
-}
-
-const Locale& Application::locale() const {
-    return Locale::global();
 }
 
 void Application::post_event(std::function<void()>&& fn) {
@@ -132,14 +124,6 @@ std::vector<Window*> Application::windows() const {
     return windows_;
 }
 
-const DisplayInfo& Application::display_info() const {
-    return display_info_;
-}
-
-aegir::ipc::Consumer& Application::gui_port() {
-    return gui_port_;
-}
-
 void Application::set_gui_port(aegir::ipc::Consumer port) {
     gui_port_ = port;
 }
@@ -151,6 +135,7 @@ std::unique_ptr<Font> Application::load_font(std::string_view family, int size_p
 }
 
 std::unique_ptr<Font> Application::load_builtin_font(std::string_view name, int size_pts) {
+    static_cast<void>(size_pts);  // font resources are a later milestone
     if (name == "Terminus") {
         // TODO: Load from resources/fonts/terminus/
         // For now, return null - will be implemented when font loading works
@@ -193,19 +178,9 @@ void Application::init_display_info() {
 }
 
 void Application::process_events() {
-    if (!gui_port_.valid()) return;
-
-    uint64_t words[aegir::ipc::kMaxWords];
-    uint32_t count = 0;
-    seL4_Word badge = 0;
-
-    uint32_t method = gui_port_.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
-
-    // Handle console events
-    // This would be expanded to handle window events, input events, etc.
-    if (method == aegir::console::kMethodDamage) {
-        // Window damage - handled by Window class
-    }
+    /* The console's events do not arrive by receiving on its port: a window's
+     * events come over a notification and a ring, which is the window arc's to
+     * drain (specs/console.md). The port this holds is call-only. */
 }
 
 void Application::process_timers() {

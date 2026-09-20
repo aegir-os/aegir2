@@ -38,6 +38,18 @@ struct Locale::Impl {
 
 Locale::Locale() = default;
 
+Locale::Locale(const Locale& other)
+    : impl_(other.impl_ ? std::make_unique<Impl>(*other.impl_) : nullptr) {}
+
+Locale& Locale::operator=(const Locale& other) {
+    if (this != &other) {
+        impl_ = other.impl_ ? std::make_unique<Impl>(*other.impl_) : nullptr;
+    }
+    return *this;
+}
+
+Locale::~Locale() = default;
+
 Locale::Locale(std::string_view name) : impl_(std::make_unique<Impl>()) {
     impl_->name_ = name;
     size_t underscore = name.find('_');
@@ -107,6 +119,7 @@ std::string Locale::format_number(double value) const {
 }
 
 std::string Locale::format_currency(double value, std::string_view currency_code) const {
+    static_cast<void>(currency_code);  // one currency symbol per locale for now
     if (!impl_) return std::to_string(value);
     char buf[128];
     std::snprintf(buf, sizeof(buf), "%.2f", value);
@@ -138,15 +151,9 @@ std::string Locale::format_scientific(double value) const {
 
 std::string Locale::format_date(int64_t timestamp, DateFormat fmt) const {
     if (!impl_) return "";
+    static_cast<void>(fmt);  // pattern parsing is a later milestone
     std::time_t t = static_cast<std::time_t>(timestamp);
     std::tm tm = *std::localtime(&t);
-    const char* pattern = "";
-    switch (fmt) {
-        case DateFormat::SHORT: pattern = impl_->date_short_.c_str(); break;
-        case DateFormat::MEDIUM: pattern = impl_->date_long_.c_str(); break;
-        default: pattern = impl_->date_long_.c_str(); break;
-    }
-    // Simplified - real impl would parse pattern
     char buf[128];
     std::strftime(buf, sizeof(buf), "%x", &tm);
     return buf;
@@ -154,14 +161,9 @@ std::string Locale::format_date(int64_t timestamp, DateFormat fmt) const {
 
 std::string Locale::format_time(int64_t timestamp, TimeFormat fmt) const {
     if (!impl_) return "";
+    static_cast<void>(fmt);  // pattern parsing is a later milestone
     std::time_t t = static_cast<std::time_t>(timestamp);
     std::tm tm = *std::localtime(&t);
-    const char* pattern = "";
-    switch (fmt) {
-        case TimeFormat::SHORT: pattern = impl_->time_short_.c_str(); break;
-        case TimeFormat::MEDIUM: pattern = impl_->time_long_.c_str(); break;
-        default: pattern = impl_->time_long_.c_str(); break;
-    }
     char buf[128];
     std::strftime(buf, sizeof(buf), "%X", &tm);
     return buf;
@@ -212,6 +214,7 @@ const Locale& Locale::global() {
 }
 
 std::unique_ptr<Locale> Locale::load(std::string_view path) {
+    static_cast<void>(path);  // binary locale files are the locale arc's
     // TODO: Load from binary .locale file
     return nullptr;
 }

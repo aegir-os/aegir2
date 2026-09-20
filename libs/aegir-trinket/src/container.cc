@@ -3,6 +3,7 @@
  */
 
 #include <aegir/trinket/widget.h>
+#include <aegir/trinket/layout.h>
 
 namespace aegir::trinket {
 

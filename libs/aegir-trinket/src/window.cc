@@ -14,7 +14,7 @@
 namespace aegir::trinket {
 
 Window::Window(Application& app)
-    : app_(app), frame_window_id_(0), console_window_id_(0) {
+    : app_(app), console_window_id_(0), frame_window_id_(0) {
     app_.register_window(this);
 }
 
@@ -24,7 +24,7 @@ Window::~Window() {
 }
 
 void Window::set_title(std::u32string_view title) {
-    title_ = title;
+    title_ = std::u32string(title);
     update_bureau_window();
 }
 
@@ -86,13 +86,14 @@ void Window::damage(const Rect& r) {
     if (!visible_ || !console_window_id_) return;
 
     Rect damage_rect = r.empty() ? Rect{0, 0, rect_.width, rect_.height} : r;
-    aegir::ipc::WordsReply reply = app_.gui_port().call_words(
-        aegir::console::kMethodDamage,
-        {console_window_id_, static_cast<uint64_t>(damage_rect.x),
-         static_cast<uint64_t>(damage_rect.y),
-         static_cast<uint64_t>(damage_rect.width),
-         static_cast<uint64_t>(damage_rect.height)},
-        5, nullptr, 0);
+    uint64_t const words[5] = {console_window_id_,
+                               static_cast<uint64_t>(damage_rect.x),
+                               static_cast<uint64_t>(damage_rect.y),
+                               static_cast<uint64_t>(damage_rect.width),
+                               static_cast<uint64_t>(damage_rect.height)};
+    aegir::ipc::WordsReply const reply =
+        app_.gui_port().call_words(aegir::console::kMethodDamage, words, 5, nullptr, 0);
+    static_cast<void>(reply);
 }
 
 void Window::on_focus_gained() {

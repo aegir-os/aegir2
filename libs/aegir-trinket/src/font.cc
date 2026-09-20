@@ -4,6 +4,8 @@
 
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/unicode.h>
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace aegir::trinket {
@@ -33,6 +35,7 @@ Size Font::measure(std::string_view utf8) const {
 
 std::vector<PositionedGlyph> Font::shape(std::u32string_view text,
                                           BidiDirection dir) const {
+    static_cast<void>(dir);  // shaping direction is the BiDi arc's
     std::vector<PositionedGlyph> result;
     int x = 0;
     for (char32_t cp : text) {
@@ -74,8 +77,6 @@ std::vector<std::string> Font::fallback_families_for_locale(const Locale& locale
 }
 
 // BitmapFont implementation
-BitmapFont::BitmapFont() = default;
-
 BitmapFont::~BitmapFont() = default;
 
 bool BitmapFont::load_bdf(const void* data, size_t size) {
@@ -125,7 +126,7 @@ bool BitmapFont::load_bdf(const void* data, size_t size) {
                     line_end = static_cast<const char*>(memchr(ptr, '\n', end - ptr));
                     if (!line_end) line_end = end;
                     line_len = line_end - ptr;
-                    if (line_len >= bytes_per_row * 2) {
+                    if (line_len >= static_cast<size_t>(bytes_per_row) * 2) {
                         // Parse hex bytes
                         for (int x = 0; x < current_glyph_.width; ++x) {
                             int byte_idx = x / 8;
@@ -172,6 +173,8 @@ bool BitmapFont::load_bdf(const void* data, size_t size) {
 
 bool BitmapFont::load_pcf(const void* data, size_t size) {
     // PCF parsing would go here
+    static_cast<void>(data);
+    static_cast<void>(size);
     return false;
 }
 
@@ -185,7 +188,7 @@ const Glyph* BitmapFont::glyph(uint32_t codepoint) const {
 }
 
 // Helpers
-int BitmapFont::hex_val(char c) {
+int BitmapFont::hex_val(char c) noexcept {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -194,24 +197,26 @@ int BitmapFont::hex_val(char c) {
 
 std::unique_ptr<Font> Font::load_terminus(int size_pts, float scale) {
     // Will load from resources/fonts/terminus/
+    static_cast<void>(size_pts);
+    static_cast<void>(scale);
     return nullptr;  // TODO: Implement resource loading
 }
 
 std::unique_ptr<Font> Font::load_terminus_bold(int size_pts, float scale) {
+    static_cast<void>(size_pts);
+    static_cast<void>(scale);
     return nullptr;  // TODO
 }
 
 std::unique_ptr<Font> Font::create_with_fallbacks(std::string_view family,
                                                    int size_pts, float scale,
                                                    const Locale& locale) {
+    static_cast<void>(family);  // family selection is a later milestone
     auto primary = load_terminus(size_pts, scale);
     if (!primary) return nullptr;
 
-    auto families = fallback_families_for_locale(locale);
-    for (const auto& fb : families) {
-        // Load fallback font
-        // For now, just use primary
-    }
+    // The fallback chain is built here when the font resources land.
+    static_cast<void>(fallback_families_for_locale(locale));
     return primary;
 }
 

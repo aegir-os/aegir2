@@ -11,13 +11,13 @@
 namespace aegir::trinket {
 
 Panel::Panel(Style style) : style_(style) {
-    set_layout(std::make_unique<FlowLayout>(FlowLayout::VERTICAL, 4));
+    set_layout(std::make_unique<FlowLayout>(FlowLayout::Direction::VERTICAL, 4));
 }
 
 Panel::~Panel() = default;
 
 void Panel::set_title(std::u32string_view title) {
-    title_ = title;
+    title_ = std::u32string(title);
     damage();
 }
 

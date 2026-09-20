@@ -19,6 +19,8 @@
 
 namespace aegir::trinket {
 
+class Window;
+
 struct DisplayInfo {
     uint64_t width_px = 0;
     uint64_t height_px = 0;
@@ -47,7 +49,7 @@ public:
     void set_theme(std::unique_ptr<Theme> theme);
     Theme& theme() const { return *theme_; }
     void set_default_font(std::unique_ptr<Font> font);
-    Font& default_font() const { return *default_font_; }
+    Font* default_font() const { return default_font_.get(); }
 
     // Locale
     void set_locale(const Locale& locale);
@@ -88,6 +90,7 @@ private:
     void process_timers();
     void process_posted_events();
     void dispatch_gui_event();
+    int64_t now_ms() const;
 
     static Application* instance_;
     int exit_code_ = 0;

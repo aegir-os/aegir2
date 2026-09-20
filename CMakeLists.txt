@@ -29,7 +29,7 @@ project(aegir C CXX ASM)
 option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and its smoke client" OFF)
 
 # The GUI toolkit on top of the hosted runtime, a separate switch because the
-# toolkit is its own arc (specs/cxx.md) and is not yet complete. It requires the
+# toolkit is its own arc (specs/cxx.md) and is still growing. It requires the
 # hosted runtime. While it is OFF the greeter and bureau fall back to
 # freestanding placeholders, because director refuses to boot when a manifest
 # entry names a binary the initrd does not carry

@@ -22,9 +22,10 @@ it was.
   and `aegir-classes`, and the real greeter and bureau. While it is OFF those
   two programs build freestanding placeholders, because director refuses to boot
   when a manifest entry names a binary the initrd does not carry
-  (`apps/aegir-director/src/services.cc`). The toolkit is an arc of its own and
-  is not complete; separating the switches is what lets the runtime be proven
-  without it.
+  (`apps/aegir-director/src/services.cc`). The toolkit builds and the greeter's
+  login form is drawn and read back by the acceptance script, but many pieces
+  are still stubs (font loading, the window-manager and menu servers); the
+  switch is what keeps the runtime's own proof separate from that work.
 - **The C library is the vendored upstream musl, not seL4's fork.** The seL4
   build's `projects/musllibc` is a musl 1.2.5 fork configured without locale,
   iconv or threads and with the `oldmalloc` backend. The hosted runtime needs

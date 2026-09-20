@@ -38,7 +38,7 @@ public:
     std::function<void()> on_pressed;
     std::function<void()> on_released;
 
-    void set_icon(std::u32string_view icon) { icon_ = icon; damage(); }
+    void set_icon(std::u32string_view icon) { icon_ = std::u32string(icon); damage(); }
     void set_icon(std::string_view icon);
 
     // Auto-repeat for held buttons

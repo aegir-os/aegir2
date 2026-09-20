@@ -305,6 +305,7 @@ void BorderLayout::layout(Container& container) {
 }
 
 Size BorderLayout::preferred_size(const Container& container) const {
+    static_cast<void>(container);  // the border regions size to their widgets
     int width = 0, height = 0;
     int center_w = 0, center_h = 0;
 
@@ -386,6 +387,7 @@ void AnchorLayout::layout(Container& container) {
 }
 
 Size AnchorLayout::preferred_size(const Container& container) const {
+    static_cast<void>(container);  // anchored widgets keep their own sizes
     Size max_size;
     for (const auto& item : items_) {
         if (!item.widget || !item.widget->visible()) continue;

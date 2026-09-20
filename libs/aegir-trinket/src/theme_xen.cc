@@ -5,6 +5,7 @@
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/unicode.h>
 #include <memory>
 
 namespace aegir::trinket {
@@ -155,6 +156,7 @@ public:
     void draw_button(Canvas& canvas, const Rect& rect,
                      bool hovered, bool pressed, bool focused,
                      bool checked, bool enabled) override {
+        static_cast<void>(checked);  // checked buttons are the widget's to draw
         Color bg = enabled ? (pressed ? color(ColorRole::BUTTON_PRESSED)
                                       : hovered ? color(ColorRole::BUTTON_HOVER)
                                                 : color(ColorRole::BUTTON_BG))
@@ -170,6 +172,7 @@ public:
 
     void draw_panel(Canvas& canvas, const Rect& rect,
                      Panel::Style style, bool focused) override {
+        static_cast<void>(focused);  // the focus ring is drawn separately
         Color bg = color(ColorRole::PANEL_BG);
         Color border = color(ColorRole::BORDER);
         int bw = metric(MetricRole::PANEL_BORDER_WIDTH);
@@ -204,6 +207,7 @@ public:
 
     void draw_textbox(Canvas& canvas, const Rect& rect,
                        bool focused, bool read_only, bool password) override {
+        static_cast<void>(password);  // the text is the widget's to obscure
         Color bg = read_only ? color(ColorRole::DISABLED_BG) : color(ColorRole::INPUT_BG);
         Color border = focused ? color(ColorRole::INPUT_FOCUS_BORDER)
                               : color(ColorRole::INPUT_BORDER);
@@ -238,7 +242,7 @@ public:
             Color text_color = disabled ? color(ColorRole::DISABLED_TEXT) : color(ColorRole::MENU_TEXT);
             int x = rect.x + metric(MetricRole::MENU_PADDING_H);
             int y = rect.y + (rect.height + font->ascent() - font->descent()) / 2;
-            canvas.draw_text({x, y}, std::u32string(reinterpret_cast<const char32_t*>(label)),
+            canvas.draw_text({x, y}, utf8_to_utf32(label),
                              font, text_color);
         }
 
@@ -262,7 +266,7 @@ public:
         if (font && title) {
             int x = rect.x + metric(MetricRole::TITLEBAR_PADDING_H);
             int y = rect.y + (rect.height + font->ascent() - font->descent()) / 2;
-            canvas.draw_text({x, y}, std::u32string(reinterpret_cast<const char32_t*>(title)),
+            canvas.draw_text({x, y}, utf8_to_utf32(title),
                              font, text);
         }
     }
@@ -301,7 +305,7 @@ public:
         if (font && text) {
             int x = rect.x + 6;
             int y = rect.y + (rect.height + font->ascent() - font->descent()) / 2;
-            canvas.draw_text({x, y}, std::u32string(reinterpret_cast<const char32_t*>(text)),
+            canvas.draw_text({x, y}, utf8_to_utf32(text),
                              font, color(ColorRole::TOOLTIP_TEXT));
         }
     }

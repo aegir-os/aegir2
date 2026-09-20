@@ -13,7 +13,9 @@
 
 #include <aegir/trinket/bidi.h>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace aegir::trinket {
@@ -22,6 +24,15 @@ class Locale {
 public:
     Locale();                          // "C" locale
     explicit Locale(std::string_view name);  // "en_US", "de_DE", "ja_JP", "ar_SA"
+
+    // The implementation is behind a pointer, so copying is a deep copy rather
+    // than the (deleted) pointer copy: `set_global` copies a Locale into the
+    // global one.
+    Locale(const Locale& other);
+    Locale& operator=(const Locale& other);
+    Locale(Locale&&) noexcept = default;
+    Locale& operator=(Locale&&) noexcept = default;
+    ~Locale();
 
     // Locale identification
     std::string name() const;          // "en_US"

@@ -8,6 +8,7 @@
 #ifndef AEGIR_BUREAU_WINDOW_MANAGER_H
 #define AEGIR_BUREAU_WINDOW_MANAGER_H
 
+#include <aegir/ipc/port.h>
 #include <aegir/trinket/point.h>
 #include <aegir/trinket/unicode.h>
 #include <cstdint>

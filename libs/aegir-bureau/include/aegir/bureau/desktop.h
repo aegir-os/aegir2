@@ -8,6 +8,7 @@
 #ifndef AEGIR_BUREAU_DESKTOP_H
 #define AEGIR_BUREAU_DESKTOP_H
 
+#include <aegir/trinket/point.h>
 #include <aegir/trinket/unicode.h>
 #include <cstdint>
 #include <vector>

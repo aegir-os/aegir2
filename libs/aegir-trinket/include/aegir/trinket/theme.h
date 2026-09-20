@@ -12,6 +12,7 @@
 
 #include <aegir/trinket/color.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/panel.h>
 #include <memory>
 
 namespace aegir::trinket {

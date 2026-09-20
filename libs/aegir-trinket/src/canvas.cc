@@ -4,11 +4,10 @@
 
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/unicode.h>
 #include <algorithm>
 
 namespace aegir::trinket {
-
-Canvas::Canvas() = default;
 
 Canvas::Canvas(uint32_t* pixels, int width, int height, int stride)
     : pixels_(pixels), width_(width), height_(height), stride_(stride) {
@@ -99,6 +98,7 @@ void Canvas::draw_rect(const Rect& r, Color c, int thickness) {
 }
 
 void Canvas::draw_line(Point a, Point b, Color c, int thickness) {
+    static_cast<void>(thickness);  // thick lines are a later refinement
     // Bresenham's line algorithm
     int x0 = a.x, y0 = a.y, x1 = b.x, y1 = b.y;
     int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
@@ -250,6 +250,7 @@ void Canvas::draw_circle(Point center, int radius, Color c, int thickness) {
 
 void Canvas::draw_text(Point pos, std::u32string_view text, Font* font, Color color,
                        BidiDirection dir) {
+    static_cast<void>(dir);  // the BiDi arc reorders runs; tier 1 is LTR
     if (!font || text.empty()) return;
     int x = pos.x;
     int y = pos.y + font->ascent();
@@ -323,6 +324,8 @@ Size Canvas::measure_text(std::string_view utf8, Font* font) const {
 
 void Canvas::draw_bitmap(const Rect& dest, const uint8_t* src_pixels, int src_w, int src_h,
                          int src_stride, bool has_alpha) {
+    static_cast<void>(src_w);
+    static_cast<void>(src_h);
     Rect clipped = dest.intersected(clip_rect_);
     if (clipped.empty()) return;
 

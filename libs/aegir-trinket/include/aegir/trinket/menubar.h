@@ -16,18 +16,10 @@
 
 namespace aegir::trinket {
 
-class Menu;
-class MenuItem;
-
 class MenuBar : public Widget {
 public:
     MenuBar();
     ~MenuBar() override;
-
-    struct Menu {
-        std::u32string title;
-        std::vector<MenuItem> items;
-    };
 
     struct MenuItem {
         uint32_t action_id = 0;
@@ -44,6 +36,11 @@ public:
         };
         uint8_t flags = NONE;
         std::vector<MenuItem> submenu;
+    };
+
+    struct Menu {
+        std::u32string title;
+        std::vector<MenuItem> items;
     };
 
     void set_menus(std::vector<Menu> menus);
@@ -88,6 +85,12 @@ private:
     void open_menu(int index, const Point& pos);
     void close_menu();
     void handle_popup_click(const MouseEvent& event);
+
+    MenuItem* find_in_submenu(std::vector<MenuItem>& items, uint32_t action_id);
+    const MenuItem* find_in_submenu(const std::vector<MenuItem>& items, uint32_t action_id) const;
+    void draw_menu(Canvas& canvas, const Menu& menu, int index);
+    void draw_popup(Canvas& canvas, Point pos, const std::vector<MenuItem>& items);
+    static std::u32string keycode_to_string(KeyCode code);
 };
 
 } // namespace aegir::trinket

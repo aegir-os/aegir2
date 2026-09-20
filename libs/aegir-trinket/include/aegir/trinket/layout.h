@@ -96,7 +96,7 @@ class AnchorLayout : public Layout {
 public:
     enum class Anchor { NONE = 0,
         LEFT = 1, RIGHT = 2, HCENTER = 4,
-        TOP = 8, BOTTOM = 16, VCENTER = 16 };
+        TOP = 8, BOTTOM = 16, VCENTER = 32 };
 
     AnchorLayout() = default;
 
@@ -110,6 +110,20 @@ private:
     struct Item { Widget* widget = nullptr; Anchor anchor = Anchor::NONE; Rect margins; };
     std::vector<Item> items_;
 };
+
+/* `Anchor` is a bit set, so the tests in the layout are bitwise. A scoped enum
+ * has no operators of its own; `&` answers "is this bit set" and `|` combines
+ * anchors. */
+constexpr bool operator&(AnchorLayout::Anchor left, AnchorLayout::Anchor right) noexcept
+{
+    return (static_cast<int>(left) & static_cast<int>(right)) != 0;
+}
+
+constexpr AnchorLayout::Anchor operator|(AnchorLayout::Anchor left,
+                                         AnchorLayout::Anchor right) noexcept
+{
+    return static_cast<AnchorLayout::Anchor>(static_cast<int>(left) | static_cast<int>(right));
+}
 
 } // namespace aegir::trinket
 

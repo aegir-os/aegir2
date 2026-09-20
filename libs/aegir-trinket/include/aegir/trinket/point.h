@@ -94,6 +94,7 @@ struct Rect {
     constexpr bool operator==(const Rect& other) const {
         return x == other.x && y == other.y && width == other.width && height == other.height;
     }
+    constexpr bool operator!=(const Rect& other) const { return !(*this == other); }
 };
 
 } // namespace aegir::trinket

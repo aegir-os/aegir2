@@ -56,23 +56,23 @@ const MenuBar::MenuItem* MenuBar::find_in_submenu(const std::vector<MenuItem>& i
 
 void MenuBar::set_item_enabled(uint32_t action_id, bool enabled) {
     if (auto* item = find_item(action_id)) {
-        if (enabled) item->flags &= ~ItemFlags::DISABLED;
-        else item->flags |= ItemFlags::DISABLED;
+        if (enabled) item->flags &= ~MenuItem::Flags::DISABLED;
+        else item->flags |= MenuItem::Flags::DISABLED;
         damage();
     }
 }
 
 void MenuBar::set_item_checked(uint32_t action_id, bool checked) {
     if (auto* item = find_item(action_id)) {
-        if (checked) item->flags |= ItemFlags::CHECKED;
-        else item->flags &= ~ItemFlags::CHECKED;
+        if (checked) item->flags |= MenuItem::Flags::CHECKED;
+        else item->flags &= ~MenuItem::Flags::CHECKED;
         damage();
     }
 }
 
 void MenuBar::set_item_text(uint32_t action_id, std::u32string_view text) {
     if (auto* item = find_item(action_id)) {
-        item->label = text;
+        item->label = std::u32string(text);
         damage();
     }
 }
@@ -203,6 +203,9 @@ void MenuBar::draw_menu(Canvas& canvas, const Menu& menu, int index) {
 }
 
 void MenuBar::draw_popup(Canvas& canvas, Point pos, const std::vector<MenuItem>& items) {
+    static_cast<void>(canvas);
+    static_cast<void>(pos);
+    static_cast<void>(items);
     // Similar to draw_menu but at arbitrary position
 }
 
