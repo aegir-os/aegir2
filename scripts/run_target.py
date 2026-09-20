@@ -122,17 +122,27 @@ def hosted_cxx() -> bool:
     """Whether the hosted C++ runtime is wanted for this build.
 
     An environment switch rather than a target property, because it selects a
-    runtime, not a machine: `AEGIR_HOSTED_CXX=1 make build`. It becomes a cmake
-    cache option of the same name, and the runtime bootstrap below keys off it.
+    runtime, not a machine. It defaults ON; `AEGIR_HOSTED_CXX=0` selects the
+    lean freestanding build (the root task and services, with the greeter and
+    bureau as placeholders). It becomes a cmake cache option of the same name,
+    and the runtime bootstrap below keys off it.
     """
     value = os.environ.get("AEGIR_HOSTED_CXX", "").strip().lower()
-    return value not in ("", "0", "off", "no", "false")
+    return value not in ("0", "off", "no", "false")
 
 
 def toolkit() -> bool:
-    """Whether the GUI toolkit is wanted (requires the hosted runtime)."""
+    """Whether the GUI toolkit is wanted (requires the hosted runtime).
+
+    Defaults ON, and is forced OFF when the hosted runtime is: the toolkit
+    cannot be built without it, and the cmake option's guard would otherwise be
+    the only thing saying so. `AEGIR_TOOLKIT=0` leaves it out while keeping the
+    hosted runtime, which is how the runtime is proven without the toolkit.
+    """
+    if not hosted_cxx():
+        return False
     value = os.environ.get("AEGIR_TOOLKIT", "").strip().lower()
-    return value not in ("", "0", "off", "no", "false")
+    return value not in ("0", "off", "no", "false")
 
 
 def build_runtimes(target: Target, timeout: int) -> None:

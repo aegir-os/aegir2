@@ -14,10 +14,11 @@ it was.
   `musllibc` and `aegir-cxx-policy-freestanding` (`specs/director.md`). Nothing
   in this arc touches it. The same is true of the ordinary services and drivers,
   which are freestanding unless they opt in.
-- **Hosted userspace is opt-in, and gated.** `AEGIR_HOSTED_CXX` (default OFF)
-  builds the runtime — vendored full musl, libc++, `aegir-heap` — and the
-  acceptance client that proves it (`apps/aegir-cxx-smoke`).
-- **The GUI toolkit is its own switch.** `AEGIR_TOOLKIT` (default OFF, requires
+- **Hosted userspace is on by default, and gated.** `AEGIR_HOSTED_CXX` (default
+  ON) builds the runtime — vendored full musl, libc++, `aegir-heap` — and the
+  acceptance client that proves it (`apps/aegir-cxx-smoke`). `AEGIR_HOSTED_CXX=0`
+  selects the lean freestanding build (director and the services).
+- **The GUI toolkit is its own switch.** `AEGIR_TOOLKIT` (default ON, requires
   `AEGIR_HOSTED_CXX`) builds `aegir-trinket`, `aegir-bureau`, `aegir-datatypes`
   and `aegir-classes`, and the real greeter and bureau. While it is OFF those
   two programs build freestanding placeholders, because director refuses to boot

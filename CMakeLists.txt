@@ -23,10 +23,11 @@ include(settings.cmake)
 project(aegir C CXX ASM)
 
 # The hosted C++ runtime -- vendored full musl, libc++/libcxxabi/libunwind, and
-# the acceptance client that proves them (apps/aegir-cxx-smoke). OFF is the
-# default so the tree configures and boots with only the freestanding path
-# (director and the services), before the runtime has been built.
-option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and its smoke client" OFF)
+# the acceptance client that proves them (apps/aegir-cxx-smoke). ON is the
+# default, so `make build` and `make run` are the full system; OFF is the lean
+# freestanding build (director and the services, with the greeter and bureau as
+# placeholders).
+option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and its smoke client" ON)
 
 # The GUI toolkit on top of the hosted runtime, a separate switch because the
 # toolkit is its own arc (specs/cxx.md) and is still growing. It requires the
@@ -34,7 +35,7 @@ option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and its smoke client" OFF)
 # freestanding placeholders, because director refuses to boot when a manifest
 # entry names a binary the initrd does not carry
 # (apps/aegir-director/src/services.cc).
-option(AEGIR_TOOLKIT "Build the GUI toolkit (requires AEGIR_HOSTED_CXX)" OFF)
+option(AEGIR_TOOLKIT "Build the GUI toolkit (requires AEGIR_HOSTED_CXX)" ON)
 if(AEGIR_TOOLKIT AND NOT AEGIR_HOSTED_CXX)
   message(FATAL_ERROR "AEGIR_TOOLKIT needs AEGIR_HOSTED_CXX (the toolkit runs on the hosted runtime)")
 endif()
