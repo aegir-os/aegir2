@@ -52,7 +52,7 @@
 
   <!--
     seL4's musllibc fork (the `sel4` branch, 1.2.5) is the C library the
-    *freestanding* build uses -- the root task and the services -- and is what
+    freestanding build uses: the root task and the services, and what
     `find_package(musllibc)` in the seL4 build system requires. It is separate
     from the upstream musl above, which is the hosted C++ runtime's C library.
     MIT.
