@@ -223,9 +223,12 @@ void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
  * visible on a white surface. The touched box is the arrow plus one pixel
  * each way (the border), which is what the save-under holds. */
 constexpr uint64_t kCursorSize = 16;
+/* A solid arrow: the fill is set, and the outline is derived from it (a set
+ * pixel with an unset neighbour is the border). An outline bitmap would leave
+ * the interior transparent, which is the see-through centre this replaced. */
 constexpr uint16_t kCursorShape[kCursorSize] = {
-    0x4000, 0xC000, 0xA000, 0x9000, 0x8800, 0x8400, 0x8200, 0x8100,
-    0x8080, 0x8040, 0x8020, 0x81F0, 0x8800, 0x9400, 0xC400, 0x0C00};
+    0x8000, 0xC000, 0xE000, 0xF000, 0xF800, 0xFC00, 0xFE00, 0xFF00,
+    0xFF80, 0xFFC0, 0xFFE0, 0xFFF0, 0xF000, 0xF000, 0xF000, 0xF000};
 constexpr uint64_t kCursorSpan = kCursorSize + 2;
 uint32_t g_cursor_under[kCursorSpan * kCursorSpan];
 int64_t g_cursor_origin_x = 0;
