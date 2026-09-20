@@ -163,6 +163,12 @@ struct Request {
     char const *account;
     uint32_t account_length;
     uint32_t priority;
+    /** How many 4 KiB pages of stack the child is given. Zero takes the floor
+     *  (kDefaultStackPages, 8 KiB); a process that runs the C++ standard
+     *  library asks for more, because its container code is stack-hungry and an
+     *  8 KiB stack overflows silently into whatever the spawner mapped below it
+     *  (specs/userland.md's "a service's stack is what the spawner gives it"). */
+    uint32_t stack_pages = 0;
     PortGrant const *ports;
     uint32_t port_count;
     /** The fault endpoint every service shares, and this service's badge on it.

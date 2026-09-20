@@ -22,7 +22,7 @@ constexpr uint64_t kPage = 1ull << seL4_PageBits;
  * CSpace size is layout, not a default: a service that itself spawns addresses
  * its own CNode through it, so it lives with the other block layout constants in
  * aegir/bootstrap.h (kCNodeBits). */
-constexpr unsigned kStackPages = 2; /* 8 KiB of stack */
+constexpr unsigned kDefaultStackPages = 2; /* 8 KiB, the floor a service is given */
 /* The bootstrap block fills the page it is mapped as: what a process is given
  * is part of who it is, and a service with many grants -- the partition
  * manager carries a window's frame per page -- is not a smaller kind of
@@ -277,8 +277,10 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     uintptr_t const block_at = align_up(static_cast<uintptr_t>(elf.load_end()), kPage);
     uintptr_t const ipc_at = block_at + kPage;
     uintptr_t const stack_lo = ipc_at + kPage;
-    uintptr_t const stack_top = stack_lo + kStackPages * kPage;
-    uint64_t const stack_bytes = kStackPages * kPage;
+    unsigned const stack_pages =
+        request.stack_pages != 0 ? request.stack_pages : kDefaultStackPages;
+    uintptr_t const stack_top = stack_lo + stack_pages * kPage;
+    uint64_t const stack_bytes = stack_pages * kPage;
 
     auto *block_storage = static_cast<uint8_t *>(arena_.allocate(kPage));
     if (block_storage == nullptr) {
@@ -548,7 +550,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (sp == 0) {
         return fail("the startup frame does not fit on the child's stack");
     }
-    if (!vspace.populate(stack_lo, kStackPages, stack, stack_bytes, 0, true, account, nullptr,
+    if (!vspace.populate(stack_lo, stack_pages, stack, stack_bytes, 0, true, account, nullptr,
                          &why)) {
         detail_ = why;
         return fail("the child's stack could not be mapped");

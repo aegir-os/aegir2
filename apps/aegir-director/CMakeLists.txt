@@ -50,6 +50,7 @@ set(aegir_initrd_files
     "$<TARGET_FILE:aegir-auth>"
     "$<TARGET_FILE:aegir-session-smoke>"
     "$<TARGET_FILE:aegir-test>"
+    "$<TARGET_FILE:aegir-cxx-smoke>"
 )
 set(aegir_initrd_names
     "services.manifest"
@@ -72,6 +73,7 @@ set(aegir_initrd_names
     "aegir-auth"
     "aegir-session-smoke"
     "aegir-test"
+    "aegir-cxx-smoke"
 )
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)

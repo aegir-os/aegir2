@@ -23,13 +23,21 @@ include(settings.cmake)
 project(aegir C CXX ASM)
 
 # The hosted C++ runtime -- vendored full musl, libc++/libcxxabi/libunwind, and
-# the toolkit that needs them. OFF is the default so the tree configures and
-# boots with only the freestanding path (director and the services), before the
-# runtime has been built. The greeter and bureau fall back to freestanding
-# placeholders while it is OFF (apps/aegir-greeter, apps/aegir-bureau), because
-# director refuses to boot when a manifest entry names a binary the initrd does
-# not carry (apps/aegir-director/src/services.cc).
-option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and the GUI toolkit" OFF)
+# the acceptance client that proves them (apps/aegir-cxx-smoke). OFF is the
+# default so the tree configures and boots with only the freestanding path
+# (director and the services), before the runtime has been built.
+option(AEGIR_HOSTED_CXX "Build the hosted C++ runtime and its smoke client" OFF)
+
+# The GUI toolkit on top of the hosted runtime, a separate switch because the
+# toolkit is its own arc (specs/cxx.md) and is not yet complete. It requires the
+# hosted runtime. While it is OFF the greeter and bureau fall back to
+# freestanding placeholders, because director refuses to boot when a manifest
+# entry names a binary the initrd does not carry
+# (apps/aegir-director/src/services.cc).
+option(AEGIR_TOOLKIT "Build the GUI toolkit (requires AEGIR_HOSTED_CXX)" OFF)
+if(AEGIR_TOOLKIT AND NOT AEGIR_HOSTED_CXX)
+  message(FATAL_ERROR "AEGIR_TOOLKIT needs AEGIR_HOSTED_CXX (the toolkit runs on the hosted runtime)")
+endif()
 
 find_package(seL4 REQUIRED)
 find_package(elfloader-tool REQUIRED)
@@ -144,6 +152,8 @@ add_subdirectory(libs/aegir-spawn)
 add_subdirectory(libs/aegir-virtio)
 if(AEGIR_HOSTED_CXX)
   add_subdirectory(libs/aegir-heap)
+endif()
+if(AEGIR_TOOLKIT)
   add_subdirectory(libs/aegir-trinket)
   add_subdirectory(libs/aegir-bureau)
   add_subdirectory(libs/aegir-datatypes)
@@ -164,6 +174,7 @@ add_subdirectory(apps/aegir-console)
 add_subdirectory(apps/aegir-greeter)
 add_subdirectory(apps/aegir-bureau)
 add_subdirectory(apps/aegir-test)
+add_subdirectory(apps/aegir-cxx-smoke)
 add_subdirectory(apps/aegir-auth)
 add_subdirectory(apps/aegir-session-smoke)
 add_subdirectory(apps/aegir-hello)

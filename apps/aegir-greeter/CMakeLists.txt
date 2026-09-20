@@ -16,7 +16,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-greeter CXX)
 
-if(AEGIR_HOSTED_CXX)
+if(AEGIR_TOOLKIT)
   add_executable(aegir-greeter src/main.cc)
 
   target_compile_options(aegir-greeter PRIVATE -Wall -Wextra -Werror)

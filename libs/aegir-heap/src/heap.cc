@@ -36,6 +36,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/mman.h>
+#include <sys/uio.h>
 
 /* musl's state, which this library seeds:
  *   - `__sysinfo`, the function pointer every syscall lands in
@@ -268,6 +269,22 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
     return static_cast<long>(length);
 }
 
+/* SYS_writev: what musl's stdio actually uses. Without it, vfprintf's output
+ * (libc++'s verbose-abort message among it) is lost and the abort looks
+ * silent. */
+long sys_writev(int fd, void const *iov, int count) noexcept
+{
+    if (fd != 1 && fd != 2) {
+        return -EBADF;
+    }
+    auto const *vectors = static_cast<struct iovec const *>(iov);
+    long total = 0;
+    for (int i = 0; i < count; ++i) {
+        total += sys_write(fd, vectors[i].iov_base, vectors[i].iov_len);
+    }
+    return total;
+}
+
 /* The dispatcher: musl's syscall table, one switch. The va_arg reads are the
  * Linux ABI's argument order for each call (projects/musl/arch/riscv64/bits/
  * syscall.h.in has the numbers). */
@@ -299,6 +316,10 @@ long vsyscall(long sysnum, ...) noexcept
     case 64: /* SYS_write */
         ret = sys_write(va_arg(ap, int), va_arg(ap, void const *),
                         va_arg(ap, size_t));
+        break;
+    case 66: /* SYS_writev */
+        ret = sys_writev(va_arg(ap, int), va_arg(ap, void const *),
+                         va_arg(ap, int));
         break;
     case 93:  /* SYS_exit */
     case 94:  /* SYS_exit_group */

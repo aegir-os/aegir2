@@ -202,6 +202,7 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.account = entry.account.data;
         request.account_length = entry.account.length;
         request.priority = priority_for(entry);
+        request.stack_pages = entry.stack_kib / 4u;
         spawn::PortGrant const *grants = graph_.grants(i);
         uint32_t grant_count = graph_.grant_count(i);
         /* Capabilities director delegates to a service go in beside the ports the

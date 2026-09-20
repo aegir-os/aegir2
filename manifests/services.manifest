@@ -242,6 +242,17 @@ maps      = true
 memory_kib = 2048
 restart   = never
 
+# The hosted C++ runtime's acceptance client (specs/cxx.md): it needs no port,
+# but it does need the untyped, the VSpace root and the window the heap is
+# carved from, so it takes the maps grant and its own memory.
+[cxxsmoke]
+binary    = aegir-cxx-smoke
+authority = system
+account   = boot
+maps      = true
+memory_kib = 4096
+restart   = never
+
 # The first session (specs/auth.md). Nothing starts it at boot -- auth
 # starts one when a login succeeds, with the user's badge and account.
 # Input it has none of: the devices are the console's (specs/console.md),

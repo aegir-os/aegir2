@@ -15,7 +15,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-bureau CXX)
 
-if(AEGIR_HOSTED_CXX)
+if(AEGIR_TOOLKIT)
   add_executable(aegir-bureau-app src/main.cc)
 
   target_compile_options(aegir-bureau-app PRIVATE -Wall -Wextra -Werror)

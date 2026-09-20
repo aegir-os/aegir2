@@ -203,6 +203,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool device_manager_seen = false;
     bool device_id_seen = false;
     bool memory_seen = false;
+    bool stack_seen = false;
     bool delegate_seen = false;
     bool initrd_seen = false;
     bool maps_seen = false;
@@ -398,6 +399,39 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 rounded <<= 1;
             }
             current->memory_kib = rounded;
+            return true;
+        }
+
+        if (equals(key, "stack_kib")) {
+            if (stack_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            stack_seen = true;
+            /* A decimal number of KiB, rounded up to whole 4 KiB pages: the
+             * stack is pages the spawner maps, and a request that is not a
+             * whole number of them is rounded up (specs/userland.md). */
+            uint32_t kib = 0;
+            if (value.length == 0 || value.length > 6) {
+                failure_line = number;
+                failure = "stack_kib is a decimal number of KiB";
+                return false;
+            }
+            for (uint32_t d = 0; d < value.length; ++d) {
+                if (value.data[d] < '0' || value.data[d] > '9') {
+                    failure_line = number;
+                    failure = "stack_kib is a decimal number of KiB";
+                    return false;
+                }
+                kib = kib * 10 + static_cast<uint32_t>(value.data[d] - '0');
+            }
+            if (kib == 0) {
+                failure_line = number;
+                failure = "stack_kib of zero asks for nothing; leave the key out";
+                return false;
+            }
+            current->stack_kib = (kib + 3u) & ~3u;
             return true;
         }
 

@@ -129,6 +129,12 @@ def hosted_cxx() -> bool:
     return value not in ("", "0", "off", "no", "false")
 
 
+def toolkit() -> bool:
+    """Whether the GUI toolkit is wanted (requires the hosted runtime)."""
+    value = os.environ.get("AEGIR_TOOLKIT", "").strip().lower()
+    return value not in ("", "0", "off", "no", "false")
+
+
 def build_runtimes(target: Target, timeout: int) -> None:
     """Build the hosted runtime's two vendored pieces for this target.
 
@@ -537,7 +543,10 @@ def main(argv: list[str]) -> int:
     # Always passed explicitly, ON or OFF: the cmake cache keeps a value set by
     # a previous build, so omitting the flag would leave a hosted tree hosted
     # when the environment says otherwise (and vice versa).
-    extra_flags = f"-DAEGIR_HOSTED_CXX={'ON' if hosted else 'OFF'}"
+    extra_flags = (
+        f"-DAEGIR_HOSTED_CXX={'ON' if hosted else 'OFF'} "
+        f"-DAEGIR_TOOLKIT={'ON' if toolkit() else 'OFF'}"
+    )
     wanted_flags = f"{wanted_flags} {extra_flags}".strip()
     try:
         if hosted:

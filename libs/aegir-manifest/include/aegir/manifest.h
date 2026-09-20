@@ -68,6 +68,11 @@ struct Entry {
      * specs/authority.md). A power of two, because a region that is carved is a power of
      * two wide; a request that is not one is rounded up when it is parsed. */
     uint32_t memory_kib;
+    /* Stack this service is given, in KiB, or zero for the floor
+     * (aegir-spawn's kDefaultStackPages, 8 KiB). The C++ standard library's
+     * container code is stack-hungry, so a service that runs it asks for more;
+     * rounded up to whole pages when parsed (specs/userland.md). */
+    uint32_t stack_kib;
     /* The untyped a spawning service is delegated, in MiB, or zero for the default
      * (services.cc's kDelegatedUntypedBits). Spawners' appetites diverge -- the
      * device manager holds drivers' windows and the partition manager's megabyte,
