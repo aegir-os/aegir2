@@ -1,5 +1,9 @@
 # Project rules
 
+- If, for whatever reason, something the user has asked for, or the way they've asked for it, 
+  isn't working, you **STOP** and ask for clarification. You do not unilaterally change the 
+  plan under any circumstances. This is the quickest way to get ditched as a model.
+
 - No arbitrary and hardcoded limits without explicit permission. Capacity tables should
   grow on demand.
 - Any use of `make test` or other long running bash process must use `timeout` so as to
