@@ -65,6 +65,16 @@ public:
     void on_focus_gained();
     void on_focus_lost();
 
+    // Widget focus within the content tree. A pointer-down focuses the
+    // focusable it lands in; Tab moves to the next (specs/trinket.md).
+    void set_focus(Widget* widget);
+    Widget* focused_widget() const { return focused_; }
+    void focus_next();
+
+    // Console event dispatch, called by Application with the packed word.
+    void dispatch_key(uint64_t event);
+    void dispatch_pointer(uint64_t event);
+
     // Request damage (repaint). Tier 1 repaints the whole window on any
     // damage: 480x360 is 172800 words and the event that caused it costs more
     // than the fill.
@@ -89,6 +99,9 @@ private:
     // claimed once and reused, and a canvas over it.
     uint64_t backing_offset_ = ~0ull;
     Canvas canvas_;
+
+    // The widget within the content tree that keys go to.
+    Widget* focused_ = nullptr;
 
     // Bureau window IDs
     uint64_t console_window_id_ = 0;

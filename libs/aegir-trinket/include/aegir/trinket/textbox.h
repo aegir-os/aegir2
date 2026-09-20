@@ -50,6 +50,8 @@ public:
     void set_font(Font* f) { font_ = f; damage(); }
     Font* font() const { return font_; }
 
+    bool focusable() const override { return true; }
+
     // Callbacks
     std::function<void(std::u32string_view)> on_text_changed;
     std::function<void()> on_submit;       // Enter pressed

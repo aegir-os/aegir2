@@ -81,6 +81,10 @@ public:
     Container* parent_container() const { return parent_; }
     virtual bool is_container() const { return false; }
 
+    // Whether a pointer-down or Tab may focus this widget. A text field and a
+    // button are focusable; a label is not.
+    virtual bool focusable() const { return false; }
+
     // The size this widget wants, which layouts arrange it at. The base has no
     // content, so it asks for what it already is; a label or a button overrides
     // it with the size of what it draws.

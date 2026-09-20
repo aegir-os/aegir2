@@ -13,6 +13,7 @@
 #include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/heap.h>
+#include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
@@ -265,11 +266,23 @@ bool Application::process_events() {
 }
 
 void Application::dispatch_gui_event(uint64_t event, uint64_t window) {
-    /* The window routing and the key/pointer/focus dispatch land here
-     * (specs/trinket.md); the plumbing that fills the ring is what this arc
-     * stands up first. */
-    static_cast<void>(event);
-    static_cast<void>(window);
+    uint16_t const type = aegir::input::event_type(event);
+    uint32_t const value = aegir::input::event_value(event);
+    for (Window* win : windows_) {
+        if (win->console_window_id() != window) continue;
+        if (type == aegir::console::kEventFocus) {
+            if (value == 1) {
+                win->on_focus_gained();
+            } else {
+                win->on_focus_lost();
+            }
+        } else if (type == aegir::console::kEventKey) {
+            win->dispatch_key(event);
+        } else if (type == aegir::console::kEventPointer) {
+            win->dispatch_pointer(event);
+        }
+        return;
+    }
 }
 
 void Application::process_timers() {

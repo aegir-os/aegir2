@@ -7,11 +7,46 @@
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/console.h>
+#include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/debug.h>
 #include <sel4/sel4.h>
+#include <algorithm>
+#include <vector>
 
 namespace aegir::trinket {
+
+namespace {
+
+/* The topmost widget under `p`, window-local. Rects are window-absolute (the
+ * layouts place children against the container's own rect), so the same point
+ * descends the tree unchanged. */
+Widget* hit_test(Widget* widget, Point p) {
+    if (widget == nullptr || !widget->visible()) return nullptr;
+    if (widget->is_container()) {
+        Container* const container = static_cast<Container*>(widget);
+        Widget* const child = container->child_at(p);
+        if (child != nullptr) {
+            Widget* const deeper = hit_test(child, p);
+            return deeper != nullptr ? deeper : child;
+        }
+    }
+    return widget->rect().contains(p) ? widget : nullptr;
+}
+
+/* The focusables in the tree, in tree order: what Tab cycles through. */
+void collect_focusables(Widget* widget, std::vector<Widget*>& out) {
+    if (widget == nullptr || !widget->visible()) return;
+    if (widget->is_container()) {
+        Container* const container = static_cast<Container*>(widget);
+        for (const auto& child : container->children()) {
+            collect_focusables(child.get(), out);
+        }
+    }
+    if (widget->focusable()) out.push_back(widget);
+}
+
+}  // namespace
 
 Window::Window(Application& app)
     : app_(app), console_window_id_(0), frame_window_id_(0) {
@@ -100,6 +135,86 @@ void Window::on_focus_gained() {
 
 void Window::on_focus_lost() {
     if (on_focus_changed) on_focus_changed(false);
+}
+
+void Window::set_focus(Widget* widget) {
+    if (focused_ == widget) return;
+    if (focused_ != nullptr) focused_->set_focused(false);
+    focused_ = widget;
+    if (focused_ != nullptr) focused_->set_focused(true);
+}
+
+void Window::focus_next() {
+    std::vector<Widget*> focusables;
+    collect_focusables(content_.get(), focusables);
+    if (focusables.empty()) return;
+    auto it = std::find(focusables.begin(), focusables.end(), focused_);
+    if (it == focusables.end() || ++it == focusables.end()) {
+        set_focus(focusables.front());
+    } else {
+        set_focus(*it);
+    }
+}
+
+void Window::dispatch_key(uint64_t event) {
+    uint32_t const value = aegir::input::event_value(event);
+    char const c = static_cast<char>(value & 0xffff);
+    bool const pressed = (value & aegir::console::kKeyPressed) != 0;
+
+    /* The console hands over the translated character; the few keys the
+     * toolkit acts on get a KeyCode as well. Tab is the window's, because it
+     * moves the focus rather than reaching a widget. */
+    KeyEvent key;
+    key.pressed = pressed;
+    switch (c) {
+    case '\b': key.code = KeyCode::BACKSPACE; break;
+    case '\t': key.code = KeyCode::TAB; break;
+    case '\n': key.code = KeyCode::ENTER; break;
+    case 27: key.code = KeyCode::ESCAPE; break;
+    case ' ': key.code = KeyCode::SPACE; key.text = U' '; break;
+    default:
+        if (c >= 32 && c < 127) key.text = static_cast<char32_t>(c);
+        break;
+    }
+
+    if (key.code == KeyCode::TAB) {
+        if (pressed) focus_next();
+        return;
+    }
+    if (focused_ == nullptr) return;
+    if (pressed) {
+        focused_->dispatch_key_down(key);
+    } else {
+        focused_->dispatch_key_up(key);
+    }
+}
+
+void Window::dispatch_pointer(uint64_t event) {
+    uint32_t const value = aegir::input::event_value(event);
+    uint16_t const code = aegir::input::event_code(event);
+    Point const pos{static_cast<int>(value & 0xffff),
+                    static_cast<int>((value >> 16) & 0xffff)};
+
+    bool const up = (code & aegir::console::kButtonRelease) != 0;
+    uint16_t const button = code & ~aegir::console::kButtonRelease;
+    MouseEvent mouse;
+    mouse.pos = pos;
+    mouse.global_pos = pos;  // window-local is all the toolkit has
+    switch (button) {
+    case 1: mouse.button = MouseButton::LEFT; break;
+    case 2: mouse.button = MouseButton::RIGHT; break;
+    case 4: mouse.button = MouseButton::MIDDLE; break;
+    default: return;  // motion (no button) is not dispatched in tier 1
+    }
+
+    Widget* const target = hit_test(content_.get(), pos);
+    if (target == nullptr) return;
+    if (up) {
+        target->dispatch_mouse_up(mouse);
+    } else {
+        if (target->focusable()) set_focus(target);
+        target->dispatch_mouse_down(mouse);
+    }
 }
 
 void Window::repaint() {

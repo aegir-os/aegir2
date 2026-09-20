@@ -44,6 +44,8 @@ public:
     // Auto-repeat for held buttons
     void set_auto_repeat(bool enable, int interval_ms = 100);
 
+    bool focusable() const override { return true; }
+
 protected:
     void on_paint(Canvas& canvas, const PaintEvent& event) override;
     void on_mouse_down(const MouseEvent& event) override;
