@@ -171,38 +171,57 @@ explicitly so the CMake cache cannot keep a stale one.
   entry in, shrink), so the fixed table bounds *fragmentation*, not objects ever
   allocated (project rule: capacity grows on demand).
 
-## Deferred, with triggers
+## The completion program
 
-- **Exceptions and RTTI.** Tier 1 compiles without them. Turning them on means
-  rebuilding libc++ with `LIBCXX_ENABLE_EXCEPTIONS`/`RTTI` on and proving
-  unwinding in a *spawned* process — `.eh_frame` mapped and frame registration
-  reached — before anything relies on it. The toolkit's widget classes are the
-  first likely consumer.
-- **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread, but
-  a thread does not start: `pthread_create` reaches `clone`, which the
-  dispatcher refuses, and with exceptions off `std::thread`'s constructor would
-  abort. `aegir-trinket`'s `WorkerPool` therefore does not spawn, and
-  `aegir-cxx-policy-hosted` sets `-fno-threadsafe-statics`. A real thread is one
-  seL4 TCB in the process's own address space, and `specs/userland.md`'s
-  threading section already records the rules (tp, gp, a stack that does not
-  overlap the TLS block).
-- **Filesystem.** `<fstream>` compiles; the file syscalls are stubbed `-ENOSYS`,
-  so a stream fails cleanly. Wiring them to the VFS service (`specs/vfs.md`) is
-  its own arc.
-- **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
-  its C dependencies are musl's — while `translation.cc` and `bidi.cc` are gated
-  out because they are stubs, not because they cannot compile. The locale arc
-  turns musl's locale on and implements UAX #9 for real.
-- **`__cxa_atexit` at process exit.** `sel4runtime` runs `__fini_array` and
-  never calls libc's `exit`, so destructors registered through libc's
-  `__cxa_atexit` do not run. A process that needs them at exit wants the
-  `__funcs_on_exit()` bridge.
-- **The compiler choice.** GCC builds everything today. Clang 22 cross-compiles
-  the hosted code cleanly and compactly (224 bytes at `-O0`, 112 at `-O2`) and
-  would not need the `__chash` patch at all, because libc++ is Clang's library.
-  Switching is `specs/build.md`'s deferred decision and its own arc; it needs
-  `lld` and a build-system change (or the hybrid build that document already
-  describes).
+Status: decided (2026-09). The runtime's remaining parts are one program,
+worked in order, each its own arc with its own acceptance. `specs/userland.md`
+frames the whole of it: **Aegir is not a POSIX system**, and a POSIX layer is
+an optional thing on top of Aegir's primitives, not the model. So the standard
+library is completed for the parts that are Aegir-native, and the POSIX-shaped
+parts — `std::filesystem`, `<fstream>`, and the file calls behind them — arrive
+through an **optional POSIX layer**, ixemul's shape: a library a program links
+and mounts volumes into. A program that does not link it never sees a POSIX
+path; no core component maps Amiga volumes to POSIX paths, and a standard
+program never has to think about the mapping. The mapping is the layer's, and
+the layer is the program's choice.
+
+The order, each before the GUI arc's launcher and its volume listing:
+
+1. **`__cxa_atexit` at process exit.** `sel4runtime` runs `__fini_array` and
+   never calls libc's `exit`, so destructors registered through libc's
+   `__cxa_atexit` do not run. A process that needs them at exit wants the
+   `__funcs_on_exit()` bridge. Small, and it closes a correctness hole the
+   other parts would otherwise each work around.
+2. **Exceptions and RTTI.** Tier 1 compiles without them. Turning them on means
+   rebuilding libc++ with `LIBCXX_ENABLE_EXCEPTIONS`/`RTTI` on and proving
+   unwinding in a *spawned* process — `.eh_frame` mapped and frame registration
+   reached — before anything relies on it. The toolkit's widget classes are the
+   first likely consumer.
+3. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
+   but a thread does not start: `pthread_create` reaches `clone`, which the
+   dispatcher refuses, and with exceptions off `std::thread`'s constructor would
+   abort. `aegir-trinket`'s `WorkerPool` therefore does not spawn. A real
+   thread is one seL4 TCB in the process's own address space, and
+   `specs/userland.md`'s threading section already records the rules (tp, gp, a
+   stack that does not overlap the TLS block).
+4. **The POSIX layer.** The file syscalls the dispatcher refuses are answered
+   by an optional library (`libs/aegir-posix`), ixemul's shape. It is linked by
+   a program that wants POSIX, it mounts volumes through `vfs.namespace`
+   (`specs/vfs.md`), and it translates `openat`/`stat`/`readdir`/`mkdir`/… into
+   the volume protocol. `std::filesystem` and `<fstream>` work once it is
+   linked and its mounts are up. `aegir-heap`'s dispatcher grows a
+   registered-handler hook (or the layer wraps `__sysinfo`), so a program that
+   does not link the layer keeps `-ENOSYS` and never sees a POSIX path.
+5. **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
+   its C dependencies are musl's — while `translation.cc` and `bidi.cc` are
+   gated out because they are stubs, not because they cannot compile. The
+   locale arc turns musl's locale on and implements UAX #9 for real.
+6. **The compiler choice.** GCC builds everything today. Clang 22
+   cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
+   112 at `-O2`) and would not need the `__chash` patch at all, because libc++
+   is Clang's library. Switching is `specs/build.md`'s deferred decision and
+   its own arc; it needs `lld` and a build-system change (or the hybrid build
+   that document already describes).
 
 ## Acceptance
 
