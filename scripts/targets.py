@@ -396,7 +396,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             QmpStep(
-                r"demo: geometry 1280x",
+                r"demo: zoomed",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
@@ -411,7 +411,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             QmpStep(
-                r"demo: geometry 260x",
+                r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 910, 310, 204, 204, 204),),

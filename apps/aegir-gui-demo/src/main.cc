@@ -79,12 +79,17 @@ int main(int argc, char *argv[])
 
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
      * close. The runner paces its dumps on them (scripts/targets.py). */
-    window.on_moved_resized = [](Rect r) {
-        write("  demo: geometry ");
-        aegir::debug_write_unsigned(static_cast<uint64_t>(r.width));
-        write("x");
-        aegir::debug_write_unsigned(static_cast<uint64_t>(r.height));
-        write("\n");
+    /* Only the two landmarks print: a debug write is a syscall a character,
+     * and logging every resize motion would tax the very gesture it reports.
+     * An interactive resize lands between them and stays quiet. */
+    Application *const app_ptr = &app;
+    window.on_moved_resized = [app_ptr](Rect r) {
+        int const screen_width = static_cast<int>(app_ptr->display_info().width_px);
+        if (screen_width > 0 && r.width >= screen_width) {
+            write("  demo: zoomed\n");
+        } else if (r.width == kWindowWidth && r.height == kWindowHeight) {
+            write("  demo: restored\n");
+        }
     };
     window.on_close_requested = []() { write("  demo: closed\n"); };
 

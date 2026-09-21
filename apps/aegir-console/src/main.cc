@@ -181,6 +181,14 @@ uint64_t g_pointer_y = 0;
 Window *g_focused = nullptr;
 Window *g_grab = nullptr;
 
+/* Motion is coalesced: a drain may carry several reports, and only the last
+ * position matters. The cursor is erased at the first, drawn at the flush,
+ * and one event is delivered -- a client resizes or moves once per drain,
+ * not once per report, which is what a fast pointer outran. */
+bool g_motion_pending = false;
+uint64_t g_motion_old_x = 0;
+uint64_t g_motion_old_y = 0;
+
 /* The topmost window covering a point, or none. The list is bottom first,
  * so the last coverer is the answer. */
 Window *window_at(uint64_t x, uint64_t y) noexcept
@@ -309,17 +317,25 @@ void cursor_erase() noexcept
     g_cursor_drawn = false;
 }
 
-/* The position has already moved when this runs: the erase happened in
- * route(), before the update, because the save-under only restores where
- * the cursor actually was. What is left here is the draw at the new spot,
- * the flush of the old and new cursor rectangles, and the event. */
-void pointer_moved(uint64_t old_x, uint64_t old_y) noexcept
+/* Deliver the coalesced motion: the cursor is drawn at its final position,
+ * the old and new cursor rectangles are flushed, and one event goes out.
+ * Called before any event that is not motion, and at the end of a drain, so
+ * the order a client sees is preserved. */
+void flush_motion() noexcept
 {
+    if (!g_motion_pending) {
+        return;
+    }
+    g_motion_pending = false;
     cursor_draw();
-    uint64_t const min_x = old_x < g_pointer_x ? old_x : g_pointer_x;
-    uint64_t const min_y = old_y < g_pointer_y ? old_y : g_pointer_y;
-    uint64_t const max_x = (old_x > g_pointer_x ? old_x : g_pointer_x) + kCursorSpan;
-    uint64_t const max_y = (old_y > g_pointer_y ? old_y : g_pointer_y) + kCursorSpan;
+    uint64_t const min_x =
+        g_motion_old_x < g_pointer_x ? g_motion_old_x : g_pointer_x;
+    uint64_t const min_y =
+        g_motion_old_y < g_pointer_y ? g_motion_old_y : g_pointer_y;
+    uint64_t const max_x =
+        (g_motion_old_x > g_pointer_x ? g_motion_old_x : g_pointer_x) + kCursorSpan;
+    uint64_t const max_y =
+        (g_motion_old_y > g_pointer_y ? g_motion_old_y : g_pointer_y) + kCursorSpan;
     uint64_t const left = min_x > 0 ? min_x - 1 : 0;
     uint64_t const top = min_y > 0 ? min_y - 1 : 0;
     flush(left, top, max_x - left, max_y - top);
@@ -396,16 +412,18 @@ void route(uint32_t device, uint64_t word) noexcept
     uint16_t const code = aegir::input::event_code(word);
     uint32_t const value = aegir::input::event_value(word);
     if (device == kHidKbd && type == aegir::input::kEvKey) {
+        flush_motion();
         key_event(code, value);
     } else if (device == kHidMouse && type == aegir::input::kEvRel) {
         /* Relative motion integrates to the pointer, clamped to the screen.
-         * The cursor comes down first: erase restores the save-under where
-         * the cursor was drawn, which is only the position it was drawn at
-         * -- erase after the update and the old pixels stay (trails) while
-         * the new spot gets the old spot's saved pixels. */
-        cursor_erase();
-        uint64_t const old_x = g_pointer_x;
-        uint64_t const old_y = g_pointer_y;
+         * The first motion of a drain takes the cursor down and remembers
+         * where it was; the drain's end draws it once at the final spot. */
+        if (!g_motion_pending) {
+            cursor_erase();
+            g_motion_old_x = g_pointer_x;
+            g_motion_old_y = g_pointer_y;
+            g_motion_pending = true;
+        }
         int64_t const next =
             static_cast<int64_t>(code == aegir::input::kAxisX ? g_pointer_x
                                                               : g_pointer_y) +
@@ -420,22 +438,26 @@ void route(uint32_t device, uint64_t word) noexcept
         } else {
             g_pointer_y = clamped;
         }
-        pointer_moved(old_x, old_y);
     } else if (device == kHidTablet && type == aegir::input::kEvAbs) {
         /* Absolute, in the axis's own units (0..32767): scaled to the
          * screen, the numbers pass through unchanged from the injector.
          * Cursor down first, as for the relative axis above. */
-        cursor_erase();
-        uint64_t const old_x = g_pointer_x;
-        uint64_t const old_y = g_pointer_y;
+        if (!g_motion_pending) {
+            cursor_erase();
+            g_motion_old_x = g_pointer_x;
+            g_motion_old_y = g_pointer_y;
+            g_motion_pending = true;
+        }
         if (code == aegir::input::kAxisX) {
             g_pointer_x = (static_cast<uint64_t>(value) * g_width) >> 15;
         } else {
             g_pointer_y = (static_cast<uint64_t>(value) * g_height) >> 15;
         }
-        pointer_moved(old_x, old_y);
     } else if (device != kHidKbd && type == aegir::input::kEvKey &&
                code >= aegir::input::kBtnLeft && code <= aegir::input::kBtnMiddle) {
+        /* The click is delivered where the pointer stands now, so any motion
+         * waiting goes first. */
+        flush_motion();
         pointer_button(code, value);
     }
     /* EV_SYN ends a moment's worth of events; delivered as they come. */
@@ -450,15 +472,17 @@ void drain(uint32_t device) noexcept
         aegir::ipc::WordsReply const polled =
             g_hid[device].call_words(aegir::input::kMethodPoll, nullptr, 0, in, 1);
         if (polled.error != 0 || polled.count != 1 || in[0] == 0) {
-            return;
+            break;
         }
         aegir::ipc::WordsReply const next =
             g_hid[device].call_words(aegir::input::kMethodNext, nullptr, 0, in, 1);
         if (next.error != 0 || next.count != 1) {
-            return;
+            break;
         }
         route(device, in[0]);
     }
+    /* Whatever motion the drain carried goes out as one event. */
+    flush_motion();
 }
 
 /* Composite a screen rectangle: every pixel is the topmost window covering

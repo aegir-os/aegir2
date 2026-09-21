@@ -115,7 +115,10 @@ The vocabulary is console's (`libs/aegir-console`), three kinds to start:
   the grab-held window in **screen coordinates**, because a window the drag
   is moving has no stable frame to be local to (an event queued while the
   window was elsewhere reads against the wrong origin, which is what an
-  overshooting "thrown" drag was).
+  overshooting "thrown" drag was). Motion is **coalesced**: a drain may carry
+  several reports and only the last position matters, so the cursor is drawn
+  once and one event goes out — a client resizes or moves once per drain, not
+  once per report, which is what a fast pointer outran.
 - **focus** — in and out. What a text field listens for.
 
 ## Focus and the pointer
