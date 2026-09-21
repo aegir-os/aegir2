@@ -253,6 +253,19 @@ maps      = true
 memory_kib = 4096
 restart   = never
 
+# The window manager's demonstration client (specs/window-manager.md): a
+# decorated window with all three titlebar gadgets, so the runner can click
+# them. It maps its own arena slice, like the test bed, and its memory is
+# what the toolkit's heap and page tables come from.
+[demo]
+binary    = aegir-gui-demo
+authority = system
+account   = boot
+needs     = log.main, console.gui
+maps      = true
+memory_kib = 4096
+restart   = never
+
 # The first session (specs/auth.md). Nothing starts it at boot -- auth
 # starts one when a login succeeds, with the user's badge and account.
 # Input it has none of: the devices are the console's (specs/console.md),

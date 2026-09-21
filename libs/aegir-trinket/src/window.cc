@@ -459,8 +459,8 @@ void Window::zoom() {
         zoomed_ = false;
     }
     if (content_) content_->set_rect({0, 0, rect_.width, rect_.height});
-    if (on_moved_resized) on_moved_resized(rect_);
     repaint();
+    if (on_moved_resized) on_moved_resized(rect_);
 }
 
 uint64_t Window::backing_bytes() const {

@@ -135,7 +135,9 @@ the widgets', as before.
 
 The greeter's window gains its titlebar and keeps its form where it was: a
 `set_title` and nothing else. The bureau's backdrop is `set_decorated(false)`
-and so has no titlebar — the Amiga screen is not a window with a frame.
+and so has no titlebar — the Amiga screen is not a window with a frame. The
+demo client (`apps/aegir-gui-demo`) is a decorated window with all three
+gadgets, clear of the others, that the runner clicks.
 
 ## What this is not
 
@@ -157,6 +159,12 @@ back there with the backdrop repainted where it stood, then resized, read back
 at its new rectangle with the uncovered strip repainted, and then the white
 raised over it and lowered beneath it, the overlap reading white while it is
 up and red once it is down.
+
+The demo client exercises zoom and close: the runner clicks its zoom gadget
+and reads the window filling the screen, titlebar at the top and active;
+clicks zoom again and reads it back; then clicks close and reads the bureau's
+backdrop where it stood. It runs last, after the login and the bureau, so its
+clicks never race the login's.
 
 The drag and the grip are read in the source and exercised at the keyboard
 (`make run-ui`): their automated test lands with the WM's own test client,

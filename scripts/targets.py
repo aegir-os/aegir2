@@ -379,6 +379,55 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 640, 700, 170, 170, 170),
                 ),
             ),
+            # The window manager's demo client (specs/window-manager.md), last
+            # so its clicks do not race the login: its decorated window sits
+            # over the bureau's backdrop at (900,300), clear of the samples
+            # above. The runner clicks its zoom gadget; the window fills the
+            # screen, its titlebar at the top and active (the click focused
+            # it); clicks zoom again and it is back; then clicks close and the
+            # backdrop stands where it was.
+            QmpStep(
+                r"bureau: the screen is yours",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 28773}},
+                    {"type": "abs", "data": {"axis": "y", "value": 11796}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(
+                r"demo: geometry 1280x",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1000, 10, 0, 120, 215),
+                    ("gpu0", 1000, 400, 204, 204, 204),
+                ),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 31845}},
+                    {"type": "abs", "data": {"axis": "y", "value": 327}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(
+                r"demo: geometry 260x",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 910, 310, 204, 204, 204),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 28261}},
+                    {"type": "abs", "data": {"axis": "y", "value": 11796}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(
+                r"demo: closed",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 1000, 400, 170, 170, 170),),
+            ),
         ),
     )
 

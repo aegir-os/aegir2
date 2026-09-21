@@ -33,29 +33,41 @@ set(aegir_initrd_files
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/services.manifest"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/drivers.registry"
     "${users_db}"
-    "$<TARGET_FILE:aegir-hello>"
-    "$<TARGET_FILE:aegir-logger>"
-    "$<TARGET_FILE:aegir-device-manager>"
-    "$<TARGET_FILE:aegir-virtio-blk>"
-    "$<TARGET_FILE:aegir-virtio-rng>"
-    "$<TARGET_FILE:aegir-virtio-input>"
-    "$<TARGET_FILE:aegir-virtio-gpu>"
-    "$<TARGET_FILE:aegir-partmgr>"
-    "$<TARGET_FILE:aegir-fs-fat>"
-    "$<TARGET_FILE:aegir-vfs>"
-    "$<TARGET_FILE:aegir-fs-initrd>"
-    "$<TARGET_FILE:aegir-console>"
-    "$<TARGET_FILE:aegir-greeter>"
-    "$<TARGET_FILE:aegir-bureau-app>"
-    "$<TARGET_FILE:aegir-auth>"
-    "$<TARGET_FILE:aegir-session-smoke>"
-    "$<TARGET_FILE:aegir-test>"
-    "$<TARGET_FILE:aegir-cxx-smoke>"
 )
 set(aegir_initrd_names
     "services.manifest"
     "drivers.registry"
     "users.db"
+)
+
+# The service images, each stripped into the initrd. A service's debug sections
+# are not needed at boot, and they are not free: the ELF loader relocates
+# itself over a fixed span, and a rootserver grown past it stops the boot
+# before the kernel prints -- which the demo client's debug sections did. The
+# copies are made rather than stripped in place, so the built binaries keep
+# their symbols. The name is the flat name the manifest addresses.
+set(aegir_initrd_binaries
+    aegir-hello
+    aegir-logger
+    aegir-device-manager
+    aegir-virtio-blk
+    aegir-virtio-rng
+    aegir-virtio-input
+    aegir-virtio-gpu
+    aegir-partmgr
+    aegir-fs-fat
+    aegir-vfs
+    aegir-fs-initrd
+    aegir-console
+    aegir-greeter
+    aegir-bureau-app
+    aegir-auth
+    aegir-session-smoke
+    aegir-test
+    aegir-cxx-smoke
+    aegir-gui-demo
+)
+set(aegir_initrd_binary_names
     "aegir-hello"
     "aegir-logger"
     "aegir-device-manager"
@@ -74,7 +86,28 @@ set(aegir_initrd_names
     "aegir-session-smoke"
     "aegir-test"
     "aegir-cxx-smoke"
+    "aegir-gui-demo"
 )
+set(aegir_initrd_strip_dir "${CMAKE_CURRENT_BINARY_DIR}/initrd")
+list(LENGTH aegir_initrd_binaries aegir_initrd_binary_count)
+math(EXPR aegir_initrd_binary_last "${aegir_initrd_binary_count} - 1")
+foreach(index RANGE 0 ${aegir_initrd_binary_last})
+  list(GET aegir_initrd_binaries ${index} aegir_initrd_target)
+  list(GET aegir_initrd_binary_names ${index} aegir_initrd_name)
+  set(aegir_initrd_image "${aegir_initrd_strip_dir}/${aegir_initrd_name}")
+  add_custom_command(
+    OUTPUT "${aegir_initrd_image}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${aegir_initrd_strip_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${aegir_initrd_target}>"
+            "${aegir_initrd_image}"
+    COMMAND "${CMAKE_STRIP}" "${aegir_initrd_image}"
+    DEPENDS ${aegir_initrd_target}
+    VERBATIM
+  )
+  list(APPEND aegir_initrd_files "${aegir_initrd_image}")
+  list(APPEND aegir_initrd_names "${aegir_initrd_name}")
+endforeach()
+
 set(aegir_initrd_names_check ${aegir_initrd_names})
 list(REMOVE_DUPLICATES aegir_initrd_names_check)
 if(NOT "${aegir_initrd_names_check}" STREQUAL "${aegir_initrd_names}")
