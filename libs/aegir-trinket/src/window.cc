@@ -163,7 +163,12 @@ void Window::damage(const Rect& r) {
         frame_rect.y += titlebar_height();
     }
     damage_rect_ = damage_rect_.empty() ? frame_rect : damage_rect_.united(frame_rect);
-    repaint();
+    /* A geometry change collects its damage and repaints once, after the
+     * console's window has the new size: a repaint here would read the
+     * backing at the new stride before it was drawn at it. */
+    if (!geometry_change_) {
+        repaint();
+    }
 }
 
 void Window::on_focus_gained() {
@@ -281,15 +286,33 @@ void Window::dispatch_pointer(uint64_t event) {
             if (w != rect_.width || h != rect_.height) {
                 Rect const resized{rect_.x, rect_.y, w, h};
                 Rect const frame = frame_for(resized);
-                /* Off the screen is refused; the window stops growing. */
-                if (aegir::console::resize(app_.gui_port(), console_window_id_,
-                                           static_cast<uint64_t>(frame.width),
-                                           static_cast<uint64_t>(frame.height))) {
+                DisplayInfo const& display = app_.display_info();
+                /* The screen bounds it; off the screen is refused, and the
+                 * window stops growing. The check is here, before anything
+                 * changes, so a refusal leaves nothing half-done. */
+                bool const fits =
+                    display.width_px > 0 && display.height_px > 0 &&
+                    frame.x >= 0 && frame.y >= 0 &&
+                    frame.x + frame.width <= static_cast<int>(display.width_px) &&
+                    frame.y + frame.height <= static_cast<int>(display.height_px);
+                if (fits) {
+                    /* The new frame is painted *before* the console is told
+                     * its size, so the console's resize composites a backing
+                     * already drawn at the new stride; the content's own
+                     * damage is collected, not repainted (geometry_change_),
+                     * and the console's resize is the one composite. */
+                    geometry_change_ = true;
                     rect_.width = w;
                     rect_.height = h;
                     if (content_) content_->set_rect({0, 0, w, h});
-                    if (on_moved_resized) on_moved_resized(rect_);
-                    repaint();
+                    geometry_change_ = false;
+                    damage_rect_ = {};
+                    paint();
+                    if (aegir::console::resize(app_.gui_port(), console_window_id_,
+                                               static_cast<uint64_t>(frame.width),
+                                               static_cast<uint64_t>(frame.height))) {
+                        if (on_moved_resized) on_moved_resized(rect_);
+                    }
                 }
             }
         }
@@ -414,52 +437,64 @@ int Window::gadget_at(Point p) const {
     return 0;
 }
 
-/* Move and resize the console window to `frame`, in the order that keeps the
- * intermediate state on the screen: shrink before moving, grow after. */
-bool Window::apply_frame(const Rect& frame, bool growing) {
-    if (console_window_id_ == 0) return false;
-    if (growing) {
-        if (!aegir::console::move(app_.gui_port(), console_window_id_,
-                                  static_cast<uint64_t>(frame.x),
-                                  static_cast<uint64_t>(frame.y))) {
-            return false;
-        }
-        return aegir::console::resize(app_.gui_port(), console_window_id_,
-                                      static_cast<uint64_t>(frame.width),
-                                      static_cast<uint64_t>(frame.height));
-    }
-    if (!aegir::console::resize(app_.gui_port(), console_window_id_,
-                                static_cast<uint64_t>(frame.width),
-                                static_cast<uint64_t>(frame.height))) {
-        return false;
-    }
-    return aegir::console::move(app_.gui_port(), console_window_id_,
-                                static_cast<uint64_t>(frame.x),
-                                static_cast<uint64_t>(frame.y));
-}
-
 /* Zoom toggles between where the window was and the whole screen, its
  * titlebar at the top. The screen's size is the bound a resize may reach
- * (specs/window-manager.md). */
+ * (specs/window-manager.md).
+ *
+ * The console composites a window's backing with the window's width as its
+ * stride, so a resize must be told only after the backing has been drawn at
+ * the new size. Growing moves first (with the old size, whose backing is
+ * still drawn at the old stride), paints, then resizes; shrinking paints the
+ * new size, resizes at the old origin, then moves to the saved one. */
 void Window::zoom() {
+    if (console_window_id_ == 0) return;
+    DisplayInfo const& display = app_.display_info();
+    int const bar = titlebar_height();
     if (!zoomed_) {
-        DisplayInfo const& display = app_.display_info();
-        int const bar = titlebar_height();
         if (display.width_px == 0 || display.height_px == 0) return;
         Rect const target{0, bar, static_cast<int>(display.width_px),
                           static_cast<int>(display.height_px) - bar};
         if (target.width <= 0 || target.height <= 0) return;
-        if (!apply_frame(frame_for(target), true)) return;
+        Rect const target_frame = frame_for(target);
+        if (!aegir::console::move(app_.gui_port(), console_window_id_,
+                                  static_cast<uint64_t>(target_frame.x),
+                                  static_cast<uint64_t>(target_frame.y))) {
+            return;
+        }
         saved_rect_ = rect_;
+        geometry_change_ = true;
         rect_ = target;
+        if (content_) content_->set_rect({0, 0, target.width, target.height});
+        geometry_change_ = false;
+        damage_rect_ = {};
+        paint();
+        if (!aegir::console::resize(app_.gui_port(), console_window_id_,
+                                    static_cast<uint64_t>(target_frame.width),
+                                    static_cast<uint64_t>(target_frame.height))) {
+            return;
+        }
         zoomed_ = true;
     } else {
-        if (!apply_frame(frame_for(saved_rect_), false)) return;
-        rect_ = saved_rect_;
+        Rect const target = saved_rect_;
+        Rect const target_frame = frame_for(target);
+        geometry_change_ = true;
+        rect_ = target;
+        if (content_) content_->set_rect({0, 0, target.width, target.height});
+        geometry_change_ = false;
+        damage_rect_ = {};
+        paint();
+        if (!aegir::console::resize(app_.gui_port(), console_window_id_,
+                                    static_cast<uint64_t>(target_frame.width),
+                                    static_cast<uint64_t>(target_frame.height))) {
+            return;
+        }
+        if (!aegir::console::move(app_.gui_port(), console_window_id_,
+                                  static_cast<uint64_t>(target_frame.x),
+                                  static_cast<uint64_t>(target_frame.y))) {
+            return;
+        }
         zoomed_ = false;
     }
-    if (content_) content_->set_rect({0, 0, rect_.width, rect_.height});
-    repaint();
     if (on_moved_resized) on_moved_resized(rect_);
 }
 
@@ -482,8 +517,8 @@ uint64_t Window::backing_bytes() const {
            static_cast<uint64_t>(frame.height) * 4ull;
 }
 
-void Window::repaint() {
-    if (!visible_ || console_window_id_ == 0 || app_.slice() == nullptr) return;
+Rect Window::paint() {
+    if (!visible_ || console_window_id_ == 0 || app_.slice() == nullptr) return {};
 
     Rect const frame = frame_for(rect_);
     int const bar = titlebar_height();
@@ -540,7 +575,12 @@ void Window::repaint() {
         theme.draw_window_frame(frame_canvas, {0, 0, frame.width, frame.height},
                                 active_);
     }
+    return damage;
+}
 
+void Window::repaint() {
+    Rect const damage = paint();
+    if (damage.empty()) return;
     (void)aegir::console::damage(app_.gui_port(), console_window_id_,
                                  static_cast<uint64_t>(damage.x),
                                  static_cast<uint64_t>(damage.y),

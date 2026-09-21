@@ -66,6 +66,16 @@ this arc.
     resize stays inside it. It is arena memory spent for headroom, and the
     alternative (a resize that outgrows its backing) is a window that cannot
     grow.
+  - **The new frame is painted before the console is told its size.** The
+    console composites a window's backing with the window's width as its
+    stride, so a `resize` that arrives before the backing is drawn at the
+    new width shows the old pixels read wrong — the artifacting a resize
+    had. The toolkit paints first and lets the console's `resize` be the one
+    composite, with the content's own damage collected rather than
+    repainted (three composites per motion was the other half of the lag).
+    A zoom, which moves and resizes, orders the two so each composite reads
+    a backing drawn at the stride the console is using: growing moves (old
+    size), paints, resizes; shrinking paints the new size, resizes, moves.
 - **A repaint and a flush carry the rectangle that changed.** The toolkit
   unions an event's damages, clips its paint to the union, and hands that
   rectangle to `console::damage`; the console composites it and the driver

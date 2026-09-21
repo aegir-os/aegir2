@@ -135,6 +135,11 @@ private:
     int resize_origin_y_ = 0;
     int resize_start_width_ = 0;
     int resize_start_height_ = 0;
+    // Set while a geometry change updates the content's rectangle: the
+    // damage it raises is collected, not repainted, because the console's
+    // window is not the new size yet and a composite now would read the
+    // backing at the wrong stride.
+    bool geometry_change_ = false;
 
     // The titlebar gadgets, and the zoom's saved rectangle.
     bool gadget_close_ = false;
@@ -150,13 +155,15 @@ private:
     // Internal
     int titlebar_height() const;
     Rect frame_for(const Rect& content) const;
+    // Paint the frame into the backing and answer the region painted; repaint
+    // also pushes that region to the console. A resize paints first and lets
+    // the console's own resize composite it, so the backing is never read at
+    // a stride it was not drawn at.
+    Rect paint();
     // The gadget at `p` (frame-local): 0 none, 1 close, 2 zoom, 3 depth.
     int gadget_at(Point p) const;
     Rect gadget_rect(int index_from_right) const;
     void zoom();
-    // Move and resize the console window to `frame`; shrink before moving,
-    // grow after, so an intermediate state is never off the screen.
-    bool apply_frame(const Rect& frame, bool growing);
     void create_bureau_window();
     void destroy_bureau_window();
     void update_bureau_window();
