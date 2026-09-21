@@ -33,6 +33,8 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
   spawn, and accounts.
 - `specs/vfs.md` — the namespace, the volume protocol, and capabilities over
   IPC.
+- `specs/namespace.md` — the union: a name read as an ordered list of
+  directories.
 - `specs/environment.md` — the process environment: arguments, environment
   variables, and the current directory.
 - `specs/auth.md` — the user database's format and the login port's protocol.

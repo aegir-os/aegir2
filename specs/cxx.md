@@ -220,9 +220,10 @@ The order:
    a tracked libc++ patch gives `path` the Aegir grammar, modelled on its
    Windows one — a root-name `Volume:`, always absolute, `/` the separator — so
    `is_absolute`/`root_name`/`absolute` are right. `aegir::filesystem` wraps the
-   namespace (`volumes()` from count/describe, and the resolve/list calls) for
-   what `std::filesystem` has no path for. Depends on 1 for the current
-   directory.
+   namespace (`volumes()` from count/describe, and resolve/list/read) for what
+   `std::filesystem` has no path for; a union (`specs/namespace.md`) is served
+   by the VFS, so the library is a thin wrapper and not a merge engine. Depends
+   on 1 for the current directory.
 6. **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
    its C dependencies are musl's — while `translation.cc` and `bidi.cc` are
    gated out because they are stubs, not because they cannot compile. The

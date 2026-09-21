@@ -1,0 +1,108 @@
+# The namespace and the union
+
+Status: decided (2026-09). This spec extends `specs/vfs.md`'s namespace — the
+map of volume names and aliases — with the **union**: a name that stands for an
+ordered list of paths, read as one directory.
+
+It is not a new idea. The Amiga's multi-assign (`Assign LIBS: Work:libs ADD`)
+already makes a name stand for an ordered list of directories searched in
+order, and Plan 9's `bind` is the same shape with a namespace behind it. What
+this spec fixes is that the union is a **filesystem the VFS serves**, not a
+search list each client resolves: a read or a listing of a union returns the
+merged view, so `aegir::filesystem` and `std::filesystem` both see every
+member's entries and neither reconstructs the merge.
+
+## The decisions
+
+- **A binding is an ordered list, not a path.** `vfs.namespace`'s `bind`
+  already stands a name for one path (`specs/vfs.md`'s aliases); a name may
+  stand for a list, and the list's order is the search order. A one-member list
+  is the alias it already had.
+- **A union reads and lists as one directory.** A read of `Name:rest` walks the
+  members in order and stops at the first that has `rest`. A listing of
+  `Name:rest` returns every member's entries for `rest`, merged, with a name an
+  earlier member has winning — so a name in two members appears once. This is
+  what makes `directory_iterator("ENV:")` list the whole union; the merge is
+  the VFS's, not a caller's.
+- **A create goes to the designated member.** One member is the **create
+  target** (Plan 9's `-c`, the Amiga's first-writable): `create`, `mkdir` and a
+  write that makes a new name land there, and a create the target refuses is
+  refused — there is no fall-through to another member, because a write must
+  not land somewhere the binder did not choose.
+- **A remove goes to the first member that has the name.** Removing a name a
+  union shadows removes the member that actually holds it, which is the same
+  rule a read uses; the member's own authority decides whether it may.
+- **Precedence is a binding choice.** Appending puts a member after the current
+  list, prepending puts it before, and the default replaces the binding. So one
+  mechanism serves a search path (`LIBS:`, append), an override (`ENV:`, the
+  user's archive before the system's), and an overlay of a read-only volume
+  with a writable scratch.
+- **The union is the VFS's to serve.** The members are volumes the namespace
+  resolved; the VFS holds their capabilities and presents the merged directory.
+  A client resolves the name once and gets the union's volume capability; the
+  volume protocol's read and list carry the merge, and the create target is
+  where its open and mkdir go. (The alternative — a search-list alias whose
+  members every client tries — puts the merge in every client, and is the thing
+  this avoids.)
+- **Bindings are per-badge, as the aliases are.** The badge names whose
+  namespace the binding is in (`specs/vfs.md`); a session's processes share the
+  session's badge and so share its `ENV:`. A finer, per-process namespace —
+  binds private to one process and inherited by its children, Plan 9's `rfork`
+  shape — is a later extension; this spec's binding table is what it would key
+  differently, so it is not foreclosed.
+- **The ownership model decides who may bind what.** While the namespace is
+  open (`specs/vfs.md`), nothing checks the badge a binder binds; the check
+  lands with the ownership model. A union whose create target is a system
+  archive is not a privilege escalation by itself: the binding says only where
+  a write is attempted, and the archive's own authority decides whether it may
+  land.
+
+## The shape
+
+### `bind`, grown
+
+`vfs.namespace`'s `bind` keeps its shape — the badge, the name, the path — and
+grows a flags word: append, prepend, or replace (the default), and whether this
+member is the create target. A second `bind` of a name with append or prepend
+adds a member; the default replaces the list, which is the one-member alias
+`specs/vfs.md` already describes. `unbind` drops the badge's bindings as it
+does today, a union with them.
+
+### The union directory
+
+The VFS keeps, per binding, the members' volume capabilities and their order,
+and serves the union through the same volume protocol every other directory
+uses:
+
+- **list** — every member's `list` for the path, in order, merged; a name an
+  earlier member returned is not returned again.
+- **read** — the first member that has the path.
+- **open** with `create`, and **mkdir** — the create target.
+- **remove** — the first member that has the path.
+
+The members are ordinary volumes; the union does not need them to know they are
+in one.
+
+### `ENV:` is one instance
+
+`specs/environment.md`'s persistent store is the first use: a session's `ENV:`
+is the union of `Home:Prefs/Env-Archive` (first, and the create target) and
+`Sys:Prefs/Env-Archive` (the base); a system-authority process's create target
+is the system archive. Nothing about that is special to the union — it is a
+binding, and the archives are ordinary directories.
+
+## What this is not
+
+Per-process namespaces (a later extension, above); a union of files (only
+directories union — a name's members must be directories); the ownership check
+on `bind` (the ownership model's arc); a filesystem that unions across *types*
+(the members are volumes, whatever serves them).
+
+## Acceptance
+
+The test bed binds two directories on two volumes — `AEGIR:` and `SCRATCH:` —
+into one name: a read of a file both hold returns the first member's bytes; a
+listing returns both members' entries with the shared name once; a `mkdir` and a
+create land in the create target and not the other member; a remove takes the
+member that holds the name. `ENV:` is read and listed once the storage arc has
+the archives, and is not this arc's test.

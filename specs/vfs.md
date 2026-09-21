@@ -97,7 +97,9 @@ resolves again until the name part is a volume — `Home:WELCOME.TXT` for
 rroland's session is `Sys:Homes/rroland/WELCOME.TXT` is
 `AEGIR:Homes/rroland/WELCOME.TXT`, and the answer is the volume `AEGIR` and
 the rest `Homes/rroland/WELCOME.TXT`. A substitution chain is bounded by the
-alias table's own length: a chain that outlasts it is a cycle, refused.
+alias table's own length: a chain that outlasts it is a cycle, refused. A name
+may stand for a **list**, not one path: `specs/namespace.md`'s union, read and
+listed as one directory.
 
 - **`Sys` is the system volume.** A partition whose GPT type GUID is the
   Aegir system GUID — `5cd58811-9bf5-4af3-8682-9b76edce3535`, the same

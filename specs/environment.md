@@ -36,17 +36,17 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   given none has none — a relative path is `-ENOENT`, an absolute path is always
   fine. The default is the spawner's, not the runtime's, so the policy lives
   where the process's identity does.
-- **The persistent environment is layered.** Two archives: the system's
-  `Sys:Prefs/Env-Archive`, which only system authority may write, and the
-  session's `Home:Prefs/Env-Archive`. A read takes the system archive as the
-  base and the user's over it — a name the user's has overrides the system's,
-  and a name only the user's has appends. `ENV:` binds both: it is the merged
-  view, not either directory. A write goes to the user archive, unless the
-  writer is a system-authority process, whose writes go to the system archive.
-  A startup reads the merged view into the first processes' environments; the
-  DOS toolset — `SetVar`/`GetVar`, once the shell and a `CON:` handler exist —
-  is where the writes happen. This arc defines the per-process mechanism and
-  the layering; the startup and the tools are later arcs.
+- **The persistent environment is layered, as a union.** `ENV:` is a
+  `specs/namespace.md` union — a name read as one directory — whose members are
+  `Sys:Prefs/Env-Archive` (the base) and `Home:Prefs/Env-Archive` (first, so the
+  user's overrides and appends), the user's the create target for an ordinary
+  process and the system's for a system-authority one. A listing of `ENV:`
+  through `aegir::filesystem` or `std::filesystem` returns the merged set; a
+  write lands in the create target. A startup reads the merged view into the
+  first processes' environments; the DOS toolset — `SetVar`/`GetVar`, once the
+  shell and a `CON:` handler exist — is where the writes happen. This arc
+  defines the per-process mechanism and the binding; the startup and the tools
+  are later arcs.
 - **The library is `aegir::environment`.** It parses the bootstrap block once
   and answers `argc`/`argv`, `getenv`/`setenv`, and
   `current_dir`/`set_current_dir`. A program includes it and never sees a slot
