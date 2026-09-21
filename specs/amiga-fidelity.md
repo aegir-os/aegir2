@@ -31,8 +31,8 @@ gadget fills, the bevels — is hard to describe in words.
 - **Menus are always visible, not on the right mouse button.** Workbench shows
   a window's menus in the screen title bar only while the right button is held;
   Aegir draws an always-visible menu bar, because a right-button drag is
-  awkward on a modern laptop's touchpad. This is a choice, not an oversight
-  (Part 2, `specs/workbench.md`).
+  awkward on a modern laptop's touchpad. This is a choice, not an oversight,
+  and it landed with the screen title bar (`specs/workbench.md`).
 
 ## Open
 
@@ -40,6 +40,7 @@ gadget fills, the bevels — is hard to describe in words.
   (`(170,170,170)`); the toolkit's `WINDOW_BG` is `#cccccc`. The greeter's form
   and the bureau read from the theme, so this is a theme value once the panel
   background is settled.
-- **The menu model and the screen title bar** (Part 2): the bureau's screen
-  title bar, the `bureau.menu` server, and the toolkit's `MenuBar`.
+- **A window's own menus in the screen bar.** The `bureau.menu` server, an app
+  registering its menu tree, shown when its window is active
+  (`specs/workbench.md`).
 - **Desktop icons and a launcher.**

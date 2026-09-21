@@ -359,22 +359,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # before the session starts. Evidence only -- the bureau's dump
             # below reads what the screen shows once they are gone.
             QmpStep(r"auth: the greeter's windows are reaped"),
-            # The greeter's login starts the bureau (specs/bureau.md): a
-            # trinket full-screen window, always backdrop mode, the theme's
-            # Workbench grey, painted before the process halts -- the console
-            # owns the slice, so the window stands as the session's visible
-            # remainder. The samples keep clear of the red window
-            # (64..263 x, 64..213 y, where the move and resize left it),
-            # which still stands above the backdrop, and of the cursor at
-            # (860,520); the corners are the backdrop's own, and prove it
-            # covers the screen.
+            # The greeter's login starts the bureau (specs/workbench.md): the
+            # trinket full-screen backdrop with the screen title bar across
+            # its top -- #6688bb, the Workbench menus in it -- over the
+            # theme's Workbench grey. The samples keep clear of the red window
+            # (64..263 x, 64..213 y, where the move and resize left it), which
+            # still stands above the backdrop, and of the cursor at (860,520);
+            # the bar's pixels are the top corners, the backdrop's the rest.
             QmpStep(
                 r"bureau: the screen is yours",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 10, 10, 170, 170, 170),
-                    ("gpu0", 1279, 0, 170, 170, 170),
+                    ("gpu0", 10, 10, 102, 136, 187),
+                    ("gpu0", 1279, 0, 102, 136, 187),
                     ("gpu0", 0, 799, 170, 170, 170),
                     ("gpu0", 1279, 799, 170, 170, 170),
                     ("gpu0", 860, 240, 170, 170, 170),
@@ -432,6 +430,35 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(("gpu0", 1000, 400, 170, 170, 170),),
             ),
+            # The Workbench menu (specs/workbench.md), after the demo so the
+            # backdrop is clear: the runner clicks the bar's first title, the
+            # bureau drops the menu, and the runner reads it and clicks an
+            # item. The action's cue is the last check.
+            QmpStep(
+                r"demo: closed",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(
+                r"bureau: menu",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 10, 10, 102, 136, 187),
+                    ("gpu0", 100, 33, 240, 240, 240),
+                ),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 1352}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(r"bureau: Aegir, the Workbench"),
         ),
     )
 

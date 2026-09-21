@@ -80,8 +80,10 @@ seL4_CPtr g_home_slot = 0;
  * from it, so an exit's one revoke frees it whole and the next login
  * reuses it -- the wait serializes sessions, so one pool is enough. Its
  * size is a starting grant: the reclaim log line says what a session
- * charged, and the grant grows when that says so. */
-constexpr uint32_t kSessionPoolBits = 20; /* 1 MiB of the 4 MiB delegation */
+ * charged, and the grant grows when that says so. It holds the bureau's own
+ * untyped besides the spawn's objects, and the bureau is a toolkit app now
+ * (its heap and its font), so it is 2 MiB of the delegation. */
+constexpr uint32_t kSessionPoolBits = 21; /* 2 MiB of the delegation */
 seL4_CPtr g_session_pool = 0;
 uint64_t g_session_pool_physical = 0;
 
@@ -383,10 +385,12 @@ void start_session(uint32_t user, bool bureau) noexcept
         reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
-    /* The bureau's mapping kit: 256 KiB of the pool for the page tables its
-     * slice mapping is retyped from, and the grant travels with its size,
-     * because a service cannot ask the kernel how large an untyped is. */
-    constexpr uint32_t kBureauUntypedBits = 18;
+    /* The bureau's kit: 1 MiB of the pool -- the page tables its slice mapping
+     * is retyped from, and the heap the toolkit (its screen bar and font)
+     * allocates from, where the raw backdrop it replaced allocated nothing.
+     * The grant travels with its size, because a service cannot ask the
+     * kernel how large an untyped is. */
+    constexpr uint32_t kBureauUntypedBits = 20;
     uint64_t bureau_untyped_physical = 0;
     seL4_CPtr bureau_untyped = 0;
     if (bureau) {

@@ -38,6 +38,7 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/trinket.md` — the GUI toolkit: console integration, the look, and the
   greeter rebuilt on it.
 - `specs/bureau.md` — the session's desktop, and the screen-size query.
+- `specs/workbench.md` — the screen title bar and the always-visible menus.
 - `specs/window-manager.md` — client-side decorations, move/raise, and the
   titlebar drag.
 - `specs/amiga-fidelity.md` — where the GUI is not Amiga, and the fixes.

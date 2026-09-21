@@ -28,12 +28,13 @@ bureau the same base and the one protocol method a full-screen window needs.
   screen. It enters the z-order at the bottom and nothing raises it
   (`specs/console.md`'s focus model), which is what every Amiga user turned
   on anyway.
-- **One shot, and the window stays.** The bureau paints, says so, signals and
-  halts. The console owns the slice, so the window persists as the session's
-  visible remainder without the process; the session's memory reclaims
-  through the ordinary path (`specs/auth.md`). It halts rather than returning
-  from `exec`, because `exec`'s teardown destroys the windows — the same
-  reason the greeter does not return after its login.
+- **The window stays; the process does too, now.** The stub painted, said so,
+  and halted, and the console owning the slice kept the window as the
+  session's visible remainder. The Workbench arc (`specs/workbench.md`) makes
+  the bureau live: it owns the screen title bar and its menus, so it runs
+  `exec`'s loop rather than halting. The backdrop still stands whether or not
+  the bureau is scheduled, and the session's memory reclaims through the
+  ordinary path (`specs/auth.md`) when it does end.
 - **The speculative bureau library is removed.** `libs/aegir-bureau`'s
   `wm::Client`, `menubar::Client` and `desktop::Backdrop` are stubs no caller
   reaches, and their protocol numbers were invented ahead of a server. They
@@ -65,13 +66,14 @@ process behind it changed.
 
 ## What this is not
 
-Window resizing, depth gadgets and the `bureau.wm` server; menus and the menu
-server; desktop icons and a launcher; re-login — reaping a session's slice and
-starting the greeter again (`specs/auth.md`); more than one window. The
-titlebar, dragging, and the console's move/raise are
-`specs/window-manager.md`. Each is easier with the bureau standing. The
-session's own slice is deliberately not reaped (`specs/auth.md`): the backdrop
-is what the session leaves on the screen.
+Window resizing, depth gadgets and the `bureau.wm` server; the `bureau.menu`
+server (an app registering its menus, shown when its window is active); desktop
+icons and a launcher; re-login — reaping a session's slice and starting the
+greeter again (`specs/auth.md`); more than one window. The titlebar, dragging,
+and the console's move/raise are `specs/window-manager.md`; the screen title
+bar and the bureau's own menus are `specs/workbench.md`. Each is easier with
+the bureau standing. The session's own slice is deliberately not reaped
+(`specs/auth.md`): the backdrop is what the session leaves on the screen.
 
 ## Acceptance
 

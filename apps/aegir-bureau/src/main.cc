@@ -5,39 +5,69 @@
  * SPDX-License-Identifier: MIT
  *
  * The bureau is the Amiga screen as a shape of window (specs/bureau.md): one
- * full-screen window, always in backdrop mode -- the Workbench grey, flat, no
- * gadgets -- which is what every Amiga user turned on anyway. It is a trinket
- * client, the greeter's shape (specs/trinket.md): an Application owns the
- * console channel, a Window owns the console window, and a Panel filled with
- * the theme's BACKGROUND is the screen. It asks the console for the size -- a
- * full-screen window must match the mode the driver settled on, and a
- * hardcoded one is refused at create -- paints, says so, and halts. The
- * window persists because the console owns the slice; the process's memory
- * reclaims through the session's ordinary path, and what a bureau grows into
- * (icons, windows of one's own, the re-login that reaps this backdrop) is the
- * later arc's.
+ * full-screen window, always in backdrop mode. This arc makes it the
+ * Workbench (specs/workbench.md): it stays alive and owns the screen title
+ * bar across the top, with the always-visible menus the bar holds. Its
+ * content is a Desktop -- the backdrop, the bar, and the menus -- and a menu
+ * item's action prints a cue.
  *
- * It halts in on_started rather than returning from exec: exec's teardown
- * destroys the windows, and the backdrop must outlive the process.
+ * It asks the console for the screen's size, so a full-screen window matches
+ * the mode the driver settled on. It does not halt: the console owns the
+ * slice, so the backdrop stands whether or not the bureau is scheduled, and a
+ * live bureau is what can answer a menu.
  */
 
 #include <aegir/bootstrap.h>
+#include <aegir/bureau/desktop.h>
 #include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
-#include <aegir/trinket/panel.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
 #include <memory>
+#include <vector>
 
 namespace {
 
 void write(char const *text)
 {
     aegir::debug_write(text);
+}
+
+/* The Workbench menus (specs/workbench.md): the bureau's own, until the
+ * bureau.menu server lets an app register its own. */
+std::vector<aegir::bureau::Desktop::Menu> workbench_menus()
+{
+    using MenuItem = aegir::bureau::Desktop::MenuItem;
+    using Menu = aegir::bureau::Desktop::Menu;
+
+    Menu workbench;
+    workbench.title = U"Workbench";
+    workbench.items = {
+        {1, U"About Aegir", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+        {2, U"Open...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::DISABLED, {}},
+        {0, U"", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::SEPARATOR, {}},
+        {3, U"Quit", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+    };
+
+    Menu window;
+    window.title = U"Window";
+    window.items = {
+        {4, U"Clean Up", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+        {5, U"Open Windows...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::DISABLED, {}},
+    };
+
+    Menu icons;
+    icons.title = U"Icons";
+    icons.items = {
+        {6, U"Show", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+        {7, U"Hide", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+    };
+
+    return {std::move(workbench), std::move(window), std::move(icons)};
 }
 
 }  // namespace
@@ -79,9 +109,24 @@ int main(int argc, char *argv[])
      * comes later (specs/console.md's focus model). */
     window.set_decorated(false);
 
-    auto backdrop = std::make_unique<Panel>(Panel::Style::FLAT);
-    backdrop->set_background(app.theme().color(ColorRole::BACKGROUND));
-    window.set_content(std::move(backdrop));
+    auto desktop = std::make_unique<aegir::bureau::Desktop>();
+    desktop->set_menus(workbench_menus());
+    desktop->on_menu_opened = [](int) { write("  bureau: menu\n"); };
+    desktop->on_action = [&](uint32_t action_id) {
+        if (action_id == 1) {
+            write("  bureau: Aegir, the Workbench\n");
+        } else if (action_id == 3) {
+            write("  bureau: quit\n");
+            aegir::halt();
+        } else if (action_id == 4) {
+            write("  bureau: clean up\n");
+        } else if (action_id == 6) {
+            write("  bureau: icons shown\n");
+        } else if (action_id == 7) {
+            write("  bureau: icons hidden\n");
+        }
+    };
+    window.set_content(std::move(desktop));
     window.show();
 
     app.on_started = [&]() {
@@ -90,11 +135,12 @@ int main(int argc, char *argv[])
             (void)log.call(aegir::log::kMethodEvent,
                            static_cast<uint64_t>(aegir::log::Event::Ready));
         }
-        /* The exit is the handoff: the window stays (the console owns the
-         * slice), the session's reclaim takes the rest, and auth goes back to
-         * serving. */
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        aegir::halt();
+        /* No supervision signal: auth reads a session's first supervision as
+         * its exit and reclaims it (apps/aegir-auth), which a short-lived
+         * smoke can be and the desktop cannot. A long-lived session's ready
+         * and exit are separate, and the split is the supervisor arc's; until
+         * then auth waits here for the exit this never sends, which is what a
+         * session that is the desktop means. */
     };
 
     return app.exec();

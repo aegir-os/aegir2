@@ -207,6 +207,10 @@ account   = system
 owns      = auth.login
 needs     = log.main, vfs.namespace, console.gui
 spawns    = session.*, greeter
+# Auth's delegation holds the greeter's kit, the session pool the bureau comes
+# out of, and auth's own objects. The bureau is a toolkit app now -- its heap
+# and its font -- so the default 4 MiB is raised to 8.
+delegate_mib = 8
 restart   = always
 
 # The login window (specs/console.md's login arc): auth's face, started once
