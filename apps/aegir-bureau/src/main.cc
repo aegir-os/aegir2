@@ -172,7 +172,10 @@ int main(int argc, char *argv[])
     desktop->set_menus(bureau_menus());
     aegir::bureau::Desktop* const desktop_ptr = desktop.get();
     Registry registry;
-    desktop->on_menu_opened = [](int) { write("  bureau: menu\n"); };
+    desktop->on_menu_opened = [&](int) {
+        write(registry.active() != nullptr ? "  bureau: client menu\n"
+                                           : "  bureau: menu\n");
+    };
     desktop->on_action = [&](uint32_t action_id) {
         if (action_id == 1) {
             write("  bureau: Aegir, the Workbench\n");
