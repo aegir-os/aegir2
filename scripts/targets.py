@@ -128,13 +128,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         qmp_steps=(
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
-            # input cue. The dump reads the toolkit's XEN look up
-            # (specs/trinket.md, specs/window-manager.md): the
-            # Workbench-blue backdrop, the window's active (blue) titlebar
-            # and its white "Aegir" title -- the greeter asks for the focus
-            # at startup -- its white depth chevron, the window's light grey,
-            # the white name field with its focused blue border, the black
-            # label text, and the button's grey. Then the form
+            # input cue. The dump reads the Workbench look up
+            # (specs/amiga-fidelity.md): the Workbench-blue backdrop, the
+            # window's raised frame and its #6688bb title bar (the greeter
+            # asks for the focus at startup, so the gadgets are filled), the
+            # black left-justified "Aegir" title, the box-in-box zoom and the
+            # cascaded depth gadgets, the window's light grey, the white name
+            # field with its focused blue border, the black label text, and
+            # the button's grey. Then the form
             # STANDS through the test bed: the login is the run's last
             # business, played after the boot marker.
             QmpStep(
@@ -143,10 +144,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 0, 85, 170),
-                    ("gpu0", 410, 205, 0, 120, 215),
-                    ("gpu0", 408, 206, 255, 255, 255),
-                    ("gpu0", 844, 204, 255, 255, 255),
-                    ("gpu0", 864, 210, 255, 255, 255),
+                    ("gpu0", 410, 205, 102, 136, 187),
+                    ("gpu0", 408, 206, 0, 0, 0),
+                    ("gpu0", 842, 206, 255, 255, 255),
+                    ("gpu0", 862, 203, 170, 170, 170),
+                    ("gpu0", 865, 207, 255, 255, 255),
                     ("gpu0", 410, 230, 204, 204, 204),
                     ("gpu0", 500, 290, 255, 255, 255),
                     ("gpu0", 424, 288, 0, 120, 215),
@@ -382,10 +384,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The window manager's demo client (specs/window-manager.md), last
             # so its clicks do not race the login: its decorated window sits
             # over the bureau's backdrop at (900,300), clear of the samples
-            # above. The runner clicks its zoom gadget; the window fills the
-            # screen, its titlebar at the top and active (the click focused
-            # it); clicks zoom again and it is back; then clicks close and the
-            # backdrop stands where it was.
+            # above. The runner clicks its zoom gadget (the right-hand pair,
+            # specs/amiga-fidelity.md); the window fills the screen with its
+            # #6688bb bars; clicks zoom again and it is back; then clicks
+            # close, at the titlebar's far left, and the backdrop stands where
+            # it was.
             QmpStep(
                 r"bureau: the screen is yours",
                 events=(
@@ -400,8 +403,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 1000, 10, 0, 120, 215),
+                    ("gpu0", 1000, 10, 102, 136, 187),
                     ("gpu0", 1000, 400, 204, 204, 204),
+                    ("gpu0", 1000, 795, 102, 136, 187),
                 ),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 31845}},
@@ -416,7 +420,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(("gpu0", 910, 310, 204, 204, 204),),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 28261}},
+                    {"type": "abs", "data": {"axis": "x", "value": 23448}},
                     {"type": "abs", "data": {"axis": "y", "value": 11796}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},

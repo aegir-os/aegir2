@@ -154,6 +154,7 @@ private:
 
     // Internal
     int titlebar_height() const;
+    int bottombar_height() const;
     Rect frame_for(const Rect& content) const;
     // Paint the frame into the backing and answer the region painted; repaint
     // also pushes that region to the console. A resize paints first and lets
@@ -162,7 +163,12 @@ private:
     Rect paint();
     // The gadget at `p` (frame-local): 0 none, 1 close, 2 zoom, 3 depth.
     int gadget_at(Point p) const;
+    // The right-packed gadget slot, index 0 the rightmost.
     Rect gadget_rect(int index_from_right) const;
+    // The Close gadget, at the titlebar's far left (specs/amiga-fidelity.md).
+    Rect close_gadget_rect() const;
+    // The resize gadget in the bottom bar's lower right.
+    Rect resize_gadget_rect() const;
     void zoom();
     void create_bureau_window();
     void destroy_bureau_window();

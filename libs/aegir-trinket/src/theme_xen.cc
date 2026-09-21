@@ -69,13 +69,24 @@ public:
             case CR::MENU_BORDER: return Color(0x00808080);
             case CR::MENU_SEPARATOR: return Color(0x00808080);
 
-            // Titlebar
-            case CR::TITLEBAR_BG: return Color(0x000078D7);      // Active blue
-            case CR::TITLEBAR_BG_INACTIVE: return Color(0x00E0E0E0);
-            case CR::TITLEBAR_TEXT: return Color(0x00FFFFFF);
+            // Titlebar (Workbench XEN, specs/amiga-fidelity.md): the same
+            // fill active or not -- the active/inactive difference is the
+            // gadgets' fill (window.cc) -- and the title is black either way.
+            case CR::TITLEBAR_BG: return Color(0x006688BB);
+            case CR::TITLEBAR_BG_INACTIVE: return Color(0x006688BB);
+            case CR::TITLEBAR_TEXT: return Color(0x00000000);
             case CR::TITLEBAR_TEXT_INACTIVE: return Color(0x00000000);
-            case CR::TITLEBAR_BUTTON_BG: return Color::TRANSPARENT;
+            case CR::TITLEBAR_BUTTON_BG: return Color(0x006688BB);
             case CR::TITLEBAR_BUTTON_HOVER: return Color(0x40FFFFFF);
+            case CR::TITLEBAR_HIGHLIGHT: return Color(0x00A4B8D7);
+            case CR::TITLEBAR_SHADOW: return Color(0x0043597B);
+            case CR::BOTTOMBAR_HIGHLIGHT: return Color(0x00B1C2DC);
+            case CR::BOTTOMBAR_SHADOW: return Color(0x002A384D);
+            case CR::GADGET_OUTLINE: return Color(0x00030303);
+            case CR::GADGET_GREY: return Color(0x00AAAAAA);
+            case CR::GADGET_WHITE: return Color(0x00FFFFFF);
+            case CR::FRAME_LIGHT: return Color(0x00F7F7F7);
+            case CR::FRAME_DARK: return Color(0x002A384D);
 
             // Tooltip
             case CR::TOOLTIP_BG: return Color(0xE0FFFF80);       // Yellow
@@ -272,9 +283,15 @@ public:
     }
 
     void draw_window_frame(Canvas& canvas, const Rect& rect, bool active) override {
-        Color border = active ? color(ColorRole::FOCUS_BORDER) : color(ColorRole::BORDER);
-        int bw = metric(MetricRole::WINDOW_BORDER_WIDTH);
-        canvas.draw_rect(rect, border, bw);
+        static_cast<void>(active);  // the Workbench frame is the same either way
+        Color const light = color(ColorRole::FRAME_LIGHT);
+        Color const dark = color(ColorRole::FRAME_DARK);
+        canvas.draw_hline(rect.x, rect.x + rect.width - 1, rect.y, light);
+        canvas.draw_vline(rect.y, rect.y + rect.height - 1, rect.x, light);
+        canvas.draw_hline(rect.x, rect.x + rect.width - 1,
+                          rect.y + rect.height - 1, dark);
+        canvas.draw_vline(rect.y, rect.y + rect.height - 1,
+                          rect.x + rect.width - 1, dark);
     }
 
     void draw_scrollbar(Canvas& canvas, const Rect& rect,

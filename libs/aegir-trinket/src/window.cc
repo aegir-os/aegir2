@@ -18,10 +18,6 @@ namespace aegir::trinket {
 
 namespace {
 
-/* The resize grip's size, frame-local, in the bottom-right corner of the
- * content (specs/window-manager.md). */
-constexpr int kResizeGrip = 16;
-
 /* The topmost widget under `p`, window-local. Rects are window-absolute (the
  * layouts place children against the container's own rect), so the same point
  * descends the tree unchanged. */
@@ -50,21 +46,53 @@ void collect_focusables(Widget* widget, std::vector<Widget*>& out) {
     if (widget->focusable()) out.push_back(widget);
 }
 
-/* One titlebar gadget: a plate and its glyph -- an X for close, a square for
- * zoom, a down chevron for depth. */
-void draw_gadget(Canvas& canvas, Rect const& r, int kind, Color ink,
-                 Color plate) {
-    canvas.fill_rect(r, plate);
-    Point const c = r.center();
+/* A titlebar gadget, drawn on the bar (its plate is the bar's own fill) with
+ * the Workbench glyphs (specs/amiga-fidelity.md): a near-black outline, and
+ * white and grey interiors. When the window is not active every fill becomes
+ * the bar's colour, so the glyph reads hollow. */
+void draw_gadget(Canvas& canvas, Rect const& r, int kind, bool active,
+                 Color bar, Color outline, Color white, Color grey) {
+    Color const inner = active ? white : bar;
     if (kind == 1) {
-        canvas.draw_line({c.x - 3, c.y - 3}, {c.x + 3, c.y + 3}, ink);
-        canvas.draw_line({c.x - 3, c.y + 3}, {c.x + 3, c.y - 3}, ink);
+        /* Close: a small square, white fill, centred. */
+        Rect const box{r.x + 4, r.y + 4, 8, 8};
+        canvas.fill_rect(box, inner);
+        canvas.draw_rect(box, outline);
     } else if (kind == 2) {
-        canvas.draw_rect({c.x - 4, c.y - 4, 8, 8}, ink);
+        /* Zoom: a box in a box -- outer the bar's fill, inner upper-left. */
+        Rect const outer{r.x + 2, r.y + 2, 12, 12};
+        canvas.fill_rect(outer, bar);
+        canvas.draw_rect(outer, outline);
+        Rect const box{r.x + 4, r.y + 4, 6, 6};
+        canvas.fill_rect(box, inner);
+        canvas.draw_rect(box, outline);
     } else {
-        canvas.draw_line({c.x - 3, c.y - 2}, {c.x, c.y + 2}, ink);
-        canvas.draw_line({c.x, c.y + 2}, {c.x + 3, c.y - 2}, ink);
+        /* Depth: two cascaded squares, upper grey, lower white. */
+        Rect const upper{r.x + 2, r.y + 2, 10, 10};
+        canvas.fill_rect(upper, active ? grey : bar);
+        canvas.draw_rect(upper, outline);
+        Rect const lower{r.x + 5, r.y + 5, 10, 10};
+        canvas.fill_rect(lower, inner);
+        canvas.draw_rect(lower, outline);
     }
+}
+
+/* The resize gadget: a white right triangle, near-black outline, right angle
+ * at the bottom-right, with a white line down its left separating it from the
+ * bar (specs/amiga-fidelity.md). */
+void draw_resize_gadget(Canvas& canvas, Rect const& r, Color white,
+                        Color outline) {
+    int const w = r.width;
+    int const h = r.height;
+    canvas.draw_vline(r.y, r.y + h - 1, r.x, white);
+    for (int row = 0; row < h; ++row) {
+        int const left =
+            r.x + (w - 1) * (h - 1 - row) / (h > 1 ? h - 1 : 1);
+        canvas.draw_hline(left, r.x + w - 1, r.y + row, white);
+    }
+    canvas.draw_vline(r.y, r.y + h - 1, r.x + w - 1, outline);
+    canvas.draw_hline(r.x, r.x + w - 1, r.y + h - 1, outline);
+    canvas.draw_line({r.x + w - 1, r.y}, {r.x, r.y + h - 1}, outline);
 }
 
 }  // namespace
@@ -370,9 +398,8 @@ void Window::dispatch_pointer(uint64_t event) {
         return;
     }
 
-    /* The bottom-right grip begins a resize. */
-    if (decorated_ && pos.x >= rect_.width - kResizeGrip &&
-        pos.y >= bar + rect_.height - kResizeGrip) {
+    /* The resize gadget in the bottom bar begins a resize. */
+    if (resize_gadget_rect().contains(pos) && bottombar_height() > 0) {
         resizing_ = true;
         /* The pointer's screen position: the down is window-local, and the
          * frame's origin is (rect_.x, rect_.y - bar). */
@@ -394,9 +421,18 @@ int Window::titlebar_height() const {
     return decorated_ ? app_.theme().metric(MetricRole::TITLEBAR_HEIGHT) : 0;
 }
 
+/* A resizable decorated window carries a bottom bar of the titlebar's height
+ * and fill, with the resize gadget in its lower right (specs/amiga-fidelity.md). */
+int Window::bottombar_height() const {
+    return decorated_ && resizable_
+               ? app_.theme().metric(MetricRole::TITLEBAR_HEIGHT)
+               : 0;
+}
+
 Rect Window::frame_for(const Rect& content) const {
     int const bar = titlebar_height();
-    return {content.x, content.y - bar, content.width, content.height + bar};
+    int const bottom = bottombar_height();
+    return {content.x, content.y - bar, content.width, content.height + bar + bottom};
 }
 
 void Window::set_gadgets(bool close, bool zoom, bool depth) {
@@ -406,8 +442,8 @@ void Window::set_gadgets(bool close, bool zoom, bool depth) {
     repaint();
 }
 
-/* The gadgets sit at the titlebar's right, packed from the edge; index 0 is
- * the rightmost (depth), then zoom, then close (specs/window-manager.md). */
+/* The right-packed gadget slot, index 0 the rightmost (Depth), then Zoom
+ * (specs/amiga-fidelity.md). */
 Rect Window::gadget_rect(int index_from_right) const {
     Theme& theme = app_.theme();
     int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
@@ -419,8 +455,26 @@ Rect Window::gadget_rect(int index_from_right) const {
     return {right, (bar - size) / 2, size, size};
 }
 
+/* Close sits at the titlebar's far left; Zoom and Depth are packed at its
+ * right, Depth rightmost (specs/amiga-fidelity.md). */
+Rect Window::close_gadget_rect() const {
+    Theme& theme = app_.theme();
+    int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
+    int const pad = theme.metric(MetricRole::TITLEBAR_PADDING_H);
+    int const bar = titlebar_height();
+    return {pad, (bar - size) / 2, size, size};
+}
+
+/* The resize gadget: the bottom bar's lower-right square. */
+Rect Window::resize_gadget_rect() const {
+    int const size = bottombar_height();
+    Rect const frame = frame_for(rect_);
+    return {frame.width - size, frame.height - size, size, size};
+}
+
 int Window::gadget_at(Point p) const {
     if (!decorated_) return 0;
+    if (gadget_close_ && close_gadget_rect().contains(p)) return 1;
     int index = 0;
     if (gadget_depth_) {
         if (gadget_rect(index).contains(p)) return 3;
@@ -428,10 +482,6 @@ int Window::gadget_at(Point p) const {
     }
     if (gadget_zoom_) {
         if (gadget_rect(index).contains(p)) return 2;
-        ++index;
-    }
-    if (gadget_close_) {
-        if (gadget_rect(index).contains(p)) return 1;
         ++index;
     }
     return 0;
@@ -450,10 +500,14 @@ void Window::zoom() {
     if (console_window_id_ == 0) return;
     DisplayInfo const& display = app_.display_info();
     int const bar = titlebar_height();
+    int const bottom = bottombar_height();
     if (!zoomed_) {
         if (display.width_px == 0 || display.height_px == 0) return;
+        /* The whole screen is the frame: the content is what is left after
+         * both bars, or the frame would not fit and the paint would run past
+         * the backing. */
         Rect const target{0, bar, static_cast<int>(display.width_px),
-                          static_cast<int>(display.height_px) - bar};
+                          static_cast<int>(display.height_px) - bar - bottom};
         if (target.width <= 0 || target.height <= 0) return;
         Rect const target_frame = frame_for(target);
         if (!aegir::console::move(app_.gui_port(), console_window_id_,
@@ -507,7 +561,10 @@ uint64_t Window::backing_bytes() const {
     DisplayInfo const& display = app_.display_info();
     if (display.width_px > 0 && display.height_px > 0) {
         content_width = static_cast<int>(display.width_px);
-        content_height = static_cast<int>(display.height_px) - titlebar_height();
+        /* The largest frame the console accepts is the screen: the content is
+         * what is left after both bars (specs/window-manager.md). */
+        content_height = static_cast<int>(display.height_px) - titlebar_height() -
+                         bottombar_height();
         if (content_height < 1) {
             content_height = static_cast<int>(display.height_px);
         }
@@ -522,6 +579,7 @@ Rect Window::paint() {
 
     Rect const frame = frame_for(rect_);
     int const bar = titlebar_height();
+    int const bottom = bottombar_height();
     /* Only the region an event damaged is painted and handed the console:
      * repainting the whole frame on every keystroke is what made typing
      * crawl (specs/trinket.md deferred this; specs/window-manager.md's
@@ -532,36 +590,58 @@ Rect Window::paint() {
     uint32_t* const pixels =
         reinterpret_cast<uint32_t*>(app_.slice() + backing_offset_);
 
-    /* The client-side frame: the window's own surface, the titlebar over the
-     * content, and the theme's border around the whole rectangle
-     * (specs/window-manager.md). The content is painted through a canvas
-     * offset by the titlebar, so its coordinates are its own. */
+    /* The client-side frame (specs/amiga-fidelity.md): a beveled title bar, the
+     * content, and, for a resizable window, a beveled bottom bar with the
+     * resize gadget. The content is painted through a canvas offset by the
+     * titlebar, so its coordinates are its own. */
     Theme& theme = app_.theme();
     Canvas frame_canvas(pixels, frame.width, frame.height, frame.width);
     frame_canvas.set_clip_rect(damage);
     frame_canvas.fill_rect({0, 0, frame.width, frame.height},
                            theme.color(ColorRole::WINDOW_BG));
+
     if (bar > 0) {
-        std::string const title = utf32_to_utf8(title_);
-        theme.draw_titlebar(frame_canvas, {0, 0, frame.width, bar}, title.c_str(),
-                            active_);
-        Color const ink = active_ ? theme.color(ColorRole::TITLEBAR_TEXT)
-                                  : theme.color(ColorRole::TITLEBAR_TEXT_INACTIVE);
-        Color const plate = theme.color(ColorRole::BUTTON_BG);
+        frame_canvas.fill_rect({0, 0, frame.width, bar},
+                               theme.color(ColorRole::TITLEBAR_BG));
+        if (bar > 2) {
+            frame_canvas.draw_hline(0, frame.width - 1, 1,
+                                    theme.color(ColorRole::TITLEBAR_HIGHLIGHT));
+        }
+        frame_canvas.draw_hline(0, frame.width - 1, bar - 1,
+                                theme.color(ColorRole::TITLEBAR_SHADOW));
+
+        Font* const font = app_.default_font();
+        if (font != nullptr && !title_.empty()) {
+            int const pad = theme.metric(MetricRole::TITLEBAR_PADDING_H);
+            int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
+            int const gap = theme.metric(MetricRole::SPACING_SMALL);
+            int const x = gadget_close_ ? pad + size + gap : pad;
+            std::string const title = utf32_to_utf8(title_);
+            frame_canvas.draw_text({x, (bar - font->height()) / 2}, title, font,
+                                   theme.color(ColorRole::TITLEBAR_TEXT));
+        }
+
+        Color const outline = theme.color(ColorRole::GADGET_OUTLINE);
+        Color const white = theme.color(ColorRole::GADGET_WHITE);
+        Color const grey = theme.color(ColorRole::GADGET_GREY);
+        Color const bar_fill = theme.color(ColorRole::TITLEBAR_BG);
+        if (gadget_close_) {
+            draw_gadget(frame_canvas, close_gadget_rect(), 1, active_, bar_fill,
+                        outline, white, grey);
+        }
         int index = 0;
         if (gadget_depth_) {
-            draw_gadget(frame_canvas, gadget_rect(index), 3, ink, plate);
+            draw_gadget(frame_canvas, gadget_rect(index), 3, active_, bar_fill,
+                        outline, white, grey);
             ++index;
         }
         if (gadget_zoom_) {
-            draw_gadget(frame_canvas, gadget_rect(index), 2, ink, plate);
-            ++index;
-        }
-        if (gadget_close_) {
-            draw_gadget(frame_canvas, gadget_rect(index), 1, ink, plate);
+            draw_gadget(frame_canvas, gadget_rect(index), 2, active_, bar_fill,
+                        outline, white, grey);
             ++index;
         }
     }
+
     if (content_) {
         content_->dispatch_layout();
         Canvas content_canvas(pixels + static_cast<size_t>(bar) * frame.width,
@@ -571,7 +651,23 @@ Rect Window::paint() {
             content_canvas,
             PaintEvent{{damage.x, damage.y - bar, damage.width, damage.height}});
     }
-    if (bar > 0) {
+
+    if (bottom > 0) {
+        int const top = frame.height - bottom;
+        frame_canvas.fill_rect({0, top, frame.width, bottom},
+                               theme.color(ColorRole::TITLEBAR_BG));
+        if (bottom > 2) {
+            frame_canvas.draw_hline(0, frame.width - 1, top + 1,
+                                    theme.color(ColorRole::BOTTOMBAR_HIGHLIGHT));
+        }
+        frame_canvas.draw_hline(0, frame.width - 1, frame.height - 2,
+                                theme.color(ColorRole::BOTTOMBAR_SHADOW));
+        draw_resize_gadget(frame_canvas, resize_gadget_rect(),
+                           theme.color(ColorRole::GADGET_WHITE),
+                           theme.color(ColorRole::GADGET_OUTLINE));
+    }
+
+    if (decorated_) {
         theme.draw_window_frame(frame_canvas, {0, 0, frame.width, frame.height},
                                 active_);
     }

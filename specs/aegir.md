@@ -40,6 +40,7 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/bureau.md` — the session's desktop, and the screen-size query.
 - `specs/window-manager.md` — client-side decorations, move/raise, and the
   titlebar drag.
+- `specs/amiga-fidelity.md` — where the GUI is not Amiga, and the fixes.
 - `specs/build.md` — build environment, targets, and what our image is made of.
 - `specs/cxx.md` — the hosted C++ runtime: the vendored musl and libc++, the
   freeing heap, and the two build switches that gate them.

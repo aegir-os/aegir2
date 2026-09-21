@@ -90,17 +90,18 @@ this arc.
   revealed and uncovered. Compositing the whole window per motion was what
   left a drag trailing the cursor, which moves only its 8×8. A move of a
   window that is not topmost falls back to the union composite.
-- **The titlebar carries three gadgets.** Packed at its right: close, zoom
-  and depth. Close calls the client's `on_close_requested` and hides the
-  window; zoom toggles between where the window was and the whole screen,
-  its titlebar at the top; depth lowers the window to the bottom among the
-  plain windows (the console gains `lower`). The titlebar elsewhere still
-  raises: a drag or a resize brings the window forward, the gadgets act
-  deliberately. Depth is on by default; a client asks for close and zoom
-  (`set_gadgets`), because a login window should not be closable and the
-  bureau's backdrop has no titlebar at all. A zoom is a move and a resize in
-  the order that keeps the intermediate state on the screen — shrink before
-  moving, grow after.
+- **The titlebar carries three gadgets, Workbench-shaped.** Close sits at the
+  titlebar's **far left**; Zoom and Depth are packed at its right, Depth
+  rightmost (`specs/amiga-fidelity.md`). Close calls the client's
+  `on_close_requested` and hides the window; zoom toggles between where the
+  window was and the whole screen, its titlebar at the top; depth lowers the
+  window to the bottom among the plain windows (the console gains `lower`).
+  The titlebar elsewhere still raises: a drag or a resize brings the window
+  forward, the gadgets act deliberately. Depth is on by default; a client
+  asks for close and zoom (`set_gadgets`), because a login window should not
+  be closable and the bureau's backdrop has no titlebar at all. The bars'
+  bevels, the gadget glyphs, and the resizable-only bottom bar with its
+  resize gadget are `specs/amiga-fidelity.md`; this spec is the behaviour.
 - **The WM server is deferred.** A `bureau.wm` server is policy the console
   does not need yet; it arrives with the client that asks.
 
@@ -118,14 +119,15 @@ of a backdrop is refused.
 
 ### The toolkit's decorated `Window`
 
-`Window` with `decorated_` (the default) draws its frame into the backing:
-the theme's `TITLEBAR_BG`/`TITLEBAR_TEXT` strip at the top, the title text
-from `set_title` (the active colour while focused), and the theme's
-`draw_window_frame` around the whole rectangle. The content is painted
-through a canvas offset by the titlebar, so the content keeps its own
-coordinate space: the content root's rectangle is `{0, 0, width, height}`
-and the widgets never hear about the titlebar. Pointer coordinates are
-translated the same way before the hit test.
+`Window` with `decorated_` (the default) draws its frame into the backing: a
+beveled title bar, the content, and, for a **resizable** window, a beveled
+bottom bar carrying the resize gadget (`specs/amiga-fidelity.md` has the
+look). `frame_for()` is `titlebar + content + bottombar`, where the bottom
+bar is zero unless the window is decorated and resizable. The content is
+painted through a canvas offset by the titlebar, so the content keeps its own
+coordinate space: the content root's rectangle is `{0, 0, width, height}` and
+the widgets never hear about the bars. Pointer coordinates are translated the
+same way before the hit test.
 
 `backing_bytes()` is the screen-bounded maximum of the frame — the largest a
 resize may reach. A client sets its content rectangle as before; `set_rect`
@@ -133,13 +135,12 @@ moves the frame, fires `on_moved_resized`, and repaints. `set_title`
 repaints.
 
 A pointer-down in the titlebar begins a drag and raises; motion moves the
-window through `console::move`. A pointer-down in the bottom-right grip
-begins a resize; motion resizes through `console::resize`, bounded by
-`min_size_` and the screen. A pointer-down on a titlebar gadget — close,
-zoom or depth, at the right — acts: `close()` (the client's
-`on_close_requested`), `zoom()` (the toggle above), or `console::lower`.
-The up ends either gesture. A pointer-down anywhere else in the content is
-the widgets', as before.
+window through `console::move`. A pointer-down on the resize gadget in the
+bottom bar begins a resize; motion resizes through `console::resize`, bounded
+by `min_size_` and the screen. A pointer-down on a titlebar gadget — close,
+zoom or depth — acts: `close()` (the client's `on_close_requested`),
+`zoom()` (the toggle above), or `console::lower`. The up ends either gesture.
+A pointer-down anywhere else in the content is the widgets', as before.
 
 ### The clients
 

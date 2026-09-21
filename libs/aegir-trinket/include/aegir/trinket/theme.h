@@ -41,6 +41,12 @@ enum class ColorRole {
     // Titlebar
     TITLEBAR_BG, TITLEBAR_BG_INACTIVE, TITLEBAR_TEXT, TITLEBAR_TEXT_INACTIVE,
     TITLEBAR_BUTTON_BG, TITLEBAR_BUTTON_HOVER,
+    // Workbench chrome (specs/amiga-fidelity.md): the bars' bevels, the
+    // gadget fills, and the frame's raised edge.
+    TITLEBAR_HIGHLIGHT, TITLEBAR_SHADOW,
+    BOTTOMBAR_HIGHLIGHT, BOTTOMBAR_SHADOW,
+    GADGET_OUTLINE, GADGET_GREY, GADGET_WHITE,
+    FRAME_LIGHT, FRAME_DARK,
     // Tooltip
     TOOLTIP_BG, TOOLTIP_TEXT,
     // Scrollbar
