@@ -36,8 +36,18 @@ public:
 
     void set_menus(std::vector<Menu> menus);
 
+    /* The active client's menus (specs/workbench.md): shown in place of the
+     * bureau's own while that client's window has the focus, and cleared when
+     * it loses it. The bureau owns both; the desktop only decides which
+     * stands. */
+    void set_client_menus(std::vector<Menu> menus);
+    void clear_client_menus();
+
     // The action an activated item names, or its absence.
     std::function<void(uint32_t action_id)> on_action;
+    // The action an activated item of the active client's menus names; the
+    // bureau forwards it to that client.
+    std::function<void(uint32_t action_id)> on_client_action;
     // The menu a click opened, by index; the bureau logs its cue on it.
     std::function<void(int menu)> on_menu_opened;
 
@@ -62,8 +72,12 @@ private:
     std::vector<Slot> item_slots(int menu) const;
     void draw_bar(aegir::trinket::Canvas& canvas);
     void draw_menu(aegir::trinket::Canvas& canvas, int menu);
+    /* The menus the bar shows: the active client's, or the bureau's own. */
+    std::vector<Menu> const& active_menus() const;
 
     std::vector<Menu> menus_;
+    std::vector<Menu> client_menus_;
+    bool client_active_ = false;
     int open_menu_ = -1;
 };
 

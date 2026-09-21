@@ -121,11 +121,12 @@ make it hold.
   `on_poll` hook after a drain.
 
 - **The wire is the toolkit's own model.** The model is `MenuBar::Menu`, so the
-  Desktop draws what it already draws. Strings are UTF-16 code units, four to a
-  word; a menu is a count and its title, an item its action id, flags and label.
-  The methods are `menu_register`, `menu_set_active`, `menu_take_action`. The
-  protocol lives in `libs/aegir-bureau` (`aegir/bureau/menu.h`), the shape of
-  every other port's (`libs/aegir-console`'s is the pattern).
+  Desktop draws what it already draws. Strings are `std::u32string`'s code
+  points, two to a word; a menu is a count and its title, an item its action id,
+  flags and label. The methods are `menu_register`, `menu_set_active`,
+  `menu_take_action`. The protocol lives in `libs/aegir-bureau`
+  (`aegir/bureau/menu.h`), the shape of every other port's
+  (`libs/aegir-console`'s is the pattern).
 
 The `Desktop` gains `set_client_menus` and `clear_client_menus` and an
 `on_client_action`; the bureau forwards a client action to the active client's

@@ -34,6 +34,24 @@ void Desktop::set_menus(std::vector<Menu> menus) {
     damage();
 }
 
+void Desktop::set_client_menus(std::vector<Menu> menus) {
+    client_menus_ = std::move(menus);
+    client_active_ = true;
+    open_menu_ = -1;
+    damage();
+}
+
+void Desktop::clear_client_menus() {
+    client_active_ = false;
+    client_menus_.clear();
+    open_menu_ = -1;
+    damage();
+}
+
+std::vector<Desktop::Menu> const& Desktop::active_menus() const {
+    return client_active_ ? client_menus_ : menus_;
+}
+
 int Desktop::bar_height() const {
     return Application::instance()->theme().metric(MetricRole::MENUBAR_HEIGHT);
 }
@@ -47,7 +65,7 @@ int Desktop::menu_width(int menu) const {
     Font* const font = Application::instance()->default_font();
     int const pad = theme.metric(MetricRole::MENU_PADDING_H);
     int width = 120;
-    for (const MenuItem& item : menus_[menu].items) {
+    for (const MenuItem& item : active_menus()[menu].items) {
         int const label = font != nullptr ? font->measure(item.label).width : 0;
         width = std::max(width, label + 2 * pad + 24);
     }
@@ -62,8 +80,9 @@ std::vector<Desktop::Slot> Desktop::title_slots() const {
     int const pad = theme.metric(MetricRole::MENU_PADDING_H);
     int const height = bar_height();
     int x = rect_.x;
-    for (int i = 0; i < static_cast<int>(menus_.size()); ++i) {
-        int const width = font->measure(menus_[i].title).width + 2 * pad;
+    std::vector<Menu> const& menus = active_menus();
+    for (int i = 0; i < static_cast<int>(menus.size()); ++i) {
+        int const width = font->measure(menus[i].title).width + 2 * pad;
         slots.push_back({Rect{x, rect_.y, width, height}, i, 0});
         x += width;
     }
@@ -78,7 +97,7 @@ std::vector<Desktop::Slot> Desktop::item_slots(int menu) const {
     int const x = titles[menu].rect.x;
     int const width = menu_width(menu);
     int y = rect_.y + bar_height();
-    for (int i = 0; i < static_cast<int>(menus_[menu].items.size()); ++i) {
+    for (int i = 0; i < static_cast<int>(active_menus()[menu].items.size()); ++i) {
         slots.push_back({Rect{x, y, width, height}, menu, i});
         y += height;
     }
@@ -103,7 +122,7 @@ void Desktop::draw_bar(Canvas& canvas) {
     for (const Slot& slot : title_slots()) {
         int const x = slot.rect.x + pad;
         int const y = slot.rect.y + (height - font->height()) / 2;
-        canvas.draw_text({x, y}, menus_[slot.menu].title, font,
+        canvas.draw_text({x, y}, active_menus()[slot.menu].title, font,
                          theme.color(ColorRole::TITLEBAR_TEXT));
     }
 }
@@ -119,13 +138,13 @@ void Desktop::draw_menu(Canvas& canvas, int menu) {
 
     Rect const box{slots.front().rect.x, slots.front().rect.y,
                    slots.front().rect.width,
-                   static_cast<int>(menus_[menu].items.size()) * height};
+                   static_cast<int>(active_menus()[menu].items.size()) * height};
     canvas.fill_rect(box, theme.color(ColorRole::MENU_BG));
     canvas.draw_rect(box, theme.color(ColorRole::MENU_BORDER),
                      theme.metric(MetricRole::MENU_BORDER_WIDTH));
 
     for (const Slot& slot : slots) {
-        MenuItem const& item = menus_[menu].items[slot.item];
+        MenuItem const& item = active_menus()[menu].items[slot.item];
         if ((item.flags & MenuItem::SEPARATOR) != 0) {
             int const y = slot.rect.y + height / 2;
             canvas.draw_hline(slot.rect.x + 8, slot.rect.x + slot.rect.width - 8, y,
@@ -150,7 +169,7 @@ void Desktop::on_paint(Canvas& canvas, const PaintEvent&) {
     Theme& theme = Application::instance()->theme();
     canvas.fill_rect(rect_, theme.color(ColorRole::BACKGROUND));
     draw_bar(canvas);
-    if (open_menu_ >= 0 && open_menu_ < static_cast<int>(menus_.size())) {
+    if (open_menu_ >= 0 && open_menu_ < static_cast<int>(active_menus().size())) {
         draw_menu(canvas, open_menu_);
     }
 }
@@ -168,12 +187,19 @@ void Desktop::on_mouse_down(const MouseEvent& event) {
     if (open_menu_ >= 0) {
         for (const Slot& slot : item_slots(open_menu_)) {
             if (!slot.rect.contains(event.pos)) continue;
-            MenuItem const& item = menus_[open_menu_].items[slot.item];
+            MenuItem const& item = active_menus()[open_menu_].items[slot.item];
             uint32_t const action = item.action_id;
             bool const acts = (item.flags & (MenuItem::DISABLED | MenuItem::SEPARATOR)) == 0;
+            bool const client = client_active_;
             open_menu_ = -1;
             damage();
-            if (acts && on_action) on_action(action);
+            if (acts) {
+                if (client) {
+                    if (on_client_action) on_client_action(action);
+                } else if (on_action) {
+                    on_action(action);
+                }
+            }
             return;
         }
         open_menu_ = -1;
