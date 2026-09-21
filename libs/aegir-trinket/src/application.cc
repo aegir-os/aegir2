@@ -377,6 +377,12 @@ bool Application::process_events() {
 void Application::dispatch_gui_event(uint64_t event, uint64_t window) {
     uint16_t const type = aegir::input::event_type(event);
     uint32_t const value = aegir::input::event_value(event);
+    /* The screen-owner nudge names no window, so it is handled before the
+     * per-window routing (specs/workbench.md). */
+    if (type == aegir::console::kEventScreenOwner) {
+        if (on_screen_owner) on_screen_owner(value != 0);
+        return;
+    }
     for (Window* win : windows_) {
         if (win->console_window_id() != window) continue;
         if (type == aegir::console::kEventFocus) {

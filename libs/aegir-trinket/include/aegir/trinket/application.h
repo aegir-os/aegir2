@@ -50,6 +50,12 @@ public:
     // that its form is on the screen.
     std::function<void()> on_started;
 
+    // The screen's owner appeared (true) or left (false): the console's nudge
+    // to every listening client when a backdrop window is created or
+    // destroyed. A client that may be focused before the bureau exists
+    // registers here, once it is up (specs/workbench.md).
+    std::function<void(bool up)> on_screen_owner;
+
     // A server's call handler, when serve() set a port: `method` and the
     // `count` words that rode with it, answered with as many reply words as
     // the handler returns. `badge` is the caller's, as the kernel reports it.
