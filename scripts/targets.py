@@ -329,6 +329,25 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 10, 10, 0, 85, 170),
                 ),
             ),
+            # The pre-bureau drag (specs/workbench.md): the demo is on the
+            # screen before login, and the bureau is a session that does not
+            # exist until the login starts it. A drag focuses the demo; if it
+            # called menu_register then, the ownerless port would block it and
+            # it would never move. The drag takes it down 150 px, and the dump
+            # after the login reads it there. It comes after the boot marker
+            # because the test bed's click is placed for the pointer starting
+            # at the screen's centre, and the demo is left where it lands --
+            # the later demo clicks are placed for (900,450).
+            QmpStep(
+                r"AEGIR_BOOT_OK",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 25600}},
+                    {"type": "abs", "data": {"axis": "y", "value": 11796}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "abs", "data": {"axis": "y", "value": 17938}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
             # The boot marker ends the test bed's part, not the script's:
             # the runner holds until every step has played, and the login is
             # what remains. The click focuses the greeter's window; it lands
@@ -343,6 +362,18 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 21325}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The demo moved before the bureau: its titlebar reads #6688bb at
+            # (1050,438) -- clear of the cursor left at (1000,438) -- and the
+            # console's backdrop stands where the titlebar was.
+            QmpStep(
+                r"greeter: the window has the focus",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1050, 438, 102, 136, 187),
+                    ("gpu0", 1000, 288, 0, 85, 170),
                 ),
             ),
             # The typing answers the focus, not the click: the click rides
@@ -380,8 +411,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             # The window manager's demo client (specs/window-manager.md), last
-            # so its clicks do not race the login: its decorated window sits
-            # over the bureau's backdrop at (900,300), clear of the samples
+            # so its clicks do not race the login: its decorated window was
+            # dragged to (900,450) before the login, clear of the samples
             # above. The runner clicks its zoom gadget (the right-hand pair,
             # specs/amiga-fidelity.md); the window fills the screen with its
             # #6688bb bars; clicks zoom again and it is back; then clicks
@@ -391,7 +422,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"bureau: the screen is yours",
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 28773}},
-                    {"type": "abs", "data": {"axis": "y", "value": 11796}},
+                    {"type": "abs", "data": {"axis": "y", "value": 17938}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
@@ -416,7 +447,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 910, 310, 204, 204, 204),),
+                pixels=(("gpu0", 910, 460, 204, 204, 204),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},
@@ -449,7 +480,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: about",
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 23448}},
-                    {"type": "abs", "data": {"axis": "y", "value": 11796}},
+                    {"type": "abs", "data": {"axis": "y", "value": 17938}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
