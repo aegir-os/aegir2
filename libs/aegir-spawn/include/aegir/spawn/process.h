@@ -162,6 +162,19 @@ struct Request {
     uint64_t binary_image_bytes = 0;
     char const *account;
     uint32_t account_length;
+    /* The arguments and environment the child starts with (specs/environment.md),
+     * as the startup frame's argv/envp: NUL-terminated strings the spawner copies
+     * into the child. argv[0] is always the program's name; `arguments` are what
+     * follow it. `environment` is `NAME=VALUE` strings. A spawner normally passes
+     * its own through -- inheritance -- which is what a shell does. */
+    char const *const *arguments = nullptr;
+    uint32_t argument_count = 0;
+    char const *const *environment = nullptr;
+    uint32_t environment_count = 0;
+    /* The child's current directory, a VFS path (`Volume:component/path`), or
+     * null/0 for none (specs/environment.md). */
+    char const *cwd = nullptr;
+    uint32_t cwd_length = 0;
     uint32_t priority;
     /** How many 4 KiB pages of stack the child is given. Zero takes the floor
      *  (kDefaultStackPages, 8 KiB); a process that runs the C++ standard

@@ -42,6 +42,15 @@ uintptr_t align_down(uintptr_t value, uintptr_t alignment) noexcept
     return value & ~(alignment - 1);
 }
 
+uint64_t c_strlen(char const *text) noexcept
+{
+    uint64_t n = 0;
+    while (text[n] != '\0') {
+        ++n;
+    }
+    return n;
+}
+
 void write_word(uint8_t *stack, uintptr_t stack_lo, uintptr_t address, uint64_t value) noexcept
 {
     uint8_t *at = stack + (address - stack_lo);
@@ -126,21 +135,33 @@ uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintpt
                                      uintptr_t ipc_buffer) noexcept
 {
     /* The frame a spawned program is started with: argc, argv, envp, auxv -- and
-     * the runtime reads exactly this (projects/sel4runtime/src/env.c:282-320).
-     * Sizes first, then placement upward from a 16-byte aligned stack pointer,
-     * because the ABI wants sp aligned at entry and a child that starts
-     * misaligned cannot tell anyone why. */
+     * the runtime reads exactly this (projects/sel4runtime/src/env.c:282-320,
+     * crt1.c). argv[0] is the program's name; the request's arguments follow it,
+     * and the request's environment is envp (specs/environment.md). Sizes first,
+     * then placement upward from a 16-byte aligned stack pointer, because the ABI
+     * wants sp aligned at entry and a child that starts misaligned cannot tell
+     * anyone why. */
     uintptr_t const stack_lo = stack_top - stack_size;
+    uint32_t const argc = 1 + request.argument_count;
+    uint32_t const envc = request.environment_count;
     uint64_t const name_bytes = request.name_length + 1;
     uint64_t const phdr_bytes =
         static_cast<uint64_t>(elf.program_headers()) * elf.program_header_size();
 
+    uint64_t strings = align_up(name_bytes, 8);
+    for (uint32_t i = 0; i < request.argument_count; ++i) {
+        strings += align_up(c_strlen(request.arguments[i]) + 1, 8);
+    }
+    for (uint32_t i = 0; i < envc; ++i) {
+        strings += align_up(c_strlen(request.environment[i]) + 1, 8);
+    }
+
     uint64_t total = 0;
     total += 8;                             /* argc */
-    total += 8 * 2;                         /* argv[0] and its terminator */
-    total += 8;                             /* envp terminator: no environment */
+    total += 8 * (argc + 1);                /* argv and its terminator */
+    total += 8 * (envc + 1);                /* envp and its terminator */
     total += kAuxvEntries * kAuxvEntrySize; /* the auxv */
-    total += align_up(name_bytes, 8);       /* the program name, above it all */
+    total += strings;                       /* the strings, above the vectors */
     total += align_up(phdr_bytes, 8);       /* the program headers, higher still */
     if (total > stack_size) {
         return 0;
@@ -154,19 +175,42 @@ uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintpt
     uintptr_t const argc_at = cursor;
     cursor += 8;
     uintptr_t const argv_at = cursor;
-    cursor += 8 * 2;
+    cursor += 8 * (argc + 1);
     uintptr_t const envp_at = cursor;
-    cursor += 8;
+    cursor += 8 * (envc + 1);
     uintptr_t const auxv_at = cursor;
     cursor += kAuxvEntries * kAuxvEntrySize;
-    uintptr_t const name_at = cursor;
-    cursor += align_up(name_bytes, 8);
-    uintptr_t const phdr_at = cursor;
+    uintptr_t const strings_at = cursor;
+    uintptr_t const phdr_at = cursor + strings;
 
-    write_word(stack, stack_lo, argc_at, 1);
-    write_word(stack, stack_lo, argv_at, name_at);
-    write_word(stack, stack_lo, argv_at + 8, 0);
-    write_word(stack, stack_lo, envp_at, 0);
+    write_word(stack, stack_lo, argc_at, argc);
+
+    /* The strings are copied in above the vectors; `at` walks them and the
+     * pointer written into argv/envp is where each landed. */
+    uintptr_t at = strings_at;
+    auto put_string = [&](char const *text, uint64_t bytes) noexcept {
+        uint8_t *out = stack + (at - stack_lo);
+        for (uint64_t i = 0; i + 1 < bytes; ++i) {
+            out[i] = text[i];
+        }
+        out[bytes - 1] = '\0';
+        uintptr_t const here = at;
+        at += align_up(bytes, 8);
+        return here;
+    };
+    write_word(stack, stack_lo, argv_at, put_string(request.name, name_bytes));
+    for (uint32_t i = 0; i < request.argument_count; ++i) {
+        uint64_t const bytes = c_strlen(request.arguments[i]) + 1;
+        write_word(stack, stack_lo, argv_at + 8 * (i + 1),
+                   put_string(request.arguments[i], bytes));
+    }
+    write_word(stack, stack_lo, argv_at + 8 * argc, 0);
+    for (uint32_t i = 0; i < envc; ++i) {
+        uint64_t const bytes = c_strlen(request.environment[i]) + 1;
+        write_word(stack, stack_lo, envp_at + 8 * i,
+                   put_string(request.environment[i], bytes));
+    }
+    write_word(stack, stack_lo, envp_at + 8 * envc, 0);
 
     struct Aux {
         int type;
@@ -189,11 +233,6 @@ uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintpt
     }
     write_auxv(stack, stack_lo, auxv_at + (kAuxvEntries - 1) * kAuxvEntrySize, AT_NULL, 0);
 
-    uint8_t *name = stack + (name_at - stack_lo);
-    for (uint32_t i = 0; i < request.name_length; ++i) {
-        name[i] = request.name[i];
-    }
-    name[request.name_length] = '\0';
     if (!elf.copy_program_headers(stack + (phdr_at - stack_lo), phdr_bytes)) {
         return 0;
     }
@@ -484,6 +523,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         request.window_frame != 0 && request.window_bytes > 0 ? shared_window_at : 0;
     bootstrap::Contents const contents{
         request.name,       request.name_length,   request.account, request.account_length,
+        request.cwd,        request.cwd_length,
         port_entries,       port_count,            devices_address, request.devices_bytes,
         device_address,     request.device_bytes,  request.device_physical,
         request.untyped_physical, request.untyped_bits, memory_at,
