@@ -19,7 +19,7 @@ gadget fills, the bevels — is hard to describe in words.
 | Gadget order | Close, Zoom, Depth, left to right | Close, Zoom, Depth, all right-packed | Close at the title bar's **far left**; Zoom and Depth at the right, Depth rightmost |
 | Title bar | beveled: a light top edge, fill, a dark bottom edge | flat `#0078d7`, no bevel | beveled: highlight `(164,184,215)`, fill **`#6688bb`**, shadow `(67,89,123)` |
 | Title text | left-justified, black | left-justified, white | left-justified, black |
-| Resizable windows | a bottom bar, same fill, with a resize gadget | a grip in the content's corner | a beveled bottom bar (`(177,194,220)` / `#6688bb` / `(42,56,77)`) with a white right-triangle resize gadget, right angle at the bottom-right, and a white separator line |
+| Resizable windows | a bottom bar, same fill, with a resize gadget | a grip in the content's corner | a beveled bottom bar (`(177,194,220)` / `#6688bb` / `(42,56,77)`) with a white right-triangle resize gadget, right angle at the bottom-right and inset from the bevel, and a white separator line |
 | Frame | a raised bevel, light top/left, dark bottom/right | one flat border colour | a raised bevel, light top/left, dark bottom/right |
 | Close gadget | a small square, white fill | an X | a small square, white fill, near-black outline |
 | Zoom gadget | a box in a box: outer `#6688bb`, inner (upper-left) white | a square | a box in a box: outer `#6688bb`, inner (upper-left) white |

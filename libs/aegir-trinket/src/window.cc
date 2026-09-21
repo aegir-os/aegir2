@@ -78,21 +78,22 @@ void draw_gadget(Canvas& canvas, Rect const& r, int kind, bool active,
 }
 
 /* The resize gadget: a white right triangle, near-black outline, right angle
- * at the bottom-right, with a white line down its left separating it from the
- * bar (specs/amiga-fidelity.md). */
+ * at the bottom-right, inset from the bar's bevel, with a white line down its
+ * left separating it from the bar (specs/amiga-fidelity.md). */
 void draw_resize_gadget(Canvas& canvas, Rect const& r, Color white,
                         Color outline) {
-    int const w = r.width;
-    int const h = r.height;
-    canvas.draw_vline(r.y, r.y + h - 1, r.x, white);
-    for (int row = 0; row < h; ++row) {
+    int const tri = (r.width * 5) / 8;
+    int const gap = (r.width - tri) / 2;
+    Rect const t{r.x + r.width - gap - tri, r.y + r.height - gap - tri, tri, tri};
+    canvas.draw_vline(r.y, r.y + r.height - 1, r.x, white);
+    for (int row = 0; row < t.height; ++row) {
         int const left =
-            r.x + (w - 1) * (h - 1 - row) / (h > 1 ? h - 1 : 1);
-        canvas.draw_hline(left, r.x + w - 1, r.y + row, white);
+            t.x + (t.width - 1) * (t.height - 1 - row) / (t.height > 1 ? t.height - 1 : 1);
+        canvas.draw_hline(left, t.x + t.width - 1, t.y + row, white);
     }
-    canvas.draw_vline(r.y, r.y + h - 1, r.x + w - 1, outline);
-    canvas.draw_hline(r.x, r.x + w - 1, r.y + h - 1, outline);
-    canvas.draw_line({r.x + w - 1, r.y}, {r.x, r.y + h - 1}, outline);
+    canvas.draw_vline(t.y, t.y + t.height - 1, t.x + t.width - 1, outline);
+    canvas.draw_hline(t.x, t.x + t.width - 1, t.y + t.height - 1, outline);
+    canvas.draw_line({t.x + t.width - 1, t.y}, {t.x, t.y + t.height - 1}, outline);
 }
 
 }  // namespace
