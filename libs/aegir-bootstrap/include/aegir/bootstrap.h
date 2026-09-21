@@ -80,7 +80,7 @@ constexpr uint32_t kCNodeBits = 10;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 4;
+constexpr uint32_t kVersion = 5;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -144,6 +144,12 @@ enum class EntryKind : uint32_t {
      *  address. The window travels with the service port because a request's
      *  data crosses there, not in the message. */
     SharedWindow = 12,
+    /** The child's current directory: a VFS path (`Volume:component/path`), a
+     *  string entry like `Name`. Empty or absent when the child was given none
+     *  (specs/environment.md). Arguments and environment variables do not ride
+     *  here: they are the startup frame's argc/argv/envp, the ABI the runtime
+     *  already reads. */
+    CurrentDir = 13,
 };
 
 struct Entry {
@@ -200,6 +206,9 @@ struct Contents {
     uint32_t name_length;
     char const *account;
     uint32_t account_length;
+    /* The child's current directory (specs/environment.md), or empty for none. */
+    char const *cwd;
+    uint32_t cwd_length;
     PortEntry const *ports;
     uint32_t port_count;
     uint64_t devices_address;
@@ -235,6 +244,11 @@ Block const *find() noexcept;
 
 /** The child's service name, or the empty string. */
 char const *name(uint32_t *length) noexcept;
+
+/** The child's current directory, or nullptr when it was given none
+ *  (specs/environment.md). The pointer is into the block, valid as long as the
+ *  block is. */
+char const *current_dir(uint32_t *length) noexcept;
 
 /** Look up one string entry by kind. The pointer is into the block, so it is
  *  valid for as long as the block is. */
