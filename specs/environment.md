@@ -15,10 +15,11 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
 
 ## The decisions
 
-- **The environment is per-process, and given at spawn.** Arguments, environment
-  strings and the current directory are the process's own; nothing else sees
-  them. The spawn `Request` grows them, and the bootstrap block names what the
-  child was given, the way it names its ports.
+- **The environment is per-process and inherited.** A spawned process gets the
+  spawner's arguments, variables and current directory, which the spawner may
+  add to or override; nothing else sees them. The spawn `Request` carries them,
+  and the bootstrap block names what the child was given, the way it names its
+  ports.
 - **Arguments are a list of strings, not a command line.** `main(int argc,
   char **argv)` is what a C++ program is written against, and the runtime
   already carries the C ABI; the Amiga's single command line is a parsing
@@ -26,18 +27,21 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
 - **The current directory is a VFS path, not a lock.** It is
   `Volume:component/path` — the VFS's own shape (`specs/vfs.md`) — held as a
   string. The VFS is stateless by path, so a lock would pin what the VFS does
-  not hold; a string is what a process can carry, compare and hand on. A
+  not hold; a string is what a process can carry, compare and inherit. A
   relative path resolves against it; an absolute path (`Volume:…`) never does.
-- **A process with no current directory refuses a relative path.** The spawner
-  sets it: a session's is `Home:`, a system service's is `Sys:`, and a process
+  It is inherited like the variables, and the spawner sets it where the
+  process's identity calls for it: a session's is `Home:`, a system service's
+  `Sys:`.
+- **A process with no current directory refuses a relative path.** A process
   given none has none — a relative path is `-ENOENT`, an absolute path is always
   fine. The default is the spawner's, not the runtime's, so the policy lives
   where the process's identity does.
-- **Environment variables are the process's own strings.** `getenv`/`setenv`
-  read and write them; a child inherits the spawner's if the spawner passes them
-  on. The Amiga's global, persistent `ENV:` volume and `GetVar`/`SetVar` are a
-  different shape — a shared environment — and are a later arc if they are
-  wanted at all.
+- **The persistent environment is `Sys:Prefs/Env-Archive`.** The Amiga's
+  `ENV:` assign points at that directory, and the variables that outlive a boot
+  are files in it. A startup reads them into the first processes' environments;
+  the DOS toolset — `SetVar`/`GetVar`, once the shell and a `CON:` handler
+  exist — writes them back. This arc defines the per-process mechanism and the
+  assign; the startup and the tools are later arcs.
 - **The library is `aegir::environment`.** It parses the bootstrap block once
   and answers `argc`/`argv`, `getenv`/`setenv`, and
   `current_dir`/`set_current_dir`. A program includes it and never sees a slot
@@ -51,17 +55,20 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
 ### What the spawner gives
 
 `Request` grows three fields: the arguments (a list of strings), the environment
-(a list of `NAME=VALUE` strings), and the current directory (a string, or empty
-for none). The spawner copies the bytes into the child — a region it maps beside
-the stack, or into a page of the image — and the bootstrap block carries an
-entry naming the region and its length, so the child finds it the way it finds
-its ports. The encoding is the spawner's and the library's to agree on; the
-block says where, not what.
+(a list of `NAME=VALUE` strings, normally the spawner's own), and the current
+directory (a string, normally the spawner's own, or empty for none). The
+spawner copies the bytes into the child — a region it maps beside the stack, or
+into a page of the image — and the bootstrap block carries an entry naming the
+region and its length, so the child finds it the way it finds its ports. The
+encoding is the spawner's and the library's to agree on; the block says where,
+not what.
 
-A process the director starts gets the manifest's arguments and a `Sys:`
-current directory; a session gets auth's (a login has no arguments, and its
-current directory is its `Home:`). Both are the spawner's choice, and the
-process cannot tell which spawner it had.
+Inheritance is the default, so a spawner that adds nothing passes its own
+environment through: a shell starts a program, and the program sees the shell's
+variables and current directory. A spawner that wants otherwise says so — the
+director gives a boot service the manifest's arguments and a `Sys:` current
+directory, and auth gives a session a `Home:` current directory, its own
+variables beside. The process cannot tell which spawner it had.
 
 ### `aegir::environment`
 
@@ -92,10 +99,12 @@ nothing in the VFS can change it.
 
 ## What this is not
 
-A global, shared environment (`ENV:`); a command-line parser (`ReadArgs`'s
-shape); file descriptors or a process's open files; `$HOME` or any other named
-variable the system sets for a program — the arc gives the mechanism, and a
-program or a spawner decides the names.
+The shell and the DOS toolset that manipulate the persistent environment
+(`SetVar`/`GetVar`, and the `CON:` handler they need); a startup sequence that
+reads `Env-Archive` into the first processes; a command-line parser
+(`ReadArgs`'s shape); file descriptors or a process's open files; `$HOME` or any
+other named variable the system sets for a program — the arc gives the
+mechanism, and a program or a spawner decides the names.
 
 ## Acceptance
 
