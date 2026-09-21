@@ -107,7 +107,15 @@ int main(int argc, char *argv[])
      * and logging every resize motion would tax the very gesture it reports.
      * An interactive resize lands between them and stays quiet. */
     Application *const app_ptr = &app;
-    window.on_moved_resized = [app_ptr](Rect r) {
+    /* The cue is a change of *size*, not of place: a move carries the same
+     * size, and a plain move must not read as a restore -- the demo is moved
+     * before the bureau exists (specs/workbench.md). */
+    int last_width = kWindowWidth;
+    int last_height = kWindowHeight;
+    window.on_moved_resized = [app_ptr, &last_width, &last_height](Rect r) {
+        if (r.width == last_width && r.height == last_height) return;
+        last_width = r.width;
+        last_height = r.height;
         int const screen_width = static_cast<int>(app_ptr->display_info().width_px);
         if (screen_width > 0 && r.width >= screen_width) {
             write("  demo: zoomed\n");
@@ -115,23 +123,41 @@ int main(int argc, char *argv[])
             write("  demo: restored\n");
         }
     };
-    /* Register once, on the first focus, and report every change after: the
-     * bureau needs to know whose window's menus stand (specs/workbench.md).
-     * The doorbell is a signal-only copy of the notification the demo already
-     * listens on, so the bureau can wake it when an item is clicked. */
+    /* Register with the bureau, and report focus as it changes: the bureau
+     * needs to know whose window's menus stand (specs/workbench.md). The
+     * bureau is a session that starts at login, so the demo cannot call it
+     * before then -- a call to a port with no owner blocks, which is what
+     * froze the window when it was focused before login. The console's
+     * screen-owner nudge is the fix: it tells every client when the bureau's
+     * backdrop appears, and the demo registers then. Until the nudge it only
+     * remembers the focus. The doorbell is a signal-only copy of the
+     * notification the demo already listens on, so the bureau can wake it
+     * when an item is clicked. */
+    bool bureau_up = false;
     bool registered = false;
-    auto report_focus = [&](bool active) {
-        if (!bureau.valid()) return;
-        if (active && !registered) {
-            seL4_CPtr const doorbell = app.alloc_slot();
-            if (doorbell != 0 && app.mint_event_notification(doorbell) &&
-                aegir::bureau::menu::register_menus(bureau, demo_menus(), doorbell)) {
-                registered = true;
-                write("  demo: menus up\n");
-            }
+    bool want_active = false;
+    auto ensure_registered = [&]() {
+        if (registered || !bureau_up || !bureau.valid()) return;
+        seL4_CPtr const doorbell = app.alloc_slot();
+        if (doorbell != 0 && app.mint_event_notification(doorbell) &&
+            aegir::bureau::menu::register_menus(bureau, demo_menus(), doorbell)) {
+            registered = true;
+            write("  demo: menus up\n");
         }
+    };
+    auto report_focus = [&](bool active) {
+        want_active = active;
+        ensure_registered();
         if (registered) {
             (void)aegir::bureau::menu::set_active(bureau, active);
+        }
+    };
+    app.on_screen_owner = [&](bool up) {
+        if (!up) return;
+        bureau_up = true;
+        ensure_registered();
+        if (registered) {
+            (void)aegir::bureau::menu::set_active(bureau, want_active);
         }
     };
     window.on_focus_changed = [&](bool active) { report_focus(active); };
