@@ -107,6 +107,12 @@ public:
     // across re-registrations respects.
     seL4_CPtr alloc_slot();
 
+    // A signal-only copy of the event notification, in `target` (a slot from
+    // alloc_slot()): what a client hands a server that must ring its doorbell
+    // (specs/workbench.md's bureau.menu). The console's listen mint carries
+    // Write, so the copy can be made; the signal only wakes this app.
+    bool mint_event_notification(seL4_CPtr target);
+
     // The mapped console slice and a window's backing within it. A Window
     // claims a region once and keeps its offset; the region stops short of the
     // event ring in the slice's last page.

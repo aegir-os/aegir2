@@ -247,6 +247,15 @@ seL4_CPtr Application::alloc_slot() {
     return g_objects.alloc_slot();
 }
 
+bool Application::mint_event_notification(seL4_CPtr target) {
+    if (events_ == 0 || target == 0) return false;
+    return seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, target,
+                           aegir::bootstrap::kCNodeBits,
+                           aegir::bootstrap::kSlotOwnCNode, events_,
+                           aegir::bootstrap::kCNodeBits,
+                           seL4_CapRights_new(0, 0, 0, 1), 0) == seL4_NoError;
+}
+
 void Application::dispatch_call(seL4_MessageInfo_t info, seL4_Word badge) {
     uint32_t const length = static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
     uint32_t const method = length > 0 ? static_cast<uint32_t>(seL4_GetMR(0)) : 0;
