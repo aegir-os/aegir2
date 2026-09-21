@@ -119,6 +119,12 @@ Rights rights_for(PortGraph::Name name) noexcept
          * source holds. */
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "bureau.menu", 11)) {
+        /* The owner reads: it receives the port's calls (specs/workbench.md).
+         * The caller writes, and carries Grant because register transfers the
+         * doorbell capability -- the namespace's reason, above. */
+        return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 

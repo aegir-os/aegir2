@@ -302,16 +302,20 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                               (spawner ? 2 : 0) +
                               (entry.maps && !spawner && memory_cap != 0 ? 1 : 0);
             /* A spawning service also gets an *unbadged* copy of every port its
-             * children need to call: a badged endpoint cap cannot be minted again
-             * (deriveCap refuses it -- that is what "a port could not be installed"
-             * with seL4_IllegalOperation meant), so a service that hands a port on
+             * children need to call, and of every port a child *owns*: a badged
+             * endpoint cap cannot be minted again (deriveCap refuses it -- that
+             * is what "a port could not be installed" with
+             * seL4_IllegalOperation meant), so a service that hands a port on
              * must be given one it may badge itself. The name carries a "spawn:"
-             * prefix, because which copy is which is not something the block should
-             * make a reader guess. The union over every entry its `spawns` covers
-             * -- names and classes -- with each port once: two children both
-             * needing log.main share one delegatable copy. The count is the worst
-             * case; duplicates are dropped at the fill, and `at` says how many
-             * there really are. */
+             * prefix, because which copy is which is not something the block
+             * should make a reader guess. The union over every entry its `spawns`
+             * covers -- names and classes -- with each port once: two children
+             * both needing log.main share one delegatable copy. The count is the
+             * worst case; duplicates are dropped at the fill, and `at` says how
+             * many there really are. The owner copy is how a session comes to
+             * own a port at all: a session is not director's to spawn, so the
+             * owner half it serves reaches it through its spawner
+             * (specs/workbench.md). */
             uint32_t spawn_needs = 0;
             if (spawner) {
                 for (uint32_t j = 0; j < manifest.size(); ++j) {
@@ -325,9 +329,7 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                         continue;
                     }
                     for (uint32_t g = 0; g < graph_.grant_count(j); ++g) {
-                        if (graph_.grants(j)[g].badge != 0) {
-                            ++spawn_needs;
-                        }
+                        ++spawn_needs;
                     }
                 }
             }
@@ -390,9 +392,6 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     }
                     for (uint32_t g = 0; g < graph_.grant_count(j); ++g) {
                         spawn::PortGrant const &need = graph_.grants(j)[g];
-                        if (need.badge == 0) {
-                            continue;
-                        }
                         /* One delegatable copy per port, however many children need
                          * it: matching by name, because the endpoint is what makes
                          * two "log.main"s the same port. The spawn: copies were

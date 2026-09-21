@@ -61,6 +61,10 @@ seL4_CPtr g_spawn_nmspace = 0;
  * children range (specs/authority.md). */
 seL4_CPtr g_spawn_gui = 0;
 seL4_CPtr g_spawn_login = 0;
+/* The owner half of bureau.menu, which the bureau serves (specs/workbench.md):
+ * a session is not director's to spawn, so the owner copy the director made
+ * reaches the bureau through auth, as the caller copies do. */
+seL4_CPtr g_spawn_bureau_menu = 0;
 aegir::ipc::Consumer g_gui;
 constexpr uint64_t kGreeterBadge = 768;
 bool g_greeter_up = false;
@@ -422,6 +426,13 @@ void start_session(uint32_t user, bool bureau) noexcept
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, bureau_untyped,
          seL4_AllRights, 0, kBureauUntypedBits},
+        /* The bureau.menu owner half (specs/workbench.md): the bureau reads it
+         * -- it receives the port's calls -- and it is unbadged, because a
+         * receiver's badge never identifies it. A boot whose director made no
+         * such port passes it with a null cap, which the spawner would refuse;
+         * the count below keeps that entry out when there is none. */
+        {"bureau.menu", 11, aegir::bootstrap::kSlotFirstDeclared + 4,
+         g_spawn_bureau_menu, seL4_CanRead, 0, 0},
     };
     static char const kSessionName[] = "session.smoke";
     static char const kSessionBinary[] = "aegir-session-smoke";
@@ -446,7 +457,7 @@ void start_session(uint32_t user, bool bureau) noexcept
     request.account_length = field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
-    request.port_count = bureau ? 4 : 2;
+    request.port_count = bureau ? (g_spawn_bureau_menu != 0 ? 5 : 4) : 2;
     request.fault_endpoint = fault;
     request.badge = badge;
 
@@ -839,6 +850,14 @@ int main(int argc, char *argv[])
         g_spawn_gui = static_cast<seL4_CPtr>(spawn_gui_slot);
         g_spawn_login = static_cast<seL4_CPtr>(spawn_login_slot);
         g_gui = aegir::ipc::Consumer(static_cast<seL4_CPtr>(gui_slot));
+    }
+    /* The bureau's own port (specs/workbench.md): present only when the
+     * director made the endpoint, which it does because the manifest declares
+     * the port. A boot without it still takes logins; the bureau then runs
+     * with its own menus and serves none. */
+    uint64_t spawn_bureau_menu_slot = 0;
+    if (aegir::bootstrap::capability("spawn:bureau.menu", 17, &spawn_bureau_menu_slot)) {
+        g_spawn_bureau_menu = static_cast<seL4_CPtr>(spawn_bureau_menu_slot);
     }
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);
