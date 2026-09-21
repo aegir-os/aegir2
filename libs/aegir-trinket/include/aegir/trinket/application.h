@@ -53,8 +53,11 @@ public:
     // A server's call handler, when serve() set a port: `method` and the
     // `count` words that rode with it, answered with as many reply words as
     // the handler returns. `badge` is the caller's, as the kernel reports it.
+    // `cap_arrived` says a capability rode with the call and is in the scratch
+    // receive slot (ipc::take_received_cap is how the handler moves it out).
     std::function<uint32_t(uint32_t method, uint64_t const *words, uint32_t count,
-                           seL4_Word badge, uint64_t *reply, uint32_t capacity)> on_call;
+                           seL4_Word badge, bool cap_arrived, uint64_t *reply,
+                           uint32_t capacity)> on_call;
 
     // Called after each drain and before the loop waits again: a client with
     // an out-of-band signal to poll (the bureau.menu doorbell) does it here.
@@ -97,6 +100,12 @@ public:
     // single-threaded server cannot wait on two objects at once, so it takes
     // the console's own shape (specs/workbench.md).
     void serve(aegir::ipc::Owner port);
+
+    // A CSpace slot for a capability the app installs -- a served port's
+    // transferred cap, say. Slots are the process's and one is never freed
+    // (aegir-mem's allocator), which a registry that reuses a client's slot
+    // across re-registrations respects.
+    seL4_CPtr alloc_slot();
 
     // The mapped console slice and a window's backing within it. A Window
     // claims a region once and keeps its offset; the region stops short of the

@@ -203,6 +203,13 @@ int Application::exec() {
         seL4_CPtr const port = server_.capability();
         while (running_) {
             seL4_Word badge = 0;
+            /* A call may carry a capability; it lands in the scratch slot the
+             * receive path names, and on_call moves it out (the port.cc
+             * pattern, which sets the path on every receive rather than keep
+             * it as state to get stale). */
+            seL4_SetCapReceivePath(aegir::bootstrap::kSlotOwnCNode,
+                                   aegir::bootstrap::kSlotReceiveCap,
+                                   aegir::bootstrap::kCNodeBits);
             seL4_MessageInfo_t const info = seL4_Recv(port, &badge);
             if (seL4_MessageInfo_get_length(info) != 0) {
                 dispatch_call(info, badge);
@@ -236,10 +243,15 @@ void Application::serve(aegir::ipc::Owner port) {
     server_ = port;
 }
 
+seL4_CPtr Application::alloc_slot() {
+    return g_objects.alloc_slot();
+}
+
 void Application::dispatch_call(seL4_MessageInfo_t info, seL4_Word badge) {
     uint32_t const length = static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
     uint32_t const method = length > 0 ? static_cast<uint32_t>(seL4_GetMR(0)) : 0;
     uint32_t const arrived = length > 1 ? length - 1 : 0;
+    bool const cap_arrived = seL4_MessageInfo_get_extraCaps(info) != 0;
     uint64_t words[aegir::ipc::kMaxWords];
     uint32_t const taken = arrived < aegir::ipc::kMaxWords ? arrived : aegir::ipc::kMaxWords;
     for (uint32_t i = 0; i < taken; ++i) {
@@ -248,7 +260,8 @@ void Application::dispatch_call(seL4_MessageInfo_t info, seL4_Word badge) {
     uint64_t reply[aegir::ipc::kMaxWords];
     uint32_t reply_count = 0;
     if (on_call) {
-        reply_count = on_call(method, words, arrived, badge, reply, aegir::ipc::kMaxWords);
+        reply_count = on_call(method, words, arrived, badge, cap_arrived, reply,
+                              aegir::ipc::kMaxWords);
     }
     server_.reply_words(reply, reply_count);
 }
