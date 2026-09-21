@@ -136,6 +136,14 @@ constexpr uint16_t kEventKey = 1;     /* code: the raw code; value below */
 constexpr uint16_t kEventPointer = 2; /* code: 0 motion, else the button */
 constexpr uint16_t kEventFocus = 3;   /* value: 1 in, 0 out */
 
+/* The screen's owner changed: a backdrop window (the bureau) appeared (value
+ * 1) or left (value 0). Delivered to every listening client when a backdrop
+ * is created or destroyed, so a client that was focused before the bureau
+ * existed can register once it is up (specs/workbench.md). Its window word is
+ * zero -- it names no window, so a client must handle it before the
+ * per-window routing. */
+constexpr uint16_t kEventScreenOwner = 4;
+
 /* A key event's value: bits 0..15 the translated character -- the keymap
  * is console's, US layout v1, and an unmapped code carries zero -- and
  * bit 16 set for a press, clear for a release. */

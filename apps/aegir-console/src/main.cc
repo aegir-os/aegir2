@@ -211,10 +211,9 @@ Window *window_at(uint64_t x, uint64_t y) noexcept
 
 /* Append an event to a client's ring and signal. A full ring drops: the
  * console never blocks on a client that stopped reading. */
-void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
-             uint64_t window) noexcept
+void deliver_to(Slice *slice, uint16_t type, uint16_t code, uint32_t value,
+                uint64_t window) noexcept
 {
-    Slice *slice = find_slice(owner);
     if (slice == nullptr || slice->events == 0) {
         return;
     }
@@ -230,6 +229,27 @@ void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
     entry[1] = window;
     ring[0] = write + 1;
     seL4_Signal(slice->events);
+}
+
+void deliver(uint64_t owner, uint16_t type, uint16_t code, uint32_t value,
+             uint64_t window) noexcept
+{
+    deliver_to(find_slice(owner), type, code, value, window);
+}
+
+/* A backdrop -- the screen's owner, the bureau -- appeared or left: every
+ * listening client hears it. A client that was focused before the bureau
+ * existed uses this nudge to register the moment it is up
+ * (specs/workbench.md); the console is the one service always there to send
+ * it. A full ring drops, as ever. */
+void announce_screen_owner(uint64_t value) noexcept
+{
+    for (Slice *slice = g_slices; slice != nullptr; slice = slice->next) {
+        if (slice->listening) {
+            deliver_to(slice, aegir::console::kEventScreenOwner, 0,
+                       static_cast<uint32_t>(value), 0);
+        }
+    }
 }
 
 /* The cursor is software (specs/console.md): a 16x16 arrow composited over
@@ -1046,6 +1066,9 @@ int main(int argc, char *argv[])
                 }
                 *tail = window;
             }
+            if (backdrop) {
+                announce_screen_owner(1);
+            }
             gui.reply(window->id);
         } else if (method == aegir::console::kMethodDamage && length == 6) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
@@ -1123,6 +1146,9 @@ int main(int argc, char *argv[])
             }
             /* What was under it is everyone else's redraw. */
             repaint(gone.x, gone.y, gone.width, gone.height);
+            if (gone.backdrop) {
+                announce_screen_owner(0);
+            }
             gui.reply(0);
         } else if (method == aegir::console::kMethodReap && length == 2) {
             /* Session teardown: every window the badge held goes away as if
@@ -1136,6 +1162,7 @@ int main(int argc, char *argv[])
              * the bureau arc's problem. */
             uint64_t const target = static_cast<uint64_t>(seL4_GetMR(1));
             Window **link = &g_windows;
+            bool lost_backdrop = false;
             while (*link != nullptr) {
                 if ((*link)->owner != target) {
                     link = &(*link)->next;
@@ -1143,6 +1170,9 @@ int main(int argc, char *argv[])
                 }
                 Window const gone = **link;
                 *link = (*link)->next;
+                if (gone.backdrop) {
+                    lost_backdrop = true;
+                }
                 if (g_focused != nullptr && g_focused->id == gone.id) {
                     deliver(gone.owner, aegir::console::kEventFocus, 0, 0,
                             gone.id);
@@ -1166,6 +1196,9 @@ int main(int argc, char *argv[])
                                   dead->untyped, aegir::bootstrap::kCNodeBits);
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                                   dead->events, aegir::bootstrap::kCNodeBits);
+            }
+            if (lost_backdrop) {
+                announce_screen_owner(0);
             }
             gui.reply(0);
         } else if (method == aegir::console::kMethodMove && length == 4) {

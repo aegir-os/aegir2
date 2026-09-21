@@ -110,6 +110,16 @@ make it hold.
   ClickToFocus-style commodity owns that choice later; `kBackdropTakesFocus` is
   the one policy point until then.
 
+  The bureau is a session, so its port has no owner until login, and a call to
+  an ownerless port blocks — a client focused before login would freeze its
+  event loop on `menu_register`. The console's **screen-owner event**, delivered
+  to every listening client when a backdrop window is created or destroyed, is
+  the nudge: a client registers when it arrives, so it never calls before the
+  bureau is up. The console is the one service always there to send it, and the
+  client remembers its focus until then. A client that registers with a
+  non-blocking send and retries was the alternative; the nudge keeps the
+  registration a plain call that cannot be lost.
+
 - **Registration is one call, and the doorbell rides with it.** `menu_register`
   carries the menu tree in the call's words and, by capability transfer, a
   signal-only copy of the notification the client already listens on — the
