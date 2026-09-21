@@ -1065,8 +1065,14 @@ int main(int argc, char *argv[])
             }
             gui.reply(0);
         } else if (method == aegir::console::kMethodListen && length == 1) {
-            /* The event channel's cap: a wait-only mint of the slice's
-             * notification. One per client -- a second listen is refused. */
+            /* The event channel's cap: a mint of the slice's notification that
+             * may wait on it *and* signal it. Read alone would do for the ring,
+             * but a client that serves a port hands a signal-only copy of this
+             * notification to whoever must ring its doorbell (the bureau,
+             * specs/workbench.md), and a mint can only keep rights its source
+             * holds. The signal is the client's own doorbell, so waking itself
+             * is all the widened right buys. One per client -- a second listen
+             * is refused. */
             Slice *slice = find_slice(badge);
             if (slice == nullptr || slice->events == 0 || slice->listening ||
                 mint_slot == 0 ||
@@ -1074,7 +1080,7 @@ int main(int argc, char *argv[])
                                 aegir::bootstrap::kCNodeBits,
                                 aegir::bootstrap::kSlotOwnCNode, slice->events,
                                 aegir::bootstrap::kCNodeBits,
-                                seL4_CapRights_new(0, 0, 1, 0), 0) != seL4_NoError) {
+                                seL4_CapRights_new(0, 0, 1, 1), 0) != seL4_NoError) {
                 gui.reply(0);
             } else {
                 slice->listening = true;

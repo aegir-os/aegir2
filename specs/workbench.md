@@ -108,10 +108,13 @@ make it hold.
 - **Registration is one call, and the doorbell rides with it.** `menu_register`
   carries the menu tree in the call's words and, by capability transfer, a
   signal-only copy of the notification the client already listens on — the
-  console's doorbell, which the client can mint because it holds it. The bureau
-  keeps the tree and the cap. A tree larger than the kernel's message registers
-  is refused; that ceiling is the envelope's (`kMaxWords`), not a number chosen
-  here, and a shared-window form is the escape hatch when a real tree needs one.
+  console's doorbell. The console's listen mint therefore carries Write beside
+  Read: a mint can only keep rights its source holds, and the client must mint
+  the signal copy the bureau rings. The signal is the client's own doorbell, so
+  waking itself is all the widened right buys. The bureau keeps the tree and the
+  cap. A tree larger than the kernel's message registers is refused; that ceiling
+  is the envelope's (`kMaxWords`), not a number chosen here, and a shared-window
+  form is the escape hatch when a real tree needs one.
 
 - **An action rings the client's doorbell and is fetched.** The bureau does not
   call into the client or hold a call open: a single-threaded client cannot be
@@ -133,6 +136,14 @@ The `Desktop` gains `set_client_menus` and `clear_client_menus` and an
 doorbell. The registry — the clients, their trees, their doorbells, the active
 one — is the bureau's, and the desktop it draws into is the same desktop the
 bar already is.
+
+The console owning each client's event notification is what makes the listen
+mint's Write right necessary. The better end state is the **client** owning its
+own notification and handing the console a signal-only cap to it: the console
+then holds less than it does today, and the client mints the bureau's copy from
+an object that is its own. That is a change to `listen` and to every client —
+the greeter, the demo, the bureau, the test bed — so it is its own arc, recorded
+here as where the event channel should end up.
 
 ## What this is not
 
