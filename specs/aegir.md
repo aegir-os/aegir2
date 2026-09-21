@@ -33,6 +33,8 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
   spawn, and accounts.
 - `specs/vfs.md` — the namespace, the volume protocol, and capabilities over
   IPC.
+- `specs/environment.md` — the process environment: arguments, environment
+  variables, and the current directory.
 - `specs/auth.md` — the user database's format and the login port's protocol.
 - `specs/console.md` — the display, the pointer, the windows, and the greeter.
 - `specs/trinket.md` — the GUI toolkit: console integration, the look, and the

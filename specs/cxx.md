@@ -174,49 +174,60 @@ explicitly so the CMake cache cannot keep a stale one.
 ## The completion program
 
 Status: decided (2026-09). The runtime's remaining parts are one program,
-worked in order, each its own arc with its own acceptance. `specs/userland.md`
-frames the whole of it: **Aegir is not a POSIX system**, and a POSIX layer is
-an optional thing on top of Aegir's primitives, not the model. So the standard
-library is completed for the parts that are Aegir-native, and the POSIX-shaped
-parts — `std::filesystem`, `<fstream>`, and the file calls behind them — arrive
-through an **optional POSIX layer**, ixemul's shape: a library a program links
-and mounts volumes into. A program that does not link it never sees a POSIX
-path; no core component maps Amiga volumes to POSIX paths, and a standard
-program never has to think about the mapping. The mapping is the layer's, and
-the layer is the program's choice.
+worked in order, each its own arc with its own acceptance. Two framing
+decisions run through it:
 
-The order, each before the GUI arc's launcher and its volume listing:
+- **The standard library is completed for what Aegir is, and the calls are
+  wrapped.** Filesystem access is a normal part of the standard library, on by
+  default: `std::filesystem` works, and its paths are Aegir's (`Volume:…`,
+  `specs/vfs.md`), so no program maps anything. Beside it, an Aegir library
+  `aegir::filesystem` wraps the VFS's own calls — enumerating volumes, the
+  things `std::filesystem` has no path for — so a program that wants Aegir's
+  filesystem does not call seL4 or the namespace port by hand
+  (`specs/userland.md`: the calls belong in a library, not a program).
+- **POSIX is not the model, and it is not the mechanism.** `std::filesystem` is
+  C++, not POSIX; it reaches the filesystem through the runtime. A POSIX
+  emulation layer, ixemul's shape, is a separate, later thing for the *rest* of
+  POSIX — `fork`, signals, pipes, a `/`-rooted mount table — that a
+  Unix-targeted program links. It is not what gives a program `std::filesystem`.
 
-1. **`__cxa_atexit` at process exit.** `sel4runtime` runs `__fini_array` and
+The order:
+
+1. **The process environment** (`specs/environment.md`). Arguments, environment
+   and a current directory: the last is what `std::filesystem`'s relative paths
+   and `current_path()` resolve against, and the library
+   (`aegir::environment`) is the first working of the wrap-the-calls rule. Its
+   own arc, first, because the filesystem arc depends on it.
+2. **`__cxa_atexit` at process exit.** `sel4runtime` runs `__fini_array` and
    never calls libc's `exit`, so destructors registered through libc's
    `__cxa_atexit` do not run. A process that needs them at exit wants the
    `__funcs_on_exit()` bridge. Small, and it closes a correctness hole the
    other parts would otherwise each work around.
-2. **Exceptions and RTTI.** Tier 1 compiles without them. Turning them on means
+3. **Exceptions and RTTI.** Tier 1 compiles without them. Turning them on means
    rebuilding libc++ with `LIBCXX_ENABLE_EXCEPTIONS`/`RTTI` on and proving
    unwinding in a *spawned* process — `.eh_frame` mapped and frame registration
    reached — before anything relies on it. The toolkit's widget classes are the
    first likely consumer.
-3. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
+4. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
    but a thread does not start: `pthread_create` reaches `clone`, which the
    dispatcher refuses, and with exceptions off `std::thread`'s constructor would
    abort. `aegir-trinket`'s `WorkerPool` therefore does not spawn. A real
    thread is one seL4 TCB in the process's own address space, and
    `specs/userland.md`'s threading section already records the rules (tp, gp, a
    stack that does not overlap the TLS block).
-4. **The POSIX layer.** The file syscalls the dispatcher refuses are answered
-   by an optional library (`libs/aegir-posix`), ixemul's shape. It is linked by
-   a program that wants POSIX, it mounts volumes through `vfs.namespace`
-   (`specs/vfs.md`), and it translates `openat`/`stat`/`readdir`/`mkdir`/… into
-   the volume protocol. `std::filesystem` and `<fstream>` work once it is
-   linked and its mounts are up. `aegir-heap`'s dispatcher grows a
-   registered-handler hook (or the layer wraps `__sysinfo`), so a program that
-   does not link the layer keeps `-ENOSYS` and never sees a POSIX path.
-5. **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
+5. **The filesystem.** `std::filesystem` in the runtime, and `aegir::filesystem`
+   beside it. The runtime answers the file calls with Aegir-path semantics, and
+   a tracked libc++ patch gives `path` the Aegir grammar, modelled on its
+   Windows one — a root-name `Volume:`, always absolute, `/` the separator — so
+   `is_absolute`/`root_name`/`absolute` are right. `aegir::filesystem` wraps the
+   namespace (`volumes()` from count/describe, and the resolve/list calls) for
+   what `std::filesystem` has no path for. Depends on 1 for the current
+   directory.
+6. **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
    its C dependencies are musl's — while `translation.cc` and `bidi.cc` are
    gated out because they are stubs, not because they cannot compile. The
    locale arc turns musl's locale on and implements UAX #9 for real.
-6. **The compiler choice.** GCC builds everything today. Clang 22
+7. **The compiler choice.** GCC builds everything today. Clang 22
    cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
    112 at `-O2`) and would not need the `__chash` patch at all, because libc++
    is Clang's library. Switching is `specs/build.md`'s deferred decision and
