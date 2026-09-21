@@ -190,13 +190,37 @@ int Application::exec() {
 
     if (on_started) on_started();
 
-    // Event loop
-    while (running_) {
-        bool const drained = process_events();
-        process_timers();
-        process_posted_events();
-        if (running_ && !drained) {
-            seL4_Wait(events_, nullptr);
+    /* Event loop. A server receives on its port and lets the console's event
+     * notification -- bound to this thread -- wake the same receive, so one
+     * blocked receive serves both (the console's shape); every other app
+     * waits on the notification and drains the ring. */
+    if (server_.valid()) {
+        if (seL4_TCB_BindNotification(aegir::bootstrap::kSlotOwnTcb, events_) !=
+            seL4_NoError) {
+            aegir::debug_write("trinket: FAIL the event notification would not bind\n");
+            return 1;
+        }
+        seL4_CPtr const port = server_.capability();
+        while (running_) {
+            seL4_Word badge = 0;
+            seL4_MessageInfo_t const info = seL4_Recv(port, &badge);
+            if (seL4_MessageInfo_get_length(info) != 0) {
+                dispatch_call(info, badge);
+            }
+            process_events();
+            process_timers();
+            process_posted_events();
+            if (on_poll) on_poll();
+        }
+    } else {
+        while (running_) {
+            bool const drained = process_events();
+            process_timers();
+            process_posted_events();
+            if (on_poll) on_poll();
+            if (running_ && !drained) {
+                seL4_Wait(events_, nullptr);
+            }
         }
     }
 
@@ -206,6 +230,27 @@ int Application::exec() {
     }
 
     return exit_code_;
+}
+
+void Application::serve(aegir::ipc::Owner port) {
+    server_ = port;
+}
+
+void Application::dispatch_call(seL4_MessageInfo_t info, seL4_Word badge) {
+    uint32_t const length = static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
+    uint32_t const method = length > 0 ? static_cast<uint32_t>(seL4_GetMR(0)) : 0;
+    uint32_t const arrived = length > 1 ? length - 1 : 0;
+    uint64_t words[aegir::ipc::kMaxWords];
+    uint32_t const taken = arrived < aegir::ipc::kMaxWords ? arrived : aegir::ipc::kMaxWords;
+    for (uint32_t i = 0; i < taken; ++i) {
+        words[i] = seL4_GetMR(1 + i);
+    }
+    uint64_t reply[aegir::ipc::kMaxWords];
+    uint32_t reply_count = 0;
+    if (on_call) {
+        reply_count = on_call(method, words, arrived, badge, reply, aegir::ipc::kMaxWords);
+    }
+    server_.reply_words(reply, reply_count);
 }
 
 void Application::quit(int exit_code) {

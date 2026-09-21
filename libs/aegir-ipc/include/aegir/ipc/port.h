@@ -147,6 +147,12 @@ public:
 
     bool valid() const noexcept { return capability_ != 0; }
 
+    /** The capability itself, for a server that must receive on it directly:
+     *  one receive serving both a port and a bound notification is the shape
+     *  a single-threaded server needs (the console's loop, and the toolkit's
+     *  served-port loop). */
+    seL4_CPtr capability() const noexcept { return capability_; }
+
     /** Wait for the next call. Returns the method, fills the caller's word, and
      *  — when `badge` is given — the badge the kernel reports for the caller,
      *  which is who is asking rather than who they say they are. */

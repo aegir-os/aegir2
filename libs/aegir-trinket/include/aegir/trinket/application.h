@@ -13,6 +13,7 @@
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/worker.h>
 #include <aegir/console.h>
+#include <aegir/ipc/port.h>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -49,6 +50,16 @@ public:
     // that its form is on the screen.
     std::function<void()> on_started;
 
+    // A server's call handler, when serve() set a port: `method` and the
+    // `count` words that rode with it, answered with as many reply words as
+    // the handler returns. `badge` is the caller's, as the kernel reports it.
+    std::function<uint32_t(uint32_t method, uint64_t const *words, uint32_t count,
+                           seL4_Word badge, uint64_t *reply, uint32_t capacity)> on_call;
+
+    // Called after each drain and before the loop waits again: a client with
+    // an out-of-band signal to poll (the bureau.menu doorbell) does it here.
+    std::function<void()> on_poll;
+
     // Theme
     void set_theme(std::unique_ptr<Theme> theme);
     Theme& theme() const { return *theme_; }
@@ -81,6 +92,12 @@ public:
     aegir::ipc::Consumer& gui_port() { return gui_port_; }
     void set_gui_port(aegir::ipc::Consumer port);
 
+    // Serve a port: exec() then receives on it, and the console's event
+    // notification -- bound to this thread -- wakes the same receive. A
+    // single-threaded server cannot wait on two objects at once, so it takes
+    // the console's own shape (specs/workbench.md).
+    void serve(aegir::ipc::Owner port);
+
     // The mapped console slice and a window's backing within it. A Window
     // claims a region once and keeps its offset; the region stops short of the
     // event ring in the slice's last page.
@@ -104,6 +121,7 @@ private:
     void process_timers();
     void process_posted_events();
     void dispatch_gui_event(uint64_t event, uint64_t window);
+    void dispatch_call(seL4_MessageInfo_t info, seL4_Word badge);
     int64_t now_ms() const;
 
     static Application* instance_;
@@ -116,6 +134,7 @@ private:
     std::vector<Window*> windows_;
     DisplayInfo display_info_;
     aegir::ipc::Consumer gui_port_;
+    aegir::ipc::Owner server_;
 
     // The console state: the slice mapped into this process's window, the
     // event notification, and the backing allocator's cursor.
