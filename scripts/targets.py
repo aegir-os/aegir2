@@ -418,24 +418,50 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(("gpu0", 910, 310, 204, 204, 204),),
                 events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The bureau.menu server (specs/workbench.md), while the demo is
+            # still up: it registered its tree when it gained the focus, so the
+            # bar's first title is the demo's, and clicking it drops the demo's
+            # menu -- clicking the bar must not take the demo's focus
+            # (kBackdropTakesFocus). Clicking the first item prints the demo's
+            # cue: proof the tree crossed to the bureau and the action back.
+            QmpStep(
+                r"bureau: client menu",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 2, 10, 102, 136, 187),
+                    ("gpu0", 100, 33, 240, 240, 240),
+                ),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 1352}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(
+                r"demo: about",
+                events=(
                     {"type": "abs", "data": {"axis": "x", "value": 23448}},
                     {"type": "abs", "data": {"axis": "y", "value": 11796}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
+            # The demo closed, so the bureau's own menus stand again: the runner
+            # clicks the bar's first title, the bureau drops its menu, and reads
+            # the Workbench action's cue.
             QmpStep(
                 r"demo: closed",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 1000, 400, 170, 170, 170),),
-            ),
-            # The Workbench menu (specs/workbench.md), after the demo so the
-            # backdrop is clear: the runner clicks the bar's first title, the
-            # bureau drops the menu, and the runner reads it and clicks an
-            # item. The action's cue is the last check.
-            QmpStep(
-                r"demo: closed",
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},

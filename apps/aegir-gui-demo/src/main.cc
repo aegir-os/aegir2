@@ -13,6 +13,7 @@
  */
 
 #include <aegir/bootstrap.h>
+#include <aegir/bureau/menu.h>
 #include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
@@ -24,6 +25,7 @@
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -38,6 +40,22 @@ constexpr int kWindowX = 900;
 constexpr int kWindowY = 300;
 constexpr int kWindowWidth = 260;
 constexpr int kWindowHeight = 200;
+
+/* The demo's menus, the first a client registers with the bureau
+ * (specs/workbench.md): shown in the screen bar while the demo's window is
+ * active, in place of the bureau's own. */
+std::vector<aegir::trinket::MenuBar::Menu> demo_menus()
+{
+    using MenuItem = aegir::trinket::MenuBar::MenuItem;
+    using Menu = aegir::trinket::MenuBar::Menu;
+    Menu demo;
+    demo.title = U"Demo";
+    demo.items = {
+        {1, U"About Demo", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+        {2, U"Reset", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+    };
+    return {std::move(demo)};
+}
 
 }  // namespace
 
@@ -62,6 +80,12 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     app.set_gui_port(gui);
+
+    /* The bureau.menu port (specs/workbench.md): the demo is its first client.
+     * It registers its tree when it first gains the focus, reports focus as it
+     * changes, and fetches the action the bureau rings its doorbell for. */
+    aegir::ipc::Consumer const bureau = aegir::ipc::Consumer::find(
+        aegir::bureau::menu::kPortName, aegir::bureau::menu::kPortNameLength);
 
     Window window(app);
     window.set_title("Demo");
@@ -91,7 +115,42 @@ int main(int argc, char *argv[])
             write("  demo: restored\n");
         }
     };
-    window.on_close_requested = []() { write("  demo: closed\n"); };
+    /* Register once, on the first focus, and report every change after: the
+     * bureau needs to know whose window's menus stand (specs/workbench.md).
+     * The doorbell is a signal-only copy of the notification the demo already
+     * listens on, so the bureau can wake it when an item is clicked. */
+    bool registered = false;
+    auto report_focus = [&](bool active) {
+        if (!bureau.valid()) return;
+        if (active && !registered) {
+            seL4_CPtr const doorbell = app.alloc_slot();
+            if (doorbell != 0 && app.mint_event_notification(doorbell) &&
+                aegir::bureau::menu::register_menus(bureau, demo_menus(), doorbell)) {
+                registered = true;
+                write("  demo: menus up\n");
+            }
+        }
+        if (registered) {
+            (void)aegir::bureau::menu::set_active(bureau, active);
+        }
+    };
+    window.on_focus_changed = [&](bool active) { report_focus(active); };
+    window.on_close_requested = [&]() {
+        report_focus(false);
+        write("  demo: closed\n");
+    };
+
+    /* The bureau rings the doorbell for an action; fetch it and print the cue
+     * the runner reads. Nothing to fetch until the tree is registered. */
+    app.on_poll = [&]() {
+        if (!registered) return;
+        uint32_t const action = aegir::bureau::menu::take_action(bureau);
+        if (action == 1) {
+            write("  demo: about\n");
+        } else if (action == 2) {
+            write("  demo: reset\n");
+        }
+    };
 
     app.on_started = [&]() {
         write("  demo: ready\n");

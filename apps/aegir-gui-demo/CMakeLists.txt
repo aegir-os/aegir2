@@ -16,8 +16,9 @@ if(AEGIR_TOOLKIT)
   target_compile_options(aegir-gui-demo PRIVATE -Wall -Wextra -Werror)
 
   target_link_libraries(
-    aegir-gui-demo PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-runtime aegir-bootstrap
-                           aegir-ipc aegir-log aegir-console-protocol aegir-mem sel4 sel4runtime
+    aegir-gui-demo PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-bureau-protocol
+                           aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+                           aegir-console-protocol aegir-mem sel4 sel4runtime
   )
 else()
   add_executable(aegir-gui-demo src/placeholder.cc)
