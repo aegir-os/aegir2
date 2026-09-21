@@ -41,6 +41,13 @@ void write_line(char const *text) noexcept
  * (aegir/framebuffer.h). */
 constexpr uint32_t kBackdrop = 0x000055AA;
 
+/* Whether a button-down on a backdrop takes the focus. The screen bar is the
+ * bureau's backdrop's own top (specs/workbench.md), and clicking it must not
+ * deactivate the window whose menus it shows -- the Amiga keeps the screen bar
+ * above the windows. A ClickToFocus-style commodity is what will own the
+ * choice; until then this is the one policy point. */
+constexpr bool kBackdropTakesFocus = false;
+
 /* Static, not local, and that is not a style choice: an Allocator carries
  * the tables of what it handed out, and a service's stack is pages, not
  * tables (the device manager says the same of its own). */
@@ -364,7 +371,12 @@ void pointer_button(uint16_t code, uint32_t state) noexcept
     Window *const under = window_at(g_pointer_x, g_pointer_y);
     if (state != 0) {
         g_grab = under;
-        if (under != g_focused) {
+        /* A backdrop is not a focus target: the screen bar is the bureau's
+         * backdrop's own top, and clicking it must not take the focus from the
+         * window whose menus it shows (kBackdropTakesFocus, above). */
+        bool const takes_focus =
+            under == nullptr || !under->backdrop || kBackdropTakesFocus;
+        if (under != g_focused && takes_focus) {
             if (g_focused != nullptr) {
                 deliver(g_focused->owner, aegir::console::kEventFocus, 0, 0,
                         g_focused->id);

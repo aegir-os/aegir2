@@ -102,8 +102,13 @@ make it hold.
   a window's owner, so the client — which owns its window — is the one that
   knows. On `on_focus_gained` it calls `menu_set_active`; on `on_focus_lost` it
   clears. The bureau shows that client's menus in place of its own, and its own
-  when none is active. No console change: the routing the console already does
-  is what tells the client.
+  when none is active. The console changes in one place: a button-down on a
+  **backdrop** no longer moves the focus, because the screen bar is the
+  backdrop's own top and clicking it must not take the focus from the window
+  whose menus it shows — the Amiga keeps the screen bar above the windows.
+  Whether the screen takes the focus on a click is a preference, and a
+  ClickToFocus-style commodity owns that choice later; `kBackdropTakesFocus` is
+  the one policy point until then.
 
 - **Registration is one call, and the doorbell rides with it.** `menu_register`
   carries the menu tree in the call's words and, by capability transfer, a
