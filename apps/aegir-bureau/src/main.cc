@@ -37,16 +37,16 @@ void write(char const *text)
     aegir::debug_write(text);
 }
 
-/* The Workbench menus (specs/workbench.md): the bureau's own, until the
- * bureau.menu server lets an app register its own. */
-std::vector<aegir::bureau::Desktop::Menu> workbench_menus()
+/* The bureau's menus (specs/workbench.md): its own, until the bureau.menu
+ * server lets an app register its own. */
+std::vector<aegir::bureau::Desktop::Menu> bureau_menus()
 {
     using MenuItem = aegir::bureau::Desktop::MenuItem;
     using Menu = aegir::bureau::Desktop::Menu;
 
-    Menu workbench;
-    workbench.title = U"Workbench";
-    workbench.items = {
+    Menu bureau;
+    bureau.title = U"Bureau";
+    bureau.items = {
         {1, U"About Aegir", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
         {2, U"Open...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::DISABLED, {}},
         {0, U"", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::SEPARATOR, {}},
@@ -67,7 +67,7 @@ std::vector<aegir::bureau::Desktop::Menu> workbench_menus()
         {7, U"Hide", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
     };
 
-    return {std::move(workbench), std::move(window), std::move(icons)};
+    return {std::move(bureau), std::move(window), std::move(icons)};
 }
 
 }  // namespace
@@ -110,7 +110,7 @@ int main(int argc, char *argv[])
     window.set_decorated(false);
 
     auto desktop = std::make_unique<aegir::bureau::Desktop>();
-    desktop->set_menus(workbench_menus());
+    desktop->set_menus(bureau_menus());
     desktop->on_menu_opened = [](int) { write("  bureau: menu\n"); };
     desktop->on_action = [&](uint32_t action_id) {
         if (action_id == 1) {

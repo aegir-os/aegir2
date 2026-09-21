@@ -371,7 +371,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 10, 10, 102, 136, 187),
+                    ("gpu0", 2, 10, 102, 136, 187),
                     ("gpu0", 1279, 0, 102, 136, 187),
                     ("gpu0", 0, 799, 170, 170, 170),
                     ("gpu0", 1279, 799, 170, 170, 170),
@@ -448,7 +448,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 10, 10, 102, 136, 187),
+                    ("gpu0", 2, 10, 102, 136, 187),
                     ("gpu0", 100, 33, 240, 240, 240),
                 ),
                 events=(
