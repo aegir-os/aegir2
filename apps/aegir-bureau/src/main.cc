@@ -19,6 +19,7 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/bureau/desktop.h>
+#include <aegir/bureau/menu.h>
 #include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
@@ -70,6 +71,64 @@ std::vector<aegir::bureau::Desktop::Menu> bureau_menus()
     return {std::move(bureau), std::move(window), std::move(icons)};
 }
 
+/* The bureau.menu registry (specs/workbench.md): the clients that have
+ * registered, their trees, the doorbell each is rung on, and which one is
+ * active. A client is its badge -- the kernel's word for who called, not
+ * anything it says -- and one badge has one entry. */
+struct Client {
+    seL4_Word badge = 0;
+    std::vector<aegir::bureau::Desktop::Menu> menus;
+    seL4_CPtr doorbell = 0;
+    uint32_t pending = 0;
+    bool active = false;
+};
+
+class Registry {
+public:
+    Client& ensure(seL4_Word badge)
+    {
+        for (Client& client : clients_) {
+            if (client.badge == badge) return client;
+        }
+        clients_.push_back(Client{});
+        clients_.back().badge = badge;
+        return clients_.back();
+    }
+
+    Client* find(seL4_Word badge)
+    {
+        for (Client& client : clients_) {
+            if (client.badge == badge) return &client;
+        }
+        return nullptr;
+    }
+
+    /* Only one client is active: gaining focus clears the rest. Losing it
+     * clears only the one, so a focus-lost that races a focus-gained does not
+     * take the new client's menus down. */
+    void set_active(seL4_Word badge, bool on)
+    {
+        for (Client& client : clients_) {
+            if (on) {
+                client.active = client.badge == badge;
+            } else if (client.badge == badge) {
+                client.active = false;
+            }
+        }
+    }
+
+    Client* active()
+    {
+        for (Client& client : clients_) {
+            if (client.active) return &client;
+        }
+        return nullptr;
+    }
+
+private:
+    std::vector<Client> clients_;
+};
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -111,6 +170,8 @@ int main(int argc, char *argv[])
 
     auto desktop = std::make_unique<aegir::bureau::Desktop>();
     desktop->set_menus(bureau_menus());
+    aegir::bureau::Desktop* const desktop_ptr = desktop.get();
+    Registry registry;
     desktop->on_menu_opened = [](int) { write("  bureau: menu\n"); };
     desktop->on_action = [&](uint32_t action_id) {
         if (action_id == 1) {
@@ -126,6 +187,88 @@ int main(int argc, char *argv[])
             write("  bureau: icons hidden\n");
         }
     };
+
+    /* A click in the active client's menus rings that client's doorbell: the
+     * client is already woken by it, drains the console ring, and fetches the
+     * action with take_action (specs/workbench.md). The bureau never calls
+     * into the client, because a single-threaded client cannot be mid-call
+     * and in its event loop at once. */
+    desktop->on_client_action = [&](uint32_t action_id) {
+        Client* const client = registry.active();
+        if (client == nullptr || client->doorbell == 0) return;
+        client->pending = action_id;
+        seL4_Signal(client->doorbell);
+    };
+
+    /* The bureau.menu port, when the director made it -- it does, because the
+     * manifest declares it. Serve it: the console's event notification, bound
+     * to this thread by exec, wakes the same receive. A boot without the port
+     * leaves the bureau with its own menus and no server. */
+    uint64_t menu_slot = 0;
+    if (aegir::bootstrap::capability("bureau.menu", 11, &menu_slot)) {
+        app.serve(aegir::ipc::Owner(static_cast<seL4_CPtr>(menu_slot)));
+    }
+
+    app.on_call = [&](uint32_t method, uint64_t const *words, uint32_t count,
+                      seL4_Word badge, bool cap_arrived, uint64_t *reply,
+                      uint32_t capacity) -> uint32_t {
+        (void)capacity;
+        if (method == aegir::bureau::menu::kMethodRegister) {
+            /* The tree and the doorbell. The cap comes out of the scratch slot
+             * whatever the tree does: a second transfer onto an occupied slot
+             * fails, so a refused registration must still take its doorbell. A
+             * re-registration reuses the client's slot rather than spend a new
+             * one (aegir-mem's allocator never frees a slot). */
+            Client* const known = registry.find(badge);
+            seL4_CPtr const target = (known != nullptr && known->doorbell != 0)
+                                         ? known->doorbell
+                                         : app.alloc_slot();
+            bool have_cap = false;
+            if (cap_arrived && target != 0) {
+                if (known != nullptr && known->doorbell == target) {
+                    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, target,
+                                      aegir::bootstrap::kCNodeBits);
+                    known->doorbell = 0;
+                }
+                have_cap = aegir::ipc::take_received_cap(target);
+            } else if (cap_arrived) {
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                  aegir::bootstrap::kSlotReceiveCap,
+                                  aegir::bootstrap::kCNodeBits);
+            }
+            std::vector<aegir::bureau::Desktop::Menu> menus;
+            if (!have_cap || !aegir::bureau::menu::decode(words, count, &menus)) {
+                reply[0] = 0;
+                return 1;
+            }
+            Client& client = registry.ensure(badge);
+            client.doorbell = target;
+            client.menus = std::move(menus);
+            if (Client* const active = registry.active()) {
+                desktop_ptr->set_client_menus(active->menus);
+            }
+            reply[0] = 1;
+            return 1;
+        }
+        if (method == aegir::bureau::menu::kMethodSetActive) {
+            bool const on = count >= 1 && words[0] != 0;
+            registry.set_active(badge, on);
+            if (Client* const active = registry.active()) {
+                desktop_ptr->set_client_menus(active->menus);
+            } else {
+                desktop_ptr->clear_client_menus();
+            }
+            return 0;
+        }
+        if (method == aegir::bureau::menu::kMethodTakeAction) {
+            Client* const client = registry.find(badge);
+            reply[0] = client != nullptr ? client->pending : 0;
+            if (client != nullptr) client->pending = 0;
+            return 1;
+        }
+        return 0;
+    };
+
     window.set_content(std::move(desktop));
     window.show();
 
