@@ -91,6 +91,39 @@ is the union of `Home:Prefs/Env-Archive` (first, and the create target) and
 is the system archive. Nothing about that is special to the union — it is a
 binding, and the archives are ordinary directories.
 
+## Implementation
+
+Five slices, each its own commit, because the wire changes and the serving
+cannot land half-way:
+
+1. **The `bind` wire** (`libs/aegir-namespace`). `bind` grows a flags word --
+   append, prepend, or replace (the default), and create-target -- so its words
+   become `{badge, flags, name, path}`. The one existing caller, auth's `Home:`,
+   sends the replace flag. `unbind` is unchanged.
+2. **The data model** (`apps/aegir-vfs`). A `Binding` keeps the flags and an
+   *ordered list* of member paths, not one target. `answer_bind` appends,
+   prepends or replaces; `unbind` drops the list. `find_binding` and the
+   single-member case are unchanged.
+3. **The union volume** -- the substantial piece. The VFS creates a port and
+   **serves the volume protocol on it** (`aegir/volume.h`: read, list, open,
+   write, close, mkdir, remove), forwarding to the members: list merges (a name
+   an earlier member has wins), read and remove take the first member that has
+   the path, open-with-create and mkdir go to the create target. This means the
+   VFS's loop multiplexes its namespace port and its union port(s) -- the
+   console's bind-notification-and-one-receive shape -- which is why the VFS is
+   no longer a pure request/response server.
+4. **`resolve` of a union** returns the union port's capability (minted with the
+   caller's badge) and the rest, exactly as a volume's resolve does. The VFS is
+   then a filesystem whose members are filesystems.
+5. **The acceptance**: the test bed binds two directories on `AEGIR:` and
+   `SCRATCH:` into one name and exercises read (first member wins), list
+   (merged, shared name once), mkdir/create (create target only), and remove
+   (the member that holds it).
+
+`ENV:` is then a binding, not code: the archives are ordinary directories and
+`ENV:` is their union (specs/environment.md). The startup that reads it and the
+DOS toolset that writes it are the storage arc's.
+
 ## What this is not
 
 Per-process namespaces (a later extension, above); a union of files (only
