@@ -236,9 +236,10 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
               "without one\n");
     }
 
-    uint64_t out[1 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
+    uint64_t out[2 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
     out[0] = badge;
-    uint32_t out_words = 1;
+    out[1] = 0; /* replace: a session's Home: is its own single-member alias */
+    uint32_t out_words = 2;
     out_words += aegir::nmspace::pack_string(out + out_words, "Home", 4,
                                              aegir::nmspace::kNameMax);
     out_words += aegir::nmspace::pack_string(out + out_words, home, home_length,

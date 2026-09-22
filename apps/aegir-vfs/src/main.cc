@@ -60,6 +60,7 @@ uint32_t g_volume_count = 0;
  * of its own -- one table, one walk. */
 struct Binding {
     uint64_t badge; /* whose alias this is; kAliasEveryone for a global */
+    uint64_t flags; /* kBindAppend / kBindPrepend / kBindCreate (specs/namespace.md) */
     char name[aegir::nmspace::kNameMax];
     uint32_t name_length;
     char target[aegir::nmspace::kPathMax];
@@ -234,6 +235,7 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
             write(": a second boot flag -- the first stands\n");
         } else {
             sys->badge = kAliasEveryone;
+            sys->flags = 0;
             sys->name[0] = 'S';
             sys->name[1] = 'y';
             sys->name[2] = 's';
@@ -257,26 +259,28 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     port.reply_words(answer, answer_words);
 }
 
-/* bind: a badge, an alias name, the path it stands for (specs/vfs.md's
- * Aliases). A pair binds once -- a badge's serial is never reused, so a
- * second bind of the same pair is a lie, not a correction. */
+/* bind: a badge, flags, an alias name, the path it stands for
+ * (specs/vfs.md's Aliases, specs/namespace.md's union). A pair binds once -- a
+ * badge's serial is never reused, so a second bind of the same pair is a lie,
+ * not a correction; the flags decide how a *name* with a second member grows. */
 void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     char const *name = nullptr;
     uint32_t name_length = 0;
     char const *target = nullptr;
     uint32_t target_length = 0;
-    if (count < 2 ||
-        !aegir::nmspace::unpack_string(words + 1, count - 1, aegir::nmspace::kNameMax,
+    if (count < 3 ||
+        !aegir::nmspace::unpack_string(words + 2, count - 2, aegir::nmspace::kNameMax,
                                        &name, &name_length) ||
         name_length == 0) {
         port.reply_words(nullptr, 0);
         return;
     }
     uint64_t const badge = words[0];
+    uint64_t const flags = words[1];
     uint32_t const name_words = 1 + (name_length + 7) / 8;
-    if (count < 1 + name_words ||
-        !aegir::nmspace::unpack_string(words + 1 + name_words, count - 1 - name_words,
+    if (count < 2 + name_words ||
+        !aegir::nmspace::unpack_string(words + 2 + name_words, count - 2 - name_words,
                                        aegir::nmspace::kPathMax, &target, &target_length) ||
         target_length == 0) {
         port.reply_words(nullptr, 0);
@@ -308,6 +312,7 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         return;
     }
     binding->badge = badge;
+    binding->flags = flags;
     for (uint32_t i = 0; i < name_length; ++i) {
         binding->name[i] = name[i];
     }

@@ -45,11 +45,20 @@ constexpr uint32_t kMethodRegister = 1; /* in: name words + 1 cap; answer: assig
 constexpr uint32_t kMethodResolve = 2;  /* in: path words; answer: the rest string + 1 cap */
 constexpr uint32_t kMethodCount = 3;    /* answer: how many volumes the namespace holds */
 constexpr uint32_t kMethodDescribe = 4; /* in: an index; answer: a Row's words */
-constexpr uint32_t kMethodBind = 5;     /* in: badge, name, path; answer: 1 bound, 0 refused */
+constexpr uint32_t kMethodBind = 5;     /* in: badge, flags, name, path; answer: 1 bound, 0 refused */
 /* unbind: a badge. Every binding the badge holds is dropped -- the session
  * teardown's mechanism, beside the volume protocol's reap (specs/vfs.md).
  * Answer: how many were dropped. */
 constexpr uint32_t kMethodUnbind = 6;   /* in: badge; answer: how many */
+
+/** Bind flags (specs/namespace.md). A second bind of the same name appends or
+ *  prepends a member -- the union, a name read as an ordered list of
+ *  directories; the default replaces the binding, which is the one-member
+ *  alias specs/vfs.md describes. `kBindCreate` marks the member a create
+ *  lands in; at most one member of a union should carry it. */
+constexpr uint64_t kBindAppend = 1;
+constexpr uint64_t kBindPrepend = 2;
+constexpr uint64_t kBindCreate = 4;
 
 /** Register flags. */
 constexpr uint64_t kFlagReadOnly = 1;
