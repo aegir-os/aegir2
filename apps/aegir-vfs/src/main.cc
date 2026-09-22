@@ -450,88 +450,79 @@ void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
     port.reply_words(&dropped, 1);
 }
 
-/* resolve: a `Volume:rest` path, where the volume part may be an alias
- * (specs/vfs.md's Aliases). Substitution composes a path the caller never
- * wrote -- Home:WELCOME.TXT is Sys:Homes/<user>/WELCOME.TXT is
- * AEGIR:Homes/<user>/WELCOME.TXT -- so the reply carries the
- * volume-relative rest as a string, and the alias table's own length bounds
- * the chain: a chain that outlasts it is a cycle. The buffers are static:
- * the serve loop is one thread, and a path is a kilobyte the stack need
- * not hold twice. */
-void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
-                    seL4_Word badge) noexcept
+/* The outcome of resolving a path's leading `Name:`: a volume, a union, or
+ * nothing. `rest_length` counts the bytes after the colon that landed in the
+ * caller's buffer -- what the name truly resolves to, after substitution. */
+enum class Resolved { None, Volume, Union };
+
+struct Resolution {
+    Resolved kind;
+    Volume const *volume;   /* when kind == Volume */
+    Binding const *binding; /* when kind == Union */
+    uint32_t rest_length;
+};
+
+/* Walk `path`'s leading `Name:` through the alias table until it names a
+ * volume or a union, substituting each alias's first member
+ * (specs/namespace.md). The rest -- what follows the colon, after
+ * substitution -- lands in `rest` (up to `rest_capacity`). A path that names
+ * no volume, loops, or outgrows the bound is `Resolved::None`. One thread, so
+ * the working buffers are static; both `resolve` and the union's forwarding
+ * compose with this. */
+Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
+                        char *rest, uint32_t rest_capacity) noexcept
 {
     static char composed[aegir::nmspace::kPathMax];
     static char next[aegir::nmspace::kPathMax];
 
-    char const *path = nullptr;
-    uint32_t path_length = 0;
-    if (count == 0 ||
-        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
-                                       &path_length)) {
-        port.reply_words(nullptr, 0);
-        return;
-    }
     uint32_t composed_length = path_length;
     for (uint32_t i = 0; i < path_length; ++i) {
         composed[i] = path[i];
     }
 
     uint32_t budget = g_binding_count + 1;
-    Volume const *volume = nullptr;
-    uint32_t rest_at = 0;
     for (;;) {
         uint32_t colon = 0;
         while (colon < composed_length && composed[colon] != ':') {
             ++colon;
         }
         if (colon == composed_length || colon == 0) {
-            port.reply_words(nullptr, 0);
-            return;
+            return {Resolved::None, nullptr, nullptr, 0};
         }
-        volume = find_volume(composed, colon);
+        Volume const *volume = find_volume(composed, colon);
         if (volume != nullptr) {
-            rest_at = colon + 1;
-            break;
+            uint32_t const rest_length = composed_length - colon - 1;
+            if (rest_length > rest_capacity) {
+                return {Resolved::None, nullptr, nullptr, 0};
+            }
+            for (uint32_t i = 0; i < rest_length; ++i) {
+                rest[i] = composed[colon + 1 + i];
+            }
+            return {Resolved::Volume, volume, nullptr, rest_length};
         }
         Binding const *binding = find_binding(badge, composed, colon);
         if (binding == nullptr || budget == 0) {
             write("  vfs: ");
             write(composed, colon);
             write(binding == nullptr ? ": no such volume\n" : ": an alias cycle\n");
-            port.reply_words(nullptr, 0);
-            return;
+            return {Resolved::None, nullptr, nullptr, 0};
         }
         if (binding->union_id != 0) {
-            /* A union: the answer is the union cap -- a minted copy of *this*
-             * endpoint carrying the union's id -- and the caller's own rest,
-             * with no substitution (specs/namespace.md). The VFS's one receive
-             * tells a union call from a namespace call by the badge. */
-            if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
-                                aegir::bootstrap::kCNodeBits,
-                                aegir::bootstrap::kSlotOwnCNode, port.capability(),
-                                aegir::bootstrap::kCNodeBits,
-                                seL4_CapRights_new(1, 1, 0, 1),
-                                aegir::nmspace::union_badge(binding->union_id)) != seL4_NoError) {
-                write("  vfs: a union's cap would not mint\n");
-                port.reply_words(nullptr, 0);
-                return;
+            uint32_t const rest_length = composed_length - colon - 1;
+            if (rest_length > rest_capacity) {
+                return {Resolved::None, nullptr, nullptr, 0};
             }
-            uint64_t answer[aegir::nmspace::kResolveWords];
-            uint32_t const answer_words = aegir::nmspace::pack_string(
-                answer, composed + colon + 1, composed_length - colon - 1,
-                aegir::nmspace::kPathMax);
-            port.reply_cap(answer, answer_words, g_mint_slot);
-            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
-                              aegir::bootstrap::kCNodeBits);
-            return;
+            for (uint32_t i = 0; i < rest_length; ++i) {
+                rest[i] = composed[colon + 1 + i];
+            }
+            return {Resolved::Union, nullptr, binding, rest_length};
         }
         --budget;
         /* Compose: the target, then the rest. A target that names a volume
          * joins with a colon; one that is a path joins with a slash, and an
-         * empty rest adds nothing. */
-        /* The first member is the one a resolve substitutes; a union's search
-         * order is the list's (specs/namespace.md). */
+         * empty rest adds nothing. The first member is the one a resolve
+         * substitutes; a union's search order is the list's
+         * (specs/namespace.md). */
         char const *target = binding->members->path;
         uint32_t const target_length = binding->members->path_length;
         uint32_t const rest_length = composed_length - colon - 1;
@@ -547,8 +538,7 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
         uint32_t const next_length = target_length + separator + rest_length;
         if (next_length > aegir::nmspace::kPathMax) {
             write("  vfs: an alias chain outgrew the path bound\n");
-            port.reply_words(nullptr, 0);
-            return;
+            return {Resolved::None, nullptr, nullptr, 0};
         }
         uint32_t at = 0;
         for (uint32_t i = 0; i < target_length; ++i) {
@@ -565,6 +555,58 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
         }
         composed_length = next_length;
     }
+}
+
+/* resolve: a `Volume:rest` path, where the volume part may be an alias
+ * (specs/vfs.md's Aliases). Substitution composes a path the caller never
+ * wrote -- Home:WELCOME.TXT is Sys:Homes/<user>/WELCOME.TXT is
+ * AEGIR:Homes/<user>/WELCOME.TXT -- so the reply carries the
+ * volume-relative rest as a string, and the alias table's own length bounds
+ * the chain: a chain that outlasts it is a cycle. The walk is resolve_path's,
+ * shared with the union's forwarding; the rest buffer here is static, as the
+ * serve loop is one thread. */
+void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                    seL4_Word badge) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+
+    static char rest[aegir::nmspace::kPathMax];
+    Resolution const resolved = resolve_path(badge, path, path_length, rest, sizeof(rest));
+    if (resolved.kind == Resolved::None) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    if (resolved.kind == Resolved::Union) {
+        /* A union: the answer is the union cap -- a minted copy of *this*
+         * endpoint carrying the union's id -- and the caller's own rest,
+         * with no substitution (specs/namespace.md). The VFS's one receive
+         * tells a union call from a namespace call by the badge. */
+        if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+                            aegir::bootstrap::kCNodeBits,
+                            aegir::bootstrap::kSlotOwnCNode, port.capability(),
+                            aegir::bootstrap::kCNodeBits,
+                            seL4_CapRights_new(1, 1, 0, 1),
+                            aegir::nmspace::union_badge(resolved.binding->union_id)) !=
+            seL4_NoError) {
+            write("  vfs: a union's cap would not mint\n");
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        uint64_t answer[aegir::nmspace::kResolveWords];
+        uint32_t const answer_words = aegir::nmspace::pack_string(
+            answer, rest, resolved.rest_length, aegir::nmspace::kPathMax);
+        port.reply_cap(answer, answer_words, g_mint_slot);
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+                          aegir::bootstrap::kCNodeBits);
+        return;
+    }
 
     /* The caller's own badge on the copy: the filesystem learns who is
      * asking from the kernel, which is what a range or a permission will one
@@ -573,16 +615,15 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
      * again. */
     if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
-                        volume->port, aegir::bootstrap::kCNodeBits,
+                        resolved.volume->port, aegir::bootstrap::kCNodeBits,
                         seL4_CapRights_new(1, 0, 0, 1), badge) != seL4_NoError) {
         write("  vfs: a resolve's badge would not mint\n");
         port.reply_words(nullptr, 0);
         return;
     }
     uint64_t answer[aegir::nmspace::kResolveWords];
-    uint32_t const answer_words =
-        aegir::nmspace::pack_string(answer, composed + rest_at, composed_length - rest_at,
-                                    aegir::nmspace::kPathMax);
+    uint32_t const answer_words = aegir::nmspace::pack_string(
+        answer, rest, resolved.rest_length, aegir::nmspace::kPathMax);
     port.reply_cap(answer, answer_words, g_mint_slot);
     /* The kernel transferred a copy; ours leaves, and the slot answers the
      * next resolve. */
