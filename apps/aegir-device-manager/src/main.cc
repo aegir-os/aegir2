@@ -1201,11 +1201,15 @@ int main(int argc, char *argv[])
             if (bound_count > 0) {
                 static char const kPartmgrName[] = "partmgr";
                 static char const kPartmgrBinary[] = "aegir-partmgr";
-                /* Room for its own objects and for what it carves for the
-                 * filesystem services it starts: each one costs its image
-                 * copy, its objects, and a 64 KiB window set of its own, so
-                 * two partitions already ask for most of a megabyte. */
-                constexpr uint32_t kPartmgrUntypedBits = 20;
+/* Room for its own objects and for what it carves for the
+                 * filesystem services it starts: each one costs its image copy,
+                 * its objects, and a 64 KiB window set of its own. 1 MiB held
+                 * two partitions before the buddy allocator, whose node pool
+                 * also comes out of this delegation (specs/allocator.md); three
+                 * partitions and the nodes no longer fit, and the manager's own
+                 * 68 MiB delegation is where the room is. Derived sizing -- from
+                 * the children it will start -- is the follow-up. */
+                constexpr uint32_t kPartmgrUntypedBits = 23;
                 aegir::mem::Account partmgr_account{"partmgr", 0, 0, 0};
                 seL4_Error untyped_error = seL4_NoError;
                 uint64_t partmgr_physical = 0;
