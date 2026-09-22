@@ -60,6 +60,30 @@ constexpr uint64_t kBindAppend = 1;
 constexpr uint64_t kBindPrepend = 2;
 constexpr uint64_t kBindCreate = 4;
 
+/** The union mark (specs/namespace.md). A union's capability is a minted copy
+ *  of the `vfs.namespace` endpoint carrying this bit in its badge, with the
+ *  union's id above it; a plain namespace capability carries neither. The one
+ *  receive tells a union's volume call from a namespace call by the mark, and
+ *  the id says which union. The caller's identity rides in the union call's
+ *  words, because the badge is spent on the id. */
+constexpr uint64_t kUnionMark = 1ull << 63;
+constexpr uint32_t kUnionIdBits = 30;
+
+inline uint64_t union_badge(uint32_t id) noexcept
+{
+    return kUnionMark | (static_cast<uint64_t>(id) << 32);
+}
+
+inline bool is_union(uint64_t badge) noexcept
+{
+    return (badge & kUnionMark) != 0;
+}
+
+inline uint32_t union_id(uint64_t badge) noexcept
+{
+    return static_cast<uint32_t>((badge >> 32) & ((1ull << kUnionIdBits) - 1));
+}
+
 /** Register flags. */
 constexpr uint64_t kFlagReadOnly = 1;
 constexpr uint64_t kFlagBoot = 2; /* the system volume -- the VFS aliases it Sys: */

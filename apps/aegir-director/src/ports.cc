@@ -104,7 +104,10 @@ bool name_is(PortGraph::Name name, char const *text, uint32_t length) noexcept
 Rights rights_for(PortGraph::Name name) noexcept
 {
     if (name_is(name, "vfs.namespace", 13)) {
-        return Rights{seL4_CapRights_new(0, 1, 1, 0), seL4_CapRights_new(1, 1, 0, 1)};
+        /* The owner mints the union cap out of this endpoint (specs/
+         * namespace.md), and a mint keeps only what its source holds, so the
+         * owner half needs every right the client's callable copy does. */
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
     if (name_is(name, "vol.initrd", 10)) {
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
