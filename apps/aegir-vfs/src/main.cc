@@ -29,6 +29,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/nmspace.h>
+#include <aegir/volume.h>
 
 #include <sel4/sel4.h>
 
@@ -55,12 +56,17 @@ struct Volume {
 Volume *g_volumes = nullptr;
 uint32_t g_volume_count = 0;
 
-/* One member of a binding: a path the name stands for, and the flags that
- * bind carried (specs/namespace.md). A plain alias has one; a union has an
- * ordered list, and the order is the search order. */
+/* One member of a binding: the volume it stands for and the volume-relative
+ * rest, both resolved when the member was bound, plus the flags that bind
+ * carried (specs/namespace.md). A plain alias has one member; a union has an
+ * ordered list, and the order is the search order. Resolving at bind is what
+ * lets a member be a per-badge alias (`ENV:`'s members are
+ * `Home:Prefs/Env-Archive`) without every later call knowing the badge, and
+ * it is what pins the binding to a volume rather than to a name. */
 struct Member {
-    char path[aegir::nmspace::kPathMax];
-    uint32_t path_length;
+    Volume const *volume;
+    char rest[aegir::nmspace::kPathMax];
+    uint32_t rest_length;
     uint64_t flags;
     Member *next;
 };
@@ -275,10 +281,8 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
                 sys->name[1] = 'y';
                 sys->name[2] = 's';
                 sys->name_length = 3;
-                for (uint32_t i = 0; i < volume->name_length; ++i) {
-                    member->path[i] = volume->name[i];
-                }
-                member->path_length = volume->name_length;
+                member->volume = volume;
+                member->rest_length = 0;
                 member->flags = 0;
                 member->next = nullptr;
                 sys->members = member;
@@ -286,7 +290,7 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
                 g_bindings = sys;
                 ++g_binding_count;
                 write("  vfs: Sys: is ");
-                write(member->path, member->path_length);
+                write(volume->name, volume->name_length);
                 write("\n");
             }
         }
@@ -297,6 +301,24 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
                                     aegir::nmspace::kNameMax);
     port.reply_words(answer, answer_words);
 }
+
+/* The outcome of resolving a path's leading `Name:`: a volume, a union, or
+ * nothing. `rest_length` counts the bytes after the colon that landed in the
+ * caller's buffer -- what the name truly resolves to. */
+enum class Resolved { None, Volume, Union };
+
+struct Resolution {
+    Resolved kind;
+    Volume const *volume;   /* when kind == Volume */
+    Binding const *binding; /* when kind == Union */
+    uint32_t rest_length;
+};
+
+/* Defined below, beside the walk it shares with resolve: `bind` resolves a
+ * member's path when it is bound, so the member pins a volume rather than a
+ * name (specs/namespace.md). */
+Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
+                        char *rest, uint32_t rest_capacity) noexcept;
 
 /* bind: a badge, flags, an alias name, the path it stands for
  * (specs/vfs.md's Aliases, specs/namespace.md's union). A pair binds once -- a
@@ -340,16 +362,28 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         port.reply_words(nullptr, 0);
         return;
     }
+    /* Resolve the path now, with the binder's badge: a member can be a
+     * per-badge alias (`ENV:`'s `Home:Prefs/Env-Archive`), and resolving here
+     * is what pins the member to a volume (specs/namespace.md). */
+    static char member_rest[aegir::nmspace::kPathMax];
+    Resolution const resolved =
+        resolve_path(badge, target, target_length, member_rest, sizeof(member_rest));
+    if (resolved.kind != Resolved::Volume) {
+        write("  vfs: a bind whose path names no volume, refused\n");
+        port.reply_words(nullptr, 0);
+        return;
+    }
     Member *member = member_take();
     if (member == nullptr) {
         write("  vfs: no room for another alias, refused\n");
         port.reply_words(nullptr, 0);
         return;
     }
-    for (uint32_t i = 0; i < target_length; ++i) {
-        member->path[i] = target[i];
+    member->volume = resolved.volume;
+    for (uint32_t i = 0; i < resolved.rest_length; ++i) {
+        member->rest[i] = member_rest[i];
     }
-    member->path_length = target_length;
+    member->rest_length = resolved.rest_length;
     member->flags = flags;
     member->next = nullptr;
 
@@ -450,111 +484,86 @@ void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
     port.reply_words(&dropped, 1);
 }
 
-/* The outcome of resolving a path's leading `Name:`: a volume, a union, or
- * nothing. `rest_length` counts the bytes after the colon that landed in the
- * caller's buffer -- what the name truly resolves to, after substitution. */
-enum class Resolved { None, Volume, Union };
+/* Compose a member's volume-relative path: the member's own rest, then a
+ * slash, then the caller's rest (specs/namespace.md). An empty piece adds
+ * nothing. False when the result outgrows the path bound. */
+bool compose_path(char const *member, uint32_t member_length, char const *rest,
+                  uint32_t rest_length, char *out, uint32_t *out_length) noexcept
+{
+    uint32_t const separator = member_length != 0 && rest_length != 0 ? 1 : 0;
+    uint32_t const length = member_length + separator + rest_length;
+    if (length > aegir::nmspace::kPathMax) {
+        return false;
+    }
+    uint32_t at = 0;
+    for (uint32_t i = 0; i < member_length; ++i) {
+        out[at++] = member[i];
+    }
+    if (separator != 0) {
+        out[at++] = '/';
+    }
+    for (uint32_t i = 0; i < rest_length; ++i) {
+        out[at++] = rest[i];
+    }
+    *out_length = length;
+    return true;
+}
 
-struct Resolution {
-    Resolved kind;
-    Volume const *volume;   /* when kind == Volume */
-    Binding const *binding; /* when kind == Union */
-    uint32_t rest_length;
-};
-
-/* Walk `path`'s leading `Name:` through the alias table until it names a
- * volume or a union, substituting each alias's first member
- * (specs/namespace.md). The rest -- what follows the colon, after
- * substitution -- lands in `rest` (up to `rest_capacity`). A path that names
- * no volume, loops, or outgrows the bound is `Resolved::None`. One thread, so
- * the working buffers are static; both `resolve` and the union's forwarding
- * compose with this. */
+/* Resolve `path`'s leading `Name:` to a volume: a volume's own name answers
+ * with its rest, and an alias answers with its first member's volume and the
+ * member's rest composed with the caller's. The member was resolved when it
+ * was bound (specs/namespace.md), so one hop is all it takes -- a member can
+ * be a per-badge alias (`ENV:`'s `Home:Prefs/Env-Archive`) without this call
+ * knowing the badge, and the binding is pinned to a volume, not a name. A
+ * union answers with its binding and the caller's rest; the union's cap is
+ * the caller's to mint. The rest lands in `rest` (up to `rest_capacity`); a
+ * path that names no volume is `Resolved::None`. */
 Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
                         char *rest, uint32_t rest_capacity) noexcept
 {
-    static char composed[aegir::nmspace::kPathMax];
-    static char next[aegir::nmspace::kPathMax];
-
-    uint32_t composed_length = path_length;
-    for (uint32_t i = 0; i < path_length; ++i) {
-        composed[i] = path[i];
+    uint32_t colon = 0;
+    while (colon < path_length && path[colon] != ':') {
+        ++colon;
     }
-
-    uint32_t budget = g_binding_count + 1;
-    for (;;) {
-        uint32_t colon = 0;
-        while (colon < composed_length && composed[colon] != ':') {
-            ++colon;
-        }
-        if (colon == composed_length || colon == 0) {
+    if (colon == path_length || colon == 0) {
+        return {Resolved::None, nullptr, nullptr, 0};
+    }
+    Volume const *volume = find_volume(path, colon);
+    if (volume != nullptr) {
+        uint32_t const rest_length = path_length - colon - 1;
+        if (rest_length > rest_capacity) {
             return {Resolved::None, nullptr, nullptr, 0};
-        }
-        Volume const *volume = find_volume(composed, colon);
-        if (volume != nullptr) {
-            uint32_t const rest_length = composed_length - colon - 1;
-            if (rest_length > rest_capacity) {
-                return {Resolved::None, nullptr, nullptr, 0};
-            }
-            for (uint32_t i = 0; i < rest_length; ++i) {
-                rest[i] = composed[colon + 1 + i];
-            }
-            return {Resolved::Volume, volume, nullptr, rest_length};
-        }
-        Binding const *binding = find_binding(badge, composed, colon);
-        if (binding == nullptr || budget == 0) {
-            write("  vfs: ");
-            write(composed, colon);
-            write(binding == nullptr ? ": no such volume\n" : ": an alias cycle\n");
-            return {Resolved::None, nullptr, nullptr, 0};
-        }
-        if (binding->union_id != 0) {
-            uint32_t const rest_length = composed_length - colon - 1;
-            if (rest_length > rest_capacity) {
-                return {Resolved::None, nullptr, nullptr, 0};
-            }
-            for (uint32_t i = 0; i < rest_length; ++i) {
-                rest[i] = composed[colon + 1 + i];
-            }
-            return {Resolved::Union, nullptr, binding, rest_length};
-        }
-        --budget;
-        /* Compose: the target, then the rest. A target that names a volume
-         * joins with a colon; one that is a path joins with a slash, and an
-         * empty rest adds nothing. The first member is the one a resolve
-         * substitutes; a union's search order is the list's
-         * (specs/namespace.md). */
-        char const *target = binding->members->path;
-        uint32_t const target_length = binding->members->path_length;
-        uint32_t const rest_length = composed_length - colon - 1;
-        bool const target_is_path = [&] {
-            for (uint32_t i = 0; i < target_length; ++i) {
-                if (target[i] == ':') {
-                    return true;
-                }
-            }
-            return false;
-        }();
-        uint32_t const separator = rest_length != 0 || !target_is_path ? 1 : 0;
-        uint32_t const next_length = target_length + separator + rest_length;
-        if (next_length > aegir::nmspace::kPathMax) {
-            write("  vfs: an alias chain outgrew the path bound\n");
-            return {Resolved::None, nullptr, nullptr, 0};
-        }
-        uint32_t at = 0;
-        for (uint32_t i = 0; i < target_length; ++i) {
-            next[at++] = target[i];
-        }
-        if (separator != 0) {
-            next[at++] = target_is_path ? '/' : ':';
         }
         for (uint32_t i = 0; i < rest_length; ++i) {
-            next[at++] = composed[colon + 1 + i];
+            rest[i] = path[colon + 1 + i];
         }
-        for (uint32_t i = 0; i < next_length; ++i) {
-            composed[i] = next[i];
-        }
-        composed_length = next_length;
+        return {Resolved::Volume, volume, nullptr, rest_length};
     }
+    Binding const *binding = find_binding(badge, path, colon);
+    if (binding == nullptr) {
+        write("  vfs: ");
+        write(path, colon);
+        write(": no such volume\n");
+        return {Resolved::None, nullptr, nullptr, 0};
+    }
+    if (binding->union_id != 0) {
+        uint32_t const rest_length = path_length - colon - 1;
+        if (rest_length > rest_capacity) {
+            return {Resolved::None, nullptr, nullptr, 0};
+        }
+        for (uint32_t i = 0; i < rest_length; ++i) {
+            rest[i] = path[colon + 1 + i];
+        }
+        return {Resolved::Union, nullptr, binding, rest_length};
+    }
+    Member const *member = binding->members;
+    uint32_t rest_length = 0;
+    if (!compose_path(member->rest, member->rest_length, path + colon + 1,
+                      path_length - colon - 1, rest, &rest_length) ||
+        rest_length > rest_capacity) {
+        return {Resolved::None, nullptr, nullptr, 0};
+    }
+    return {Resolved::Volume, member->volume, nullptr, rest_length};
 }
 
 /* resolve: a `Volume:rest` path, where the volume part may be an alias
@@ -658,19 +667,243 @@ void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     port.reply_words(reinterpret_cast<uint64_t const *>(&row), aegir::nmspace::kRowWords);
 }
 
+/* The binding a union id names: the id is what the union cap's badge carries,
+ * and a stale id -- one whose binding is gone -- names nothing, which is a
+ * refusal rather than a wrong read (specs/namespace.md). */
+Binding const *find_union(uint32_t id) noexcept
+{
+    for (Binding const *b = g_bindings; b != nullptr; b = b->next) {
+        if (b->union_id == id) {
+            return b;
+        }
+    }
+    return nullptr;
+}
+
+/* Mint a member volume's stored cap with the caller's badge into the scratch
+ * slot, so the member sees the true caller and not the VFS
+ * (specs/namespace.md). Zero when the kernel refuses; the slot answers one
+ * nested call and is dropped after. */
+seL4_CPtr mint_member(Volume const *volume, uint64_t badge) noexcept
+{
+    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        volume->port, aegir::bootstrap::kCNodeBits,
+                        seL4_CapRights_new(1, 0, 0, 1), badge) != seL4_NoError) {
+        return 0;
+    }
+    return g_mint_slot;
+}
+
+void drop_member() noexcept
+{
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+                      aegir::bootstrap::kCNodeBits);
+}
+
+/* One member's list entry: compose the volume-relative path and ask the
+ * member's volume for entry `index`. The answer's words land in `out`; the
+ * return is their count, zero when the member has no such entry or the nested
+ * call failed. The serve loop is one thread, so the working buffers are
+ * static. */
+uint32_t member_list_entry(Member const *member, uint64_t caller, char const *path,
+                           uint32_t path_length, uint64_t index, uint64_t *out) noexcept
+{
+    static char member_path[aegir::nmspace::kPathMax];
+    static uint64_t payload[aegir::ipc::kMaxWords];
+
+    uint32_t member_path_length = 0;
+    if (!compose_path(member->rest, member->rest_length, path, path_length, member_path,
+                      &member_path_length)) {
+        return 0;
+    }
+    uint32_t const member_words = aegir::nmspace::pack_string(
+        payload, member_path, member_path_length, aegir::nmspace::kPathMax);
+    if (member_words == 0 || member_words + 1 > aegir::ipc::kMaxWords) {
+        return 0;
+    }
+    payload[member_words] = index;
+    seL4_CPtr const cap = mint_member(member->volume, caller);
+    if (cap == 0) {
+        return 0;
+    }
+    aegir::ipc::Consumer const consumer(cap);
+    aegir::ipc::WordsReply const reply = consumer.call_words(
+        aegir::volume::kMethodList, payload, member_words + 1, out, aegir::ipc::kMaxWords);
+    drop_member();
+    if (reply.error != 0) {
+        return 0;
+    }
+    return reply.count;
+}
+
+/* Whether a list answer's leading name is `name`. */
+bool answer_name_is(uint64_t const *answer, uint32_t count, char const *name,
+                    uint32_t name_length) noexcept
+{
+    char const *entry = nullptr;
+    uint32_t entry_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(answer, count, aegir::nmspace::kNameMax, &entry,
+                                       &entry_length)) {
+        return false;
+    }
+    return same_volume(entry, entry_length, name, name_length);
+}
+
+/* read, forwarded: the first member that has the path answers
+ * (specs/namespace.md). The read's path is union-relative; each member's is
+ * its rest composed with it. The member's answer -- count, end-of-file, bytes
+ * -- is the union's, word for word. */
+void union_read(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller,
+                uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count < 1 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 2) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const offset = words[path_words];
+    uint64_t const max = words[path_words + 1];
+
+    static char member_path[aegir::nmspace::kPathMax];
+    static uint64_t payload[aegir::ipc::kMaxWords];
+    static uint64_t answer[aegir::ipc::kMaxWords];
+
+    for (Member const *m = binding->members; m != nullptr; m = m->next) {
+        uint32_t member_path_length = 0;
+        if (!compose_path(m->rest, m->rest_length, path, path_length, member_path,
+                          &member_path_length)) {
+            continue;
+        }
+        uint32_t const member_words = aegir::nmspace::pack_string(
+            payload, member_path, member_path_length, aegir::nmspace::kPathMax);
+        if (member_words == 0 || member_words + 2 > aegir::ipc::kMaxWords) {
+            continue;
+        }
+        payload[member_words] = offset;
+        payload[member_words + 1] = max;
+        seL4_CPtr const cap = mint_member(m->volume, caller);
+        if (cap == 0) {
+            continue;
+        }
+        aegir::ipc::Consumer const consumer(cap);
+        aegir::ipc::WordsReply const reply = consumer.call_words(
+            aegir::volume::kMethodRead, payload, member_words + 2, answer,
+            aegir::ipc::kMaxWords);
+        drop_member();
+        if (reply.error == 0 && reply.count > 0) {
+            port.reply_words(answer, reply.count);
+            return;
+        }
+    }
+    port.reply_words(nullptr, 0);
+}
+
+/* list, forwarded and merged: every member's entries for the path, in order,
+ * with a name an earlier member returned not returned again
+ * (specs/namespace.md). The caller's index is the cursor, and the directory
+ * owes no stability across calls, so a call rebuilds the merged sequence up to
+ * the index it is asked for rather than keeping one. */
+void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller,
+                uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count < 1 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const want = words[path_words];
+
+    static uint64_t entry[aegir::ipc::kMaxWords];
+    static uint64_t earlier[aegir::ipc::kMaxWords];
+
+    uint64_t unique = 0;
+    for (Member const *m = binding->members; m != nullptr; m = m->next) {
+        for (uint64_t j = 0;; ++j) {
+            uint32_t const entry_count =
+                member_list_entry(m, caller, path, path_length, j, entry);
+            if (entry_count == 0) {
+                break;
+            }
+            char const *name = nullptr;
+            uint32_t name_length = 0;
+            if (!aegir::nmspace::unpack_string(entry, entry_count, aegir::nmspace::kNameMax,
+                                               &name, &name_length)) {
+                break;
+            }
+            /* A name an earlier member returned is shadowed: scan the members
+             * before this one. */
+            bool shadowed = false;
+            for (Member const *p = binding->members; p != m && !shadowed; p = p->next) {
+                for (uint64_t k = 0;; ++k) {
+                    uint32_t const earlier_count =
+                        member_list_entry(p, caller, path, path_length, k, earlier);
+                    if (earlier_count == 0) {
+                        break;
+                    }
+                    if (answer_name_is(earlier, earlier_count, name, name_length)) {
+                        shadowed = true;
+                        break;
+                    }
+                }
+            }
+            if (shadowed) {
+                continue;
+            }
+            if (unique == want) {
+                port.reply_words(entry, entry_count);
+                return;
+            }
+            ++unique;
+        }
+    }
+    port.reply_words(nullptr, 0);
+}
+
 /* A union's volume call (specs/namespace.md): the badge names the union, and
- * the caller's identity is the first word. The forwarding to the members --
- * read and remove take the first that has the path, list merges, create and
- * mkdir go to the create target -- is the next slice; for now every union call
- * is the empty reply, which a caller reads as a refusal. */
+ * the caller's identity is the first word -- the badge is spent on the union
+ * id, so the identity cannot ride there. read and list are served here; the
+ * write side (open, write, close, mkdir, remove) is the next piece, and a
+ * method this version does not know is answered by saying nothing. */
 void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
                   uint64_t const *words, uint32_t count) noexcept
 {
-    static_cast<void>(badge);
-    static_cast<void>(method);
-    static_cast<void>(words);
-    static_cast<void>(count);
-    port.reply_words(nullptr, 0);
+    Binding const *binding = find_union(aegir::nmspace::union_id(badge));
+    if (binding == nullptr || count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const caller = words[0];
+    uint64_t const *payload = words + 1;
+    uint32_t const payload_count = count - 1;
+    switch (method) {
+    case aegir::volume::kMethodRead:
+        union_read(port, binding, caller, payload, payload_count);
+        break;
+    case aegir::volume::kMethodList:
+        union_list(port, binding, caller, payload, payload_count);
+        break;
+    default:
+        port.reply_words(nullptr, 0);
+        break;
+    }
 }
 
 }  // namespace
