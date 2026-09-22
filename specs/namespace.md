@@ -108,10 +108,18 @@ cannot land half-way:
    **serves the volume protocol on it** (`aegir/volume.h`: read, list, open,
    write, close, mkdir, remove), forwarding to the members: list merges (a name
    an earlier member has wins), read and remove take the first member that has
-   the path, open-with-create and mkdir go to the create target. This means the
-   VFS's loop multiplexes its namespace port and its union port(s) -- the
-   console's bind-notification-and-one-receive shape -- which is why the VFS is
-   no longer a pure request/response server.
+   the path, open-with-create and mkdir go to the create target.
+
+   The port is the **namespace endpoint itself**, not a new one: a single
+   thread cannot `seL4_Recv` on two endpoints, and polling a second one is a
+   spin, so the union's methods are additional method numbers on the endpoint
+   the VFS already serves. `resolve` of a union returns the namespace
+   endpoint's capability, minted with a badge that encodes the **union id**; a
+   plain namespace capability carries no union id, so the receive tells a union
+   call from a namespace call and knows which union. The caller's identity --
+   which the member filesystems need -- rides in the union call's words, since
+   the badge is spent on the union id. This is why the VFS stops being a pure
+   request/response server even though it still has one receive.
 4. **`resolve` of a union** returns the union port's capability (minted with the
    caller's badge) and the rest, exactly as a volume's resolve does. The VFS is
    then a filesystem whose members are filesystems.
