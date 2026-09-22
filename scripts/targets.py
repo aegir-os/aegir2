@@ -131,6 +131,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the current directory its spawner gave it. Its cue is the boot's
             # first, so it is checked before anything else.
             QmpStep(r"ENV_SMOKE_OK"),
+            # The hosted C++ runtime's acceptance client (specs/cxx.md): its
+            # malloc and libc++ container checks pass, and then -- returning
+            # from main rather than halting -- its run-time exit handler runs
+            # through the __funcs_on_exit bridge and prints the second marker.
+            QmpStep(r"CXX_SMOKE_OK"),
+            QmpStep(r"CXX_ATEXIT_OK"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up

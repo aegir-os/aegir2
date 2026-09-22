@@ -25,8 +25,19 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <sel4/sel4.h>
+#include <stdlib.h>
 
 namespace {
+
+/* The exit bridge's proof (specs/cxx.md's completion program, step 2): a
+ * handler registered at run time lives in musl's list, which only
+ * __funcs_on_exit walks, and sel4runtime calls that through the pre-exit hook
+ * after main returns. So its marker is the one thing this service prints
+ * after main -- the acceptance script's last cue for it. */
+void report_atexit()
+{
+    aegir::debug_write("CXX_ATEXIT_OK\n");
+}
 
 /* Static, like the greeter's and the test bed's: the allocator's untyped table
  * and the scratch window's bookkeeping are tens of kilobytes, and a service's
@@ -102,8 +113,16 @@ int main(int argc, char *argv[])
 
     aegir::debug_write(failed == 0 ? "CXX_SMOKE_OK\n" : "CXX_SMOKE_FAIL\n");
 
+    /* The one run-time exit handler: registered here, run by the bridge once
+     * main returns. */
+    if (atexit(report_atexit) != 0) {
+        aegir::debug_write("  cxx-smoke: FAIL atexit would not register\n");
+    }
+
     /* The boot thread waits for this, so the marker can follow (the same clock
-     * the greeter's form-up signal is). */
+     * the greeter's form-up signal is). Returning, rather than halting,
+     * exercises the exit bridge: __funcs_on_exit runs the handler above, then
+     * the runtime's exit callback halts the thread. */
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
-    aegir::halt();
+    return failed;
 }
