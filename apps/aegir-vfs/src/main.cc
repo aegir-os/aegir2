@@ -72,6 +72,7 @@ struct Member {
 struct Binding {
     uint64_t badge; /* whose alias this is; kAliasEveryone for a global */
     uint64_t flags; /* kBindAppend / kBindPrepend / kBindCreate (specs/namespace.md) */
+    uint32_t union_id; /* the id its union cap carries, when it has more than one member */
     char name[aegir::nmspace::kNameMax];
     uint32_t name_length;
     Member *members; /* the ordered list; never empty for a live binding */
@@ -80,6 +81,10 @@ struct Binding {
 constexpr uint64_t kAliasEveryone = ~0ULL;
 Binding *g_bindings = nullptr;
 uint32_t g_binding_count = 0;
+/* The next union id: a binding that grows past one member becomes a union, and
+ * its cap's badge carries this (specs/namespace.md). Ids are not reused -- a
+ * stale cap names a union that is gone, which is a refusal, not a wrong read. */
+uint32_t g_union_next = 1;
 /* Dropped bindings and members, for reuse: each is one size, so an unbound
  * row serves the next bind, and the arena's bound is the most ever live at
  * once rather than ever made (specs/vfs.md). */
@@ -368,6 +373,9 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
             binding->members = member;
         }
         binding->flags = flags;
+        if (binding->members->next != nullptr && binding->union_id == 0) {
+            binding->union_id = g_union_next++;
+        }
         write("  vfs: ");
         write(binding->name, binding->name_length);
         write(": grown\n");
@@ -390,6 +398,7 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     }
     fresh->badge = badge;
     fresh->flags = flags;
+    fresh->union_id = 0;
     for (uint32_t i = 0; i < name_length; ++i) {
         fresh->name[i] = name[i];
     }
@@ -493,6 +502,30 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
             port.reply_words(nullptr, 0);
             return;
         }
+        if (binding->union_id != 0) {
+            /* A union: the answer is the union cap -- a minted copy of *this*
+             * endpoint carrying the union's id -- and the caller's own rest,
+             * with no substitution (specs/namespace.md). The VFS's one receive
+             * tells a union call from a namespace call by the badge. */
+            if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::kSlotOwnCNode, port.capability(),
+                                aegir::bootstrap::kCNodeBits,
+                                seL4_CapRights_new(1, 1, 0, 1),
+                                aegir::nmspace::union_badge(binding->union_id)) != seL4_NoError) {
+                write("  vfs: a union's cap would not mint\n");
+                port.reply_words(nullptr, 0);
+                return;
+            }
+            uint64_t answer[aegir::nmspace::kResolveWords];
+            uint32_t const answer_words = aegir::nmspace::pack_string(
+                answer, composed + colon + 1, composed_length - colon - 1,
+                aegir::nmspace::kPathMax);
+            port.reply_cap(answer, answer_words, g_mint_slot);
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+                              aegir::bootstrap::kCNodeBits);
+            return;
+        }
         --budget;
         /* Compose: the target, then the rest. A target that names a volume
          * joins with a colon; one that is a path joins with a slash, and an
@@ -584,6 +617,21 @@ void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     port.reply_words(reinterpret_cast<uint64_t const *>(&row), aegir::nmspace::kRowWords);
 }
 
+/* A union's volume call (specs/namespace.md): the badge names the union, and
+ * the caller's identity is the first word. The forwarding to the members --
+ * read and remove take the first that has the path, list merges, create and
+ * mkdir go to the create target -- is the next slice; for now every union call
+ * is the empty reply, which a caller reads as a refusal. */
+void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
+                  uint64_t const *words, uint32_t count) noexcept
+{
+    static_cast<void>(badge);
+    static_cast<void>(method);
+    static_cast<void>(words);
+    static_cast<void>(count);
+    port.reply_words(nullptr, 0);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -638,6 +686,10 @@ int main(int argc, char *argv[])
         bool cap_arrived = false;
         uint32_t const method =
             port.receive_words(words, aegir::ipc::kMaxWords, &count, &badge, &cap_arrived);
+        if (aegir::nmspace::is_union(badge)) {
+            answer_union(port, badge, method, words, count);
+            continue;
+        }
         switch (method) {
         case aegir::nmspace::kMethodRegister:
             answer_register(port, words, count, cap_arrived);
