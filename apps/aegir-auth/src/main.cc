@@ -455,6 +455,12 @@ void start_session(uint32_t user, bool bureau) noexcept
     }
     request.account = g_rows[user].account;
     request.account_length = field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
+    /* A session stands on its own Home (specs/environment.md): the alias auth
+     * already bound for it below, so a relative path resolves into the user's
+     * tree rather than the system's. */
+    static char const kHomeCwd[] = "Home:";
+    request.cwd = kHomeCwd;
+    request.cwd_length = sizeof(kHomeCwd) - 1;
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
     request.port_count = bureau ? (g_spawn_bureau_menu != 0 ? 5 : 4) : 2;
