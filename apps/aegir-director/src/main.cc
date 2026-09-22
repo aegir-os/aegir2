@@ -698,12 +698,21 @@ int main(int argc, char *argv[])
     }
     report_bootinfo(bootinfo);
 
-    aegir::mem::Allocator allocator(bootinfo);
+    /* Static, not local: the allocator carries the node pool and the scratch
+     * its bookkeeping, tens of kilobytes each, and the root task's stack is
+     * 16 KiB -- a local would run off it into the image (specs/userland.md:
+     * anything that large belongs in static storage). */
+    static aegir::mem::Allocator allocator(bootinfo);
+    /* The node pool, provided and sized from the grant: the buddy tree over 2 GiB
+     * is far larger than a service's, and the root task's image is not mapped by a
+     * spawner, so a few megabytes of `.bss` here is cheap (specs/allocator.md). */
+    static uint8_t director_nodes[4u << 20];
+    allocator.adopt_nodes(director_nodes, sizeof(director_nodes));
     if (!allocator.initialise()) {
         problem("the allocator could not take the machine's memory");
     }
 
-    aegir::mem::Scratch scratch(bootinfo);
+    static aegir::mem::Scratch scratch(bootinfo);
     if (!scratch.initialise(&allocator)) {
         problem("the address space window could not be worked out");
     }

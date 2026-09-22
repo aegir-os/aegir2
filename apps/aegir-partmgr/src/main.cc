@@ -465,7 +465,7 @@ int main(int argc, char *argv[])
      * destination capability of a retype *is* the CNode
      * (kernel/src/object/untyped.c). The size is the one the spawner builds
      * (kCNodeBits in libs/aegir-spawn/src/process.cc). */
-    g_objects.adopt_slots(first_free, (1u << 10) - first_free, 0);
+    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0);
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {

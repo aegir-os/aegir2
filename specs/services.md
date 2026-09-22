@@ -105,7 +105,9 @@ restart   = always
 | `delegate_mib` | no | the MiB of untyped memory a spawning service is delegated, rounded up to a power of two — absent means the default (4) |
 | `restart` | no | `always`, `on-fault` (default), `never`, with optional backoff |
 | `priority` | no | scheduling priority |
-| `args` | no | the `argv` it is started with; a list, never a shell |
+| `args` | no | the arguments after `argv[0]` (which is the service's name); a list, never a shell |
+| `environment` | no | the `NAME=VALUE` items it starts with, comma separated (specs/environment.md) |
+| `cwd` | no | its current directory, a VFS path; absent means none (specs/environment.md) |
 
 ### Validation, and failing loudly
 

@@ -22,13 +22,42 @@ constexpr seL4_Word kRootCNodeDepth = seL4_WordBits;
 }  // namespace
 
 Allocator::Allocator(seL4_BootInfo *bootinfo) noexcept
-    : bootinfo_(bootinfo), untyped_count_(0), cnode_size_bits_(0), slots_first_(0),
-      slots_next_(0), slots_end_(0), slots_used_(0), normal_bytes_(0), device_bytes_(0),
-      allocated_bytes_(0), last_request_bits_(0), last_candidate_bits_(0)
+    : bootinfo_(bootinfo), node_region_(nullptr), node_capacity_(0), free_nodes_(nullptr),
+      node_used_(0), node_free_(0), growing_(false), node_source_(nullptr),
+      node_context_(nullptr), cnode_size_bits_(0),
+      slots_first_(0), slots_next_(0), slots_end_(0), slots_used_(0), normal_bytes_(0),
+      device_bytes_(0), allocated_bytes_(0), last_request_bits_(0), last_candidate_bits_(0)
 {
-    for (auto &entry : untyped_) {
-        entry = Untyped{0, 0, 0, 0, 0, 0};
+    for (auto &list : heads_) {
+        list = nullptr;
     }
+    for (auto &list : dev_heads_) {
+        list = nullptr;
+    }
+    adopt_nodes(default_nodes_, sizeof(default_nodes_));
+}
+
+void Allocator::adopt_nodes(void *region, unsigned bytes) noexcept
+{
+    auto *const nodes = static_cast<Node *>(region);
+    unsigned const count = bytes / static_cast<unsigned>(sizeof(Node));
+    if (nodes == nullptr || count == 0) {
+        return;
+    }
+    node_region_ = nodes;
+    node_capacity_ = count;
+    free_nodes_ = nullptr;
+    node_free_ = count;
+    for (unsigned i = 0; i < count; ++i) {
+        nodes[i].next = free_nodes_;
+        free_nodes_ = &nodes[i];
+    }
+}
+
+void Allocator::set_node_source(NodeSource source, void *context) noexcept
+{
+    node_source_ = source;
+    node_context_ = context;
 }
 
 bool Allocator::initialise() noexcept
@@ -47,8 +76,8 @@ bool Allocator::initialise() noexcept
     }
     for (seL4_Word i = 0; i < untyped_caps; ++i) {
         seL4_UntypedDesc const &desc = bootinfo_->untypedList[i];
-        if (!remember(bootinfo_->untyped.start + i, desc.sizeBits, desc.isDevice != 0,
-                      desc.paddr)) {
+        if (!add_untyped(bootinfo_->untyped.start + i, desc.sizeBits, desc.isDevice != 0,
+                         desc.paddr)) {
             return false;
         }
         if (desc.isDevice != 0) {
@@ -66,21 +95,100 @@ bool Allocator::initialise() noexcept
     return true;
 }
 
-bool Allocator::remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept
+Allocator::Node *Allocator::alloc_node() noexcept
 {
-    /* Never silently: an untyped this allocator cannot remember is memory it
-     * would hand out twice or lose, and both are worse than failing. */
-    if (untyped_count_ >= static_cast<unsigned>(CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS) * 8) {
+    /* Grow with a reserve still in hand: the source carves a frame to map, and
+     * carving needs nodes. The flag stops the source's own allocation from
+     * asking for another region. */
+    constexpr unsigned kReserve = 32;
+    if (node_free_ <= kReserve && !growing_ && node_source_ != nullptr) {
+        growing_ = true;
+        unsigned bytes = 0;
+        void *const region = node_source_(node_context_, &bytes);
+        growing_ = false;
+        auto *const nodes = static_cast<Node *>(region);
+        unsigned const count = bytes / static_cast<unsigned>(sizeof(Node));
+        for (unsigned i = 0; i < count; ++i) {
+            nodes[i].next = free_nodes_;
+            free_nodes_ = &nodes[i];
+        }
+        node_free_ += count;
+    }
+    Node *node = free_nodes_;
+    if (node == nullptr) {
+        return nullptr;
+    }
+    free_nodes_ = node->next;
+    --node_free_;
+    ++node_used_;
+    return node;
+}
+
+void Allocator::free_node(Node *node) noexcept
+{
+    node->next = free_nodes_;
+    free_nodes_ = node;
+    ++node_free_;
+    --node_used_;
+}
+
+bool Allocator::add_untyped(seL4_CPtr cap, seL4_Word size_bits, bool device,
+                            uint64_t paddr) noexcept
+{
+    Node *node = alloc_node();
+    if (node == nullptr) {
         return false;
     }
-    untyped_[untyped_count_].cap = cap;
-    untyped_[untyped_count_].physical = paddr;
-    untyped_[untyped_count_].size_bits = static_cast<uint8_t>(size_bits);
-    untyped_[untyped_count_].device = device ? 1 : 0;
-    untyped_[untyped_count_].used = 0;
-    untyped_[untyped_count_].children = 0;
-    ++untyped_count_;
+    node->cap = cap;
+    node->physical = paddr;
+    node->size_bits = static_cast<uint8_t>(size_bits);
+    node->device = device ? 1 : 0;
+    node->parent = nullptr;
+    node->sibling = nullptr;
+    node->next = nullptr;
+    node->prev = nullptr;
+    insert(device, node);
     return true;
+}
+
+void Allocator::insert(bool device, Node *node) noexcept
+{
+    Node **const lists = this->lists(device);
+    Node **link = &lists[node->size_bits];
+    /* Physical order: a piece with a known address goes before the first known
+     * address above it, so allocations come off in address order (allocman's
+     * reason: contiguous physical memory is friendlier to devices). Unknown
+     * addresses -- a delegated untyped whose giver did not say -- go to the
+     * head, where they do not pretend to an order they do not have. */
+    if (node->physical != 0) {
+        while (*link != nullptr && (*link)->physical != 0 &&
+               (*link)->physical < node->physical) {
+            link = &(*link)->next;
+        }
+    }
+    node->next = *link;
+    node->prev = nullptr;
+    if (*link != nullptr) {
+        (*link)->prev = node;
+    }
+    *link = node;
+    node->free = 1;
+}
+
+void Allocator::unlink(Node *node) noexcept
+{
+    Node **const lists = this->lists(node->device != 0);
+    if (node->prev != nullptr) {
+        node->prev->next = node->next;
+    } else {
+        lists[node->size_bits] = node->next;
+    }
+    if (node->next != nullptr) {
+        node->next->prev = node->prev;
+    }
+    node->next = nullptr;
+    node->prev = nullptr;
+    node->free = 0;
 }
 
 seL4_CPtr Allocator::alloc_slot() noexcept
@@ -100,17 +208,6 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
     }
 }
 
-void Allocator::release_entry(int index) noexcept
-{
-    if (index < 0 || index >= static_cast<int>(untyped_count_)) {
-        return;
-    }
-    --untyped_count_;
-    if (index != static_cast<int>(untyped_count_)) {
-        untyped_[index] = untyped_[untyped_count_];
-    }
-}
-
 void Allocator::slot_release(seL4_CPtr mark) noexcept
 {
     if (mark >= slots_first_ && mark <= slots_next_) {
@@ -121,7 +218,21 @@ void Allocator::slot_release(seL4_CPtr mark) noexcept
 
 void Allocator::reset() noexcept
 {
-    untyped_count_ = 0;
+    for (auto &list : heads_) {
+        list = nullptr;
+    }
+    for (auto &list : dev_heads_) {
+        list = nullptr;
+    }
+    /* The provided regions stay ours; only the pieces in them are forgotten. */
+    free_nodes_ = nullptr;
+    node_used_ = 0;
+    node_free_ = node_capacity_;
+    growing_ = false;
+    for (unsigned i = 0; i < node_capacity_; ++i) {
+        node_region_[i].next = free_nodes_;
+        free_nodes_ = &node_region_[i];
+    }
     slots_first_ = 0;
     slots_next_ = 0;
     slots_end_ = 0;
@@ -134,8 +245,8 @@ void Allocator::reset() noexcept
 unsigned Allocator::untyped_free() const noexcept
 {
     unsigned free = 0;
-    for (unsigned i = 0; i < untyped_count_; ++i) {
-        if (untyped_[i].used == 0) {
+    for (Node const *list : heads_) {
+        for (Node const *node = list; node != nullptr; node = node->next) {
             ++free;
         }
     }
@@ -152,115 +263,188 @@ unsigned Allocator::object_bits(seL4_Word type, seL4_Word size_bits) noexcept
 
 unsigned Allocator::largest_free_bits() const noexcept
 {
-    unsigned largest = 0;
-    for (unsigned i = 0; i < untyped_count_; ++i) {
-        if (untyped_[i].used == 0 && untyped_[i].device == 0 && untyped_[i].size_bits > largest) {
-            largest = untyped_[i].size_bits;
+    for (unsigned bits = seL4_WordBits; bits > 0; --bits) {
+        if (heads_[bits - 1] != nullptr) {
+            return bits - 1;
         }
     }
-    return largest;
+    return 0;
 }
 
-/* `memory_bits` is always the memory an object costs (see object_bits). */
-int Allocator::find_untyped(seL4_Word memory_bits) const noexcept
+bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 {
-    int best = -1;
-    for (unsigned i = 0; i < untyped_count_; ++i) {
-        Untyped const &entry = untyped_[i];
-        if (entry.used != 0 || entry.device != 0 ||
-            static_cast<seL4_Word>(entry.size_bits) < memory_bits) {
-            continue;
-        }
-        if (best < 0 || entry.size_bits < untyped_[best].size_bits) {
-            /* both are uint8_t, so this compares as int */
-            best = static_cast<int>(i);
-        }
+    Node **const lists = this->lists(device);
+    if (lists[size_bits] != nullptr) {
+        return true;
     }
-    return best;
+    /* Nothing bigger exists to split: the largest untyped a word can name is
+     * one bit below the word. */
+    if (size_bits + 1 >= seL4_WordBits) {
+        return false;
+    }
+    if (!refill(device, size_bits + 1)) {
+        return false;
+    }
+    Node *const parent = lists[size_bits + 1];
+    if (parent == nullptr) {
+        return false;
+    }
+    Node *const left = alloc_node();
+    Node *const right = alloc_node();
+    if (left == nullptr || right == nullptr) {
+        if (left != nullptr) {
+            free_node(left);
+        }
+        if (right != nullptr) {
+            free_node(right);
+        }
+        return false;
+    }
+    seL4_CPtr const left_slot = alloc_slot();
+    seL4_CPtr const right_slot = left_slot != 0 ? alloc_slot() : 0;
+    if (left_slot == 0 || right_slot == 0) {
+        if (left_slot != 0) {
+            slot_failed(left_slot);
+        }
+        if (right_slot != 0) {
+            slot_failed(right_slot);
+        }
+        free_node(left);
+        free_node(right);
+        return false;
+    }
+    /* The parent's two halves: the kernel carves each from the parent's free
+     * index, low end first, so the first is the low buddy and the second the
+     * high one (kernel/src/object/untyped.c:225-232 aligns the free pointer,
+     * :294-302 retypes and moves it). */
+    seL4_Error const first = seL4_Untyped_Retype(
+        parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
+        seL4_CapInitThreadCNode, cnode_depth_, left_slot, 1);
+    if (first != seL4_NoError) {
+        slot_failed(left_slot);
+        slot_failed(right_slot);
+        free_node(left);
+        free_node(right);
+        return false;
+    }
+    seL4_Error const second = seL4_Untyped_Retype(
+        parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
+        seL4_CapInitThreadCNode, cnode_depth_, right_slot, 1);
+    if (second != seL4_NoError) {
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, left_slot, cnode_depth_);
+        slot_failed(left_slot);
+        slot_failed(right_slot);
+        free_node(left);
+        free_node(right);
+        return false;
+    }
+    /* The parent leaves the free list but its node stays: it is the merge
+     * anchor, and its memory is reclaimable once both children are deleted
+     * (the kernel resets a childless untyped's free index on the next retype,
+     * kernel/src/object/untyped.c:184-189). */
+    unlink(parent);
+    left->cap = left_slot;
+    left->physical = parent->physical;
+    left->size_bits = static_cast<uint8_t>(size_bits);
+    left->device = parent->device;
+    left->parent = parent;
+    left->sibling = right;
+    left->next = nullptr;
+    left->prev = nullptr;
+    right->cap = right_slot;
+    right->physical =
+        parent->physical != 0 ? parent->physical + (1ull << size_bits) : 0;
+    right->size_bits = static_cast<uint8_t>(size_bits);
+    right->device = parent->device;
+    right->parent = parent;
+    right->sibling = left;
+    right->next = nullptr;
+    right->prev = nullptr;
+    insert(device, right);
+    insert(device, left);
+    return true;
 }
 
-bool Allocator::split_to(int index, seL4_Word memory_bits, seL4_CPtr *last_child,
-                         seL4_Error *error) noexcept
+Allocator::Node *Allocator::take(bool device, seL4_Word size_bits) noexcept
 {
-    if (last_child != nullptr) {
-        *last_child = 0;
+    Node **const lists = this->lists(device);
+    Node *const node = lists[size_bits];
+    if (node == nullptr) {
+        return nullptr;
     }
-    while (static_cast<seL4_Word>(untyped_[index].size_bits) > memory_bits) {
-        seL4_Word half = untyped_[index].size_bits - 1;
-        seL4_CPtr slot = alloc_slot();
-        if (slot == 0) {
-            if (error != nullptr) {
-                *error = seL4_NotEnoughMemory;
-            }
-            return false;
-        }
-        /* Retyping an untyped out of an untyped carves the child from the LOW end of
-         * what is left: the kernel creates the new object at the untyped's free index
-         * and advances the index past it (kernel/src/object/untyped.c:225-232 aligns
-         * the free pointer, :294-302 retypes there and moves capFreeIndex). So the
-         * child sits at this entry's recorded physical base, and the remainder -- the
-         * cap this entry keeps -- begins one half higher. Bookkeeping that says
-         * otherwise hands a caller a physical address its memory does not have: a
-         * device given it reads an empty ring out of somebody else's RAM, forever. */
-        seL4_Error retyped =
-            seL4_Untyped_Retype(untyped_[index].cap, seL4_UntypedObject, half,
-                                seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
-                                cnode_depth_, slot, 1);
-        if (retyped != seL4_NoError) {
-            slot_failed(slot);
-            if (error != nullptr) {
-                *error = retyped;
-            }
-            return false;
-        }
-        if (!remember(slot, half, false, untyped_[index].physical)) {
-            return false;
-        }
-        if (untyped_[index].physical != 0) {
-            untyped_[index].physical += 1ull << half;
-        }
-        untyped_[index].size_bits = static_cast<uint8_t>(half);
-        untyped_[index].children = 1;
-        if (last_child != nullptr) {
-            *last_child = slot;
-        }
+    unlink(node);
+    return node;
+}
+
+void Allocator::free_piece(Node *node) noexcept
+{
+    /* A piece whose buddy is free merges with it: delete both children (so the
+     * parent has none and its memory resets), return their node slots, and give
+     * the parent back in turn (allocman's `_utspace_split_free`). */
+    if (node->parent != nullptr && node->sibling != nullptr && node->sibling->free != 0) {
+        Node *const sibling = node->sibling;
+        Node *const parent = node->parent;
+        unlink(sibling);
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, node->cap, cnode_depth_);
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, sibling->cap, cnode_depth_);
+        free_node(sibling);
+        free_node(node);
+        free_piece(parent);
+    } else {
+        insert(node->device != 0, node);
     }
+}
+
+bool Allocator::free_object(void *cookie, seL4_Word size_bits) noexcept
+{
+    if (cookie == nullptr) {
+        return false;
+    }
+    auto *const node = static_cast<Node *>(cookie);
+    if (node->size_bits != size_bits || node->free != 0) {
+        return false;
+    }
+    free_piece(node);
     return true;
 }
 
 seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &account,
-                                  seL4_Error *error) noexcept
+                                  seL4_Error *error, void **cookie) noexcept
 {
     *error = seL4_NoError;
     unsigned const wanted = object_bits(type, size_bits);
     last_request_bits_ = static_cast<unsigned>(size_bits);
     last_candidate_bits_ = 0;
-    int index = find_untyped(wanted);
-    if (index < 0) {
+    if (!refill(false, wanted)) {
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    last_candidate_bits_ = untyped_[index].size_bits;
-    if (!split_to(index, wanted, nullptr, error)) {
+    Node *const node = take(false, wanted);
+    if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
         return 0;
     }
-
-    seL4_CPtr slot = alloc_slot();
+    last_candidate_bits_ = node->size_bits;
+    seL4_CPtr const slot = alloc_slot();
     if (slot == 0) {
+        insert(false, node);
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    *error = seL4_Untyped_Retype(untyped_[index].cap, type, size_bits,
-                                 seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
-                                 cnode_depth_, slot, 1);
+    *error = seL4_Untyped_Retype(node->cap, type, size_bits, seL4_CapInitThreadCNode,
+                                 seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
     if (*error != seL4_NoError) {
         slot_failed(slot);
+        insert(false, node);
         return 0;
     }
-
-    /* The untyped was split to exactly the memory the object costs, so the
-     * object consumed it: the record is dead and goes away. */
-    release_entry(index);
+    /* The piece is the object now. The node stays as the object's identity: a
+     * caller that will free it takes the cookie, and a caller that will not
+     * leaves it, which keeps the merge tree whole for the pieces around it (a
+     * node whose storage went back could be reused under its buddy's feet). */
+    if (cookie != nullptr) {
+        *cookie = node;
+    }
     account.bytes += 1ull << wanted;
     account.objects += 1;
     allocated_bytes_ += 1ull << wanted;
@@ -317,7 +501,7 @@ bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *fi
 
 bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits, uint64_t paddr) noexcept
 {
-    return remember(cap, size_bits, false, paddr);
+    return add_untyped(cap, size_bits, false, paddr);
 }
 
 void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept
@@ -330,52 +514,31 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) n
 }
 
 seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,
-                                    uint64_t *physical_out) noexcept
+                                   uint64_t *physical_out, void **cookie) noexcept
 {
     *error = seL4_NoError;
-    int index = find_untyped(size_bits);
-    if (index < 0) {
+    if (!refill(false, size_bits)) {
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    /* An exact-size untyped that splitting left over has children, and a capability
-     * with children cannot be given away (see below). Splitting a larger one makes a
-     * leaf that can, so that is the better candidate for a handout when there is one. */
-    if (untyped_[index].children != 0 &&
-        static_cast<seL4_Word>(untyped_[index].size_bits) == size_bits) {
-        for (unsigned i = 0; i < untyped_count_; ++i) {
-            Untyped const &entry = untyped_[i];
-            if (entry.used != 0 || entry.device != 0 ||
-                static_cast<seL4_Word>(entry.size_bits) <= size_bits) {
-                continue;
-            }
-            if (untyped_[index].children != 0 ||
-                entry.size_bits < untyped_[index].size_bits) {
-                index = static_cast<int>(i);
-            }
-        }
-    }
-    seL4_CPtr leaf = 0;
-    if (!split_to(index, size_bits, &leaf, error)) {
+    Node *const node = take(false, size_bits);
+    if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
         return 0;
     }
-    /* What is handed out must be a capability the kernel will let the caller copy:
-     * giving it to a service is the point (specs/authority.md), and a capability
-     * with derived objects cannot be copied ("RevokeFirst: The untyped has been
-     * used to retype an object",
-     * out/aegir/libsel4/include/interfaces/sel4_client.h:419). The split's last
-     * leaf has nothing derived from it; the remainder it came from does. So the
-     * leaf is the handout when there was one, and the remainder stays here, free.
-     * The leaf is the entry remember() just appended. */
-    int taken = index;
-    if (leaf != 0) {
-        taken = static_cast<int>(untyped_count_) - 1;
-    }
-    seL4_CPtr const cap = untyped_[taken].cap;
+    /* What is handed out is a piece the splitting made, so it has nothing
+     * derived from it and the kernel will let the caller copy it -- giving it
+     * to a service is the point (specs/authority.md), and a capability with
+     * derived objects cannot be copied ("RevokeFirst: The untyped has been used
+     * to retype an object",
+     * out/aegir/libsel4/include/interfaces/sel4_client.h:419). */
     if (physical_out != nullptr) {
-        *physical_out = untyped_[taken].physical;
+        *physical_out = node->physical;
     }
-    release_entry(taken);
+    seL4_CPtr const cap = node->cap;
+    if (cookie != nullptr) {
+        *cookie = node;
+    }
     account.bytes += 1ull << size_bits;
     account.objects += 1;
     allocated_bytes_ += 1ull << size_bits;

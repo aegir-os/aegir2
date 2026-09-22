@@ -80,8 +80,12 @@ void report_fault(seL4_Word badge, seL4_MessageInfo_t info) noexcept
     if (seL4_isVMFault_tag(info)) {
         /* Which address, and which instruction, are in the message for whoever
          * wants them: a supervisor's first job is to say who died, and the
-         * detail belongs with the policy that decides what to do about it. */
-        write(" faulted on a memory access");
+         * detail belongs with the policy that decides what to do about it. The
+         * two are printed because "who died" is not enough to find it. */
+        write(" faulted on a memory access at ");
+        aegir::debug_write_hex(seL4_GetMR(1));
+        write(", pc ");
+        aegir::debug_write_hex(seL4_GetMR(0));
     } else if (seL4_isUnknownSyscall_tag(info)) {
         write(" faulted on an unknown syscall");
     } else if (seL4_isNullFault_tag(info)) {

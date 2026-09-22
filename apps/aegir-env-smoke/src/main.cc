@@ -1,20 +1,13 @@
 /*
- * aegir-cxx-smoke: the hosted C++ runtime's acceptance client.
+ * aegir-env-smoke: the process environment's acceptance client.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * It stands the hosted runtime up and exercises it: aegir-heap turns the
- * memory the spawn kit gave this process into musl's mallocng, and the checks
- * in checks.cc run libc++'s containers on top of it. This file is the
- * seL4-facing half and must not include a libc++ header (checks.h explains
- * why); the checks are the libc++ half.
- *
- * What it proves, in order: the untyped, the VSpace root and the window
- * arrived in the bootstrap block; musl's memory syscalls reach our dispatcher
- * (no null __sysinfo); mallocng gets pages and recycles freed ones; libc++'s
- * operator new/delete, std::string, std::vector and std::unordered_map all
- * link and run against them.
+ * It stands the hosted runtime up (the checks use libc++'s std::string_view)
+ * and checks what the spawner gave it: argv, the environment and the current
+ * directory (specs/environment.md). This file is the seL4-facing half and must
+ * not include a libc++ header (checks.h explains why).
  */
 
 #include "checks.h"
@@ -28,16 +21,11 @@
 
 namespace {
 
-/* Static, like the greeter's and the test bed's: the allocator's untyped table
- * and the scratch window's bookkeeping are tens of kilobytes, and a service's
- * stack is pages (specs/userland.md). */
+/* Static, like the cxx-smoke's: the allocator's untyped table is tens of
+ * kilobytes and a service's stack is pages (specs/userland.md). */
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 
-/* The mapping authority the spawn kit installs: the delegated untyped (page
- * tables and frames are retyped from it), the VSpace root, and the window of
- * free addresses (the give_vspace grant). The pattern is the greeter's and the
- * test bed's. */
 bool adopt_memory()
 {
     uint64_t untyped_slot = 0;
@@ -83,27 +71,25 @@ int main(int argc, char *argv[])
     static_cast<void>(argc);
     static_cast<void>(argv);
 
-    aegir::debug_write("\ncxx-smoke: the hosted C++ runtime\n");
+    aegir::debug_write("\nenv-smoke: the process environment\n");
 
     if (!adopt_memory()) {
-        aegir::debug_write("  cxx-smoke: FAIL no untyped, vspace or window\n");
+        aegir::debug_write("  env-smoke: FAIL no untyped, vspace or window\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
 
     constexpr uint64_t kHeapBytes = 8ull << 20;
     if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
-        aegir::debug_write("  cxx-smoke: FAIL the heap could not claim the window\n");
+        aegir::debug_write("  env-smoke: FAIL the heap could not claim the window\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
 
-    int const failed = aegir::cxx_smoke::run();
+    int const failed = aegir::env_smoke::run();
 
-    aegir::debug_write(failed == 0 ? "CXX_SMOKE_OK\n" : "CXX_SMOKE_FAIL\n");
+    aegir::debug_write(failed == 0 ? "ENV_SMOKE_OK\n" : "ENV_SMOKE_FAIL\n");
 
-    /* The boot thread waits for this, so the marker can follow (the same clock
-     * the greeter's form-up signal is). */
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     aegir::halt();
 }

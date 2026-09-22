@@ -257,6 +257,21 @@ maps      = true
 memory_kib = 4096
 restart   = never
 
+# The process environment's acceptance client (specs/environment.md): a spawned
+# service that checks the argv, environment and current directory its spawner
+# gave it. It runs the hosted runtime, so it takes the maps grant and its own
+# memory like the cxx-smoke.
+[envsmoke]
+binary      = aegir-env-smoke
+authority   = system
+account     = boot
+args        = alpha, beta
+environment = AEGIR=smoke, TWO=2
+cwd         = Sys:
+maps        = true
+memory_kib  = 4096
+restart     = never
+
 # The window manager's demonstration client (specs/window-manager.md): a
 # decorated window with all three titlebar gadgets, so the runner can click
 # them. It maps its own arena slice, like the test bed, and its memory is

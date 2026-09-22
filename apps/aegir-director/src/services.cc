@@ -108,6 +108,70 @@ bool Services::prepare(mem::Account &account) noexcept
     return fault_endpoint_ != 0;
 }
 
+char const *const *Services::split_list(manifest::View value, uint32_t *count) noexcept
+{
+    *count = 0;
+    if (value.data == nullptr || value.length == 0) {
+        return nullptr;
+    }
+    /* Count first: the array is sized from the manifest itself rather than from a
+     * maximum chosen here (project rule: capacity grows on demand). */
+    uint32_t items = 0;
+    for (char const *cursor = value.data, *const end = value.data + value.length;
+         cursor < end;) {
+        while (cursor < end && (*cursor == ',' || *cursor == ' ' || *cursor == '\t')) {
+            ++cursor;
+        }
+        char const *start = cursor;
+        while (cursor < end && *cursor != ',') {
+            ++cursor;
+        }
+        char const *stop = cursor;
+        while (stop > start && (stop[-1] == ' ' || stop[-1] == '\t')) {
+            --stop;
+        }
+        if (stop > start) {
+            ++items;
+        }
+    }
+    if (items == 0) {
+        return nullptr;
+    }
+    auto **array = static_cast<char const **>(arena_.allocate(sizeof(char const *) * items));
+    if (array == nullptr) {
+        return nullptr;
+    }
+    uint32_t at = 0;
+    for (char const *cursor = value.data, *const end = value.data + value.length;
+         cursor < end && at < items;) {
+        while (cursor < end && (*cursor == ',' || *cursor == ' ' || *cursor == '\t')) {
+            ++cursor;
+        }
+        char const *start = cursor;
+        while (cursor < end && *cursor != ',') {
+            ++cursor;
+        }
+        char const *stop = cursor;
+        while (stop > start && (stop[-1] == ' ' || stop[-1] == '\t')) {
+            --stop;
+        }
+        if (stop > start) {
+            uint32_t const length = static_cast<uint32_t>(stop - start);
+            auto *text = static_cast<char *>(arena_.allocate(length + 1));
+            if (text == nullptr) {
+                return nullptr;
+            }
+            for (uint32_t i = 0; i < length; ++i) {
+                text[i] = start[i];
+            }
+            text[length] = '\0';
+            array[at++] = text;
+        }
+    }
+    *count = at;
+    return array;
+}
+
 void Services::boot(manifest::Manifest const &manifest, mem::Account &account, Started *started,
                     Boot &boot, Supervisor *supervisor, void const *devices,
               uint32_t devices_bytes, Device const *bus, uint32_t bus_count,
@@ -201,6 +265,10 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.binary_length = entry.binary.length;
         request.account = entry.account.data;
         request.account_length = entry.account.length;
+        request.arguments = split_list(entry.args, &request.argument_count);
+        request.environment = split_list(entry.environment, &request.environment_count);
+        request.cwd = entry.cwd.data;
+        request.cwd_length = entry.cwd.length;
         request.priority = priority_for(entry);
         request.stack_pages = entry.stack_kib / 4u;
         spawn::PortGrant const *grants = graph_.grants(i);

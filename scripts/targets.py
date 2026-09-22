@@ -126,6 +126,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         # which-console-is-which agnostic: the *set* of dimensions is what is
         # checked) and presses the key that paces the guest's next step.
         qmp_steps=(
+            # The process environment's acceptance client (specs/environment.md):
+            # a spawned boot service that checks the argv, the environment and
+            # the current directory its spawner gave it. Its cue is the boot's
+            # first, so it is checked before anything else.
+            QmpStep(r"ENV_SMOKE_OK"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up

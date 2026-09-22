@@ -100,6 +100,11 @@ public:
     PortGraph const &graph() const noexcept { return graph_; }
 
 private:
+    /** Split a comma-separated manifest list (args, environment) into
+     *  NUL-terminated strings in the arena, and return a pointer array over
+     *  them. Null with `count` zero when there is nothing to split. */
+    char const *const *split_list(manifest::View value, uint32_t *count) noexcept;
+
     mem::Allocator &allocator_;
     /* Where the merged grant list for a service is built. A capability director
      * delegates is not a port, so it is not in the manifest's port graph, and the

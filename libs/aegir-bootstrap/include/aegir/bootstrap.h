@@ -61,7 +61,7 @@ constexpr uint64_t kSlotReceiveCap = 5;
 /** First slot the manifest's own declarations may use. */
 constexpr uint64_t kSlotFirstDeclared = 8;
 
-/* The size of the CSpace every Aegir process is given, in slots-bits: 2^10
+/* The size of the CSpace every Aegir process is given, in slots-bits: 2^12
  *  slots. It is part of the layout rather than a detail of the spawner, because
  *  two things depend on it: the guard a process's TCB is configured with
  *  (seL4_WordBits - kCNodeBits, so plain slot numbers resolve at full depth),
@@ -69,8 +69,15 @@ constexpr uint64_t kSlotFirstDeclared = 8;
  *  own-CNode cap at kSlotOwnCNode is a raw copy with guard 0 and radix
  *  kCNodeBits, so its slots resolve as plain numbers at depth kCNodeBits, not
  *  at seL4_WordBits (kernel/src/kernel/cspace.c:126-193: with no guard, the
- *  index is read MSB-first). */
-constexpr uint32_t kCNodeBits = 10;
+ *  index is read MSB-first).
+ *
+ * It was 10 (1024) until the buddy allocator landed: a buddy split takes two
+ * capabilities (the two equal halves), where the old geometric split took one,
+ * so a spawning service's CSpace filled about twice as fast -- the device
+ * manager hit 1001 of its 1014 free slots spawning the second GPU. Growing the
+ * CSpace on demand (a two-level CSpace) is still the deferral it always was;
+ * this is the size that holds until then. */
+constexpr uint32_t kCNodeBits = 12;
 
 /* --- the block ------------------------------------------------------------- */
 

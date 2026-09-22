@@ -50,6 +50,11 @@ struct Entry {
     View restart;
     View priority;
     View args;
+    /* The environment the service starts with, `NAME=VALUE` items comma
+     * separated, and its current directory (specs/environment.md). Absent means
+     * an empty environment and no current directory. */
+    View environment;
+    View cwd;
     Authority authority;
     /* The service the machine's devices are given to, and its description of them.
      * A device is a capability, so it goes to exactly one service -- the one that

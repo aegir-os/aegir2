@@ -98,7 +98,7 @@ public:
      * `object_bits` so that a caller does not have to know the kernel's rule.
      */
     seL4_CPtr alloc_object(seL4_Word type, seL4_Word size_bits, Account &account,
-                           seL4_Error *error) noexcept;
+                           seL4_Error *error, void **cookie = nullptr) noexcept;
 
     /**
      * A window of device memory: `pages` frames, for the device registers at
@@ -145,7 +145,8 @@ public:
      * (specs/services.md).
      */
     seL4_CPtr carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,
-                            uint64_t *physical_out = nullptr) noexcept;
+                            uint64_t *physical_out = nullptr,
+                            void **cookie = nullptr) noexcept;
 
     /**
      * Adopt an untyped this process was *handed* rather than one it found in its own
@@ -207,15 +208,38 @@ public:
      */
     static unsigned object_bits(seL4_Word type, seL4_Word size_bits) noexcept;
 
+    /**
+     * Give an object's memory back: the piece it was retyped from goes back to
+     * its free list, merging with its buddy when the buddy is free (the buddy
+     * tree is what makes that possible). `cookie` is what an allocation
+     * returned through its `cookie` out-parameter -- the capability a caller
+     * holds is the *object*, not the piece, and only the allocator knows which
+     * piece an object came from. False when the cookie is not one of ours.
+     */
+    bool free_object(void *cookie, seL4_Word size_bits) noexcept;
+
+    /**
+     * The node pool: mapped regions the allocator turns into bookkeeping nodes.
+     * It cannot map its own -- the `Scratch` does that, and the `Scratch`
+     * depends on the allocator -- so the caller provides the first region and a
+     * way to get another when it runs low. Growth is bounded by the untyped the
+     * process was given, so it is not unbounded. `region` must be a mapped,
+     * writable run of at least `count * sizeof(Node)` bytes.
+     */
+    using NodeSource = void *(*)(void *context, unsigned *bytes);
+    void adopt_nodes(void *region, unsigned bytes) noexcept;
+    void set_node_source(NodeSource source, void *context) noexcept;
+
     /* The last failed object allocation, for the boot report: a spawn that fails
      * should say what it wanted and what it found. */
     unsigned last_request_bits() const noexcept { return last_request_bits_; }
     unsigned last_candidate_bits() const noexcept { return last_candidate_bits_; }
-    /** The largest untyped that is still ours to allocate from. */
+
+    /** The largest piece still free to allocate from. */
     unsigned largest_free_bits() const noexcept;
 
     /* What the machine gave us, for the boot report. */
-    unsigned untyped_count() const noexcept { return untyped_count_; }
+    unsigned untyped_count() const noexcept { return node_used_; }
     unsigned untyped_free() const noexcept;
     uint64_t normal_bytes() const noexcept { return normal_bytes_; }
     uint64_t device_bytes() const noexcept { return device_bytes_; }
@@ -225,28 +249,58 @@ public:
     unsigned slots_used() const noexcept { return slots_used_; }
 
 private:
-    /* One untyped capability: 2^size_bits bytes, device or normal. Storing the
-     * size is what lets the allocator split and fit without asking the kernel. */
-    struct Untyped {
+    /* One piece of an untyped: the capability, its size, where it is, and the
+     * buddy tree that lets a free merge it back with the piece it was split
+     * from. The shape is libsel4allocman's `utspace_split_node`
+     * (projects/seL4_libs/libsel4allocman/src/utspace/split.c, BSD-2-Clause);
+     * what is Aegir's is the storage (a static pool, not an mspace) and the
+     * capabilities (slots in one CSpace, not `cspacepath`s). */
+    struct Node {
         seL4_CPtr cap;
-        /* Where the region's *free* memory is in the machine. The kernel's list says
-         * for the ones it found; splitting moves it, because the kernel carves a child
-         * from the low end of what is left and the remainder -- what this entry tracks --
-         * sits above every child so far (split_to). Zero means unknown, which is what an
-         * untyped handed in from outside has unless its giver said where it is. */
+        /* Where the piece's memory is in the machine, or 0 when the giver did
+         * not say. Splitting moves it: the kernel carves a child from the low
+         * end, so the buddy above it begins one size higher. */
         uint64_t physical;
         uint8_t size_bits;
         uint8_t device;
-        uint8_t used;
-        /* Split off leaves have been carved out of this one. A capability with
-         * derived objects cannot be copied (seL4_RevokeFirst), which is what makes
-         * such a remainder useless as a *handout* while remaining fine to retype
-         * from locally -- carve_untyped looks elsewhere when it can. */
-        uint8_t children;
+        uint8_t free;
+        /* The piece this was split from (null for a root), and the other half
+         * of that split. A free merges the two and frees the parent in turn. */
+        Node *parent;
+        Node *sibling;
+        /* The free-list links; `next` doubles as the node-pool link when the
+         * node is not a piece. */
+        Node *next;
+        Node *prev;
     };
 
-    /** Index of the smallest unused normal untyped that can hold `size_bits`. */
-    int find_untyped(seL4_Word size_bits) const noexcept;
+    /** A free node slot, or nullptr when the pool is exhausted. */
+    Node *alloc_node() noexcept;
+    void free_node(Node *node) noexcept;
+
+    /** Put a root untyped into its class's size list, in physical order. False
+     *  when the node pool is full. */
+    bool add_untyped(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept;
+
+    /** The free lists of a class. */
+    Node **lists(bool device) noexcept { return device ? dev_heads_ : heads_; }
+
+    /** Make sure `size_bits` has a free piece, splitting a larger one into two
+     *  equal buddies until it does (allocman's `_refill_pool`). */
+    bool refill(bool device, seL4_Word size_bits) noexcept;
+
+    /** Unlink a free piece and mark it allocated, or nullptr when none. */
+    Node *take(bool device, seL4_Word size_bits) noexcept;
+
+    /** Insert a free piece into its size list, in physical order. */
+    void insert(bool device, Node *node) noexcept;
+
+    /** Unlink a free piece from its list. */
+    void unlink(Node *node) noexcept;
+
+    /** Give a piece back, merging with its buddy when the buddy is free
+     *  (allocman's `_utspace_split_free`). */
+    void free_piece(Node *node) noexcept;
 
     /** Give back the most recent reservation, if `slot` is it. A cursor that keeps
      *  walking past a failed retype leaves it behind the slots actually in use, and a
@@ -255,34 +309,29 @@ private:
      *  need: one slot is outstanding at a time. */
     void slot_failed(seL4_CPtr slot) noexcept;
 
-    /** A record whose untyped an object consumed is dead: its memory is gone and
-     *  the kernel will never let it be retyped again. Compact it away -- swap the
-     *  last live entry into its place and shrink -- so the fixed table is a
-     *  ceiling on *live free untypeds*, not on every object ever allocated. This
-     *  is the table growing on demand in the only sense a bootstrap structure
-     *  can: fragmentation is what it holds, and fragmentation is bounded. */
-    void release_entry(int index) noexcept;
-
-    /** Halve `untyped_[index]` until its free remainder is exactly `size_bits` wide.
-     *  `last_child`, when given, receives the capability of the last leaf the
-     *  halving made -- or 0 when nothing had to be split. The leaf is the piece a
-     *  caller may give away: the remainder has children and the kernel refuses to
-     *  copy a capability that does (`seL4_RevokeFirst`). On failure, `error` says
-     *  what the kernel said -- a caller that overwrites it with its own guess is
-     *  inventing an answer the kernel already gave. */
-    bool split_to(int index, seL4_Word size_bits, seL4_CPtr *last_child = nullptr,
-                  seL4_Error *error = nullptr) noexcept;
-
-    bool remember(seL4_CPtr cap, seL4_Word size_bits, bool device, uint64_t paddr) noexcept;
-
     seL4_BootInfo *bootinfo_;
-    /* Room for the kernel's own list *and* the halves splitting creates: every
-     * allocation from a big untyped can add up to one entry per halving. It is a
-     * bootstrap structure, so it is static storage rather than something the
-     * allocator allocates -- and when it is full, allocations fail loudly rather
-     * than quietly forgetting memory (remember() returns false). */
-    Untyped untyped_[CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS * 8];
-    unsigned untyped_count_;
+    /* The node pool: regions the caller provided, linked as one free list. A
+     * full pool asks `node_source_` for another region rather than failing --
+     * the caller carves and maps it, the allocator only retypes. */
+    Node *node_region_;
+    unsigned node_capacity_;
+    Node *free_nodes_;
+    unsigned node_used_;
+    /* How many nodes are free, and whether a grow is in progress. The source
+     * itself allocates (a frame to map), so `alloc_node` must not ask for
+     * another region while it is being grown -- hence the flag -- and it grows
+     * with a reserve still in hand, because the frame the source carves needs
+     * nodes of its own. */
+    unsigned node_free_;
+    bool growing_;
+    NodeSource node_source_;
+    void *node_context_;
+    /* A small built-in region, so an allocator whose caller does not adopt one
+     * still works; a caller that knows its grant adopts a bigger one and/or a
+     * source, and this is not touched. It is a floor, not the size. */
+    Node default_nodes_[CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS * 8];
+    Node *heads_[seL4_WordBits];
+    Node *dev_heads_[seL4_WordBits];
     unsigned cnode_size_bits_;
     /* The depth that addresses our slots: the whole word for the kernel's root CNode,
      * and zero for a service that addresses its own CSpace (adopt_slots explains). */

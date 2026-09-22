@@ -290,7 +290,8 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             {"owns", &Entry::owns},       {"needs", &Entry::needs},
             {"grants", &Entry::grants},   {"spawns", &Entry::spawns},
             {"restart", &Entry::restart},   {"priority", &Entry::priority},
-            {"args", &Entry::args},
+            {"args", &Entry::args},         {"environment", &Entry::environment},
+            {"cwd", &Entry::cwd},
         };
         for (Binding const &binding : kViewKeys) {
             if (equals(key, binding.name)) {

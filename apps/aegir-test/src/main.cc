@@ -1046,7 +1046,7 @@ int main(int argc, char *argv[])
         if (ok) {
             /* The slots below +64 are this block's constants' neighbours;
              * the allocator works past them. */
-            g_test_objects.adopt_slots(first_free + 64, (1u << 10) - (first_free + 64), 0);
+            g_test_objects.adopt_slots(first_free + 64, (1u << aegir::bootstrap::kCNodeBits) - (first_free + 64), 0);
             ok = g_test_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                                       static_cast<uintptr_t>(window_base),
                                       static_cast<uintptr_t>(window_base + window_bytes),

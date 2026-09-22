@@ -51,4 +51,6 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
   freeing heap, and the two build switches that gate them.
 - `specs/third_party.md` — how third-party code is pinned, fetched and patched.
 - `specs/userland.md` — what Aegir's userland is, and what it is not.
+- `specs/clang-on-aegir.md` — the plan for an on-device LLVM/Clang: the POSIX
+  personality it needs, the target triple, and the phases.
 
