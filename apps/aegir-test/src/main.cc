@@ -846,6 +846,108 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The union (specs/namespace.md): a name that stands for an ordered list
+     * of directories, read and listed as one. AEGIR: and SCRATCH: are bound
+     * into a global UNION:, first member first; a read of a name both hold is
+     * the first member's, and a listing is the merge, the shared name once.
+     * The bind is the everyone-badge's (the global a Sys: carries), so this
+     * service does not need its own badge to make the union its own. */
+    {
+        static char const kShared[] = "AEGIR.TXT";
+        uint8_t const scratch_byte = 's';
+        bool ok = [&] {
+            uint64_t const handle =
+                vol_open(scratch_volume, kShared, sizeof(kShared) - 1,
+                         aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            return handle != 0 && vol_write(scratch_volume, handle, &scratch_byte, 1) == 1 &&
+                   vol_close(scratch_volume, handle) == 1;
+        }();
+        if (!ok) {
+            write("  test: FAIL SCRATCH:AEGIR.TXT would not be made\n");
+            ++failed;
+        }
+        /* The bind: replace for the first member, then append the second --
+         * the append is what makes the name a union. */
+        ok = ok && [&] {
+            uint64_t out[aegir::ipc::kMaxWords];
+            uint64_t in[1];
+            uint32_t w = 0;
+            out[w++] = ~0ULL;
+            out[w++] = 0;
+            w += aegir::nmspace::pack_string(out + w, "UNION", 5,
+                                             aegir::nmspace::kNameMax);
+            w += aegir::nmspace::pack_string(out + w, "AEGIR:", 6,
+                                             aegir::nmspace::kPathMax);
+            aegir::ipc::WordsReply const first =
+                g_nmspace.call_words(aegir::nmspace::kMethodBind, out, w, in, 1);
+            w = 0;
+            out[w++] = ~0ULL;
+            out[w++] = aegir::nmspace::kBindAppend | aegir::nmspace::kBindCreate;
+            w += aegir::nmspace::pack_string(out + w, "UNION", 5,
+                                             aegir::nmspace::kNameMax);
+            w += aegir::nmspace::pack_string(out + w, "SCRATCH:", 8,
+                                             aegir::nmspace::kPathMax);
+            aegir::ipc::WordsReply const second =
+                g_nmspace.call_words(aegir::nmspace::kMethodBind, out, w, in, 1);
+            return first.error == 0 && first.count == 1 && in[0] == 1 &&
+                   second.error == 0 && second.count == 1 && in[0] == 1;
+        }();
+        if (!ok) {
+            write("  test: FAIL UNION: would not bind\n");
+            ++failed;
+        }
+        if (ok) {
+            seL4_CPtr const union_volume =
+                resolve("UNION:AEGIR.TXT", 15, &rest, &rest_length,
+                        static_cast<seL4_CPtr>(first_free + 11));
+            if (!read_and_check(union_volume, rest, rest_length, kAegirTxt,
+                                text_length(kAegirTxt))) {
+                write("  test: FAIL UNION:AEGIR.TXT was not the first member's\n");
+                ++failed;
+            } else {
+                write("  test: UNION:AEGIR.TXT reads the first member's bytes\n");
+            }
+            aegir::ipc::Consumer const volume(union_volume);
+            uint32_t shared = 0;
+            bool saw_scratch = false;
+            bool saw_docs = false;
+            for (uint32_t i = 0;; ++i) {
+                uint64_t out[aegir::ipc::kMaxWords];
+                uint32_t out_words = aegir::nmspace::pack_string(
+                    out, "", 0, aegir::nmspace::kPathMax);
+                out[out_words++] = i;
+                uint64_t in[aegir::ipc::kMaxWords];
+                aegir::ipc::WordsReply const answer = volume.call_words(
+                    aegir::volume::kMethodList, out, out_words, in, aegir::ipc::kMaxWords);
+                if (answer.error != 0 || answer.count == 0) {
+                    break;
+                }
+                char const *name = nullptr;
+                uint32_t name_length = 0;
+                if (!aegir::nmspace::unpack_string(in, answer.count,
+                                                   aegir::nmspace::kNameMax, &name,
+                                                   &name_length)) {
+                    break;
+                }
+                if (name_length == 9 && same_bytes(name, "AEGIR.TXT", 9)) {
+                    ++shared;
+                }
+                if (name_length == 9 && same_bytes(name, "WROTE.TXT", 9)) {
+                    saw_scratch = true;
+                }
+                if (name_length == 4 && same_bytes(name, "DOCS", 4)) {
+                    saw_docs = true;
+                }
+            }
+            if (shared != 1 || !saw_scratch || !saw_docs) {
+                write("  test: FAIL UNION: did not merge the members\n");
+                ++failed;
+            } else {
+                write("  test: UNION: lists the merge, the shared name once\n");
+            }
+        }
+    }
+
     /* auth.login: the entry the build packed is the checksum -- accepted
      * with its secret, and refused the same way for a wrong secret and an
      * unknown name, because the port is not an oracle (specs/auth.md). */

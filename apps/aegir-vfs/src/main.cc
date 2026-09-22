@@ -706,7 +706,7 @@ void drop_member() noexcept
  * return is their count, zero when the member has no such entry or the nested
  * call failed. The serve loop is one thread, so the working buffers are
  * static. */
-uint32_t member_list_entry(Member const *member, uint64_t caller, char const *path,
+uint32_t member_list_entry(Member const *member, uint64_t badge, char const *path,
                            uint32_t path_length, uint64_t index, uint64_t *out) noexcept
 {
     static char member_path[aegir::nmspace::kPathMax];
@@ -723,7 +723,7 @@ uint32_t member_list_entry(Member const *member, uint64_t caller, char const *pa
         return 0;
     }
     payload[member_words] = index;
-    seL4_CPtr const cap = mint_member(member->volume, caller);
+    seL4_CPtr const cap = mint_member(member->volume, badge);
     if (cap == 0) {
         return 0;
     }
@@ -755,7 +755,7 @@ bool answer_name_is(uint64_t const *answer, uint32_t count, char const *name,
  * (specs/namespace.md). The read's path is union-relative; each member's is
  * its rest composed with it. The member's answer -- count, end-of-file, bytes
  * -- is the union's, word for word. */
-void union_read(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller,
+void union_read(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
                 uint64_t const *words, uint32_t count) noexcept
 {
     char const *path = nullptr;
@@ -791,7 +791,7 @@ void union_read(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller
         }
         payload[member_words] = offset;
         payload[member_words + 1] = max;
-        seL4_CPtr const cap = mint_member(m->volume, caller);
+        seL4_CPtr const cap = mint_member(m->volume, badge);
         if (cap == 0) {
             continue;
         }
@@ -813,7 +813,7 @@ void union_read(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller
  * (specs/namespace.md). The caller's index is the cursor, and the directory
  * owes no stability across calls, so a call rebuilds the merged sequence up to
  * the index it is asked for rather than keeping one. */
-void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller,
+void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
                 uint64_t const *words, uint32_t count) noexcept
 {
     char const *path = nullptr;
@@ -838,7 +838,7 @@ void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller
     for (Member const *m = binding->members; m != nullptr; m = m->next) {
         for (uint64_t j = 0;; ++j) {
             uint32_t const entry_count =
-                member_list_entry(m, caller, path, path_length, j, entry);
+                member_list_entry(m, badge, path, path_length, j, entry);
             if (entry_count == 0) {
                 break;
             }
@@ -854,7 +854,7 @@ void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller
             for (Member const *p = binding->members; p != m && !shadowed; p = p->next) {
                 for (uint64_t k = 0;; ++k) {
                     uint32_t const earlier_count =
-                        member_list_entry(p, caller, path, path_length, k, earlier);
+                        member_list_entry(p, badge, path, path_length, k, earlier);
                     if (earlier_count == 0) {
                         break;
                     }
@@ -878,27 +878,26 @@ void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t caller
 }
 
 /* A union's volume call (specs/namespace.md): the badge names the union, and
- * the caller's identity is the first word -- the badge is spent on the union
- * id, so the identity cannot ride there. read and list are served here; the
- * write side (open, write, close, mkdir, remove) is the next piece, and a
- * method this version does not know is answered by saying nothing. */
+ * the call is the volume protocol's -- read and list carry the merge, so a
+ * client that resolved a name calls them exactly as it calls a volume's. The
+ * members are asked on the binder's badge; the write side (open, write,
+ * close, mkdir, remove), where a handle is scoped to the caller, is the next
+ * piece, and a method this version does not know is answered by saying
+ * nothing. */
 void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
                   uint64_t const *words, uint32_t count) noexcept
 {
     Binding const *binding = find_union(aegir::nmspace::union_id(badge));
-    if (binding == nullptr || count < 1) {
+    if (binding == nullptr) {
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const caller = words[0];
-    uint64_t const *payload = words + 1;
-    uint32_t const payload_count = count - 1;
     switch (method) {
     case aegir::volume::kMethodRead:
-        union_read(port, binding, caller, payload, payload_count);
+        union_read(port, binding, binding->badge, words, count);
         break;
     case aegir::volume::kMethodList:
-        union_list(port, binding, caller, payload, payload_count);
+        union_list(port, binding, binding->badge, words, count);
         break;
     default:
         port.reply_words(nullptr, 0);
