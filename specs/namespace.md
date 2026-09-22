@@ -112,14 +112,24 @@ cannot land half-way:
 
    The port is the **namespace endpoint itself**, not a new one: a single
    thread cannot `seL4_Recv` on two endpoints, and polling a second one is a
-   spin, so the union's methods are additional method numbers on the endpoint
-   the VFS already serves. `resolve` of a union returns the namespace
-   endpoint's capability, minted with a badge that encodes the **union id**; a
-   plain namespace capability carries no union id, so the receive tells a union
-   call from a namespace call and knows which union. The caller's identity --
-   which the member filesystems need -- rides in the union call's words, since
-   the badge is spent on the union id. This is why the VFS stops being a pure
-   request/response server even though it still has one receive.
+   spin, so the union is served on the endpoint the VFS already receives on.
+   `resolve` of a union returns that endpoint's capability, minted with a
+   badge that encodes the **union id**; a plain namespace capability carries no
+   union id, so the one receive tells a union call from a namespace call and
+   knows which union. The union then speaks the **volume protocol** on that
+   capability -- read and list carry the merge, so a client that resolved a
+   name calls them exactly as it calls a volume's -- and the badge's mark is
+   what lets the VFS tell the two meanings of method 1 apart (a namespace
+   `register`, a union's `read`).
+
+   The members are resolved when they are **bound**, not per call: `bind` turns
+   each path into the volume it names and the volume-relative rest, and the
+   binding keeps those (the section above), so a member can be a per-badge
+   alias (`ENV:`'s `Home:Prefs/Env-Archive`) without a later call knowing the
+   badge. What the write side still needs -- the caller's identity, so a member
+   filesystem scopes a handle to the true caller -- is not in the union cap's
+   badge (the union id is), and is the write side's own piece: a client cannot
+   learn its badge today, so the identity's source is settled there, not here.
 
    It also widens a right: minting the union cap is a mint *of the namespace
    endpoint*, and a mint keeps only what the source holds, so the VFS's owner
@@ -127,13 +137,20 @@ cannot land half-way:
    `apps/aegir-director/src/ports.cc`'s `rights_for("vfs.namespace").owner`
    grows from `Grant+Read` to all rights for that reason. Nothing else about
    the port graph changes.
-4. **`resolve` of a union** returns the union port's capability (minted with the
-   caller's badge) and the rest, exactly as a volume's resolve does. The VFS is
-   then a filesystem whose members are filesystems.
+4. **`resolve` of a union** returns the union endpoint's capability, minted
+   with the **union id** in its badge, and the rest -- the shape a volume's
+   resolve answers in, so a client sees no difference. The VFS is then a
+   filesystem whose members are filesystems.
 5. **The acceptance**: the test bed binds two directories on `AEGIR:` and
    `SCRATCH:` into one name and exercises read (first member wins), list
    (merged, shared name once), mkdir/create (create target only), and remove
    (the member that holds it).
+6. **The enumeration**: three more methods on `vfs.namespace` --
+   `bindcount`, `binddescribe`, `bindmember` -- expose the bindings, which a
+   shell otherwise cannot see. A binding's row carries its name, flags, union
+   id and member count; a member's row carries the volume it pins, its flags,
+   and its rest. This is what lets a DOS command set a union up and remove a
+   volume from one, and the groundwork for naming a filesystem for a mount.
 
 `ENV:` is then a binding, not code: the archives are ordinary directories and
 `ENV:` is their union (specs/environment.md). The startup that reads it and the
