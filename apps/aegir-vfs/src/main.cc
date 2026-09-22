@@ -667,6 +667,99 @@ void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     port.reply_words(reinterpret_cast<uint64_t const *>(&row), aegir::nmspace::kRowWords);
 }
 
+/* The binding at an index, oldest-first like the volumes: a registration
+ * during a walk does not move what was seen. Null when the index is past the
+ * end. */
+Binding const *binding_at(uint64_t index) noexcept
+{
+    if (index >= g_binding_count) {
+        return nullptr;
+    }
+    uint32_t const want = g_binding_count - 1 - static_cast<uint32_t>(index);
+    Binding const *binding = g_bindings;
+    for (uint32_t i = 0; i < want && binding != nullptr; ++i) {
+        binding = binding->next;
+    }
+    return binding;
+}
+
+void answer_bind_count(aegir::ipc::Owner &port) noexcept
+{
+    uint64_t const n = g_binding_count;
+    port.reply_words(&n, 1);
+}
+
+/* describe: the bindings, one row at a time -- the shell's way to see a union
+ * and its members (specs/namespace.md). */
+void answer_bind_describe(aegir::ipc::Owner &port, uint64_t const *words,
+                          uint32_t count) noexcept
+{
+    if (count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Binding const *binding = binding_at(words[0]);
+    if (binding == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::nmspace::BindingRow row{};
+    for (uint32_t i = 0; i < binding->name_length; ++i) {
+        row.name[i] = binding->name[i];
+    }
+    row.flags = binding->flags;
+    row.union_id = binding->union_id;
+    uint64_t members = 0;
+    for (Member const *m = binding->members; m != nullptr; m = m->next) {
+        ++members;
+    }
+    row.member_count = members;
+    port.reply_words(reinterpret_cast<uint64_t const *>(&row),
+                     aegir::nmspace::kBindingRowWords);
+}
+
+/* member: one member of a binding -- the volume it pins, the flags its bind
+ * carried, and its rest, packed after the row. */
+void answer_bind_member(aegir::ipc::Owner &port, uint64_t const *words,
+                        uint32_t count) noexcept
+{
+    if (count < 2) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Binding const *binding = binding_at(words[0]);
+    if (binding == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Member const *member = binding->members;
+    for (uint64_t i = 0; i < words[1] && member != nullptr; ++i) {
+        member = member->next;
+    }
+    if (member == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::nmspace::MemberRow row{};
+    if (member->volume != nullptr) {
+        for (uint32_t i = 0; i < member->volume->name_length; ++i) {
+            row.volume[i] = member->volume->name[i];
+        }
+        row.bound = 1;
+    }
+    row.flags = member->flags;
+    uint64_t answer[aegir::ipc::kMaxWords];
+    for (uint32_t i = 0; i < aegir::nmspace::kMemberRowWords; ++i) {
+        answer[i] = reinterpret_cast<uint64_t const *>(&row)[i];
+    }
+    uint32_t const rest_max =
+        8 * (aegir::ipc::kMaxWords - aegir::nmspace::kMemberRowWords - 1);
+    uint32_t const rest_words = aegir::nmspace::pack_string(
+        answer + aegir::nmspace::kMemberRowWords, member->rest, member->rest_length,
+        rest_max);
+    port.reply_words(answer, aegir::nmspace::kMemberRowWords + rest_words);
+}
+
 /* The binding a union id names: the id is what the union cap's badge carries,
  * and a stale id -- one whose binding is gone -- names nothing, which is a
  * refusal rather than a wrong read (specs/namespace.md). */
@@ -983,6 +1076,15 @@ int main(int argc, char *argv[])
             break;
         case aegir::nmspace::kMethodUnbind:
             answer_unbind(port, words, count);
+            break;
+        case aegir::nmspace::kMethodBindCount:
+            answer_bind_count(port);
+            break;
+        case aegir::nmspace::kMethodBindDescribe:
+            answer_bind_describe(port, words, count);
+            break;
+        case aegir::nmspace::kMethodBindMember:
+            answer_bind_member(port, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

@@ -51,6 +51,15 @@ constexpr uint32_t kMethodBind = 5;     /* in: badge, flags, name, path; answer:
  * Answer: how many were dropped. */
 constexpr uint32_t kMethodUnbind = 6;   /* in: badge; answer: how many */
 
+/* The bindings, enumerated (specs/namespace.md): how the shell sees a union
+ * and its members -- to set one up, to remove a volume from one, and one day
+ * to name a mount. count answers how many; describe answers one binding's
+ * row; member answers one member's row with its rest packed after it. */
+constexpr uint32_t kMethodBindCount = 7;    /* answer: how many bindings */
+constexpr uint32_t kMethodBindDescribe = 8; /* in: an index; answer: a BindingRow */
+constexpr uint32_t kMethodBindMember = 9;   /* in: binding index, member index;
+                                             * answer: a MemberRow + the rest */
+
 /** Bind flags (specs/namespace.md). A second bind of the same name appends or
  *  prepends a member -- the union, a name read as an ordered list of
  *  directories; the default replaces the binding, which is the one-member
@@ -143,6 +152,30 @@ struct Row {
 
 /** The Row as the message carries it. */
 constexpr uint32_t kRowWords = (sizeof(Row) + 7) / 8;
+
+/** One binding, as the namespace knows it: the name, the flags of its last
+ *  bind, `union_id` (zero for a plain alias, the id its union cap carries
+ *  otherwise), and how many members the ordered list has. */
+struct BindingRow {
+    char name[kNameMax];
+    uint64_t flags;
+    uint64_t union_id;
+    uint64_t member_count;
+};
+
+/** The BindingRow as the message carries it. */
+constexpr uint32_t kBindingRowWords = (sizeof(BindingRow) + 7) / 8;
+
+/** One member of a binding: the volume it pins and the flags its bind
+ *  carried. Its volume-relative rest follows the row as a packed string. */
+struct MemberRow {
+    char volume[kNameMax];
+    uint64_t flags;
+    uint64_t bound; /* 1 when the member holds a volume */
+};
+
+/** The MemberRow as the message carries it. */
+constexpr uint32_t kMemberRowWords = (sizeof(MemberRow) + 7) / 8;
 
 /* resolve's answer, at its longest: the volume-relative rest as one packed
  * string -- the whole envelope, the way the request's path is. */

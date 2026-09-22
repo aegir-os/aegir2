@@ -945,6 +945,68 @@ int main(int argc, char *argv[])
             } else {
                 write("  test: UNION: lists the merge, the shared name once\n");
             }
+            /* The enumeration (specs/namespace.md): the shell's way to see
+             * the union and its members -- count, then find UNION: among the
+             * bindings, then read its two members in order. */
+            uint64_t bindings = 0;
+            {
+                uint64_t in[1];
+                aegir::ipc::WordsReply const answer = g_nmspace.call_words(
+                    aegir::nmspace::kMethodBindCount, nullptr, 0, in, 1);
+                bindings = answer.error == 0 && answer.count == 1 ? in[0] : 0;
+            }
+            bool described = false;
+            bool members_ok = false;
+            for (uint64_t i = 0; i < bindings; ++i) {
+                uint64_t const out[1] = {i};
+                uint64_t in[aegir::ipc::kMaxWords];
+                aegir::ipc::WordsReply const answer = g_nmspace.call_words(
+                    aegir::nmspace::kMethodBindDescribe, out, 1, in, aegir::ipc::kMaxWords);
+                if (answer.error != 0 || answer.count < aegir::nmspace::kBindingRowWords) {
+                    continue;
+                }
+                aegir::nmspace::BindingRow row{};
+                for (uint32_t w = 0; w < aegir::nmspace::kBindingRowWords; ++w) {
+                    reinterpret_cast<uint64_t *>(&row)[w] = in[w];
+                }
+                if (row.name[5] != '\0' || !same_bytes(row.name, "UNION", 5)) {
+                    continue;
+                }
+                described = row.union_id != 0 && row.member_count == 2;
+                bool saw_aegir = false;
+                bool saw_scratch = false;
+                for (uint64_t m = 0; m < row.member_count; ++m) {
+                    uint64_t const mout[2] = {i, m};
+                    uint64_t min[aegir::ipc::kMaxWords];
+                    aegir::ipc::WordsReply const manswer = g_nmspace.call_words(
+                        aegir::nmspace::kMethodBindMember, mout, 2, min,
+                        aegir::ipc::kMaxWords);
+                    if (manswer.error != 0 ||
+                        manswer.count < aegir::nmspace::kMemberRowWords) {
+                        continue;
+                    }
+                    aegir::nmspace::MemberRow mrow{};
+                    for (uint32_t w = 0; w < aegir::nmspace::kMemberRowWords; ++w) {
+                        reinterpret_cast<uint64_t *>(&mrow)[w] = min[w];
+                    }
+                    if (m == 0 && mrow.bound == 1 && mrow.volume[5] == '\0' &&
+                        same_bytes(mrow.volume, "AEGIR", 5)) {
+                        saw_aegir = true;
+                    }
+                    if (m == 1 && mrow.bound == 1 && mrow.volume[7] == '\0' &&
+                        same_bytes(mrow.volume, "SCRATCH", 7)) {
+                        saw_scratch = true;
+                    }
+                }
+                members_ok = saw_aegir && saw_scratch;
+                break;
+            }
+            if (!described || !members_ok) {
+                write("  test: FAIL UNION: was not enumerable\n");
+                ++failed;
+            } else {
+                write("  test: UNION: enumerates as a union of AEGIR: and SCRATCH:\n");
+            }
         }
     }
 
