@@ -202,7 +202,13 @@ The order:
    never calls libc's `exit`, so destructors registered through libc's
    `__cxa_atexit` do not run. A process that needs them at exit wants the
    `__funcs_on_exit()` bridge. Small, and it closes a correctness hole the
-   other parts would otherwise each work around.
+   other parts would otherwise each work around. **Landed**: the bridge is a
+   constructor in `libs/aegir-runtime/src/debug.cc` (that translation unit,
+   not one of its own, because a static archive only pulls an object the
+   linker has a reason to), installing `__funcs_on_exit` and `__stdio_exit` as
+   sel4runtime's pre-exit step and a clean halt as the exit itself; the
+   cxx-smoke registers a handler and returns from `main`, and the acceptance
+   checks `CXX_ATEXIT_OK` after `CXX_SMOKE_OK`.
 3. **Exceptions and RTTI.** Tier 1 compiles without them. Turning them on means
    rebuilding libc++ with `LIBCXX_ENABLE_EXCEPTIONS`/`RTTI` on and proving
    unwinding in a *spawned* process — `.eh_frame` mapped and frame registration
