@@ -120,6 +120,13 @@ cannot land half-way:
    which the member filesystems need -- rides in the union call's words, since
    the badge is spent on the union id. This is why the VFS stops being a pure
    request/response server even though it still has one receive.
+
+   It also widens a right: minting the union cap is a mint *of the namespace
+   endpoint*, and a mint keeps only what the source holds, so the VFS's owner
+   half must carry Write and GrantReply for the client's cap to be callable.
+   `apps/aegir-director/src/ports.cc`'s `rights_for("vfs.namespace").owner`
+   grows from `Grant+Read` to all rights for that reason. Nothing else about
+   the port graph changes.
 4. **`resolve` of a union** returns the union port's capability (minted with the
    caller's badge) and the rest, exactly as a volume's resolve does. The VFS is
    then a filesystem whose members are filesystems.
