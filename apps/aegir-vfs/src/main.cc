@@ -55,26 +55,36 @@ struct Volume {
 Volume *g_volumes = nullptr;
 uint32_t g_volume_count = 0;
 
-/* An alias: a name that stands for a path (specs/vfs.md's Aliases). Sys is
- * kept as one of these with the everyone-badge rather than through a shape
- * of its own -- one table, one walk. */
+/* One member of a binding: a path the name stands for, and the flags that
+ * bind carried (specs/namespace.md). A plain alias has one; a union has an
+ * ordered list, and the order is the search order. */
+struct Member {
+    char path[aegir::nmspace::kPathMax];
+    uint32_t path_length;
+    uint64_t flags;
+    Member *next;
+};
+
+/* An alias: a name that stands for an ordered list of paths (specs/vfs.md's
+ * Aliases, specs/namespace.md's union). Sys is kept as one of these with the
+ * everyone-badge rather than through a shape of its own -- one table, one
+ * walk. */
 struct Binding {
     uint64_t badge; /* whose alias this is; kAliasEveryone for a global */
     uint64_t flags; /* kBindAppend / kBindPrepend / kBindCreate (specs/namespace.md) */
     char name[aegir::nmspace::kNameMax];
     uint32_t name_length;
-    char target[aegir::nmspace::kPathMax];
-    uint32_t target_length;
+    Member *members; /* the ordered list; never empty for a live binding */
     Binding *next;
 };
 constexpr uint64_t kAliasEveryone = ~0ULL;
 Binding *g_bindings = nullptr;
 uint32_t g_binding_count = 0;
-/* Dropped bindings, for reuse: every binding is the same size, so an
- * unbound row serves the next bind, and the arena's bound is the most
- * aliases ever live at once rather than ever made -- the demand the
- * session-reclaim arc creates, met by reuse (specs/vfs.md). */
+/* Dropped bindings and members, for reuse: each is one size, so an unbound
+ * row serves the next bind, and the arena's bound is the most ever live at
+ * once rather than ever made (specs/vfs.md). */
 Binding *g_binding_free = nullptr;
+Member *g_member_free = nullptr;
 
 /* The table's backing store: the memory the manifest's memory_kib granted,
  * mapped and ours, used up from the front. */
@@ -91,6 +101,22 @@ void *arena_take(uint64_t bytes) noexcept
     g_arena += bytes;
     g_arena_left -= bytes;
     return taken;
+}
+
+Member *member_take() noexcept
+{
+    Member *member = g_member_free;
+    if (member != nullptr) {
+        g_member_free = member->next;
+        return member;
+    }
+    return static_cast<Member *>(arena_take(sizeof(Member)));
+}
+
+void member_free(Member *member) noexcept
+{
+    member->next = g_member_free;
+    g_member_free = member;
 }
 
 /* Slots past everything the bootstrap block names are ours (the adoption the
@@ -234,22 +260,30 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
             write(volume->name, volume->name_length);
             write(": a second boot flag -- the first stands\n");
         } else {
-            sys->badge = kAliasEveryone;
-            sys->flags = 0;
-            sys->name[0] = 'S';
-            sys->name[1] = 'y';
-            sys->name[2] = 's';
-            sys->name_length = 3;
-            for (uint32_t i = 0; i < volume->name_length; ++i) {
-                sys->target[i] = volume->name[i];
+            Member *member = member_take();
+            if (member == nullptr) {
+                write("  vfs: no room for the Sys: alias, refused\n");
+            } else {
+                sys->badge = kAliasEveryone;
+                sys->flags = 0;
+                sys->name[0] = 'S';
+                sys->name[1] = 'y';
+                sys->name[2] = 's';
+                sys->name_length = 3;
+                for (uint32_t i = 0; i < volume->name_length; ++i) {
+                    member->path[i] = volume->name[i];
+                }
+                member->path_length = volume->name_length;
+                member->flags = 0;
+                member->next = nullptr;
+                sys->members = member;
+                sys->next = g_bindings;
+                g_bindings = sys;
+                ++g_binding_count;
+                write("  vfs: Sys: is ");
+                write(member->path, member->path_length);
+                write("\n");
             }
-            sys->target_length = volume->name_length;
-            sys->next = g_bindings;
-            g_bindings = sys;
-            ++g_binding_count;
-            write("  vfs: Sys: is ");
-            write(sys->target, sys->target_length);
-            write("\n");
         }
     }
     uint64_t answer[aegir::nmspace::kNameMax / 8 + 1];
@@ -288,44 +322,84 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     }
     /* A name with a colon is a path, not an alias; a volume's name is a
      * volume's -- resolution looks volumes up first, so the alias would be
-     * dead on arrival; and a bound pair does not rebind. */
+     * dead on arrival. A second bind of a *name* grows the list or replaces it
+     * (specs/namespace.md): append and prepend add a member, the default
+     * replaces, which is the one-member alias specs/vfs.md describes. */
     bool colon = false;
     for (uint32_t i = 0; i < name_length; ++i) {
         if (name[i] == ':') {
             colon = true;
         }
     }
-    if (colon || find_volume(name, name_length) != nullptr ||
-        find_binding(badge, name, name_length) != nullptr) {
+    if (colon || find_volume(name, name_length) != nullptr) {
         port.reply_words(nullptr, 0);
         return;
     }
-    Binding *binding = g_binding_free;
-    if (binding != nullptr) {
-        g_binding_free = binding->next;
-    } else {
-        binding = static_cast<Binding *>(arena_take(sizeof(Binding)));
-    }
-    if (binding == nullptr) {
+    Member *member = member_take();
+    if (member == nullptr) {
         write("  vfs: no room for another alias, refused\n");
         port.reply_words(nullptr, 0);
         return;
     }
-    binding->badge = badge;
-    binding->flags = flags;
-    for (uint32_t i = 0; i < name_length; ++i) {
-        binding->name[i] = name[i];
-    }
-    binding->name_length = name_length;
     for (uint32_t i = 0; i < target_length; ++i) {
-        binding->target[i] = target[i];
+        member->path[i] = target[i];
     }
-    binding->target_length = target_length;
-    binding->next = g_bindings;
-    g_bindings = binding;
+    member->path_length = target_length;
+    member->flags = flags;
+    member->next = nullptr;
+
+    Binding *binding = find_binding(badge, name, name_length);
+    if (binding != nullptr) {
+        if ((flags & aegir::nmspace::kBindAppend) != 0) {
+            Member **tail = &binding->members;
+            while (*tail != nullptr) {
+                tail = &(*tail)->next;
+            }
+            *tail = member;
+        } else if ((flags & aegir::nmspace::kBindPrepend) != 0) {
+            member->next = binding->members;
+            binding->members = member;
+        } else {
+            while (binding->members != nullptr) {
+                Member *old = binding->members;
+                binding->members = old->next;
+                member_free(old);
+            }
+            binding->members = member;
+        }
+        binding->flags = flags;
+        write("  vfs: ");
+        write(binding->name, binding->name_length);
+        write(": grown\n");
+        uint64_t const one = 1;
+        port.reply_words(&one, 1);
+        return;
+    }
+
+    Binding *fresh = g_binding_free;
+    if (fresh != nullptr) {
+        g_binding_free = fresh->next;
+    } else {
+        fresh = static_cast<Binding *>(arena_take(sizeof(Binding)));
+    }
+    if (fresh == nullptr) {
+        member_free(member);
+        write("  vfs: no room for another alias, refused\n");
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    fresh->badge = badge;
+    fresh->flags = flags;
+    for (uint32_t i = 0; i < name_length; ++i) {
+        fresh->name[i] = name[i];
+    }
+    fresh->name_length = name_length;
+    fresh->members = member;
+    fresh->next = g_bindings;
+    g_bindings = fresh;
     ++g_binding_count;
     write("  vfs: ");
-    write(binding->name, binding->name_length);
+    write(fresh->name, fresh->name_length);
     write(": bound for badge ");
     aegir::debug_write_hex(badge);
     write("\n");
@@ -351,6 +425,11 @@ void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
         Binding *b = *at;
         if (b->badge == badge) {
             *at = b->next;
+            while (b->members != nullptr) {
+                Member *member = b->members;
+                b->members = member->next;
+                member_free(member);
+            }
             b->next = g_binding_free;
             g_binding_free = b;
             --g_binding_count;
@@ -418,8 +497,10 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
         /* Compose: the target, then the rest. A target that names a volume
          * joins with a colon; one that is a path joins with a slash, and an
          * empty rest adds nothing. */
-        char const *target = binding->target;
-        uint32_t const target_length = binding->target_length;
+        /* The first member is the one a resolve substitutes; a union's search
+         * order is the list's (specs/namespace.md). */
+        char const *target = binding->members->path;
+        uint32_t const target_length = binding->members->path_length;
         uint32_t const rest_length = composed_length - colon - 1;
         bool const target_is_path = [&] {
             for (uint32_t i = 0; i < target_length; ++i) {
