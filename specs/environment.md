@@ -1,6 +1,6 @@
 # The process environment
 
-Status: for review (2026-09). This is the spec the process-environment arc lands
+Status: decided (2026-09). This is the spec the process-environment arc lands
 under — the arc `std::filesystem` and `aegir::filesystem` wait on
 (`specs/cxx.md`'s completion program).
 
@@ -62,18 +62,17 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
 `Request` grows three fields: the arguments (a list of strings), the environment
 (a list of `NAME=VALUE` strings, normally the spawner's own), and the current
 directory (a string, normally the spawner's own, or empty for none). The
-spawner copies the bytes into the child — a region it maps beside the stack, or
-into a page of the image — and the bootstrap block carries an entry naming the
-region and its length, so the child finds it the way it finds its ports. The
-encoding is the spawner's and the library's to agree on; the block says where,
-not what.
+arguments and the environment ride in the **startup frame** — the `argc`/`argv`/
+`envp` the C ABI already carries, which the runtime reads and the library then
+wraps — and only the current directory is a bootstrap block entry (`CurrentDir`),
+because it is the one piece the frame has no place for.
 
 Inheritance is the default, so a spawner that adds nothing passes its own
 environment through: a shell starts a program, and the program sees the shell's
 variables and current directory. A spawner that wants otherwise says so — the
 director gives a boot service the manifest's arguments and a `Sys:` current
-directory, and auth gives a session a `Home:` current directory, its own
-variables beside. The process cannot tell which spawner it had.
+directory (its default), and auth gives a session a `Home:` current directory.
+The process cannot tell which spawner it had.
 
 ### `aegir::environment`
 

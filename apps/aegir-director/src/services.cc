@@ -269,6 +269,16 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.environment = split_list(entry.environment, &request.environment_count);
         request.cwd = entry.cwd.data;
         request.cwd_length = entry.cwd.length;
+        if (request.cwd == nullptr) {
+            /* A system service stands on the system volume unless the manifest
+             * says otherwise (specs/environment.md): a boot service that wants
+             * relative paths has somewhere to stand, and one that does not
+             * never resolves it. The director gives it, not the runtime, so the
+             * policy lives where the process's identity does. */
+            static char const kSystemCwd[] = "Sys:";
+            request.cwd = kSystemCwd;
+            request.cwd_length = sizeof(kSystemCwd) - 1;
+        }
         request.priority = priority_for(entry);
         request.stack_pages = entry.stack_kib / 4u;
         spawn::PortGrant const *grants = graph_.grants(i);

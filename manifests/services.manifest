@@ -267,7 +267,6 @@ authority   = system
 account     = boot
 args        = alpha, beta
 environment = AEGIR=smoke, TWO=2
-cwd         = Sys:
 maps        = true
 memory_kib  = 4096
 restart     = never
