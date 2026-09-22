@@ -40,6 +40,16 @@ bool Scratch::initialise(Allocator *tables) noexcept
     }
     tables_ = tables;
     may_grow_ = tables != nullptr;
+    /* Wire the allocator's node pool to this window: it grows by carving a
+     * frame and mapping it here (specs/allocator.md). The context is static
+     * because the allocator keeps its address and there is one Scratch per
+     * process. */
+    if (tables_ != nullptr) {
+        static NodeWindow node_window{nullptr, nullptr};
+        node_window.allocator = tables_;
+        node_window.scratch = this;
+        tables_->set_node_source(grow_nodes_from_window, &node_window);
+    }
 
     uintptr_t start = reinterpret_cast<uintptr_t>(_end);
     uintptr_t ipc_end = reinterpret_cast<uintptr_t>(bootinfo_->ipcBuffer) + kPage;
@@ -73,6 +83,12 @@ bool Scratch::adopt(seL4_CPtr vspace_root, uintptr_t base, uintptr_t limit,
     base_ = base;
     next_ = base;
     limit_ = limit;
+    if (tables_ != nullptr) {
+        static NodeWindow node_window{nullptr, nullptr};
+        node_window.allocator = tables_;
+        node_window.scratch = this;
+        tables_->set_node_source(grow_nodes_from_window, &node_window);
+    }
     return true;
 }
 
@@ -230,6 +246,32 @@ void Scratch::rewind(uintptr_t mark) noexcept
     }
     next_ = mark;
     last_cap_ = 0;
+}
+
+void *grow_nodes_from_window(void *context, unsigned *bytes) noexcept
+{
+    auto *const window = static_cast<NodeWindow *>(context);
+    if (window == nullptr || window->allocator == nullptr || window->scratch == nullptr) {
+        *bytes = 0;
+        return nullptr;
+    }
+    Account account{"nodes", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const frame =
+        window->allocator->alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account, &error);
+    if (frame == 0) {
+        *bytes = 0;
+        return nullptr;
+    }
+    /* The frame stays mapped: it is the allocator's bookkeeping now, and it
+     * lives as long as the allocator does. */
+    void *const mapped = window->scratch->map(frame);
+    if (mapped == nullptr) {
+        *bytes = 0;
+        return nullptr;
+    }
+    *bytes = 1u << seL4_PageBits;
+    return mapped;
 }
 
 }  // namespace aegir::mem

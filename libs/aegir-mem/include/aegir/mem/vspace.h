@@ -119,6 +119,18 @@ private:
     seL4_Error last_error_ = seL4_NoError;
 };
 
+/** The allocator's node pool, wired to the process's own window. A service (or
+ *  the root task) hands its allocator and its Scratch here, and the allocator
+ *  grows its bookkeeping from its grant -- carving a frame and mapping it --
+ *  instead of a fixed table (specs/allocator.md). The allocator cannot do this
+ *  itself: the Scratch depends on the allocator, so the pair is wired here. */
+struct NodeWindow {
+    Allocator *allocator;
+    Scratch *scratch;
+};
+
+void *grow_nodes_from_window(void *context, unsigned *bytes) noexcept;
+
 }  // namespace aegir::mem
 
 #endif  // AEGIR_MEM_VSPACE_H
