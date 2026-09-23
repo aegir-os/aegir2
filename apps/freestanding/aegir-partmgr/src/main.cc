@@ -23,6 +23,8 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/clock.h>
+#include <aegir/descriptor.h>
+#include <aegir/fsbundle.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/mem/allocator.h>
@@ -66,7 +68,23 @@ struct Pending {
     uint64_t first_lba;
     uint64_t sector_count;
     uint32_t boot;         /* the Aegir system type GUID said so */
+    /* The filesystem service its type calls for, chosen at the walk from the
+     * registry the device manager bundled with the images
+     * (aegir/fsbundle.h): the manager is filesystem-agnostic, a partition's
+     * type is not. */
+    char const *kind;
+    uint32_t kind_length;
+    void const *image;
+    uint32_t image_bytes;
     Pending *next;
+};
+
+/** One registry row and the image it names, resolved once at startup so the
+ *  walk is a comparison rather than a search. */
+struct FilesystemType {
+    aegir::fsbundle::Row row;
+    void const *image;
+    uint32_t image_bytes;
 };
 
 /* A window of `pages` 4 KiB frames carved from our untyped, so a filesystem
@@ -103,6 +121,74 @@ seL4_CPtr carve_window(aegir::mem::Account &account, uint32_t pages,
     }
     *physical_out = physical;
     return base;
+}
+
+/* Read the registry the device manager bundled and resolve each row's image,
+ * so the walk is a comparison rather than a search. The bundle is the blob the
+ * manager handed us: the registry text and the images as one (aegir/fsbundle.h).
+ * A row whose image is missing is a loud failure here rather than a partition
+ * that silently does not start. */
+FilesystemType *load_filesystems(aegir::mem::Arena &arena, void const *bundle,
+                                 uint32_t bundle_bytes, uint32_t *count) noexcept
+{
+    *count = 0;
+    static char const kRegistry[] = "filesystems.registry";
+    uint32_t registry_bytes = 0;
+    void const *registry = aegir::fsbundle::find(bundle, bundle_bytes, kRegistry,
+                                                 sizeof(kRegistry) - 1, &registry_bytes);
+    if (registry == nullptr) {
+        return nullptr;
+    }
+    aegir::descriptor::Reader counting(registry, registry_bytes);
+    uint32_t rows = 0;
+    while (counting.next_row()) {
+        ++rows;
+    }
+    auto *types = static_cast<FilesystemType *>(
+        arena.allocate(sizeof(FilesystemType) * (rows != 0 ? rows : 1)));
+    if (types == nullptr) {
+        return nullptr;
+    }
+    uint32_t parsed = 0;
+    aegir::descriptor::Reader reader(registry, registry_bytes);
+    while (parsed < rows && reader.next_row()) {
+        FilesystemType type{};
+        type.image = nullptr;
+        type.image_bytes = 0;
+        aegir::descriptor::Field field;
+        while (reader.next_field(field)) {
+            if (aegir::descriptor::key_is(field, "type")) {
+                type.row.type = field.value;
+                type.row.type_length = field.value_length;
+            } else if (aegir::descriptor::key_is(field, "kind")) {
+                type.row.kind = field.value;
+                type.row.kind_length = field.value_length;
+            } else if (aegir::descriptor::key_is(field, "binary")) {
+                type.row.binary = field.value;
+                type.row.binary_length = field.value_length;
+            }
+        }
+        if (type.row.type == nullptr || type.row.kind == nullptr ||
+            type.row.binary == nullptr) {
+            aegir::debug_write(
+                "      FAIL a row of the filesystem registry is not complete\n");
+            continue;
+        }
+        uint32_t image_bytes = 0;
+        void const *image = aegir::fsbundle::find(bundle, bundle_bytes, type.row.binary,
+                                                  type.row.binary_length, &image_bytes);
+        if (image == nullptr) {
+            aegir::debug_write("      FAIL the filesystem registry names ");
+            aegir::debug_write(type.row.binary, type.row.binary_length);
+            aegir::debug_write(", which the bundle does not carry\n");
+            continue;
+        }
+        type.image = image;
+        type.image_bytes = image_bytes;
+        types[parsed++] = type;
+    }
+    *count = parsed;
+    return types;
 }
 
 namespace {
@@ -147,6 +233,7 @@ void append_number(char *out, uint32_t *at, uint64_t value) noexcept
 void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                       seL4_CPtr spawn_clock, aegir::ipc::Consumer const &nmspace,
                       seL4_CPtr announce,
+                      char const *kind, uint32_t kind_length,
                       char const *device_name, uint32_t device_name_length,
                       uint32_t partition, uint64_t first_lba, uint64_t sector_count,
                       uint32_t boot,
@@ -154,16 +241,19 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                       void const *fs_image, uint32_t fs_image_bytes,
                       uint64_t badge) noexcept
 {
-    /* Its name: the driver's name for the device, the partition's index, and
-     * the kind of service -- fat.BD0Part0. Bounded by the name's own format:
-     * the device name is 8 by the block protocol, the index is a 32-bit
-     * number. */
-    char name[4 + 8 + 4 + 10];
+    /* Its name, `kind.instance`: the filesystem's kind, the driver's name for
+     * the device and the partition's index -- fat.BD0Part0. Bounded by the
+     * name's own format: the kind is short, the device name is 8 by the block
+     * protocol, the index is a 32-bit number. */
+    char name[8 + 1 + 8 + 4 + 10];
     uint32_t name_length = 0;
-    char const *kind = "fat.";
-    for (uint32_t i = 0; kind[i] != '\0'; ++i) {
+    if (kind_length > 8) {
+        kind_length = 8;
+    }
+    for (uint32_t i = 0; i < kind_length; ++i) {
         name[name_length++] = kind[i];
     }
+    name[name_length++] = '.';
     for (uint32_t i = 0; i < device_name_length; ++i) {
         name[name_length++] = device_name[i];
     }
@@ -200,7 +290,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     append_number(range, &range_length, sector_count);
     append_text(range, &range_length, " name=", 6);
     /* The volume's name is the child's without the kind: BD0Part0. */
-    append_text(range, &range_length, name + 4, name_length - 4);
+    append_text(range, &range_length, name + kind_length + 1, name_length - kind_length - 1);
     append_text(range, &range_length, " writable=1", 11);
     range[range_length++] = '\n';
 
@@ -512,19 +602,20 @@ int main(int argc, char *argv[])
     uint32_t const pages_per_window = grant_count / port_count;
 
     /* What starting a filesystem service takes: the pool its address space id
-     * comes from, the delegatable log, and the helper's image as bytes -- the
-     * blob the device manager handed us, because the initrd whole does not
-     * fit a delegation this size (specs/services.md). */
+     * comes from, the delegatable log, and the filesystem registry bundled
+     * with the images it names -- the blob the device manager handed us,
+     * because the initrd whole does not fit a delegation this size
+     * (specs/services.md). */
     uint64_t spawn_log_slot = 0;
     uint64_t pool_slot = 0;
     uint64_t spawn_clock_slot = 0;
-    uint64_t fs_image_address = 0;
-    uint32_t fs_image_bytes = 0;
+    uint64_t bundle_address = 0;
+    uint32_t bundle_bytes = 0;
     bool const can_spawn =
         aegir::bootstrap::capability("spawn:log.main", 14, &spawn_log_slot) &&
         aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
-        aegir::bootstrap::devices(&fs_image_address, &fs_image_bytes) &&
-        fs_image_bytes != 0;
+        aegir::bootstrap::devices(&bundle_address, &bundle_bytes) &&
+        bundle_bytes != 0;
     /* The clock is optional: a filesystem without one still serves, its
      * timestamps zero (specs/fat.md). Director gives a spawning service an
      * unbadged `spawn:` copy of each covered child's ports, so the name here
@@ -534,12 +625,21 @@ int main(int argc, char *argv[])
                                                    &spawn_clock_slot));
     if (!can_spawn) {
         aegir::debug_write("      partition manager: no pool, delegatable log or "
-                           "filesystem image -- reading tables only\n");
+                           "filesystem registry -- reading tables only\n");
     }
     /* Our own CNode at its own depth: a service's own-CNode cap is a raw copy
      * with guard 0 and radix kCNodeBits, so mint sources address through it
-     * (aegir/bootstrap.h). No initrd: the image arrives as bytes. */
+     * (aegir/bootstrap.h). No initrd: the images arrive in the bundle. */
     aegir::mem::Arena arena(g_objects, g_scratch, g_account);
+    uint32_t filesystem_count = 0;
+    FilesystemType *filesystem_types =
+        can_spawn ? load_filesystems(arena, reinterpret_cast<void const *>(bundle_address),
+                                     bundle_bytes, &filesystem_count)
+                  : nullptr;
+    if (can_spawn && filesystem_types == nullptr) {
+        aegir::debug_write(
+            "      partition manager: the filesystem registry would not read\n");
+    }
     aegir::spawn::Initrd const no_initrd(nullptr, 0);
     aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, no_initrd,
                                   static_cast<seL4_CPtr>(pool_slot),
@@ -791,8 +891,27 @@ int main(int argc, char *argv[])
                         /* Remembered for the spawn phase: starting the
                          * service now would put a serving child on this
                          * window while the walk is still reading through
-                         * it (Pending, above). */
+                         * it (Pending, above). The filesystem its type calls
+                         * for is chosen here; a type the registry does not
+                         * know is reported, not guessed at. */
                         if (can_spawn) {
+                            FilesystemType const *filesystem = nullptr;
+                            for (uint32_t t = 0; t < filesystem_count && filesystem == nullptr;
+                                 ++t) {
+                                if (aegir::fsbundle::type_matches(filesystem_types[t].row,
+                                                                  partition.type)) {
+                                    filesystem = &filesystem_types[t];
+                                }
+                            }
+                            if (filesystem == nullptr) {
+                                aegir::debug_write(
+                                    "      partition manager: no filesystem for the type of ");
+                                aegir::debug_write(device_name, device_name_length);
+                                aegir::debug_write("Part");
+                                aegir::debug_write_unsigned(i);
+                                aegir::debug_write("\n");
+                                continue;
+                            }
                             auto *pending =
                                 static_cast<Pending *>(arena.allocate(sizeof(Pending)));
                             if (pending == nullptr) {
@@ -810,6 +929,10 @@ int main(int argc, char *argv[])
                             pending->sector_count =
                                 partition.last_lba - partition.first_lba + 1;
                             pending->boot = system ? 1 : 0;
+                            pending->kind = filesystem->row.kind;
+                            pending->kind_length = filesystem->row.kind_length;
+                            pending->image = filesystem->image;
+                            pending->image_bytes = filesystem->image_bytes;
                             pending->next = pendings;
                             pendings = pending;
                         }
@@ -835,10 +958,11 @@ int main(int argc, char *argv[])
     for (Pending *pending = pendings; pending != nullptr; pending = pending->next) {
         start_filesystem(spawner, static_cast<seL4_CPtr>(spawn_log_slot),
                          static_cast<seL4_CPtr>(spawn_clock_slot), nmspace,
-                         announce, pending->device_name, pending->device_name_length,
+                         announce, pending->kind, pending->kind_length,
+                         pending->device_name, pending->device_name_length,
                          pending->partition, pending->first_lba, pending->sector_count,
                          pending->boot, pending->port, pages_per_window,
-                         reinterpret_cast<void const *>(fs_image_address), fs_image_bytes,
+                         pending->image, pending->image_bytes,
                          512u + fs_started);
         ++fs_started;
     }

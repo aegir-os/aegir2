@@ -24,6 +24,7 @@
 #include <aegir/debug.h>
 #include <aegir/descriptor.h>
 #include <aegir/devtree.h>
+#include <aegir/fsbundle.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
@@ -108,6 +109,15 @@ struct DriverRow {
     uint32_t window_bits; /* the shared window its port serves through */
 };
 
+/** A filesystem the registry knows: which GPT partition type it serves, what
+ *  its service instances are called, and the initrd entry its image comes
+ *  from. Like the driver registry, this is *data*
+ *  (manifests/filesystems.registry), and the images travel to the partition
+ *  manager as one named bundle (aegir/fsbundle.h, specs/services.md). The
+ *  shape is the bundle library's, because the partition manager reads the same
+ *  rows. */
+using FilesystemRow = aegir::fsbundle::Row;
+
 /** One cell of the map: a device the tree describes that a registry row claims,
  *  joined with the frame director granted for it. `frame` stays 0 -- reported,
  *  not driven -- when the join finds no grant or the probe finds a different
@@ -150,6 +160,17 @@ bool same_compatible(DriverRow const &a, DriverRow const &b) noexcept
     }
     for (uint32_t i = 0; i < a.compatible_length; ++i) {
         if (a.compatible[i] != b.compatible[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Two name ranges are equal. Registry fields are views, not C strings. */
+bool same_range(char const *a, char const *b, uint32_t length) noexcept
+{
+    for (uint32_t i = 0; i < length; ++i) {
+        if (a[i] != b[i]) {
             return false;
         }
     }
@@ -567,6 +588,130 @@ int main(int argc, char *argv[])
                     aegir::debug_write_unsigned(row_count);
                     aegir::debug_write(row_count == 1 ? " driver, from the file\n"
                                                       : " drivers, from the file\n");
+                }
+            }
+
+            /* The filesystem registry and the images it names: the partition
+             * manager starts a filesystem per partition, and which one a
+             * partition's type calls for is data, not a recompile. The images
+             * travel together in one bundle -- the registry text is an entry
+             * in it too -- because a service's image is the one part of
+             * spawning a capability cannot carry (aegir/fsbundle.h). */
+            void const *fs_bundle = nullptr;
+            uint32_t fs_bundle_bytes = 0;
+            {
+                uint64_t fs_registry_bytes = 0;
+                static char const kFsRegistry[] = "filesystems.registry";
+                void const *fs_registry = initrd.find(kFsRegistry, sizeof(kFsRegistry) - 1,
+                                                      &fs_registry_bytes);
+                if (fs_registry == nullptr) {
+                    write_line("FAIL", "the initrd carries no filesystem registry");
+                } else {
+                    aegir::descriptor::Reader counting(fs_registry, fs_registry_bytes);
+                    uint32_t fs_count = 0;
+                    while (counting.next_row()) {
+                        ++fs_count;
+                    }
+                    FilesystemRow *fs_rows = static_cast<FilesystemRow *>(arena.allocate(
+                        sizeof(FilesystemRow) * (fs_count != 0 ? fs_count : 1)));
+                    if (fs_rows == nullptr) {
+                        write_line("FAIL", "no room for the filesystem registry");
+                    } else {
+                        uint32_t parsed = 0;
+                        aegir::descriptor::Reader reader(fs_registry, fs_registry_bytes);
+                        while (parsed < fs_count && reader.next_row()) {
+                            FilesystemRow row{};
+                            aegir::descriptor::Field field;
+                            while (reader.next_field(field)) {
+                                if (aegir::descriptor::key_is(field, "type")) {
+                                    row.type = field.value;
+                                    row.type_length = field.value_length;
+                                } else if (aegir::descriptor::key_is(field, "kind")) {
+                                    row.kind = field.value;
+                                    row.kind_length = field.value_length;
+                                } else if (aegir::descriptor::key_is(field, "binary")) {
+                                    row.binary = field.value;
+                                    row.binary_length = field.value_length;
+                                }
+                            }
+                            if (row.type == nullptr || row.kind == nullptr ||
+                                row.binary == nullptr) {
+                                write_line("FAIL",
+                                           "a row of the filesystem registry is not complete");
+                                continue;
+                            }
+                            fs_rows[parsed++] = row;
+                        }
+                        fs_count = parsed;
+                        /* The bundle: the registry text, then each distinct
+                         * image the rows name, looked up in the initrd so a
+                         * row that names a binary the image does not carry
+                         * fails here rather than in the partition manager. */
+                        uint32_t const max_entries = 1 + fs_count;
+                        auto **names = static_cast<char const **>(
+                            arena.allocate(sizeof(char const *) * max_entries));
+                        auto *lengths = static_cast<uint32_t *>(
+                            arena.allocate(sizeof(uint32_t) * max_entries));
+                        auto **images = static_cast<void const **>(
+                            arena.allocate(sizeof(void const *) * max_entries));
+                        auto *sizes = static_cast<uint64_t *>(
+                            arena.allocate(sizeof(uint64_t) * max_entries));
+                        if (names == nullptr || lengths == nullptr || images == nullptr ||
+                            sizes == nullptr) {
+                            write_line("FAIL", "no room for the filesystem bundle");
+                        } else {
+                            uint32_t entries = 0;
+                            names[entries] = kFsRegistry;
+                            lengths[entries] = sizeof(kFsRegistry) - 1;
+                            images[entries] = fs_registry;
+                            sizes[entries] = fs_registry_bytes;
+                            ++entries;
+                            for (uint32_t i = 0; i < fs_count; ++i) {
+                                uint64_t image_bytes = 0;
+                                void const *image = initrd.find(fs_rows[i].binary,
+                                                                 fs_rows[i].binary_length,
+                                                                 &image_bytes);
+                                if (image == nullptr) {
+                                    aegir::debug_write(
+                                        "      FAIL the filesystem registry names ");
+                                    aegir::debug_write(fs_rows[i].binary,
+                                                       fs_rows[i].binary_length);
+                                    aegir::debug_write(
+                                        ", which the initrd does not carry\n");
+                                    continue;
+                                }
+                                bool seen = false;
+                                for (uint32_t j = 1; j < entries && !seen; ++j) {
+                                    seen = lengths[j] == fs_rows[i].binary_length &&
+                                           same_range(names[j], fs_rows[i].binary,
+                                                      fs_rows[i].binary_length);
+                                }
+                                if (seen) {
+                                    continue;
+                                }
+                                names[entries] = fs_rows[i].binary;
+                                lengths[entries] = fs_rows[i].binary_length;
+                                images[entries] = image;
+                                sizes[entries] = image_bytes;
+                                ++entries;
+                            }
+                            uint32_t const needed = aegir::fsbundle::measure(entries, sizes);
+                            void *bundle = arena.allocate(needed);
+                            if (bundle == nullptr ||
+                                aegir::fsbundle::build(bundle, needed, entries, names,
+                                                       lengths, images, sizes) != needed) {
+                                write_line("FAIL", "the filesystem bundle would not build");
+                            } else {
+                                fs_bundle = bundle;
+                                fs_bundle_bytes = needed;
+                                aegir::debug_write("      filesystems: ");
+                                aegir::debug_write_unsigned(fs_count);
+                                aegir::debug_write(fs_count == 1 ? " type, " : " types, ");
+                                aegir::debug_write_unsigned(entries - 1);
+                                aegir::debug_write(" image(s), bundled\n");
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1350,19 +1495,12 @@ int main(int argc, char *argv[])
                     request.ports = ports;
                     request.port_count = 4 + registry_rows + nmspace_rows + clock_rows + bound_count;
                     request.give_vspace = true;
-                    /* The filesystem service's image, as bytes: the whole
-                     * initrd is 1.2 MiB and does not fit a service-sized
-                     * delegation, so what the manager starts is handed over
-                     * one helper at a time (specs/services.md). One
-                     * filesystem type exists today; the day a second does,
-                     * what a partition's type calls for is a descriptor, not
-                     * a recompile. */
-                    static char const kFsBinary[] = "aegir-fs-fat";
-                    uint64_t fs_binary_bytes = 0;
-                    void const *fs_binary =
-                        initrd.find(kFsBinary, sizeof(kFsBinary) - 1, &fs_binary_bytes);
-                    request.devices = fs_binary;
-                    request.devices_bytes = static_cast<uint32_t>(fs_binary_bytes);
+                    /* The filesystem registry and the images it names, as one
+                     * bundle: the partition manager picks the service a
+                     * partition's type calls for, without coming back to us
+                     * (aegir/fsbundle.h, specs/services.md). */
+                    request.devices = fs_bundle;
+                    request.devices_bytes = fs_bundle_bytes;
                     request.untyped_physical = partmgr_physical;
                     request.untyped_bits = kPartmgrUntypedBits;
                     request.device_grants = frames;

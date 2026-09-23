@@ -341,6 +341,17 @@ That map is the reason it exists, and everything else it does is in service of i
   filesystem-agnostic job), and for each partition starts the filesystem service
   matching that partition's type — a spawn of its own, under the spawn right its
   manifest entry declares.
+- **Which filesystem serves which type is data.** `manifests/filesystems.registry`
+  (the `drivers.registry` pattern) maps a GPT partition type GUID to the service
+  kind and the initrd binary: the system GUID and Microsoft basic data to FAT
+  today, and the BeFS GUID to BeFS the day it lands (`specs/bfs.md`). The device
+  manager bundles every image the registry names, with the registry text as an
+  entry, and hands the partition manager the one blob (`aegir/fsbundle.h`) — a
+  filesystem's image is the part of spawning a capability cannot carry. The
+  partition manager resolves each row's image once at startup, so the walk is a
+  comparison; a partition whose type no row names is reported and not started,
+  because a filesystem is the disk's decision and an unknown one is refused
+  loudly rather than guessed at.
 - **One partition type GUID is ours**: `5cd58811-9bf5-4af3-8682-9b76edce3535`
   names the Aegir system volume — the discovery shape of systemd's
   Discoverable Partitions Specification, one GUID per role, the disk

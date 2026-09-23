@@ -32,11 +32,13 @@ add_custom_target(users_db_pack ALL DEPENDS "${users_db}")
 set(aegir_initrd_files
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/services.manifest"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/drivers.registry"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/filesystems.registry"
     "${users_db}"
 )
 set(aegir_initrd_names
     "services.manifest"
     "drivers.registry"
+    "filesystems.registry"
     "users.db"
 )
 

@@ -1,0 +1,25 @@
+# The filesystem registry: which filesystem service handles which partition
+# type, as *data* (specs/services.md). Adding a filesystem is adding a row here
+# and a binary to the image -- not a code change -- and the day the same file
+# comes from a volume instead of the initrd, only its source changes.
+#
+# One row per partition type, key=value fields:
+#   type    the GPT partition type GUID, canonical form (the on-disk entry is
+#           the usual mixed-endian layout; the parser reads the canonical text)
+#   kind    the instance-name prefix a started service wears: a partition on
+#           BD0 with this kind is fat.BD0Part0, and the VFS sees the volume's
+#           own label, not the instance name
+#   binary  the initrd entry the service starts from
+#
+# A partition whose type is not here is reported and not started: a filesystem
+# is a decision the disk makes, and an unknown one is refused loudly rather
+# than guessed at.
+
+# The Aegir system volume (specs/services.md). It wears the system GUID, and
+# the system stands on it; FAT is its filesystem until the BFS migration arc
+# moves it, and this row is what moves with it.
+type=5cd58811-9bf5-4af3-8682-9b76edce3535 kind=fat binary=aegir-fs-fat
+
+# Microsoft basic data: the type a FAT partition on GPT carries, and what the
+# test disk's interchange volumes are (specs/fat.md).
+type=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 kind=fat binary=aegir-fs-fat
