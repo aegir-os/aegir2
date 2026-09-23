@@ -8,6 +8,7 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/thread.h>
+#include <aegir/thread/arch.h>
 
 /* sel4runtime's TLS helpers, declared here rather than by including its
  * header: sel4runtime.h is C-only (specs/userland.md), and the runtime is the
@@ -57,7 +58,7 @@ bool Builder::start(Placement const &where, void (*entry)(void *), void *argumen
     for (unsigned page = 0; page < where.stack_pages; ++page) {
         seL4_Error error = seL4_NoError;
         seL4_CPtr const frame =
-            allocator_.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account_, &error);
+            allocator_.alloc_object(arch::kPageObject, seL4_PageBits, account_, &error);
         if (frame == 0) {
             problem_ = "no memory for the thread's stack";
             return false;
@@ -76,7 +77,7 @@ bool Builder::start(Placement const &where, void (*entry)(void *), void *argumen
      * TCB's configuration, so it stays this thread's. */
     seL4_Error error = seL4_NoError;
     seL4_CPtr const ipc_frame =
-        allocator_.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account_, &error);
+        allocator_.alloc_object(arch::kPageObject, seL4_PageBits, account_, &error);
     if (ipc_frame == 0) {
         problem_ = "no memory for the thread's IPC buffer";
         return false;
@@ -147,11 +148,10 @@ bool Builder::start(Placement const &where, void (*entry)(void *), void *argumen
 
     seL4_UserContext context = {};
     /* The global pointer the process already uses. A thread started this way
-     * skips the crt that computes it from __global_pointer$, so its first
-     * access to a global would fault without this (specs/userland.md). */
-    seL4_Word gp = 0;
-    asm volatile("mv %0, gp" : "=r"(gp));
-    context.gp = gp;
+     * skips the crt that computes it, so its first access to a global would
+     * fault without this (specs/userland.md); the read is the architecture's,
+     * because not every architecture has one (aegir/thread/arch.h). */
+    context.gp = arch::global_pointer();
     /* The thread pointer, in the context and not only through a separate TLS
      * invocation: WriteRegisters writes the whole user context, so a zero here
      * would overwrite the base just set and leave the thread with none -- a
