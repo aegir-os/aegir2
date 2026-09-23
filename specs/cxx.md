@@ -239,9 +239,11 @@ The order:
      and its typeinfo undefined the moment anything needed it. The base hooks
      now have their no-op default bodies.
 4. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
-   but a thread does not start: `pthread_create` reaches `__clone`
-   (`projects/musl/src/thread/clone.c`), a raw `SYS_clone` (riscv64 syscall
-   220), and the dispatcher has no case for it, so it returns `-ENOSYS`.
+   but a thread does not start: `pthread_create` reaches riscv64's `__clone`
+   (`projects/musl/src/thread/riscv64/clone.s`), hand-written assembly that
+   issues a raw `SYS_clone` (syscall 220) with an `ecall` -- which the syscall
+   patch does not cover (`arch/riscv64/syscall_arch.h` redirects only
+   `__syscall0..6`), so it never reaches the dispatcher.
    `aegir-trinket`'s `WorkerPool` therefore does not spawn. A real thread is
    one seL4 TCB in the process's own address space, and
    `specs/userland.md:85` records the rules (tp, gp, a stack that does not
@@ -255,12 +257,24 @@ The order:
       variable `__sel4_ipc_buffer`), and start it. The freestanding smoke is a
       check in `aegir-test`: a second thread runs, reaches a global and the
       console through its own TLS, and signals the starter.
-   2. **Each thread's IPC buffer and TLS block**, from the process's heap
-      (`aegir-heap`'s window), because the boot thread's is not shared.
-   3. **The dispatcher's `SYS_clone`**, which resumes the child at the
-      *caller's* return address with a 0 return value per musl's contract --
-      the fiddly part, and the one that turns the primitive into
-      `pthread_create`.
+   2. **A thread in a hosted process** -- `aegir-cxx-smoke` (landed): the same
+      primitive on the runtime this process actually uses. A second seL4 TCB
+      with its own stack, TLS block and IPC buffer shares the address space,
+      and the worker runs musl's `malloc` (whose syscalls reach the dispatcher
+      from the new thread too) and reaches the console. The finding that makes
+      item 3 tractable: a hosted process's TLS comes from sel4runtime
+      (`aegir-heap` bypasses musl's `__init_libc` for exactly that reason), so
+      a thread's sel4runtime TLS image carries `__sel4_ipc_buffer` *and* musl's
+      own `__thread` variables -- the runtime's TLS and musl's are one image.
+   3. **The dispatcher's `SYS_clone`.** `__clone` is raw assembly, so it must be
+      brought onto the `__sysinfo` path before a thread can exist: the parent
+      side becomes a call into the dispatcher, and the child becomes a thread
+      the dispatcher starts at a trampoline that calls `func(arg)` and then
+      exits. `pthread_create` allocates the child's stack and its own `tp` (its
+      pthread struct); item 2 says the runtime's TLS image is the same one, so
+      the dispatcher can write `tp` and the IPC buffer pointer as the primitive
+      does. `__set_thread_area` and `__unmapself` are assembly too and take the
+      same treatment when they are reached.
    4. **`std::thread`** then falls out; the acceptance extends the cxx-smoke
       with a thread that joins and a mutex held across two threads.
 5. **The filesystem.** `std::filesystem` in the runtime, and `aegir::filesystem`

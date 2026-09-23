@@ -27,7 +27,7 @@ if(AEGIR_HOSTED_CXX)
   # how it adopts the untyped and the window the spawn kit gave it.
   target_link_libraries(
     aegir-cxx-smoke PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-runtime aegir-bootstrap
-                             aegir-mem sel4 sel4runtime
+                             aegir-mem aegir-thread sel4 sel4runtime
   )
 else()
   add_executable(aegir-cxx-smoke src/placeholder.cc)

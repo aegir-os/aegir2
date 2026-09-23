@@ -24,6 +24,7 @@
 #include <aegir/heap.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/thread.h>
 #include <sel4/sel4.h>
 #include <stdlib.h>
 
@@ -44,6 +45,41 @@ void report_atexit()
  * stack is pages (specs/userland.md). */
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
+
+/* What this process's own objects are charged to; everything here is boot
+ * work. */
+aegir::mem::Account g_account{"cxx-smoke", 0, 0, 0};
+
+/* The notice between this thread and the one it starts: a notification in this
+ * process's CSpace and the worker's report. Globals on purpose -- the worker
+ * reaching them is what proves its global pointer. */
+struct WorkerReport {
+    seL4_CPtr notice;
+    volatile uint64_t ran;
+    volatile uint64_t allocated;
+};
+WorkerReport g_worker;
+
+/* What the worker thread runs. A thread has no caller and no startup frame, so
+ * it must not return. It reaches a global, allocates through musl (whose
+ * syscalls land in the dispatcher), writes to the console, and signals the
+ * starter -- each of which depends on a different thing the thread was given:
+ * the global pointer, the thread pointer, and the IPC buffer. */
+void worker_entry(void *)
+{
+    void *const block = malloc(4096);
+    if (block != nullptr) {
+        static_cast<uint8_t *>(block)[0] = 0xa5;
+        free(block);
+    }
+    g_worker.allocated = block != nullptr ? 1 : 0;
+    g_worker.ran = 1;
+    seL4_Signal(g_worker.notice);
+    for (;;) {
+        seL4_Word badge = 0;
+        seL4_Wait(g_worker.notice, &badge);
+    }
+}
 
 /* The mapping authority the spawn kit installs: the delegated untyped (page
  * tables and frames are retyped from it), the VSpace root, and the window of
@@ -109,7 +145,51 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    int const failed = aegir::cxx_smoke::run();
+    int failed = aegir::cxx_smoke::run();
+
+    /* A thread in a hosted process: the primitive the test bed proves, on the
+     * runtime this process actually uses. It is the floor the runtime's
+     * std::thread will stand on (specs/cxx.md step 4): a second seL4 TCB with
+     * its own stack, TLS block and IPC buffer, sharing this address space --
+     * and running musl's allocator, whose syscalls reach the dispatcher from
+     * the new thread too. The starter blocks on the notification first, so on
+     * one CPU the worker cannot run until then, and the heap's own state is
+     * never touched by two threads at once. */
+    {
+        uint64_t vspace_slot = 0;
+        bool const have_vspace = aegir::bootstrap::capability("vspace", 6, &vspace_slot);
+        seL4_Error thread_error = seL4_NoError;
+        seL4_CPtr const notice =
+            g_objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
+                                   g_account, &thread_error);
+        g_worker.notice = notice;
+        g_worker.ran = 0;
+        g_worker.allocated = 0;
+        aegir::thread::Thread worker{};
+        aegir::thread::Builder builder(g_objects, g_scratch, g_account);
+        aegir::thread::Placement const where{
+            seL4_CapInitThreadCNode,
+            static_cast<seL4_CPtr>(vspace_slot),
+            seL4_CapNull,
+            seL4_MaxPrio - 1,
+            4,
+        };
+        bool const started = notice != 0 && have_vspace &&
+                             builder.start(where, worker_entry, nullptr, worker);
+        bool ok = started;
+        if (started) {
+            seL4_Word badge = 0;
+            seL4_Recv(notice, &badge);
+            ok = g_worker.ran == 1 && g_worker.allocated == 1;
+        }
+        if (!ok) {
+            aegir::debug_write("  cxx-smoke: FAIL a thread could not be started in this "
+                               "process\n");
+            ++failed;
+        } else {
+            aegir::debug_write("  cxx-smoke: a second thread ran here, and malloc'd on it\n");
+        }
+    }
 
     aegir::debug_write(failed == 0 ? "CXX_SMOKE_OK\n" : "CXX_SMOKE_FAIL\n");
 
