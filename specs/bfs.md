@@ -406,9 +406,11 @@ sparseness takes a gate bit.
 
 ## Metadata over the volume protocol
 
-The volume protocol (`specs/vfs.md`) grows methods for attributes and queries.
-The base methods answer refusals with an empty reply; metadata needs to tell
-"this filesystem has no such attribute" from "this filesystem has no
+The volume protocol (`specs/vfs.md`) grows methods for attributes and queries,
+defined in `libs/freestanding/aegir-metadata/` (`aegir/metadata.h`) and
+numbered `12` upward so a version that does not know them answers by saying
+nothing. The base methods answer refusals with an empty reply; metadata needs
+to tell "this filesystem has no such attribute" from "this filesystem has no
 metadata", so the new methods answer a **status word first**:
 
 | Value | Name | Meaning |
@@ -419,19 +421,21 @@ metadata", so the new methods answer a **status word first**:
 | 3 | `kInvalidName` | the name is empty or longer than 255 bytes |
 | 4 | `kReadOnly` | the volume is read-only |
 | 5 | `kNoSpace` | the volume is full |
-| 6 | `kNotADirectory` / `kIsADirectory` | the kind is wrong for the call |
+| 6 | `kNotADirectory` | the path names something that is not a directory |
+| 7 | `kIsADirectory` | the call wanted a file and the path names a directory |
 
-FAT answers **`kUnsupported`** to every metadata method and an empty list to
-the list method; it never pretends. The runtime maps `kUnsupported` to
-`EOPNOTSUPP`, `kNotFound` to `ENODATA`, and so on.
+FAT answers **`kUnsupported`** to every metadata method; it never pretends.
+The runtime maps `kUnsupported` to `EOPNOTSUPP`, `kNotFound` to `ENODATA`, and
+so on.
 
 The methods mirror Haiku's `fs_*attr` API:
 
 - **attr stat** — in: path words, name. Answer: status, `type_code`, size.
-- **attr read** — in: path words, name, offset, max. Answer: status, bytes.
-- **attr write** — in: path words, name, `type_code`, offset, bytes. Answer:
-  status, written. Creating an attribute sets its type; writing it with a
-  different type is a refusal.
+- **attr read** — in: path words, name, offset, max. Answer: status, count,
+  bytes.
+- **attr write** — in: path words, name, `type_code`, offset, count, bytes.
+  Answer: status, written. Creating an attribute sets its type; writing it with
+  a different type is a refusal.
 - **attr remove** — in: path words, name. Answer: status.
 - **attr list** — in: path words, index. Answer: status, name, `type_code`,
   size, or `kNotFound` past the last attribute. The cursor is the caller's

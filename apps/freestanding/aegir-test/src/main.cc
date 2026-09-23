@@ -27,6 +27,7 @@
 #include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/metadata.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
@@ -396,6 +397,165 @@ uint64_t vol_truncate(seL4_CPtr port, char const *path, uint32_t path_length,
     return in[0];
 }
 
+/* The metadata protocol (aegir/metadata.h): every answer begins with a status
+ * word. A path and an attribute name travel as two strings in sequence. */
+uint32_t pack_path_name(uint64_t *out, char const *path, uint32_t path_length,
+                        char const *name, uint32_t name_length) noexcept
+{
+    uint32_t words = aegir::nmspace::pack_string(out, path, path_length,
+                                                 aegir::nmspace::kPathMax);
+    if (words == 0) {
+        return 0;
+    }
+    uint32_t const name_words = aegir::nmspace::pack_string(
+        out + words, name, name_length, aegir::metadata::kAttrNameMax);
+    return name_words == 0 ? 0 : words + name_words;
+}
+
+uint64_t meta_attr_stat(seL4_CPtr port, char const *path, uint32_t path_length,
+                        char const *name, uint32_t name_length, uint32_t *type,
+                        uint64_t *size) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t const words = pack_path_name(out, path, path_length, name, name_length);
+    uint64_t in[aegir::metadata::kAttrStatTailWords + 1] = {};
+    if (words == 0) {
+        return aegir::metadata::kNotFound;
+    }
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodAttrStat, out, words, in,
+        aegir::metadata::kAttrStatTailWords + 1);
+    if (answer.error != 0 || answer.count < 1) {
+        return aegir::metadata::kNotFound;
+    }
+    if (in[0] == aegir::metadata::kOk) {
+        *type = static_cast<uint32_t>(in[1]);
+        *size = in[2];
+    }
+    return in[0];
+}
+
+uint64_t meta_attr_read(seL4_CPtr port, char const *path, uint32_t path_length,
+                        char const *name, uint32_t name_length, uint64_t offset,
+                        uint8_t *bytes, uint32_t *length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words = pack_path_name(out, path, path_length, name, name_length);
+    if (words == 0) {
+        return aegir::metadata::kNotFound;
+    }
+    out[words++] = offset;
+    out[words++] = *length;
+    uint64_t in[aegir::metadata::kAttrReadHeaderWords +
+                aegir::metadata::kAttrDataMax / 8] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodAttrRead, out, words, in,
+        aegir::metadata::kAttrReadHeaderWords + aegir::metadata::kAttrDataMax / 8);
+    if (answer.error != 0 || answer.count < 1) {
+        return aegir::metadata::kNotFound;
+    }
+    if (in[0] == aegir::metadata::kOk) {
+        uint32_t const got = static_cast<uint32_t>(in[1]);
+        auto const *packed = reinterpret_cast<uint8_t const *>(
+            in + aegir::metadata::kAttrReadHeaderWords);
+        for (uint32_t i = 0; i < got; ++i) {
+            bytes[i] = packed[i];
+        }
+        *length = got;
+    }
+    return in[0];
+}
+
+uint64_t meta_attr_write(seL4_CPtr port, char const *path, uint32_t path_length,
+                         char const *name, uint32_t name_length, uint32_t type,
+                         uint64_t offset, uint8_t const *bytes, uint32_t length,
+                         uint32_t *written) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words = pack_path_name(out, path, path_length, name, name_length);
+    if (words == 0) {
+        return aegir::metadata::kNotFound;
+    }
+    out[words++] = type;
+    out[words++] = offset;
+    out[words++] = length;
+    auto *packed = reinterpret_cast<uint8_t *>(out + words);
+    for (uint32_t i = 0; i < length; ++i) {
+        packed[i] = bytes[i];
+    }
+    words += (length + 7) / 8;
+    uint64_t in[aegir::metadata::kAttrWriteTailWords] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodAttrWrite, out, words, in,
+        aegir::metadata::kAttrWriteTailWords);
+    if (answer.error != 0 || answer.count < 1) {
+        return aegir::metadata::kNotFound;
+    }
+    if (in[0] == aegir::metadata::kOk) {
+        *written = static_cast<uint32_t>(in[1]);
+    }
+    return in[0];
+}
+
+uint64_t meta_attr_remove(seL4_CPtr port, char const *path,
+                          uint32_t path_length, char const *name,
+                          uint32_t name_length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t const words = pack_path_name(out, path, path_length, name, name_length);
+    uint64_t in[1] = {};
+    if (words == 0) {
+        return aegir::metadata::kNotFound;
+    }
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodAttrRemove, out, words, in, 1);
+    return answer.error != 0 || answer.count < 1 ? aegir::metadata::kNotFound
+                                                 : in[0];
+}
+
+/* attr list: the status, then the name string, then the type and size. */
+uint64_t meta_attr_list(seL4_CPtr port, char const *path, uint32_t path_length,
+                        uint32_t index, char *name, uint32_t *name_length,
+                        uint32_t *type, uint64_t *size) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words = aegir::nmspace::pack_string(out, path, path_length,
+                                                 aegir::nmspace::kPathMax);
+    if (words == 0) {
+        return aegir::metadata::kNotFound;
+    }
+    out[words++] = index;
+    uint64_t in[aegir::ipc::kMaxWords] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodAttrList, out, words, in, aegir::ipc::kMaxWords);
+    if (answer.error != 0 || answer.count < 1) {
+        return aegir::metadata::kNotFound;
+    }
+    if (in[0] != aegir::metadata::kOk) {
+        return in[0];
+    }
+    char const *seen = nullptr;
+    uint32_t seen_length = 0;
+    if (!aegir::nmspace::unpack_string(in + 1, answer.count - 1,
+                                       aegir::metadata::kAttrNameMax, &seen,
+                                       &seen_length)) {
+        return aegir::metadata::kNotFound;
+    }
+    for (uint32_t i = 0; i < seen_length; ++i) {
+        name[i] = seen[i];
+    }
+    *name_length = seen_length;
+    uint32_t const tail = 1 + 1 + (seen_length + 7) / 8;
+    *type = static_cast<uint32_t>(in[tail]);
+    *size = in[tail + 1];
+    return aegir::metadata::kOk;
+}
+
 /* One read, asking for refusal: true when the volume says no. */
 bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
 {
@@ -416,6 +576,13 @@ bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexce
 uint8_t pattern_at(uint64_t i) noexcept
 {
     return static_cast<uint8_t>('a' + (i % 26));
+}
+
+/* The attribute test's bytes: a pattern a reader recomputes, so a misplaced
+ * byte is a byte that reads back wrong. */
+uint8_t attr_pattern_at(uint64_t i) noexcept
+{
+    return static_cast<uint8_t>(i * 7 + 1);
 }
 
 /* Read the whole file and check every byte against the pattern. */
@@ -556,6 +723,23 @@ int main(int argc, char *argv[])
         ++failed;
     } else {
         write("  test: AEGIR:AEGIR.TXT reads back what the disk holds\n");
+    }
+
+    /* FAT has no attributes, and says so rather than pretending. */
+    {
+        uint32_t type = 0;
+        uint64_t size = 0;
+        bool const unsupported =
+            meta_attr_stat(aegir_volume, rest, rest_length,
+                           aegir::metadata::kNameType,
+                           sizeof(aegir::metadata::kNameType) - 1, &type,
+                           &size) == aegir::metadata::kUnsupported;
+        if (!unsupported) {
+            write("  test: FAIL FAT did not answer kUnsupported to attr stat\n");
+            ++failed;
+        } else {
+            write("  test: FAT answers kUnsupported to attribute requests\n");
+        }
     }
 
     /* The same file by the system volume's alias: the disk's type GUID said
@@ -992,6 +1176,114 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: BFS reads a sparse tail as zeros with no blocks\n");
+        }
+    }
+
+    /* Attributes (specs/bfs.md): a small one kept in the inode, and one too
+     * big that becomes an attribute inode, through stat, read, list and
+     * remove. */
+    {
+        static char const kAttrPath[] = "ATTR.TXT";
+        static char const kTypeName[] = "BEOS:TYPE";
+        static char const kToolName[] = "AEGIR:TOOLTYPES";
+        static char const kMime[] = "text/plain";
+        uint64_t const handle =
+            vol_open(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool ok = handle != 0 && vol_close(bfs_write_volume, handle) == 1;
+        uint32_t type = 0;
+        uint64_t size = 0;
+        uint32_t written = 0;
+        ok = ok &&
+             meta_attr_write(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                             kTypeName, sizeof(kTypeName) - 1,
+                             aegir::metadata::kTypeMime, 0,
+                             reinterpret_cast<uint8_t const *>(kMime),
+                             sizeof(kMime) - 1, &written) == aegir::metadata::kOk &&
+             written == sizeof(kMime) - 1 &&
+             meta_attr_stat(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                            kTypeName, sizeof(kTypeName) - 1, &type, &size) ==
+                 aegir::metadata::kOk &&
+             type == aegir::metadata::kTypeMime && size == sizeof(kMime) - 1;
+        uint8_t got[32] = {};
+        uint32_t got_length = sizeof(got);
+        ok = ok &&
+             meta_attr_read(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                            kTypeName, sizeof(kTypeName) - 1, 0, got,
+                            &got_length) == aegir::metadata::kOk &&
+             got_length == sizeof(kMime) - 1 &&
+             same_bytes(reinterpret_cast<char const *>(got), kMime, got_length);
+        /* A value past the inode's small_data room becomes an attribute
+         * inode under an attribute directory. It arrives in 800-byte chunks
+         * (the envelope's bound with a path and a name in front), so it both
+         * moves out of the inode and grows as a file. */
+        constexpr uint32_t kBigChunk = 800;
+        constexpr uint32_t kBigTotal = 3200;
+        uint8_t chunk[kBigChunk];
+        for (uint32_t off = 0; ok && off < kBigTotal; off += kBigChunk) {
+            for (uint32_t i = 0; i < kBigChunk; ++i) {
+                chunk[i] = attr_pattern_at(off + i);
+            }
+            ok = meta_attr_write(bfs_write_volume, kAttrPath,
+                                 sizeof(kAttrPath) - 1, kToolName,
+                                 sizeof(kToolName) - 1,
+                                 aegir::metadata::kTypeRaw, off, chunk, kBigChunk,
+                                 &written) == aegir::metadata::kOk &&
+                 written == kBigChunk;
+        }
+        ok = ok &&
+             meta_attr_stat(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                            kToolName, sizeof(kToolName) - 1, &type, &size) ==
+                 aegir::metadata::kOk &&
+             type == aegir::metadata::kTypeRaw && size == kBigTotal;
+        uint8_t got_big[kBigChunk] = {};
+        uint32_t got_big_length = sizeof(got_big);
+        ok = ok &&
+             meta_attr_read(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                            kToolName, sizeof(kToolName) - 1, 1600, got_big,
+                            &got_big_length) == aegir::metadata::kOk &&
+             got_big_length == sizeof(got_big);
+        for (uint32_t i = 0; ok && i < kBigChunk; ++i) {
+            ok = got_big[i] == attr_pattern_at(1600 + i);
+        }
+        bool saw_type = false;
+        bool saw_tool = false;
+        for (uint32_t index = 0; index < 8; ++index) {
+            char name[aegir::metadata::kAttrNameMax];
+            uint32_t name_length = 0;
+            uint32_t listed_type = 0;
+            uint64_t listed_size = 0;
+            if (meta_attr_list(bfs_write_volume, kAttrPath,
+                               sizeof(kAttrPath) - 1, index, name, &name_length,
+                               &listed_type, &listed_size) != aegir::metadata::kOk) {
+                break;
+            }
+            if (name_length == sizeof(kTypeName) - 1 &&
+                same_bytes(name, kTypeName, name_length)) {
+                saw_type = true;
+            }
+            if (name_length == sizeof(kToolName) - 1 &&
+                same_bytes(name, kToolName, name_length)) {
+                saw_tool = true;
+            }
+        }
+        ok = ok && saw_type && saw_tool;
+        ok = ok &&
+             meta_attr_remove(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                              kTypeName, sizeof(kTypeName) - 1) ==
+                 aegir::metadata::kOk &&
+             meta_attr_remove(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                              kToolName, sizeof(kToolName) - 1) ==
+                 aegir::metadata::kOk &&
+             meta_attr_stat(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1,
+                            kTypeName, sizeof(kTypeName) - 1, &type, &size) ==
+                 aegir::metadata::kNotFound;
+        ok = ok && vol_remove(bfs_write_volume, kAttrPath, sizeof(kAttrPath) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL BFS attributes did not set, read, list and remove\n");
+            ++failed;
+        } else {
+            write("  test: BFS sets, reads, lists and removes attributes\n");
         }
     }
 

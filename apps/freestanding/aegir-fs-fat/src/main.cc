@@ -30,6 +30,7 @@
 #include <aegir/descriptor.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/partman.h>
 #include <aegir/volume.h>
@@ -2087,6 +2088,17 @@ int main(int argc, char *argv[])
         case aegir::volume::kMethodReap:
             answer_reap(vol, words, count);
             break;
+        case aegir::metadata::kMethodAttrStat:
+        case aegir::metadata::kMethodAttrRead:
+        case aegir::metadata::kMethodAttrWrite:
+        case aegir::metadata::kMethodAttrRemove:
+        case aegir::metadata::kMethodAttrList: {
+            /* FAT has no attributes: it says so rather than pretending
+             * (specs/fat.md, specs/vfs.md's metadata protocol). */
+            uint64_t const status = aegir::metadata::kUnsupported;
+            vol.reply_words(&status, 1);
+            break;
+        }
         default:
             /* A method this version does not know is answered by saying
              * nothing (specs/services.md's versioning rule). */

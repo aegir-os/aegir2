@@ -18,5 +18,5 @@ target_compile_options(aegir-fs-bfs PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-fs-bfs PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block aegir-bfs
-                       aegir-descriptor aegir-clock aegir-ipc aegir-log aegir-namespace aegir-partman aegir-volume sel4 muslc sel4runtime
+                       aegir-descriptor aegir-clock aegir-ipc aegir-log aegir-metadata aegir-namespace aegir-partman aegir-volume sel4 muslc sel4runtime
 )

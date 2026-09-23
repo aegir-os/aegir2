@@ -21,6 +21,7 @@
 #include <aegir/descriptor.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/partman.h>
 #include <aegir/volume.h>
@@ -636,6 +637,251 @@ void answer_refuse(aegir::ipc::Owner &port) noexcept
     port.reply_words(nullptr, 0);
 }
 
+/* The metadata protocol wants a path and an attribute name, two strings in
+ * sequence (aegir/metadata.h). `*name` is left null when the message does not
+ * carry one. */
+bool unpack_path_name(uint64_t const *words, uint32_t count, char const **path,
+                      uint32_t *path_length, char const **name,
+                      uint32_t *name_length) noexcept
+{
+    if (!aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                       path, path_length)) {
+        return false;
+    }
+    uint32_t const path_words = 1 + (*path_length + 7) / 8;
+    if (count <= path_words) {
+        return false;
+    }
+    return aegir::nmspace::unpack_string(words + path_words, count - path_words,
+                                         aegir::metadata::kAttrNameMax, name,
+                                         name_length);
+}
+
+/* A path and a name that could name an attribute: false with the status the
+ * client should read when either is wrong. */
+bool attr_target(char const *path, uint32_t path_length, char const *name,
+                 uint32_t name_length, aegir::bfs::Inode *inode,
+                 uint64_t *status) noexcept
+{
+    if (name == nullptr || name_length == 0 ||
+        name_length > aegir::metadata::kAttrNameMax) {
+        *status = aegir::metadata::kInvalidName;
+        return false;
+    }
+    if (!walk(path, path_length, inode)) {
+        *status = aegir::metadata::kNotFound;
+        return false;
+    }
+    return true;
+}
+
+void answer_attr_stat(aegir::ipc::Owner &port, uint64_t const *words,
+                      uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    aegir::bfs::Inode inode;
+    uint64_t status = aegir::metadata::kNotFound;
+    if (unpack_path_name(words, count, &path, &path_length, &name, &name_length) &&
+        attr_target(path, path_length, name, name_length, &inode, &status)) {
+        uint32_t type = 0;
+        uint64_t size = 0;
+        if (g_volume.attr_stat(inode, name, name_length, &type, &size)) {
+            uint64_t const answer[aegir::metadata::kAttrStatTailWords + 1] = {
+                aegir::metadata::kOk, type, size,
+            };
+            port.reply_words(answer, aegir::metadata::kAttrStatTailWords + 1);
+            return;
+        }
+    }
+    port.reply_words(&status, 1);
+}
+
+void answer_attr_read(aegir::ipc::Owner &port, uint64_t const *words,
+                      uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (!unpack_path_name(words, count, &path, &path_length, &name, &name_length)) {
+        uint64_t const status = aegir::metadata::kNotFound;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const name_words = 1 + (name_length + 7) / 8;
+    uint32_t const after = 1 + (path_length + 7) / 8 + name_words;
+    uint64_t const status = aegir::metadata::kNotFound;
+    if (count < after + 2) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint64_t const offset = words[after];
+    uint64_t wanted = words[after + 1];
+    aegir::bfs::Inode inode;
+    uint64_t target_status = aegir::metadata::kNotFound;
+    if (!attr_target(path, path_length, name, name_length, &inode,
+                     &target_status)) {
+        port.reply_words(&target_status, 1);
+        return;
+    }
+    if (wanted > aegir::metadata::kAttrDataMax) {
+        wanted = aegir::metadata::kAttrDataMax;
+    }
+    uint64_t answer[aegir::metadata::kAttrReadHeaderWords +
+                    aegir::metadata::kAttrDataMax / 8] = {};
+    uint32_t length = static_cast<uint32_t>(wanted);
+    auto *bytes = reinterpret_cast<uint8_t *>(
+        answer + aegir::metadata::kAttrReadHeaderWords);
+    if (!g_volume.attr_read(inode, name, name_length, offset, bytes, &length)) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    answer[0] = aegir::metadata::kOk;
+    answer[1] = length;
+    port.reply_words(answer,
+                     aegir::metadata::kAttrReadHeaderWords +
+                         static_cast<uint32_t>((length + 7) / 8));
+}
+
+void answer_attr_write(aegir::ipc::Owner &port, uint64_t const *words,
+                       uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (!unpack_path_name(words, count, &path, &path_length, &name, &name_length)) {
+        uint64_t const status = aegir::metadata::kNotFound;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const after =
+        1 + (path_length + 7) / 8 + 1 + (name_length + 7) / 8;
+    if (count < after + 3) {
+        uint64_t const status = aegir::metadata::kNotFound;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint64_t const type = words[after];
+    uint64_t const offset = words[after + 1];
+    uint64_t const length = words[after + 2];
+    uint64_t answer[aegir::metadata::kAttrWriteTailWords] = {
+        aegir::metadata::kNoSpace, 0,
+    };
+    if (!g_writable) {
+        answer[0] = aegir::metadata::kReadOnly;
+        port.reply_words(answer, 1);
+        return;
+    }
+    if (length > aegir::metadata::kAttrDataMax ||
+        count < after + 3 + static_cast<uint32_t>((length + 7) / 8)) {
+        answer[0] = aegir::metadata::kNoSpace;
+        port.reply_words(answer, 1);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    uint64_t target_status = aegir::metadata::kNotFound;
+    if (!attr_target(path, path_length, name, name_length, &inode,
+                     &target_status)) {
+        port.reply_words(&target_status, 1);
+        return;
+    }
+    auto const *bytes = reinterpret_cast<uint8_t const *>(words + after + 3);
+    uint32_t written = 0;
+    uint64_t const block = g_volume.to_block(inode.run);
+    if (g_writer.attr_write(block, name, name_length, static_cast<uint32_t>(type),
+                            offset, bytes, static_cast<uint32_t>(length),
+                            &written, inode_time())) {
+        answer[0] = aegir::metadata::kOk;
+        answer[1] = written;
+        port.reply_words(answer, aegir::metadata::kAttrWriteTailWords);
+        return;
+    }
+    port.reply_words(answer, 1);
+}
+
+void answer_attr_remove(aegir::ipc::Owner &port, uint64_t const *words,
+                        uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    uint64_t answer = aegir::metadata::kNotFound;
+    if (!unpack_path_name(words, count, &path, &path_length, &name, &name_length)) {
+        port.reply_words(&answer, 1);
+        return;
+    }
+    if (!g_writable) {
+        answer = aegir::metadata::kReadOnly;
+        port.reply_words(&answer, 1);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    uint64_t target_status = aegir::metadata::kNotFound;
+    if (!attr_target(path, path_length, name, name_length, &inode,
+                     &target_status)) {
+        port.reply_words(&target_status, 1);
+        return;
+    }
+    uint64_t const block = g_volume.to_block(inode.run);
+    answer = g_writer.attr_remove(block, name, name_length)
+                 ? aegir::metadata::kOk
+                 : aegir::metadata::kNotFound;
+    port.reply_words(&answer, 1);
+}
+
+void answer_attr_list(aegir::ipc::Owner &port, uint64_t const *words,
+                      uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                       &path, &path_length)) {
+        uint64_t const status = aegir::metadata::kNotFound;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    uint64_t const status = aegir::metadata::kNotFound;
+    if (count < path_words + 1) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    if (!walk(path, path_length, &inode)) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    char name[aegir::metadata::kAttrNameMax];
+    uint32_t name_length = 0;
+    uint32_t type = 0;
+    uint64_t size = 0;
+    if (!g_volume.attr_entry(inode, static_cast<uint32_t>(words[path_words]), name,
+                             &name_length, &type, &size)) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint64_t answer[aegir::ipc::kMaxWords] = {};
+    uint32_t const name_words = aegir::nmspace::pack_string(
+        answer + 1, name, name_length,
+        aegir::ipc::kMaxWords * 8 - aegir::metadata::kAttrListTailWords * 8);
+    if (name_words == 0 ||
+        1 + name_words + aegir::metadata::kAttrListTailWords >
+            aegir::ipc::kMaxWords) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    answer[0] = aegir::metadata::kOk;
+    answer[1 + name_words] = type;
+    answer[1 + name_words + 1] = size;
+    port.reply_words(answer, 1 + name_words + aegir::metadata::kAttrListTailWords);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -850,6 +1096,12 @@ int main(int argc, char *argv[])
         case aegir::volume::kMethodTruncate:
             mutating = true;
             break;
+        case aegir::metadata::kMethodAttrWrite:
+            mutating = true;
+            break;
+        case aegir::metadata::kMethodAttrRemove:
+            mutating = true;
+            break;
         default:
             break;
         }
@@ -889,6 +1141,21 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodReap:
             answer_reap(vol, words, count);
+            break;
+        case aegir::metadata::kMethodAttrStat:
+            answer_attr_stat(vol, words, count);
+            break;
+        case aegir::metadata::kMethodAttrRead:
+            answer_attr_read(vol, words, count);
+            break;
+        case aegir::metadata::kMethodAttrWrite:
+            answer_attr_write(vol, words, count);
+            break;
+        case aegir::metadata::kMethodAttrRemove:
+            answer_attr_remove(vol, words, count);
+            break;
+        case aegir::metadata::kMethodAttrList:
+            answer_attr_list(vol, words, count);
             break;
         default:
             /* The metadata methods and queries: the next phases, refused
