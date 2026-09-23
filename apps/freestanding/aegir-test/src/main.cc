@@ -1287,6 +1287,52 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* A write that spans two runs the allocator could not keep adjacent: a
+     * guard file takes the block the next free run would have used, so the
+     * file's second block is not next to its first, and one write crosses
+     * both. The bytes on either side of the boundary must come from the right
+     * place in the source. */
+    {
+        static char const kSpanPath[] = "SPAN.TXT";
+        static char const kGuardPath[] = "GUARD.TXT";
+        constexpr uint32_t kSpanChunk = 900;
+        uint64_t const handle =
+            vol_open(bfs_write_volume, kSpanPath, sizeof(kSpanPath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        uint8_t chunk[kSpanChunk];
+        for (uint32_t i = 0; i < kSpanChunk; ++i) {
+            chunk[i] = pattern_at(i);
+        }
+        bool ok = handle != 0 &&
+                  vol_write(bfs_write_volume, handle, chunk, kSpanChunk) == kSpanChunk;
+        uint64_t const guard =
+            vol_open(bfs_write_volume, kGuardPath, sizeof(kGuardPath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        ok = ok && guard != 0 && vol_close(bfs_write_volume, guard) == 1;
+        for (uint32_t i = 0; i < kSpanChunk; ++i) {
+            chunk[i] = pattern_at(kSpanChunk + i);
+        }
+        ok = ok &&
+             vol_write(bfs_write_volume, handle, chunk, kSpanChunk) == kSpanChunk;
+        for (uint32_t i = 0; i < kSpanChunk; ++i) {
+            chunk[i] = pattern_at(2 * kSpanChunk + i);
+        }
+        ok = ok &&
+             vol_write(bfs_write_volume, handle, chunk, kSpanChunk) == kSpanChunk &&
+             vol_close(bfs_write_volume, handle) == 1 &&
+             read_and_check_pattern(bfs_write_volume, kSpanPath,
+                                    sizeof(kSpanPath) - 1, 3 * kSpanChunk);
+        ok = ok &&
+             vol_remove(bfs_write_volume, kGuardPath, sizeof(kGuardPath) - 1) == 1 &&
+             vol_remove(bfs_write_volume, kSpanPath, sizeof(kSpanPath) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL a write across a split run read back wrong\n");
+            ++failed;
+        } else {
+            write("  test: BFS writes across a non-contiguous run boundary\n");
+        }
+    }
+
     /* And the boot image itself, by its volume name. The manifest's first
      * bytes are its own to change, so what this checks is that the ask is
      * answered -- the byte-exact checks are the FAT volumes', above. */

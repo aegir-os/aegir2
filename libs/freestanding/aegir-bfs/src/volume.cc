@@ -337,7 +337,7 @@ bool Volume::write_stream_raw(uint8_t const *stream, uint32_t stream_size,
             return true;
         }
         uint32_t const n = static_cast<uint32_t>(hi - lo);
-        if (!write_part(run, lo - run_start, src + (lo - cursor), n)) {
+        if (!write_part(run, lo - run_start, src + (lo - offset), n)) {
             return false;
         }
         left -= n;
