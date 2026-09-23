@@ -21,6 +21,6 @@ add_executable(aegir-virtio-gpu src/main.cc src/gpu.cc)
 target_compile_options(aegir-virtio-gpu PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-virtio-gpu PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-framebuffer aegir-ipc aegir-log aegir-virtio sel4
+  aegir-virtio-gpu PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-framebuffer aegir-ipc aegir-log aegir-virtio sel4
                            muslc sel4runtime
 )

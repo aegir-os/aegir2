@@ -21,6 +21,6 @@ add_executable(aegir-virtio-rng src/main.cc)
 target_compile_options(aegir-virtio-rng PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-virtio-rng PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-entropy aegir-ipc aegir-log aegir-virtio sel4
+  aegir-virtio-rng PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-entropy aegir-ipc aegir-log aegir-virtio sel4
                             muslc sel4runtime
 )

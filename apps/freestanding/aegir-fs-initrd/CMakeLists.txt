@@ -16,6 +16,6 @@ target_compile_options(aegir-fs-initrd PRIVATE -Wall -Wextra -Werror)
 
 # cpio is util_libs' reader for the archive; everything else is ours.
 target_link_libraries(
-  aegir-fs-initrd PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+  aegir-fs-initrd PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                           aegir-namespace aegir-volume sel4 muslc sel4runtime cpio
 )

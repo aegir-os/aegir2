@@ -23,6 +23,6 @@ target_compile_options(aegir-test PRIVATE -Wall -Wextra -Werror)
 # aegir-volume are the two wires it speaks: the map, and what the map points
 # at (specs/vfs.md).
 target_link_libraries(
-  aegir-test PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+  aegir-test PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                       aegir-authdb aegir-namespace aegir-volume aegir-registry aegir-entropy aegir-input aegir-framebuffer aegir-console-protocol aegir-mem sel4 muslc sel4runtime
 )

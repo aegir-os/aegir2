@@ -86,19 +86,12 @@ target_include_directories(
   aegir-c-headers SYSTEM INTERFACE $<TARGET_PROPERTY:muslc,INTERFACE_INCLUDE_DIRECTORIES>
 )
 
-# C++ policies:
-# - aegir-cxx-policy-freestanding: no exceptions, no RTTI, no thread-safe statics.
-#   Used by kernel-adjacent code (root task, services, drivers) that must remain
-#   small and predictable.
-# - aegir-cxx-policy-hosted: full C++17 with exceptions, RTTI, thread-safe statics,
-#   linked against libc++. Used by applications (GUI, user programs).
-# Both require C++17.
-add_library(aegir-cxx-policy-freestanding INTERFACE)
-target_compile_features(aegir-cxx-policy-freestanding INTERFACE cxx_std_17)
-target_compile_options(
-  aegir-cxx-policy-freestanding
-  INTERFACE -fno-exceptions -fno-rtti -fno-threadsafe-statics -Wall -Wextra -Werror
-)
+# C++ policies. A *target's* policy is where it lives: libs/freestanding and
+# apps/freestanding set the lean flags (-fno-exceptions -fno-rtti
+# -fno-threadsafe-statics) at directory scope, and a hosted target links the
+# hosted policy below first (for libc++'s includes and its -fexceptions).
+# aegir-cxx-policy, which libraries link, is only C++17 and the warning set --
+# a library does not export a policy.
 
 if(AEGIR_HOSTED_CXX)
   # The hosted standard library, with exceptions and RTTI on

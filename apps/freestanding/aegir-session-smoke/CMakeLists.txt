@@ -24,7 +24,7 @@ target_compile_options(aegir-session-smoke PRIVATE -Wall -Wextra -Werror)
 # the pieces every binary needs (see libs/aegir-runtime). aegir-namespace and
 # aegir-volume are the map and what the map points at (specs/vfs.md).
 target_link_libraries(
-  aegir-session-smoke PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc
+  aegir-session-smoke PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc
                               aegir-log aegir-namespace aegir-volume sel4 muslc
                               sel4runtime
 )

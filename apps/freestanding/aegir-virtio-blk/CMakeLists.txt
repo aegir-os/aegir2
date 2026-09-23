@@ -23,6 +23,6 @@ add_executable(aegir-virtio-blk src/main.cc src/sector.cc)
 target_compile_options(aegir-virtio-blk PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-virtio-blk PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-block aegir-ipc aegir-log aegir-virtio sel4
+  aegir-virtio-blk PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block aegir-ipc aegir-log aegir-virtio sel4
                             muslc sel4runtime
 )
