@@ -53,13 +53,18 @@ void Allocator::clear_bit(uint8_t *bitmap, uint32_t bit) noexcept
         static_cast<uint8_t>(~(1u << (bit % 8)));
 }
 
-bool Allocator::allocate(uint32_t max_blocks, Run *out) noexcept
+bool Allocator::allocate(uint32_t max_blocks, Run *out,
+                         uint32_t min_blocks) noexcept
 {
-    if (volume_ == nullptr || out == nullptr || max_blocks == 0) {
+    if (volume_ == nullptr || out == nullptr || max_blocks == 0 ||
+        min_blocks == 0) {
         return false;
     }
     if (max_blocks > kMaxRun) {
         max_blocks = kMaxRun;
+    }
+    if (min_blocks > max_blocks) {
+        min_blocks = max_blocks;
     }
     uint32_t const per_block = bits_per_block();
     for (uint32_t group = 0; group < volume_->num_ags(); ++group) {
@@ -89,6 +94,9 @@ bool Allocator::allocate(uint32_t max_blocks, Run *out) noexcept
                        (local + length) / per_block == index &&
                        !bit_set(bitmap_, local + length)) {
                     ++length;
+                }
+                if (length < min_blocks) {
+                    continue;
                 }
                 for (uint32_t k = 0; k < length; ++k) {
                     set_bit(bitmap_, local + k);

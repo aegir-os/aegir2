@@ -372,6 +372,36 @@ bool Volume::write_stream_raw(uint8_t const *stream, uint32_t stream_size,
             }
         }
     }
+
+    Run const double_indirect = le_run(stream + data::kDoubleIndirect);
+    if (!run_is_zero(double_indirect)) {
+        for (uint32_t b = 0; b < double_indirect.length; ++b) {
+            if (!read_block(to_block(double_indirect) + b, array_)) {
+                return false;
+            }
+            for (uint32_t j = 0; j < runs_per_block; ++j) {
+                Run const array_run = le_run(array_ + j * 8);
+                if (run_is_zero(array_run)) {
+                    return left == 0;
+                }
+                for (uint32_t c = 0; c < array_run.length; ++c) {
+                    if (!read_block(to_block(array_run) + c, array2_)) {
+                        return false;
+                    }
+                    for (uint32_t k = 0; k < runs_per_block; ++k) {
+                        Run const run = le_run(array2_ + k * 8);
+                        if (run_is_zero(run)) {
+                            return left == 0;
+                        }
+                        if (!handle(run, pos)) {
+                            return false;
+                        }
+                        pos += run_bytes(run);
+                    }
+                }
+            }
+        }
+    }
     return left == 0;
 }
 

@@ -51,6 +51,7 @@ constexpr uint32_t kModeStrIndex = 0x01000000;  /* S_STR_INDEX */
 constexpr uint32_t kTreeMagic = 0x69f6c2e8;
 constexpr uint32_t kTreeNodeSize = 1024; /* BPLUSTREE_NODE_SIZE, hard-coded */
 constexpr uint32_t kNumArrayBlocks = 4;  /* NUM_ARRAY_BLOCKS */
+constexpr uint32_t kDoubleIndirectArraySize = 4096; /* DOUBLE_INDIRECT_ARRAY_SIZE */
 
 /** Roles a key type names (bplustree data_type). Directories are string. */
 constexpr uint32_t kTreeStringType = 0;

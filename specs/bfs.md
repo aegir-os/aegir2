@@ -384,11 +384,14 @@ The write phase lands in steps, and each smaller step is a completed
 implementation rather than a stub. Directories grow: a full leaf splits in
 half, the separator rises into its parent, and a parent that splits too makes
 a new root, so a directory has no one-node bound and the listing cursor walks
-the leaves. A stream uses direct plus indirect runs; one that outgrows the
-indirect arrays is still **refused**, not miswritten, and the double indirect
-runs are the next step. Growth is non-sparse: a byte the file grows across is
-a real zeroed block, and a write past the end zero-fills the gap. Every
-operation leaves the volume `'CLEN'` with `log_start == log_end`.
+the leaves. A stream grows through its direct runs, then an indirect array,
+then the double indirect, whose runs are laid out in units of its own block
+length (`_DoubleIndirectBlockLength()`), exactly as Haiku computes them. A cut
+that lands inside the double indirect -- unreachable for a stream that fits
+the single indirect -- is refused rather than miswritten. Growth is non-sparse:
+a byte the file grows across is a real zeroed block, and a write past the end
+zero-fills the gap. Every operation leaves the volume `'CLEN'` with
+`log_start == log_end`.
 
 The Aegir additions are **runtime features** wherever possible, because the
 format need not change for them: TRIM is a discard on a freed run, permission

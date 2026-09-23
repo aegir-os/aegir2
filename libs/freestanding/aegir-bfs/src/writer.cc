@@ -283,7 +283,11 @@ bool Writer::split_leaf(uint8_t const *node, uint32_t node_size, uint64_t offset
 {
     uint16_t count = 0;
     int64_t overflow = 0;
-    if (!gather(node, node_size, &count, &overflow) ||
+    /* The node is copied first: growing the stream below reuses node_. */
+    for (uint32_t i = 0; i < node_size; ++i) {
+        split_src_[i] = node[i];
+    }
+    if (!gather(split_src_, node_size, &count, &overflow) ||
         static_cast<uint32_t>(count) + 1 > kMaxNodeEntries) {
         return false;
     }
@@ -316,8 +320,8 @@ bool Writer::split_leaf(uint8_t const *node, uint32_t node_size, uint64_t offset
     }
     uint16_t const total = count + 1;
     uint16_t const m = total / 2;
-    int64_t const old_left = le64_signed(node + node::kLeftLink);
-    int64_t const old_right = le64_signed(node + node::kRightLink);
+    int64_t const old_left = le64_signed(split_src_ + node::kLeftLink);
+    int64_t const old_right = le64_signed(split_src_ + node::kRightLink);
 
     uint64_t other = 0;
     if (!append_node(edit_parent_, node_size, &other)) {
@@ -356,7 +360,11 @@ bool Writer::split_internal(uint8_t const *node, uint32_t node_size, uint64_t of
 {
     uint16_t count = 0;
     int64_t overflow = 0;
-    if (!gather(node, node_size, &count, &overflow) ||
+    /* The node is copied first: growing the stream below reuses node_. */
+    for (uint32_t i = 0; i < node_size; ++i) {
+        split_src_[i] = node[i];
+    }
+    if (!gather(split_src_, node_size, &count, &overflow) ||
         static_cast<uint32_t>(count) + 1 > kMaxNodeEntries) {
         return false;
     }
@@ -402,8 +410,8 @@ bool Writer::split_internal(uint8_t const *node, uint32_t node_size, uint64_t of
     if (j >= total) {
         j = total - 1;
     }
-    int64_t const old_left = le64_signed(node + node::kLeftLink);
-    int64_t const old_right = le64_signed(node + node::kRightLink);
+    int64_t const old_left = le64_signed(split_src_ + node::kLeftLink);
+    int64_t const old_right = le64_signed(split_src_ + node::kRightLink);
 
     uint64_t other = 0;
     if (!append_node(edit_parent_, node_size, &other)) {
@@ -571,7 +579,7 @@ bool Writer::create(uint64_t parent_block, char const *name,
     if (directory) {
         uint32_t const tree_blocks =
             blocks_for(kTreeNodeSize * 2, volume_->block_size());
-        if (!allocator_.allocate(tree_blocks, &tree_run) ||
+        if (!allocator_.allocate(tree_blocks, &tree_run, tree_blocks) ||
             tree_run.length < tree_blocks) {
             if (tree_run.length != 0) {
                 (void)allocator_.free(tree_run);
@@ -768,6 +776,56 @@ bool Writer::destroy(uint64_t block) noexcept
     return allocator_.free(inode_run);
 }
 
+bool Writer::free_double(uint8_t *stream) noexcept
+{
+    uint32_t const per_block = volume_->block_size() / 8;
+    Run const double_indirect = le_run(stream + data::kDoubleIndirect);
+    if (run_is_zero(double_indirect)) {
+        return true;
+    }
+    for (uint32_t b = 0; b < double_indirect.length; ++b) {
+        uint64_t const at = volume_->to_block(double_indirect) + b;
+        if (!volume_->read_block(at, node_)) {
+            return false;
+        }
+        for (uint32_t j = 0; j < per_block; ++j) {
+            Run const array = le_run(node_ + j * 8);
+            if (run_is_zero(array)) {
+                break;
+            }
+            for (uint32_t c = 0; c < array.length; ++c) {
+                if (!volume_->read_block(volume_->to_block(array) + c, work_)) {
+                    return false;
+                }
+                for (uint32_t k = 0; k < per_block; ++k) {
+                    Run const run = le_run(work_ + k * 8);
+                    if (run_is_zero(run)) {
+                        break;
+                    }
+                    if (!allocator_.free(run)) {
+                        return false;
+                    }
+                }
+            }
+            if (!allocator_.free(array)) {
+                return false;
+            }
+        }
+    }
+    if (!allocator_.free(double_indirect)) {
+        return false;
+    }
+    put_run(stream + data::kDoubleIndirect, Run{0, 0, 0});
+    return true;
+}
+
+uint32_t Writer::double_indirect_blocks() const noexcept
+{
+    return volume_->block_size() > kDoubleIndirectArraySize
+               ? 1
+               : kDoubleIndirectArraySize / volume_->block_size();
+}
+
 uint64_t Writer::stream_blocks(uint8_t const *stream) const noexcept
 {
     uint64_t covered = 0;
@@ -794,11 +852,38 @@ uint64_t Writer::stream_blocks(uint8_t const *stream) const noexcept
             }
         }
     }
+    Run const double_indirect = le_run(stream + data::kDoubleIndirect);
+    if (!run_is_zero(double_indirect)) {
+        for (uint32_t b = 0; b < double_indirect.length; ++b) {
+            if (!volume_->read_block(volume_->to_block(double_indirect) + b, node_)) {
+                return covered;
+            }
+            for (uint32_t j = 0; j < per_block; ++j) {
+                Run const array = le_run(node_ + j * 8);
+                if (run_is_zero(array)) {
+                    return covered;
+                }
+                for (uint32_t c = 0; c < array.length; ++c) {
+                    if (!volume_->read_block(volume_->to_block(array) + c, work_)) {
+                        return covered;
+                    }
+                    for (uint32_t k = 0; k < per_block; ++k) {
+                        Run const run = le_run(work_ + k * 8);
+                        if (run_is_zero(run)) {
+                            return covered;
+                        }
+                        covered += run.length;
+                    }
+                }
+            }
+        }
+    }
     return covered;
 }
 
-bool Writer::append_run(uint8_t *stream, Run const &run) noexcept
+bool Writer::append_run(uint8_t *stream, Run const &run, uint32_t *rest) noexcept
 {
+    *rest = 0;
     uint32_t used = 0;
     for (; used < data::kDirectCount; ++used) {
         if (run_is_zero(le_run(stream + data::kDirect + used * 8))) {
@@ -872,19 +957,152 @@ bool Writer::append_run(uint8_t *stream, Run const &run) noexcept
             return true;
         }
     }
-    return false;
+
+    /* The indirect arrays are full: the double indirect now, whose runs are
+     * laid out in units of its own block length (Haiku's baseLength). */
+    uint32_t const unit = double_indirect_blocks();
+    Run double_indirect = le_run(stream + data::kDoubleIndirect);
+    if (run_is_zero(double_indirect)) {
+        Run array{};
+        if (!allocator_.allocate(unit, &array, unit) || array.length < unit) {
+            if (array.length != 0) {
+                (void)allocator_.free(array);
+            }
+            return false;
+        }
+        for (uint32_t b = 0; b < array.length; ++b) {
+            if (!volume_->write_block(volume_->to_block(array) + b, zero_)) {
+                (void)allocator_.free(array);
+                return false;
+            }
+        }
+        put_run(stream + data::kDoubleIndirect, array);
+        put_le64(stream + data::kMaxDoubleIndirectRange,
+                 le64_signed(stream + data::kMaxIndirectRange));
+    }
+    if (unit != 0 && run.length % unit != 0) {
+        uint32_t const usable = (run.length / unit) * unit;
+        if (usable == 0) {
+            *rest = run.length;
+            return true;
+        }
+        Run head = run;
+        head.length = static_cast<uint16_t>(usable);
+        *rest = static_cast<uint32_t>(run.length) - usable;
+        return append_double(stream, head);
+    }
+    return append_double(stream, run);
+}
+
+bool Writer::append_double(uint8_t *stream, Run run) noexcept
+{
+    uint32_t const unit = double_indirect_blocks();
+    uint32_t const per_block = volume_->block_size() / 8;
+    Run const double_indirect = le_run(stream + data::kDoubleIndirect);
+    int64_t const max_indirect = le64_signed(stream + data::kMaxIndirectRange);
+    int64_t const max_double = le64_signed(stream + data::kMaxDoubleIndirectRange);
+    int64_t const start = max_double - max_indirect;
+    int64_t const direct_size = static_cast<int64_t>(unit) * volume_->block_size();
+    int64_t const indirect_size =
+        static_cast<int64_t>(unit) * direct_size * per_block;
+    if (direct_size <= 0 || indirect_size <= 0) {
+        return false;
+    }
+    int64_t indirect_index = start / indirect_size;
+    int64_t index = (start % indirect_size) / direct_size;
+    int64_t const runs_per_array = static_cast<int64_t>(per_block) * unit;
+    uint32_t const ran = run.length;
+    bool loaded = false;
+    uint64_t array_block = 0;
+
+    while (run.length != 0) {
+        uint64_t const block =
+            static_cast<uint64_t>(indirect_index) / per_block;
+        if (block >= double_indirect.length) {
+            return false;
+        }
+        if (!loaded) {
+            array_block = volume_->to_block(double_indirect) + block;
+            if (!volume_->read_block(array_block, node_)) {
+                return false;
+            }
+            loaded = true;
+        }
+        bool wrote_array = false;
+        do {
+            Run slot = le_run(node_ + static_cast<uint64_t>(indirect_index % per_block) * 8);
+            if (run_is_zero(slot)) {
+                Run array{};
+                if (!allocator_.allocate(unit, &array, unit) || array.length < unit) {
+                    if (array.length != 0) {
+                        (void)allocator_.free(array);
+                    }
+                    return false;
+                }
+                for (uint32_t z = 0; z < array.length; ++z) {
+                    if (!volume_->write_block(volume_->to_block(array) + z, zero_)) {
+                        (void)allocator_.free(array);
+                        return false;
+                    }
+                }
+                put_run(node_ + static_cast<uint64_t>(indirect_index % per_block) * 8,
+                        array);
+                slot = array;
+                wrote_array = true;
+            }
+            uint64_t const data_block =
+                volume_->to_block(slot) + static_cast<uint64_t>(index) / per_block;
+            if (!volume_->read_block(data_block, work_)) {
+                return false;
+            }
+            do {
+                Run piece = run;
+                piece.length = static_cast<uint16_t>(unit);
+                put_run(work_ + static_cast<uint64_t>(index % per_block) * 8, piece);
+                run.start = static_cast<uint16_t>(run.start + unit);
+                run.length = static_cast<uint16_t>(run.length - unit);
+            } while ((++index % per_block) != 0 && run.length != 0);
+            if (!volume_->write_block(data_block, work_)) {
+                return false;
+            }
+        } while ((index % runs_per_array) != 0 && run.length != 0);
+        if (wrote_array && !volume_->write_block(array_block, node_)) {
+            return false;
+        }
+        if (index == runs_per_array) {
+            index = 0;
+        }
+        if ((++indirect_index % per_block) == 0) {
+            loaded = false;
+            index = 0;
+        }
+    }
+    put_le64(stream + data::kMaxDoubleIndirectRange,
+             static_cast<uint64_t>(max_double + static_cast<int64_t>(ran) *
+                                                   volume_->block_size()));
+    return true;
 }
 
 bool Writer::grow_to(uint8_t *stream, uint64_t needed_blocks,
                      uint64_t *covered) noexcept
 {
+    uint32_t min_unit = 1;
     while (*covered < needed_blocks) {
         uint64_t want = needed_blocks - *covered;
+        if (want < min_unit) {
+            want = min_unit;
+        }
         if (want > 65535) {
             want = 65535;
         }
         Run run{};
-        if (!allocator_.allocate(static_cast<uint32_t>(want), &run)) {
+        if (!allocator_.allocate(static_cast<uint32_t>(want), &run, min_unit)) {
+            return false;
+        }
+        if (min_unit > 1 && run.length < min_unit) {
+            /* The double indirect takes runs in units of its own length, and
+             * this volume has no such run free. */
+            (void)allocator_.free(run);
             return false;
         }
         uint64_t const at = volume_->to_block(run);
@@ -894,11 +1112,23 @@ bool Writer::grow_to(uint8_t *stream, uint64_t needed_blocks,
                 return false;
             }
         }
-        if (!append_run(stream, run)) {
+        uint32_t rest = 0;
+        if (!append_run(stream, run, &rest)) {
             (void)allocator_.free(run);
             return false;
         }
-        *covered += run.length;
+        if (rest != 0) {
+            Run tail = run;
+            tail.start = static_cast<uint16_t>(tail.start + (run.length - rest));
+            tail.length = static_cast<uint16_t>(rest);
+            (void)allocator_.free(tail);
+        }
+        *covered += run.length - rest;
+        if (rest == run.length || rest != 0) {
+            min_unit = double_indirect_blocks();
+        } else {
+            min_unit = 1;
+        }
     }
     return true;
 }
@@ -1002,6 +1232,20 @@ bool Writer::trim_stream(uint8_t *stream, uint64_t new_blocks) noexcept
             put_run(stream + data::kIndirect, Run{0, 0, 0});
             put_le64(stream + data::kMaxIndirectRange, 0);
         }
+    }
+
+    /* The double indirect is only reached by a stream fragmented past the
+     * indirect arrays. A cut below it frees the whole thing; a cut inside it
+     * -- unreachable where a stream fits the single indirect -- refuses
+     * rather than miswrite. */
+    if (!run_is_zero(le_run(stream + data::kDoubleIndirect))) {
+        if (new_blocks > logical) {
+            return false;
+        }
+        if (!free_double(stream)) {
+            return false;
+        }
+        put_le64(stream + data::kMaxDoubleIndirectRange, 0);
     }
 
     /* Recompute the direct range from what is left. */

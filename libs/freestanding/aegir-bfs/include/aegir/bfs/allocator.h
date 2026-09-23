@@ -33,8 +33,10 @@ public:
     bool open(Volume *volume) noexcept;
 
     /** Allocate one run of up to `max_blocks` contiguous free blocks, at most
-     *  65535 (a run's length field). False when the volume is full. */
-    bool allocate(uint32_t max_blocks, Run *out) noexcept;
+     *  65535 (a run's length field), and at least `min_blocks`. False when no
+     *  run that long is free. */
+    bool allocate(uint32_t max_blocks, Run *out,
+                  uint32_t min_blocks = 1) noexcept;
 
     /** Return a run's blocks to the free pool. */
     bool free(Run const &run) noexcept;

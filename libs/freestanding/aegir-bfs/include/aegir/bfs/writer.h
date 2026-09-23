@@ -105,12 +105,15 @@ private:
     bool write_new_root(uint64_t root_block, TreeSplit const &split,
                         uint32_t node_size) noexcept;
 
-    bool append_run(uint8_t *stream, Run const &run) noexcept;
+    bool append_run(uint8_t *stream, Run const &run, uint32_t *rest) noexcept;
+    bool append_double(uint8_t *stream, Run run) noexcept;
+    uint32_t double_indirect_blocks() const noexcept;
     uint64_t stream_blocks(uint8_t const *stream) const noexcept;
     bool grow_to(uint8_t *stream, uint64_t needed_blocks,
                  uint64_t *covered) noexcept;
     bool zero_range(uint8_t *stream, uint64_t from, uint64_t to) noexcept;
     bool free_stream(uint8_t const *stream) noexcept;
+    bool free_double(uint8_t *stream) noexcept;
     bool trim_stream(uint8_t *stream, uint64_t new_blocks) noexcept;
 
     Volume *volume_ = nullptr;
@@ -122,7 +125,8 @@ private:
     uint8_t hdr_[tree_header::kBytes] = {};
     mutable uint8_t node_[kMaxBlockSize] = {};
     uint8_t parent_[kMaxBlockSize] = {};
-    uint8_t work_[kMaxBlockSize] = {};
+    uint8_t split_src_[kMaxBlockSize] = {};
+    mutable uint8_t work_[kMaxBlockSize] = {};
     uint8_t fresh_[kMaxBlockSize] = {};
     uint8_t zero_[kMaxBlockSize] = {};
 
