@@ -70,8 +70,8 @@ is **tier 1**, and each choice is a decision:
 
 | option | value | why |
 | --- | --- | --- |
-| `LIBCXX_ENABLE_EXCEPTIONS` | OFF | tier 1; see "Deferred" |
-| `LIBCXX_ENABLE_RTTI` | OFF | tier 1; see "Deferred" |
+| `LIBCXX_ENABLE_EXCEPTIONS` | ON | exceptions arc (`specs/cxx.md`'s step 3) |
+| `LIBCXX_ENABLE_RTTI` | ON | exceptions arc (`specs/cxx.md`'s step 3) |
 | `LIBCXX_ENABLE_THREADS` | ON | so `<thread>`/`<mutex>` compile and link; a thread does not start (below) |
 | `LIBCXX_HAS_PTHREAD_API` | ON | the thread API is musl's |
 | `LIBCXX_ENABLE_FILESYSTEM` | OFF | the VFS is a service, not stdio (`specs/vfs.md`) |
@@ -209,11 +209,33 @@ The order:
    sel4runtime's pre-exit step and a clean halt as the exit itself; the
    cxx-smoke registers a handler and returns from `main`, and the acceptance
    checks `CXX_ATEXIT_OK` after `CXX_SMOKE_OK`.
-3. **Exceptions and RTTI.** Tier 1 compiles without them. Turning them on means
+3. **Exceptions and RTTI.** Tier 1 compiled without them; turning them on meant
    rebuilding libc++ with `LIBCXX_ENABLE_EXCEPTIONS`/`RTTI` on and proving
-   unwinding in a *spawned* process — `.eh_frame` mapped and frame registration
-   reached — before anything relies on it. The toolkit's widget classes are the
-   first likely consumer.
+   unwinding in a *spawned* process. **Landed**: the cxx-smoke throws through a
+   live frame object and the frame's destructor runs, and a `dynamic_cast`
+   resolves, before it prints `CXX_SMOKE_OK`. Four things fell out of it:
+   - **The policy split.** A library can no longer *export* `-fno-exceptions`:
+     the negative flag lands after a hosted target's `-fexceptions` with no
+     later positive flag to undo it, and the same link order that would fix
+     that also orders libc++'s includes *after* musl's. So `aegir-cxx-policy`
+     (what libraries link) is C++17 + warnings only; a library with sources
+     sets the lean flags **privately** on itself; a freestanding target links
+     `aegir-cxx-policy-freestanding`; a hosted one links
+     `aegir-cxx-policy-hosted` first. (A `libs/hosted` + `libs/freestanding`
+     directory split is the recorded follow-on that makes this a directory
+     rule rather than a per-library one.)
+   - **libunwind is not linked.** The riscv64 bare-metal toolchain ships no
+     `libgcc_eh`, but its `libgcc.a` carries `_Unwind_*` and the frames are
+     registered by the `crtbegin.o` the link already has; libunwind's baremetal
+     build wants linker-provided `__eh_frame_*` symbols, so libgcc's unwinder
+     is the one used and libunwind is never reached.
+   - **`aegir-cxxabi-shim`.** `__cxa_call_terminate` lives in GCC's libsupc++
+     (libstdc++), which this toolchain omits and libc++abi does not define, so
+     libc++'s `<string>` left a hosted link undefined; the shim is its ABI body.
+   - **`theme.cc`.** Enabling RTTI exposed that `Theme`'s out-of-line virtuals
+     were declared and never defined, leaving the class without a key function
+     and its typeinfo undefined the moment anything needed it. The base hooks
+     now have their no-op default bodies.
 4. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
    but a thread does not start: `pthread_create` reaches `clone`, which the
    dispatcher refuses, and with exceptions off `std::thread`'s constructor would
