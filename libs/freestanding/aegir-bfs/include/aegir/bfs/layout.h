@@ -56,6 +56,45 @@ constexpr uint32_t kDoubleIndirectArraySize = 4096; /* DOUBLE_INDIRECT_ARRAY_SIZ
 
 /** Roles a key type names (bplustree data_type). Directories are string. */
 constexpr uint32_t kTreeStringType = 0;
+constexpr uint32_t kTreeInt32Type = 1;
+constexpr uint32_t kTreeUInt32Type = 2;
+constexpr uint32_t kTreeInt64Type = 3;
+constexpr uint32_t kTreeUInt64Type = 4;
+constexpr uint32_t kTreeFloatType = 5;
+constexpr uint32_t kTreeDoubleType = 6;
+
+/** A tree value can point at a duplicate array instead of naming an inode:
+ *  Haiku's `bplustree_node::MakeLink` packs a type in the top two bits and a
+ *  node offset in the rest. A duplicate node is a whole node holding
+ *  `{int64 count; off_t values[]}`; Aegir uses only those, never the fragment
+ *  nodes Haiku also knows, because a duplicate node is the simple case Haiku
+ *  reads and writes as well. */
+constexpr uint32_t kDuplicateNode = 2;
+constexpr uint32_t kDuplicateFragment = 3;
+constexpr uint32_t kNumDuplicateValues = 125;
+
+inline uint32_t link_type(int64_t link) noexcept
+{
+    return static_cast<uint64_t>(link) >> 62;
+}
+
+inline bool link_is_duplicate(int64_t link) noexcept
+{
+    return (link_type(link) & (kDuplicateNode | kDuplicateFragment)) != 0;
+}
+
+/** The node offset a link names (the low ten bits are a fragment index, which
+ *  Aegir does not use). */
+inline uint64_t link_offset(int64_t link) noexcept
+{
+    return static_cast<uint64_t>(link) & 0x3ffffffffffffc00ULL;
+}
+
+inline int64_t make_link(uint32_t type, uint64_t offset) noexcept
+{
+    return static_cast<int64_t>((static_cast<uint64_t>(type) << 62) |
+                                (offset & 0x3ffffffffffffc00ULL));
+}
 
 /** A key in a tree is at most this many bytes; an attribute name too. */
 constexpr uint32_t kMaxName = 255;

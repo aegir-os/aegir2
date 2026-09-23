@@ -291,10 +291,16 @@ Keys are compared by type:
 | 6 | `BPLUSTREE_DOUBLE_TYPE` | double |
 
 The key type is derived from the stream's mode (`ModeToKeyType`) or from a
-`type_code` (`TypeCodeToKeyType`). A tree may allow duplicate keys; those are
-held in a **duplicate array** reached through `overflow_link`, with fragment
-nodes past that (`NUM_DUPLICATE_VALUES` 125, `NUM_FRAGMENT_VALUES` 7). The name
-index allows duplicates, because two directories may hold the same name.
+`type_code` (`TypeCodeToKeyType`). Keys compare by their type: a string
+bytewise, an integer or real as a number, so an int64 index holds its keys in
+numeric order as Haiku's does. A tree may allow duplicate keys; those are held
+in a **duplicate array** reached through `overflow_link`, with fragment nodes
+past that (`NUM_DUPLICATE_VALUES` 125, `NUM_FRAGMENT_VALUES` 7). Aegir writes
+only the duplicate-**node** form — a whole node holding `{count; values[]}`
+at its overflow link, chained by the sibling links when it fills — never the
+fragment form, which Haiku nonetheless reads; Haiku reads and appends to the
+node form either way. The name index allows duplicates, because two
+directories may hold the same name.
 
 A directory's keys are the entry names (UTF-8, at most 255 bytes) and its
 values are inode block numbers. The root directory's block is the superblock's

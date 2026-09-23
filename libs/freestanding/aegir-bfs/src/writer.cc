@@ -266,7 +266,7 @@ bool Writer::insert_into(uint64_t offset, uint32_t node_size, char const *name,
     }
     if (info.overflow == kNullLink) {
         bool existed = false;
-        if (!node_insert(work_, node_size, node_, name, name_length, value, &existed)) {
+        if (!node_insert(work_, node_size, kTreeStringType, node_, name, name_length, value, &existed)) {
             return split_leaf(node_, node_size, offset, name, name_length, value, out);
         }
         return node_write(offset, node_size, work_);
@@ -304,7 +304,7 @@ bool Writer::insert_into(uint64_t offset, uint32_t node_size, char const *name,
         return true;
     }
     bool existed = false;
-    if (node_insert(work_, node_size, parent_, child_split.separator,
+    if (node_insert(work_, node_size, kTreeStringType, parent_, child_split.separator,
                     child_split.separator_length, child_split.left, &existed)) {
         uint16_t const new_count = le16(work_ + node::kKeyCount);
         if (static_cast<uint16_t>(child_index + 1) < new_count) {
@@ -524,7 +524,7 @@ bool Writer::remove_into(uint64_t offset, uint32_t node_size, char const *name,
     }
     if (info.overflow == kNullLink) {
         bool present = false;
-        if (!node_remove(work_, node_size, node_, name, name_length, &present)) {
+        if (!node_remove(work_, node_size, kTreeStringType, node_, name, name_length, &present)) {
             return false;
         }
         if (!present) {
