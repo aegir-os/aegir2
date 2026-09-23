@@ -21,17 +21,17 @@ project(aegir-director CXX)
 set(users_db "${CMAKE_CURRENT_BINARY_DIR}/users.db")
 add_custom_command(
   OUTPUT "${users_db}"
-  COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/make_users.py"
-          "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/users" "${users_db}"
-  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/users"
-          "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/make_users.py"
+  COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/make_users.py"
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/users" "${users_db}"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/users"
+          "${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/make_users.py"
   VERBATIM
 )
 add_custom_target(users_db_pack ALL DEPENDS "${users_db}")
 
 set(aegir_initrd_files
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/services.manifest"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../manifests/drivers.registry"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/services.manifest"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/drivers.registry"
     "${users_db}"
 )
 set(aegir_initrd_names
