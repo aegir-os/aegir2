@@ -55,6 +55,12 @@ struct Entry {
      * an empty environment and no current directory. */
     View environment;
     View cwd;
+    /* The device this service is for, by the devicetree's name for it (its
+     * first `compatible` string, e.g. "google,goldfish-rtc"), for a device
+     * that is not a virtio transport and so has no id. Empty when the service
+     * names no device; a service declares `device` or `device_id`, not both
+     * (specs/services.md). */
+    View device;
     Authority authority;
     /* The service the machine's devices are given to, and its description of them.
      * A device is a capability, so it goes to exactly one service -- the one that

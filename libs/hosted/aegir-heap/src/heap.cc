@@ -37,6 +37,7 @@
 #include <aegir/heap.h>
 
 #include "files.h"
+#include "time.h"
 
 #include <aegir/debug.h>
 #include <aegir/mem/allocator.h>
@@ -521,6 +522,9 @@ long vsyscall(long sysnum, ...) noexcept
         break;
     case 46: /* SYS_ftruncate */
         ret = files::ftruncate(va_arg(ap, int), va_arg(ap, long));
+        break;
+    case 113: /* SYS_clock_gettime: the clock service behind it (aegir/clock.h) */
+        ret = time::clock_gettime(va_arg(ap, int), va_arg(ap, void *));
         break;
     case 49: /* SYS_chdir */
         ret = files::chdir(va_arg(ap, char const *));

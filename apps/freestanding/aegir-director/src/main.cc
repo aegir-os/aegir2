@@ -204,6 +204,149 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
     return 0;
 }
 
+/** A platform device the tree names by compatible rather than by a virtio id:
+ *  where its registers are, and what the tree calls it. The compatible string
+ *  points into the blob, which is mapped for director's lifetime. */
+struct PlatformEntry {
+    uint64_t base;
+    uint64_t size;
+    char const *compatible;
+    uint32_t compatible_length;
+};
+
+/** Collect every node with a register window whose transport is not virtio.
+ *  The survey hands these out by compatible, which is how a platform device
+ *  without an id reaches the one service that claims it (specs/services.md). */
+class PlatformCollector : public aegir::devtree::Tree::Visitor {
+public:
+    bool device(aegir::devtree::Device const &device) override {
+        if (!device.has_region) {
+            return true;
+        }
+        static char const virtio[] = "virtio,mmio";
+        if (device.compatible_length == sizeof(virtio) - 1) {
+            bool same = true;
+            for (uint32_t i = 0; i < device.compatible_length && same; ++i) {
+                same = device.compatible[i] == virtio[i];
+            }
+            if (same) {
+                return true;
+            }
+        }
+        if (list != nullptr && count < capacity) {
+            list[count] = PlatformEntry{device.base, device.size, device.compatible,
+                                        device.compatible_length};
+        }
+        ++count;
+        return true;
+    }
+
+    PlatformEntry *list = nullptr;
+    uint32_t capacity = 0;
+    uint32_t count = 0;
+};
+
+/* The platform device whose register window covers an address, or null. */
+PlatformEntry const *platform_at(PlatformEntry const *list, uint32_t count,
+                                 uint64_t address) noexcept
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        if (address >= list[i].base && address < list[i].base + list[i].size) {
+            return &list[i];
+        }
+    }
+    return nullptr;
+}
+
+/** Take the frame of each platform device a service claims by compatible.
+ *  Only claimed devices are reached: a window is taken up to the device's
+ *  page from the device untyped that covers it, and a device no service names
+ *  is left alone (its untyped may be far below it, and reaching a page in the
+ *  middle of an untyped costs every page before it). A device already in the
+ *  bus -- the survey recorded it inside the transports' untyped -- is left as
+ *  it is. */
+unsigned survey_claimed_platform_devices(seL4_BootInfo const *bootinfo,
+                                         aegir::mem::Allocator &allocator,
+                                         PlatformEntry const *platform, uint32_t platform_count,
+                                         aegir::manifest::Manifest const &manifest,
+                                         aegir::director::Device *found, uint32_t capacity,
+                                         uint32_t *device_count) noexcept
+{
+    for (uint32_t e = 0; e < manifest.size(); ++e) {
+        aegir::manifest::Entry const &entry = manifest[e];
+        if (entry.device.length == 0) {
+            continue;
+        }
+        for (uint32_t p = 0; p < platform_count; ++p) {
+            if (platform[p].compatible_length != entry.device.length) {
+                continue;
+            }
+            bool same = true;
+            for (uint32_t i = 0; i < entry.device.length && same; ++i) {
+                same = platform[p].compatible[i] == entry.device.data[i];
+            }
+            if (!same) {
+                continue;
+            }
+            uint64_t const base = platform[p].base;
+            bool already = false;
+            for (uint32_t d = 0; d < *device_count && !already; ++d) {
+                already = found[d].address == base;
+            }
+            if (already) {
+                break; /* another service claimed the same one first */
+            }
+            bool reached = false;
+            seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
+            for (seL4_Word i = 0; i < count && !reached; ++i) {
+                seL4_UntypedDesc const &desc = bootinfo->untypedList[i];
+                if (desc.isDevice == 0) {
+                    continue;
+                }
+                uint64_t const span = 1ull << desc.sizeBits;
+                if (base < desc.paddr || base >= desc.paddr + span) {
+                    continue;
+                }
+                uint64_t const untyped = desc.paddr;
+                unsigned const pages =
+                    static_cast<unsigned>(((base - untyped) >> seL4_PageBits) + 1);
+                seL4_Error error = seL4_NoError;
+                seL4_CPtr window_first = 0;
+                if (!allocator.device_window(untyped, pages, &window_first, &error)) {
+                    aegir::debug_write("  FAIL a claimed device's window could not be taken at ");
+                    aegir::debug_write_hex(base);
+                    aegir::debug_write(" (seL4 error ");
+                    aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+                    aegir::debug_write(")\n");
+                    return 1;
+                }
+                seL4_CPtr const slot = window_first + ((base - untyped) >> seL4_PageBits);
+                aegir::debug_write("  platform device at ");
+                aegir::debug_write_hex(base);
+                aegir::debug_write(": ");
+                aegir::debug_write(platform[p].compatible, platform[p].compatible_length);
+                aegir::debug_write(", frame at cap ");
+                aegir::debug_write_unsigned(slot);
+                aegir::debug_write("\n");
+                if (*device_count < capacity) {
+                    found[*device_count] = aegir::director::Device{
+                        base, 0, slot, platform[p].compatible, platform[p].compatible_length};
+                }
+                ++(*device_count);
+                reached = true;
+            }
+            if (!reached) {
+                aegir::debug_write("  FAIL no device untyped covers the claimed device at ");
+                aegir::debug_write_hex(base);
+                aegir::debug_write("\n");
+                return 1;
+            }
+            break;
+        }
+    }
+    return 0;
+}
+
 /** Report which of the machine's transports has something behind it.
  *
  *  This is the first content of the bus map: a device id is what says whether a
@@ -219,8 +362,9 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
  *  transport, which is what makes reading them safe. */
 unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &allocator,
                         aegir::mem::Scratch &scratch, uint64_t untyped_base, uint64_t first,
-                        uint64_t last, aegir::director::Device *found, uint32_t capacity,
-                        uint32_t *device_count) noexcept {
+                        uint64_t last, PlatformEntry const *platform,
+                        uint32_t platform_count, aegir::director::Device *found,
+                        uint32_t capacity, uint32_t *device_count) noexcept {
     *device_count = 0;
     seL4_Word const count = bootinfo->untyped.end - bootinfo->untyped.start;
     for (seL4_Word i = 0; i < count; ++i) {
@@ -252,8 +396,26 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
             uint64_t const address = untyped_base + (static_cast<uint64_t>(page) << seL4_PageBits);
             seL4_CPtr const slot = window_first + page;
             if (address < first) {
-                /* A page the tree names no transport at: taken to advance the
-                 * cursor, and not read, because nothing says what is behind it. */
+                /* A page before the transports: taken to advance the cursor.
+                 * The tree names no virtio transport here, but it may name a
+                 * platform device -- the RTC sits just above the UART -- and
+                 * that device is recorded with the name the tree gives it,
+                 * which is how it reaches the service that claims it without
+                 * an id (specs/services.md). */
+                PlatformEntry const *named =
+                    platform_at(platform, platform_count, address);
+                if (named != nullptr) {
+                    aegir::debug_write("  platform device at ");
+                    aegir::debug_write_hex(address);
+                    aegir::debug_write(": ");
+                    aegir::debug_write(named->compatible, named->compatible_length);
+                    aegir::debug_write("\n");
+                    if (*device_count < capacity) {
+                        found[*device_count] = aegir::director::Device{
+                            address, 0, slot, named->compatible, named->compatible_length};
+                    }
+                    ++(*device_count);
+                }
                 continue;
             }
             auto *registers = static_cast<volatile uint32_t *>(scratch.map(slot));
@@ -287,7 +449,8 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
              * (specs/services.md). The two outputs below keep reporting the last device for
              * the report that follows; the list is what a service is given. */
             if (*device_count < capacity) {
-                found[*device_count] = aegir::director::Device{address, device_id, slot};
+                found[*device_count] = aegir::director::Device{address, device_id, slot,
+                                                               nullptr, 0};
             }
             ++(*device_count);
             aegir::debug_write("  device at ");
@@ -734,17 +897,46 @@ int main(int argc, char *argv[])
     aegir::mem::Arena arena(allocator, scratch, system);
     failures += report_device_memory(bootinfo, device_tree, device_tree_bytes, &device_untyped,
                                     &first_transport, &last_transport);
-    /* One entry per device the machine has behind a transport, in the arena. The span the
-     * tree names is the bound: a page can hold at most one device (specs/services.md). */
-    uint32_t const bus_slots =
-        static_cast<uint32_t>(((last_transport - first_transport) / 4096) + 2);
+    /* The platform devices: every node the tree names with a register window
+     * that is not a virtio transport. The survey records their frames (they
+     * share the device untyped the transports sit in), and a service claims
+     * one by the tree's name for it -- no id, because a platform device has
+     * none (specs/services.md). */
+    PlatformEntry *platform = nullptr;
+    uint32_t platform_count = 0;
+    {
+        aegir::devtree::Tree tree;
+        if (device_tree != nullptr && device_tree_bytes != 0 &&
+            tree.adopt(device_tree, device_tree_bytes)) {
+            PlatformCollector counter;
+            if (tree.walk(counter)) {
+                uint32_t const room = counter.count != 0 ? counter.count : 1;
+                platform = static_cast<PlatformEntry *>(
+                    arena.allocate(sizeof(PlatformEntry) * room));
+                PlatformCollector fill;
+                fill.list = platform;
+                fill.capacity = counter.count;
+                static_cast<void>(tree.walk(fill));
+                platform_count = counter.count;
+            }
+        }
+    }
+    /* One entry per device the machine has behind a transport and per platform
+     * device, in the arena. Within the transports' untyped a page holds at
+     * most one device; a platform device outside it adds one each
+     * (specs/services.md). */
+    uint64_t const transports_end = last_transport + 4096;
+    uint32_t bus_slots = platform_count + 1;
+    if (device_untyped != 0 && last_transport != 0 && transports_end > device_untyped) {
+        bus_slots += static_cast<uint32_t>((transports_end - device_untyped) / 4096);
+    }
     aegir::director::Device *bus = static_cast<aegir::director::Device *>(
         arena.allocate(sizeof(aegir::director::Device) * bus_slots));
     uint32_t bus_count = 0;
     if (device_untyped != 0 && last_transport != 0) {
         failures += survey_devices(bootinfo, allocator, scratch, device_untyped,
-                                   first_transport, last_transport, bus, bus_slots,
-                                   &bus_count);
+                                   first_transport, last_transport, platform, platform_count,
+                                   bus, bus_slots, &bus_count);
     }
 
     heading("memory");
@@ -820,6 +1012,13 @@ int main(int argc, char *argv[])
             {kIrqControlName, sizeof(kIrqControlName) - 1, 0, seL4_CapIRQControl,
              seL4_AllRights, 0, 0, true},
         };
+        /* The platform devices a service claims by compatible are taken now,
+         * after the manifest says which are wanted: reaching a page in the
+         * middle of a device untyped costs every page before it, so only the
+         * claimed devices are worth the walk (specs/services.md). */
+        failures += survey_claimed_platform_devices(bootinfo, allocator, platform,
+                                                    platform_count, manifest, bus, bus_slots,
+                                                    &bus_count);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
                                device_tree_bytes, bus, bus_count, delegated, 1);
     }

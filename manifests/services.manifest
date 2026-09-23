@@ -20,6 +20,20 @@ account   = system
 owns      = log.main
 restart   = always
 
+# The clock: the machine's RTC, mapped as a device and served as clock.main
+# (aegir/clock.h). A platform device has no virtio id and no bus map, so
+# director grants it the frame the devicetree names by compatible; its
+# consumers name clock.main in their own `needs`, and the hosted runtime
+# answers clock_gettime through it (specs/services.md).
+[clock]
+binary    = aegir-rtc
+authority = system
+account   = system
+owns      = clock.main
+needs     = log.main
+device    = google,goldfish-rtc
+restart   = always
+
 # The device manager owns what the machine is, rather than director repeating it:
 # it is given the device tree, reads it, and will hold the bus -> device -> service
 # map that lets a driver be started for a device (specs/services.md).
@@ -139,7 +153,7 @@ restart   = always
 binary    = aegir-fs-fat
 authority = system
 account   = system
-needs     = log.main
+needs     = log.main, clock.main
 restart   = always
 
 # The VFS owns the namespace -- volume names, path resolution -- and not the
@@ -279,7 +293,7 @@ restart     = never
 binary     = aegir-fs-smoke
 authority  = system
 account    = boot
-needs      = log.main, vfs.namespace
+needs      = log.main, vfs.namespace, clock.main
 maps       = true
 memory_kib = 2048
 restart    = never

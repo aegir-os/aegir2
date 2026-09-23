@@ -49,6 +49,7 @@ set(aegir_initrd_names
 set(aegir_initrd_binaries
     aegir-hello
     aegir-logger
+    aegir-rtc
     aegir-device-manager
     aegir-virtio-blk
     aegir-virtio-rng
@@ -72,6 +73,7 @@ set(aegir_initrd_binaries
 set(aegir_initrd_binary_names
     "aegir-hello"
     "aegir-logger"
+    "aegir-rtc"
     "aegir-device-manager"
     "aegir-virtio-blk"
     "aegir-virtio-rng"

@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <system_error>
+#include <time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -275,12 +276,31 @@ void check_std_filesystem()
     }
 }
 
+/* The clock service (specs/services.md, aegir/clock.h): the runtime answers
+ * clock_gettime through the port the manifest gave this process. A plausible
+ * wall time is the checksum -- the RTC is QEMU's host clock, so the answer is
+ * well past 2020 and well before 2100, and zero or the epoch is a failure. */
+void check_clock()
+{
+    struct timespec realtime = {};
+    int const rc = ::clock_gettime(CLOCK_REALTIME, &realtime);
+    bool const plausible = rc == 0 && realtime.tv_sec > 1577836800 &&
+                           realtime.tv_sec < 4102444800;
+    report(plausible, "clock_gettime returns a plausible wall time");
+
+    struct timespec mono = {};
+    int const mono_rc = ::clock_gettime(CLOCK_MONOTONIC, &mono);
+    report(mono_rc == 0 && mono.tv_sec > 1577836800 && mono.tv_sec < 4102444800,
+           "clock_gettime returns a plausible monotonic time");
+}
+
 }  // namespace
 
 int run()
 {
     check_volumes();
     check_std_filesystem();
+    check_clock();
     return g_failed;
 }
 

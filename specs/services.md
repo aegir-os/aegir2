@@ -749,6 +749,16 @@ and answers "who owns this device?" for everyone else.
   not driven. Bound devices get instance names (`blk.virtio0`, not `blkdriver`), built
   when the join succeeds, and the map is sized by two walks of the tree so it grows
   with the machine. Adding a driver is adding a registry row.
+- **done**: a **platform device** -- one the tree names by `compatible` rather than
+  a virtio id -- is surveyed too, and a service claims it with the manifest's
+  `device = <compatible>`. Only a claimed device is reached: its page is taken
+  from the device untyped that covers it, and every page before it is taken with
+  it, so walking to a page in the middle of an untyped is a cost worth paying
+  only for a device somebody wants. Director grants the frame to the service
+  directly (there is no bus row for a device with no id). The first is the
+  **clock**: the goldfish RTC at `0x101000`, whose 64-bit nanosecond register is
+  served as `clock.main` (`aegir/clock.h`), and the hosted runtime answers
+  `clock_gettime` through it (`specs/fat.md`'s Times, `specs/cxx.md`).
 - **done**: each driver's interrupt. IRQControl custody moved to the device manager
   (a copy derives to a null cap, so it *moved* -- specs/authority.md records the
   kernel lines); the handler is minted at the binding, paired with a notification and

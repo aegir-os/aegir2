@@ -202,6 +202,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool authority_seen = false;
     bool device_manager_seen = false;
     bool device_id_seen = false;
+    bool device_seen = false;
     bool memory_seen = false;
     bool stack_seen = false;
     bool delegate_seen = false;
@@ -251,7 +252,9 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             authority_seen = false;
             device_manager_seen = false;
             device_id_seen = false;
+            device_seen = false;
             memory_seen = false;
+            stack_seen = false;
             delegate_seen = false;
             initrd_seen = false;
             maps_seen = false;
@@ -481,6 +484,11 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 return false;
             }
             device_id_seen = true;
+            if (device_seen) {
+                failure_line = number;
+                failure = "device_id and device cannot both be declared";
+                return false;
+            }
             /* A small decimal number, which is all a device id is. Read here rather
              * than in a table because the only thing that gives it meaning is the
              * bus, and the bus is not in this file. */
@@ -499,6 +507,30 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 value_number = value_number * 10 + static_cast<uint32_t>(value.data[d] - '0');
             }
             current->device_id = value_number;
+            return true;
+        }
+
+        if (equals(key, "device")) {
+            if (device_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            device_seen = true;
+            if (device_id_seen) {
+                failure_line = number;
+                failure = "device_id and device cannot both be declared";
+                return false;
+            }
+            if (value.length == 0) {
+                failure_line = number;
+                failure = "device is the devicetree's name for the device (its compatible)";
+                return false;
+            }
+            /* The devicetree's own name for the device -- the first
+             * `compatible` string a non-virtio node carries. The bus matches
+             * it at boot; this file only carries it (specs/services.md). */
+            current->device = value;
             return true;
         }
 

@@ -22,7 +22,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-heap CXX)
 
-add_library(aegir-heap STATIC src/heap.cc src/files.cc)
+add_library(aegir-heap STATIC src/heap.cc src/files.cc src/time.cc)
 
 target_include_directories(aegir-heap PUBLIC include)
-target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client musl_full)
+target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client aegir-clock musl_full)

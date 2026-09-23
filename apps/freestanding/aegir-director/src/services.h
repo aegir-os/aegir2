@@ -71,6 +71,11 @@ struct Device {
     uint64_t address;
     uint32_t id;
     seL4_CPtr frame;
+    /* The devicetree's name for the device, for a platform device that has no
+     * id (a virtio transport names itself by id instead). The string points
+     * into the tree blob, which outlives the boot. */
+    char const *compatible;
+    uint32_t compatible_length;
 };
 
 class Services {

@@ -539,6 +539,23 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                     break;
                 }
             }
+        } else if (entry.device.length != 0) {
+            /* A platform device, which the tree names by compatible rather
+             * than by a virtio id. The first device the survey recorded with
+             * that name is the one this service is for. */
+            for (uint32_t d = 0; d < bus_count; ++d) {
+                if (bus[d].id != 0 || bus[d].compatible_length != entry.device.length) {
+                    continue;
+                }
+                bool same = true;
+                for (uint32_t i = 0; i < entry.device.length && same; ++i) {
+                    same = bus[d].compatible[i] == entry.device.data[i];
+                }
+                if (same) {
+                    mine = &bus[d];
+                    break;
+                }
+            }
         }
         request.device_frame = mine != nullptr ? mine->frame : 0;
         request.device_bytes = mine != nullptr ? 4096u : 0;
