@@ -325,11 +325,24 @@ Other attributes gain an index when one is created for them. An index makes a
 query a tree walk instead of a volume scan; a query on an unindexed attribute
 falls back to scanning.
 
-Aegir does not create the indices yet: `mkfs` writes the superblock's
-`indices` run as a zero run, so every query scans, and the index directory and
-its maintenance are the next step of this phase. A zero `indices` run is
-Haiku's own "no index directory", so a volume Aegir writes stays one Haiku
-mounts.
+`mkfs` now creates the four indices: the indices directory (mode
+`S_INDEX_DIR | S_STR_INDEX | S_DIRECTORY | 0700`, its parent its own run),
+four index inodes under it (mode `S_INDEX_DIR | S_DIRECTORY | S_<type>_INDEX`,
+carrying the Be `type_code` `'CSTR'` or `'LLNG'`, and no file-name small data),
+and their entries. The rules are Haiku's (`Inode::InNameIndex` and friends):
+the **name** index takes every regular named inode — files and directories,
+but not the root, the indices directory, or attributes — and allows
+duplicates, because a name repeats across directories; the **size** index
+takes files; the **last_modified** index takes files and symlinks. An index
+inode's key type is its mode's `S_<type>_INDEX` bit (`BPlusTree::ModeToKeyType`),
+so `name` and `BEOS:APP_SIG` read bytewise and `last_modified` and `size` read
+their int64 keys numerically. Repeated keys go in a duplicate node, so the
+mkfs `last_modified` index holds every inode at time zero under the one key.
+
+Maintaining the indices as files come and go is the next step of this phase,
+and it is the reason `mkfs` must populate them rather than leave them empty: a
+Haiku mount trusts a volume's indices, so an index present but stale is worse
+than one absent. A zero `indices` run is Haiku's own "no index directory".
 
 ## Times
 

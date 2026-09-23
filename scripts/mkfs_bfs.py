@@ -13,9 +13,9 @@ in a B+tree stored in the directory inode's data stream.
 
 The builder makes a small but valid little-endian BFS: a root directory with
 a known file and a nested directory, the "." and ".." entries a regular
-directory carries, and each inode's file-name small data. Indices are not
-built yet (a volume without them is legal and mounts -- specs/bfs.md defers
-queries to a later phase).
+directory carries, each inode's file-name small data, and the four standard
+indices (name, BEOS:APP_SIG, last_modified, size) with their entries, so a
+mount trusts them as Haiku's do (specs/bfs.md's indices).
 
 The public entry point is make_bfs(): give it the image buffer, the
 partition's byte offset and size, a label, and a tree of entries.
@@ -52,9 +52,18 @@ S_ATTR_DIR = 0o01000000000
 S_ATTR = 0o02000000000
 S_INDEX_DIR = 0o04000000000
 S_STR_INDEX = 0o00100000000
+S_LONG_LONG_INDEX = 0o00010000000
 
 BPLUSTREE_MAGIC = 0x69F6C2E8
 BPLUSTREE_STRING_TYPE = 0
+BPLUSTREE_INT64_TYPE = 3
+
+# The index types an index inode's `type` field carries: Be's type codes.
+TYPE_CSTR = 0x43535452  # 'CSTR', B_STRING_TYPE
+TYPE_LLNG = 0x4C4C4E47  # 'LLNG', B_INT64_TYPE
+
+# A duplicate node a key's value points at holds at most this many values.
+NUM_DUPLICATE_VALUES = 125
 
 FILE_NAME_TYPE = 0x43535452  # 'CSTR'
 FILE_NAME_NAME = 0x13
@@ -118,7 +127,8 @@ def _small_data(*, type_code: int, name: bytes, data: bytes) -> bytes:
 
 
 def _inode(*, run: bytes, mode: int, parent: bytes, attributes: bytes,
-           size: int, runs: list[bytes], name: bytes | None, time: int) -> bytes:
+           size: int, runs: list[bytes], name: bytes | None, time: int,
+           type_code: int = 0) -> bytes:
     inode = bytearray(BLOCK)
     _w32(inode, 0, INODE_MAGIC1)
     inode[4:12] = run
@@ -130,7 +140,7 @@ def _inode(*, run: bytes, mode: int, parent: bytes, attributes: bytes,
     _w64(inode, 36, time)  # last_modified_time
     inode[44:52] = parent
     inode[52:60] = attributes
-    _w32(inode, 60, 0)  # type: not an attribute
+    _w32(inode, 60, type_code)  # an attribute/index's type_code, else zero
     _w32(inode, 64, BLOCK)  # inode_size
     _w32(inode, 68, 0)  # etc
 
@@ -205,6 +215,89 @@ def _sort_key(entry: tuple[bytes, int]) -> bytes:
     return entry[0]
 
 
+def _make_link(link_type: int, offset: int) -> int:
+    return ((link_type << 62) | (offset & 0x3FFFFFFFFFFFFC00)) & 0xFFFFFFFFFFFFFFFF
+
+
+def _typed_tree(data_type: int, entries: list[tuple[bytes, int]]) -> bytes:
+    """An index's B+tree: one leaf, plus a duplicate node for each repeated
+    key, so `last_modified` with several inodes at the same time is held the
+    way Haiku holds it. Keys sort by their type, not by their bytes, so an
+    int64 key is in numeric order. A tree bigger than one leaf is refused, as
+    the directory builder refuses one."""
+    if data_type == BPLUSTREE_INT64_TYPE:
+        ordered = sorted(entries, key=lambda e: struct.unpack("<q", e[0])[0])
+    else:
+        ordered = sorted(entries, key=lambda e: e[0])
+
+    groups: list[list] = []  # [key, [values...]]
+    for key, value in ordered:
+        if groups and groups[-1][0] == key:
+            groups[-1][1].append(value)
+        else:
+            groups.append([key, [value]])
+
+    duplicate_nodes: list[tuple[int, list[int]]] = []
+    offset = NODE * 2
+    keys: list[bytes] = []
+    values: list[int] = []
+    for key, group in groups:
+        group.sort()
+        keys.append(key)
+        if len(group) == 1:
+            values.append(group[0])
+        else:
+            if len(group) > NUM_DUPLICATE_VALUES:
+                raise ValueError("index duplicate array too long for one node")
+            duplicate_nodes.append((offset, group))
+            values.append(_make_link(2, offset))  # 2: a duplicate node
+            offset += NODE
+
+    total = NODE * (2 + len(duplicate_nodes))
+    tree = bytearray(total)
+    _w32(tree, 0, BPLUSTREE_MAGIC)
+    _w32(tree, 4, NODE)
+    _w32(tree, 8, 1)  # max_number_of_levels
+    _w32(tree, 12, data_type)
+    _w64(tree, 16, NODE)  # root_node_pointer
+    _w64(tree, 24, 0xFFFFFFFFFFFFFFFF)  # free_node_pointer: none
+    _w64(tree, 32, total)  # maximum_size
+
+    all_key_length = sum(len(key) for key in keys)
+    if _align8(28 + all_key_length) + len(keys) * (2 + 8) > NODE:
+        raise ValueError("index does not fit one B+tree node")
+
+    base = NODE
+    _w64(tree, base, 0xFFFFFFFFFFFFFFFF)  # left_link
+    _w64(tree, base + 8, 0xFFFFFFFFFFFFFFFF)  # right_link
+    _w64(tree, base + 16, 0xFFFFFFFFFFFFFFFF)  # overflow_link -> a leaf
+    _w16(tree, base + 24, len(keys))
+    _w16(tree, base + 26, all_key_length)
+    at = base + 28
+    for key in keys:
+        tree[at : at + len(key)] = key
+        at += len(key)
+    at = base + _align8(28 + all_key_length)
+    cumulative = 0
+    for key in keys:
+        cumulative += len(key)
+        _w16(tree, at, cumulative)
+        at += 2
+    for value in values:
+        _w64(tree, at, value)
+        at += 8
+
+    for duplicate_offset, group in duplicate_nodes:
+        _w64(tree, duplicate_offset, 0xFFFFFFFFFFFFFFFF)  # left_link
+        _w64(tree, duplicate_offset + 8, 0xFFFFFFFFFFFFFFFF)  # right_link
+        _w64(tree, duplicate_offset + 16, len(group))  # count
+        dat = duplicate_offset + 24
+        for value in group:
+            _w64(tree, dat, value)
+            dat += 8
+    return bytes(tree)
+
+
 def make_bfs(buf: bytearray, offset: int, size: int, label: str,
              tree: list) -> None:
     """Write a BFS volume into `buf` at `offset`.
@@ -240,6 +333,13 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
     inodes: list[tuple[int, bytes]] = []
     data_blocks: list[tuple[int, bytes]] = []
 
+    # The standard indices' entries, gathered as the tree is built: the name
+    # index takes every named inode, the size and last_modified indices the
+    # files (specs/bfs.md).
+    name_index: list[tuple[bytes, int]] = []
+    size_index: list[tuple[bytes, int]] = []
+    mtime_index: list[tuple[bytes, int]] = []
+
     def build(entries: list, own_block: int, parent_block: int,
               own_name: str | None = None) -> None:
         # A directory owns a tree block, and every child owns an inode (and,
@@ -266,8 +366,12 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
                     parent=_run(own_block, 1, ag_shift), attributes=ZERO_RUN,
                     size=len(content), runs=runs, name=name.encode("utf-8"), time=0)))
                 table.append((name.encode("utf-8"), child_block))
+                name_index.append((name.encode("utf-8"), child_block))
+                size_index.append((struct.pack("<q", len(content)), child_block))
+                mtime_index.append((struct.pack("<q", 0), child_block))
             else:  # dir
                 table.append((name.encode("utf-8"), child_block))
+                name_index.append((name.encode("utf-8"), child_block))
                 build(entry[2], child_block, own_block, name)
 
         table.append((b".", own_block))
@@ -283,6 +387,61 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
 
     root_block = take()
     build(tree, root_block, root_block)
+
+    # The four standard indices (specs/bfs.md): an indices root whose tree
+    # names them, and each index a tree over the inode blocks. An index inode
+    # has S_INDEX_DIR and S_<type>_INDEX, carries the Be type code, and lives
+    # under the indices root; it has no file name of its own.
+    def place_tree(tree_bytes: bytes) -> bytes:
+        blocks = (len(tree_bytes) + BLOCK - 1) // BLOCK
+        base = take(blocks)
+        for i in range(blocks):
+            piece = bytes(tree_bytes[i * BLOCK : (i + 1) * BLOCK])
+            data_blocks.append((base + i, piece.ljust(BLOCK, b"\x00")))
+        return _run(base, blocks, ag_shift)
+
+    name_block = take()
+    name_tree = _typed_tree(BPLUSTREE_STRING_TYPE, name_index)
+    name_run = place_tree(name_tree)
+
+    appsig_block = take()
+    appsig_tree = _typed_tree(BPLUSTREE_STRING_TYPE, [])
+    appsig_run = place_tree(appsig_tree)
+
+    mtime_block = take()
+    mtime_tree = _typed_tree(BPLUSTREE_INT64_TYPE, mtime_index)
+    mtime_run = place_tree(mtime_tree)
+
+    size_block = take()
+    size_tree = _typed_tree(BPLUSTREE_INT64_TYPE, size_index)
+    size_run = place_tree(size_tree)
+
+    indices_root_block = take()
+    indices_root_run = _run(indices_root_block, 1, ag_shift)
+    indices_tree = _typed_tree(BPLUSTREE_STRING_TYPE, [
+        (b"BEOS:APP_SIG", appsig_block),
+        (b"last_modified", mtime_block),
+        (b"name", name_block),
+        (b"size", size_block),
+    ])
+    indices_tree_run = place_tree(indices_tree)
+
+    inodes.append((indices_root_block, _inode(
+        run=indices_root_run, mode=S_INDEX_DIR | S_STR_INDEX | S_IFDIR | 0o700,
+        parent=indices_root_run, attributes=ZERO_RUN, size=len(indices_tree),
+        runs=[indices_tree_run], name=None, time=0)))
+
+    std_str = S_INDEX_DIR | S_IFDIR | S_STR_INDEX
+    std_i64 = S_INDEX_DIR | S_IFDIR | S_LONG_LONG_INDEX
+    for block, tree_bytes, tree_run, mode, type_code in (
+            (name_block, name_tree, name_run, std_str, TYPE_CSTR),
+            (appsig_block, appsig_tree, appsig_run, std_str, TYPE_CSTR),
+            (mtime_block, mtime_tree, mtime_run, std_i64, TYPE_LLNG),
+            (size_block, size_tree, size_run, std_i64, TYPE_LLNG)):
+        inodes.append((block, _inode(
+            run=_run(block, 1, ag_shift), mode=mode, parent=indices_root_run,
+            attributes=ZERO_RUN, size=len(tree_bytes), runs=[tree_run],
+            name=None, time=0, type_code=type_code)))
 
     used_blocks = next_block
 
@@ -320,7 +479,7 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
     _w64(superblock, 104, log_start)  # log_end: clean
     _w32(superblock, 112, MAGIC3)
     superblock[116:124] = _run(root_block, 1, ag_shift)
-    superblock[124:132] = ZERO_RUN  # indices: none yet
+    superblock[124:132] = _run(indices_root_block, 1, ag_shift)
     start = offset + 512
     buf[start : start + SECTOR] = superblock
 
