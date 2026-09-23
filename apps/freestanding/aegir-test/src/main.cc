@@ -1509,6 +1509,66 @@ int main(int argc, char *argv[])
                         &kind) == aegir::metadata::kNotFound &&
              query_close(bfs_write_volume, by_type) == 1;
 
+        /* An indexed equality over a duplicate key: two files of one size
+         * answer together (from the size index), and removing one leaves the
+         * other. The names prove which inodes the index walk returned. */
+        static char const kQ1[] = "Q1.TXT";
+        static char const kQ2[] = "Q2.TXT";
+        uint8_t q_bytes[936];
+        for (uint32_t i = 0; i < sizeof(q_bytes); ++i) {
+            q_bytes[i] = static_cast<uint8_t>('A' + i % 26);
+        }
+        uint64_t const q1 = vol_open(bfs_write_volume, kQ1, sizeof(kQ1) - 1,
+                                     aegir::volume::kOpenCreate |
+                                         aegir::volume::kOpenTruncate);
+        uint64_t const q2 = vol_open(bfs_write_volume, kQ2, sizeof(kQ2) - 1,
+                                     aegir::volume::kOpenCreate |
+                                         aegir::volume::kOpenTruncate);
+        ok = ok && q1 != 0 && q2 != 0 &&
+             vol_write(bfs_write_volume, q1, q_bytes, sizeof(q_bytes)) ==
+                 sizeof(q_bytes) &&
+             vol_write(bfs_write_volume, q2, q_bytes, sizeof(q_bytes)) ==
+                 sizeof(q_bytes) &&
+             vol_close(bfs_write_volume, q1) == 1 &&
+             vol_close(bfs_write_volume, q2) == 1;
+        static char const kBySize[] = "size == 936";
+        bool saw_q1 = false;
+        bool saw_q2 = false;
+        uint64_t const by_size =
+            query_open(bfs_write_volume, kBySize, sizeof(kBySize) - 1, 0);
+        if (by_size != 0) {
+            while (query_next(bfs_write_volume, by_size, name, &name_length, &size,
+                              &kind) == aegir::metadata::kOk) {
+                if (name_length == sizeof(kQ1) - 1 && same_bytes(name, kQ1, name_length)) {
+                    saw_q1 = true;
+                }
+                if (name_length == sizeof(kQ2) - 1 && same_bytes(name, kQ2, name_length)) {
+                    saw_q2 = true;
+                }
+            }
+        }
+        ok = ok && saw_q1 && saw_q2 && query_close(bfs_write_volume, by_size) == 1;
+
+        ok = ok && vol_remove(bfs_write_volume, kQ1, sizeof(kQ1) - 1) == 1;
+        saw_q1 = false;
+        saw_q2 = false;
+        uint64_t const by_size_after =
+            query_open(bfs_write_volume, kBySize, sizeof(kBySize) - 1, 0);
+        if (by_size_after != 0) {
+            while (query_next(bfs_write_volume, by_size_after, name, &name_length,
+                              &size, &kind) == aegir::metadata::kOk) {
+                if (name_length == sizeof(kQ1) - 1 && same_bytes(name, kQ1, name_length)) {
+                    saw_q1 = true;
+                }
+                if (name_length == sizeof(kQ2) - 1 && same_bytes(name, kQ2, name_length)) {
+                    saw_q2 = true;
+                }
+            }
+        }
+        ok = ok && !saw_q1 && saw_q2 &&
+             query_close(bfs_write_volume, by_size_after) == 1;
+        ok = ok && vol_remove(bfs_write_volume, kQ2, sizeof(kQ2) - 1) == 1;
+
         ok = ok && query_open(bfs_write_volume, "size >", 6, 0) == 0;
         ok = ok && query_open(bfs_write_volume, kByName, sizeof(kByName) - 1,
                               aegir::metadata::kQueryFlagLive) == 0;
