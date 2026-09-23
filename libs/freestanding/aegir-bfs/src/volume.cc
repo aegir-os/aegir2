@@ -246,10 +246,30 @@ bool Volume::read_inode(uint64_t block, Inode *out) const noexcept
     out->run = le_run(block_ + inode::kInodeNum);
     out->parent = le_run(block_ + inode::kParent);
     out->attributes = le_run(block_ + inode::kAttributes);
+    out->name_length = 0;
+    (void)small_file_name(block_, le32(block_ + inode::kInodeSize), out->name,
+                          sizeof(out->name), &out->name_length);
     for (uint32_t i = 0; i < data::kBytes; ++i) {
         out->data[i] = block_[inode::kData + i];
     }
     return true;
+}
+
+bool Volume::next_inode(uint64_t *block, Inode *out) const noexcept
+{
+    for (uint64_t at = *block; at < num_blocks_; ++at) {
+        Inode inode{};
+        /* An inode names its own block; a stale copy of one -- in the log, or
+         * in a freed block not yet overwritten -- names another, and is not
+         * an inode here. */
+        if (read_inode(at, &inode) && to_block(inode.run) == at) {
+            *out = inode;
+            *block = at + 1;
+            return true;
+        }
+    }
+    *block = num_blocks_;
+    return false;
 }
 
 bool Volume::read_part(Run const &run, uint64_t skip, uint8_t *out,

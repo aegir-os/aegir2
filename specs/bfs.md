@@ -319,6 +319,12 @@ Other attributes gain an index when one is created for them. An index makes a
 query a tree walk instead of a volume scan; a query on an unindexed attribute
 falls back to scanning.
 
+Aegir does not create the indices yet: `mkfs` writes the superblock's
+`indices` run as a zero run, so every query scans, and the index directory and
+its maintenance are the next step of this phase. A zero `indices` run is
+Haiku's own "no index directory", so a volume Aegir writes stays one Haiku
+mounts.
+
 ## Times
 
 An inode time is a 64-bit value: the seconds in the high 48 bits
@@ -521,8 +527,21 @@ scans otherwise.
 
 - **query open** — in: the query string, flags. Answer: status, a handle.
 - **query next** — in: the handle. Answer: status, one entry (name, kind,
-  size), or an end marker. The cursor is the filesystem's, per handle.
+  size), or `kNotFound` at the end. The cursor is the filesystem's, per
+  handle.
 - **query close** — in: the handle. Answer: status.
+
+The evaluator scans the volume: it walks the inodes block by block, keeps the
+named ones (a directory's inode carries its name in its small data, as a
+file's does), and tests each against the parsed expression. An inode that
+names a block other than where it was read -- a stale copy in the log, or in a
+freed block not yet overwritten -- is not an inode and is skipped, which is
+what keeps the scan honest without an index. `name`, `size` and
+`last_modified` are the standard attributes; another name is read through the
+volume's metadata layer. The literal's type and the attribute's `type_code`
+decide how they compare: a string as bytes, an integer as a number, a real as
+a number, a bool as a bool; a literal and an attribute of different families
+do not match.
 
 A **live query** is a query that sees changes after it opens. Its open carries
 a **notification endpoint** the filesystem may signal, plus a token:
@@ -538,7 +557,8 @@ a **notification endpoint** the filesystem may signal, plus a token:
 
 The signal carries no data beyond the handle: what changed is discovered by
 re-reading. This keeps the notification path off the critical section and is
-the shape Phase 6 refines.
+the shape Phase 6 refines. A live open is answered with `kUnsupported` until
+the notification endpoint step lands: a refusal, not a quiet ordinary query.
 
 ## Sparseness
 

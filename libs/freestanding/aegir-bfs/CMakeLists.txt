@@ -12,9 +12,9 @@ project(aegir-bfs CXX)
 
 add_library(aegir-bfs STATIC src/volume.cc src/allocator.cc src/inode.cc
                               src/bplustree.cc src/writer.cc src/attribute.cc
-                              src/journal.cc)
+                              src/journal.cc src/query.cc)
 
 target_include_directories(aegir-bfs PUBLIC include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers have
 # to come from a link (specs/build.md).
-target_link_libraries(aegir-bfs PUBLIC aegir-cxx-policy sel4 aegir-c-headers)
+target_link_libraries(aegir-bfs PUBLIC aegir-cxx-policy sel4 aegir-c-headers aegir-metadata)

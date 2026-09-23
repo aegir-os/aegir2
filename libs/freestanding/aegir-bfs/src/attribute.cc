@@ -181,4 +181,34 @@ bool small_remove(uint8_t *block, uint32_t inode_size, char const *name,
     return true;
 }
 
+bool small_file_name(uint8_t const *block, uint32_t inode_size, char *out,
+                     uint32_t capacity, uint32_t *length) noexcept
+{
+    uint32_t at = inode::kSmallData;
+    while (in_bounds(inode_size, at) && le16(block + at + 4) != 0) {
+        uint32_t const size = entry_size(block, inode_size, at);
+        if (size == 0) {
+            return false;
+        }
+        if (is_file_name(block, at)) {
+            uint32_t data_length = le16(block + at + 6);
+            uint8_t const *data = block + at + 8 + le16(block + at + 4) + 3;
+            /* The stored data may or may not include its terminator. */
+            while (data_length != 0 && data[data_length - 1] == 0) {
+                --data_length;
+            }
+            if (data_length > capacity) {
+                return false;
+            }
+            for (uint32_t i = 0; i < data_length; ++i) {
+                out[i] = static_cast<char>(data[i]);
+            }
+            *length = data_length;
+            return true;
+        }
+        at += size;
+    }
+    return false;
+}
+
 }  // namespace aegir::bfs

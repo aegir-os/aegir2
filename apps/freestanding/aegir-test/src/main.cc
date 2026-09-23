@@ -557,6 +557,68 @@ uint64_t meta_attr_list(seL4_CPtr port, char const *path, uint32_t path_length,
     return aegir::metadata::kOk;
 }
 
+/* The query protocol (specs/bfs.md): open, one entry per next, close. */
+uint64_t query_open(seL4_CPtr port, char const *text, uint32_t length,
+                    uint64_t flags) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t const words = aegir::nmspace::pack_string(
+        out, text, length, aegir::metadata::kQueryTextMax);
+    if (words == 0) {
+        return 0;
+    }
+    out[words] = flags;
+    uint64_t in[aegir::metadata::kQueryOpenTailWords] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodQueryOpen, out, words + 1, in,
+        aegir::metadata::kQueryOpenTailWords);
+    if (answer.error != 0 || answer.count < 1 ||
+        in[0] != aegir::metadata::kOk) {
+        return 0;
+    }
+    return in[1];
+}
+
+uint64_t query_next(seL4_CPtr port, uint64_t handle, char *name,
+                    uint32_t *name_length, uint64_t *size, uint64_t *kind) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t in[aegir::ipc::kMaxWords] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodQueryNext, &handle, 1, in, aegir::ipc::kMaxWords);
+    if (answer.error != 0 || answer.count < 1) {
+        return aegir::metadata::kNotFound;
+    }
+    if (in[0] != aegir::metadata::kOk) {
+        return in[0];
+    }
+    char const *seen = nullptr;
+    uint32_t seen_length = 0;
+    if (!aegir::nmspace::unpack_string(in + 1, answer.count - 1,
+                                       aegir::metadata::kAttrNameMax, &seen,
+                                       &seen_length)) {
+        return aegir::metadata::kNotFound;
+    }
+    for (uint32_t i = 0; i < seen_length; ++i) {
+        name[i] = seen[i];
+    }
+    *name_length = seen_length;
+    uint32_t const tail = 2 + (seen_length + 7) / 8;
+    *size = in[tail];
+    *kind = in[tail + 1];
+    return aegir::metadata::kOk;
+}
+
+uint64_t query_close(seL4_CPtr port, uint64_t handle) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t in[1] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodQueryClose, &handle, 1, in, 1);
+    return answer.error != 0 || answer.count < 1 ? 0 : in[0];
+}
+
 /* One read, asking for refusal: true when the volume says no. */
 bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
 {
@@ -1395,6 +1457,68 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: BFS attributes round-trip through the typed layer\n");
+        }
+    }
+
+    /* Queries (specs/bfs.md): the language over the volume's inodes. A query
+     * on a name finds one entry and then ends; one on an attribute finds the
+     * file that carries it; a malformed one is refused; a live one is not
+     * answered yet. */
+    {
+        static char const kQueryPath[] = "QUERY.TXT";
+        static char const kTypeName[] = "BEOS:TYPE";
+        static char const kMime[] = "text/plain";
+        uint64_t const created =
+            vol_open(bfs_write_volume, kQueryPath, sizeof(kQueryPath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        uint32_t written = 0;
+        bool ok = created != 0 && vol_close(bfs_write_volume, created) == 1 &&
+                  meta_attr_write(bfs_write_volume, kQueryPath,
+                                  sizeof(kQueryPath) - 1, kTypeName,
+                                  sizeof(kTypeName) - 1,
+                                  aegir::metadata::kTypeMime, 0,
+                                  reinterpret_cast<uint8_t const *>(kMime),
+                                  sizeof(kMime) - 1,
+                                  &written) == aegir::metadata::kOk;
+
+        static char const kByName[] = "name == \"HELLO.TXT\"";
+        uint64_t const by_name =
+            query_open(bfs_write_volume, kByName, sizeof(kByName) - 1, 0);
+        char name[aegir::metadata::kAttrNameMax];
+        uint32_t name_length = 0;
+        uint64_t size = 0;
+        uint64_t kind = 0;
+        ok = ok && by_name != 0 &&
+             query_next(bfs_write_volume, by_name, name, &name_length, &size,
+                        &kind) == aegir::metadata::kOk &&
+             name_length == 9 && same_bytes(name, "HELLO.TXT", 9) &&
+             kind == aegir::volume::kKindFile &&
+             query_next(bfs_write_volume, by_name, name, &name_length, &size,
+                        &kind) == aegir::metadata::kNotFound &&
+             query_close(bfs_write_volume, by_name) == 1;
+
+        static char const kByType[] = "BEOS:TYPE == \"text/plain\"";
+        uint64_t const by_type =
+            query_open(bfs_write_volume, kByType, sizeof(kByType) - 1, 0);
+        ok = ok && by_type != 0 &&
+             query_next(bfs_write_volume, by_type, name, &name_length, &size,
+                        &kind) == aegir::metadata::kOk &&
+             name_length == sizeof(kQueryPath) - 1 &&
+             same_bytes(name, kQueryPath, name_length) &&
+             query_next(bfs_write_volume, by_type, name, &name_length, &size,
+                        &kind) == aegir::metadata::kNotFound &&
+             query_close(bfs_write_volume, by_type) == 1;
+
+        ok = ok && query_open(bfs_write_volume, "size >", 6, 0) == 0;
+        ok = ok && query_open(bfs_write_volume, kByName, sizeof(kByName) - 1,
+                              aegir::metadata::kQueryFlagLive) == 0;
+        ok = ok && vol_remove(bfs_write_volume, kQueryPath,
+                              sizeof(kQueryPath) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL BFS queries did not open, find and close\n");
+            ++failed;
+        } else {
+            write("  test: BFS queries find an entry by name and attribute\n");
         }
     }
 

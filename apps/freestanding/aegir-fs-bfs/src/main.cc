@@ -25,6 +25,7 @@
 #include <aegir/nmspace.h>
 #include <aegir/partman.h>
 #include <aegir/volume.h>
+#include <aegir/bfs/query.h>
 #include <aegir/bfs/volume.h>
 #include <aegir/bfs/writer.h>
 #include <sel4/sel4.h>
@@ -39,6 +40,9 @@ constexpr uint32_t kReadMax = aegir::volume::kReadMax;
  * block buffers (tens of kilobytes), so it is not a local. */
 aegir::bfs::Volume g_volume;
 aegir::bfs::Writer g_writer;
+/* One parsed query, reused: the service answers one call at a time, and a
+ * query is re-parsed from its text on each step rather than held. */
+aegir::bfs::Query g_query;
 aegir::ipc::Consumer g_blk;
 uint8_t *g_window = nullptr;
 uint64_t g_first = 0;
@@ -241,14 +245,18 @@ bool make_dirs(char const *path, uint32_t length) noexcept
     return true;
 }
 
-/* One open file. The serial is the handle the client names; it is never
- * reused. The badge is whose it is, and the inode block is where the writes
- * land. */
+/* One open file or query. The serial is the handle the client names; it is
+ * never reused. The badge is whose it is. A file's inode block is where the
+ * writes land and its cursor is the byte offset; a query's text is what it
+ * evaluates and its cursor is the block the scan resumes at. */
 struct Handle {
     uint64_t serial;
     uint64_t badge;
     uint64_t inode_block;
     uint64_t cursor;
+    uint8_t kind; /* 0 file, 1 query */
+    uint32_t query_length;
+    char query[aegir::metadata::kQueryTextMax];
 };
 
 Handle *handle_lookup(uint64_t serial, uint64_t badge) noexcept
@@ -358,6 +366,8 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         if (row != nullptr) {
             row->inode_block = inode_block;
             row->cursor = cursor;
+            row->kind = 0;
+            row->query_length = 0;
             handle = row->serial;
         }
     }
@@ -616,6 +626,129 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         static_cast<uint64_t>(inode.mtime) >> 16,
     };
     port.reply_words(answer, aegir::volume::kStatTailWords);
+}
+
+/* A query returns named entries: attribute inodes, attribute directories and
+ * the index directory are the filesystem's own, not names a client asked
+ * about. */
+bool is_queryable(aegir::bfs::Inode const &inode) noexcept
+{
+    if ((inode.mode &
+         (aegir::bfs::kModeAttr | aegir::bfs::kModeAttrDir |
+          aegir::bfs::kModeIndexDir)) != 0) {
+        return false;
+    }
+    return inode.name_length != 0;
+}
+
+void answer_query_open(aegir::ipc::Owner &port, uint64_t const *words,
+                       uint32_t count, uint64_t badge) noexcept
+{
+    uint64_t answer[aegir::metadata::kQueryOpenTailWords] = {
+        aegir::metadata::kNotFound, 0,
+    };
+    char const *text = nullptr;
+    uint32_t text_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::metadata::kQueryTextMax,
+                                       &text, &text_length)) {
+        port.reply_words(answer, 1);
+        return;
+    }
+    uint32_t const text_words = 1 + (text_length + 7) / 8;
+    if (count < text_words + 1 || text_length == 0) {
+        port.reply_words(answer, 1);
+        return;
+    }
+    uint64_t const flags = words[text_words];
+    if ((flags & aegir::metadata::kQueryFlagLive) != 0) {
+        /* Live queries arrive with the notification endpoint; until then a
+         * refusal, not a quiet ordinary query. */
+        answer[0] = aegir::metadata::kUnsupported;
+        port.reply_words(answer, 1);
+        return;
+    }
+    if (!g_query.parse(text, text_length)) {
+        answer[0] = aegir::metadata::kInvalidName;
+        port.reply_words(answer, 1);
+        return;
+    }
+    Handle *row = handle_alloc(badge);
+    if (row == nullptr) {
+        port.reply_words(answer, 1);
+        return;
+    }
+    row->kind = 1;
+    row->cursor = 1; /* the scan starts at the first block */
+    row->query_length = text_length;
+    for (uint32_t i = 0; i < text_length; ++i) {
+        row->query[i] = text[i];
+    }
+    answer[0] = aegir::metadata::kOk;
+    answer[1] = row->serial;
+    port.reply_words(answer, aegir::metadata::kQueryOpenTailWords);
+}
+
+void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
+                       uint32_t count, uint64_t badge) noexcept
+{
+    uint64_t status = aegir::metadata::kNotFound;
+    if (count < 1) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    if (handle == nullptr || handle->kind != 1) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    if (!g_query.parse(handle->query, handle->query_length)) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint64_t block = handle->cursor;
+    aegir::bfs::Inode inode;
+    while (g_volume.next_inode(&block, &inode)) {
+        if (is_queryable(inode) && g_query.matches(g_volume, inode)) {
+            handle->cursor = block;
+            uint64_t answer[aegir::ipc::kMaxWords];
+            uint32_t const name_words = aegir::nmspace::pack_string(
+                answer + 1, inode.name, inode.name_length,
+                aegir::ipc::kMaxWords * 8 - aegir::metadata::kQueryTailWords * 8);
+            if (name_words == 0 ||
+                1 + name_words + aegir::metadata::kQueryTailWords >
+                    aegir::ipc::kMaxWords) {
+                port.reply_words(&status, 1);
+                return;
+            }
+            answer[0] = aegir::metadata::kOk;
+            uint64_t const size = is_directory(inode) ? 0
+                                   : static_cast<uint64_t>(inode.size);
+            answer[1 + name_words] = size;
+            answer[1 + name_words + 1] =
+                is_directory(inode) ? aegir::volume::kKindDir
+                                    : aegir::volume::kKindFile;
+            port.reply_words(answer,
+                             1 + name_words + aegir::metadata::kQueryTailWords);
+            return;
+        }
+    }
+    handle->cursor = block;
+    port.reply_words(&status, 1);
+}
+
+void answer_query_close(aegir::ipc::Owner &port, uint64_t const *words,
+                        uint32_t count, uint64_t badge) noexcept
+{
+    uint64_t closed = 0;
+    if (count >= 1) {
+        Handle *handle = handle_lookup(words[0], badge);
+        if (handle != nullptr && handle->kind == 1) {
+            handle->serial = 0;
+            closed = 1;
+        }
+    }
+    port.reply_words(&closed, 1);
 }
 
 void answer_refuse(aegir::ipc::Owner &port) noexcept
@@ -1109,6 +1242,20 @@ int main(int argc, char *argv[])
         case aegir::metadata::kMethodAttrList:
             answer_attr_list(vol, words, count);
             break;
+        case aegir::metadata::kMethodQueryOpen:
+            answer_query_open(vol, words, count, badge);
+            break;
+        case aegir::metadata::kMethodQueryNext:
+            answer_query_next(vol, words, count, badge);
+            break;
+        case aegir::metadata::kMethodQueryClose:
+            answer_query_close(vol, words, count, badge);
+            break;
+        case aegir::metadata::kMethodQueryOpenLive: {
+            uint64_t const status = aegir::metadata::kUnsupported;
+            vol.reply_words(&status, 1);
+            break;
+        }
         default:
             /* The metadata methods and queries: the next phases, refused
              * rather than answered wrongly. */

@@ -44,6 +44,8 @@ struct Inode {
     Run run;
     Run parent;
     Run attributes; /* the attribute directory, or a zero run for none */
+    char name[kMaxName]; /* the inode's own name, from its small data */
+    uint32_t name_length;
     uint8_t data[data::kBytes];
 };
 
@@ -129,6 +131,11 @@ public:
     /** Read the inode at `block`. False on a bad magic, a deleted inode, or a
      *  size that does not match the volume's. */
     bool read_inode(uint64_t block, Inode *out) const noexcept;
+
+    /** The next inode at or after `*block`, scanning the volume's blocks.
+     *  `*block` is advanced past it; false at the end, with `*block` at the
+     *  volume's last block. A query's scan walks the volume this way. */
+    bool next_inode(uint64_t *block, Inode *out) const noexcept;
 
     /** Read `length` bytes of `inode`'s data stream at `offset`, zero-filling
      *  a hole. False when the stream cannot supply them. */

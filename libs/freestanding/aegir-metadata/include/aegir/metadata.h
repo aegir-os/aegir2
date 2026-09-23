@@ -44,6 +44,21 @@ constexpr uint32_t kMethodQueryNext = 18;
 constexpr uint32_t kMethodQueryClose = 19;
 constexpr uint32_t kMethodQueryOpenLive = 20;
 
+/** The most bytes of a query string the service holds per open query. A
+ *  longer one is refused. */
+constexpr uint32_t kQueryTextMax = 128;
+
+/** query open's answer after the status: the handle. */
+constexpr uint32_t kQueryOpenTailWords = 2;
+
+/** query next's answer after the status and the name string: the size and the
+ *  kind, as list's answer has them. */
+constexpr uint32_t kQueryTailWords = 2;
+
+/** query open's flags: open a live query (a later phase answers
+ *  kUnsupported). */
+constexpr uint64_t kQueryFlagLive = 1;
+
 /** Every metadata answer's first word. */
 constexpr uint64_t kOk = 0;
 constexpr uint64_t kUnsupported = 1;

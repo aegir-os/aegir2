@@ -240,7 +240,8 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
     inodes: list[tuple[int, bytes]] = []
     data_blocks: list[tuple[int, bytes]] = []
 
-    def build(entries: list, own_block: int, parent_block: int) -> None:
+    def build(entries: list, own_block: int, parent_block: int,
+              own_name: str | None = None) -> None:
         # A directory owns a tree block, and every child owns an inode (and,
         # for a file, its data). The children are taken first so the parent's
         # tree can name their inode numbers; this directory's own inode is
@@ -267,7 +268,7 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
                 table.append((name.encode("utf-8"), child_block))
             else:  # dir
                 table.append((name.encode("utf-8"), child_block))
-                build(entry[2], child_block, own_block)
+                build(entry[2], child_block, own_block, name)
 
         table.append((b".", own_block))
         table.append((b"..", parent_block))
@@ -276,7 +277,9 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
         inodes.append((own_block, _inode(
             run=_run(own_block, 1, ag_shift), mode=S_IFDIR | S_STR_INDEX | 0o755,
             parent=_run(parent_block, 1, ag_shift), attributes=ZERO_RUN,
-            size=NODE * 2, runs=[_run(tree_block, 1, ag_shift)], name=None, time=0)))
+            size=NODE * 2, runs=[_run(tree_block, 1, ag_shift)],
+            name=own_name.encode("utf-8") if own_name is not None else None,
+            time=0)))
 
     root_block = take()
     build(tree, root_block, root_block)

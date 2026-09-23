@@ -66,6 +66,11 @@ bool small_set(uint8_t *block, uint32_t inode_size, uint32_t type,
 bool small_remove(uint8_t *block, uint32_t inode_size, char const *name,
                   uint32_t name_length) noexcept;
 
+/** The reserved file-name entry's data: the inode's own name, NUL-terminated
+ *  as stored. False when the inode has none. */
+bool small_file_name(uint8_t const *block, uint32_t inode_size, char *out,
+                     uint32_t capacity, uint32_t *length) noexcept;
+
 }  // namespace aegir::bfs
 
 #endif  // AEGIR_BFS_ATTRIBUTE_H
