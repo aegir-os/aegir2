@@ -80,6 +80,20 @@ public:
     bool attr_remove(uint64_t inode_block, char const *name,
                      uint32_t name_length) noexcept;
 
+    /** Add `value` under `key` in the index inode at `index_block`, whose tree
+     *  keeps its keys by their type. A key that is not there takes `value`; a
+     *  key already there gets `value` added to its duplicate array, so two
+     *  inodes that share a size or a name are both found. */
+    bool index_insert(uint64_t index_block, uint8_t const *key,
+                      uint32_t key_length, uint64_t value) noexcept;
+
+    /** Remove `value` from under `key` in the index at `index_block`. The key
+     *  goes when its last value does. False on a corrupt index; `removed`
+     *  reports whether the value was there. */
+    bool index_remove(uint64_t index_block, uint8_t const *key,
+                      uint32_t key_length, uint64_t value,
+                      bool *removed) noexcept;
+
 private:
     /* Each public operation is one journal transaction (specs/bfs.md): the
      * metadata it changes is buffered and written to the log before any block
@@ -118,6 +132,9 @@ private:
     };
 
     bool read_inode_block(uint64_t block, uint8_t *out) noexcept;
+    /* The order two keys sort in under the open tree's key type. */
+    int key_order(char const *a, uint32_t a_length, uint8_t const *b,
+                  uint32_t b_length) const noexcept;
     bool tree_header(uint64_t parent_block, uint8_t *stream, uint32_t *node_size,
                      uint64_t *root, uint64_t *maximum) noexcept;
     bool tree_edit(uint64_t parent_block, char const *name, uint32_t name_length,
@@ -163,10 +180,45 @@ private:
                            uint32_t name_length, uint32_t type, int64_t time,
                            uint64_t *attr_block) noexcept;
 
+    /* An index is a stream holding a tree whose keys are compared by the
+     * header's data_type, and whose a leaf value may point at a duplicate node
+     * (specs/bfs.md). The `_blocks` forms are the operation inside a larger
+     * transaction; stage 4 calls them beside the operation that changed a
+     * name, a size or a time. */
+    bool index_insert_blocks(uint64_t index_block, uint8_t const *key,
+                             uint32_t key_length, uint64_t value) noexcept;
+    bool index_remove_blocks(uint64_t index_block, uint8_t const *key,
+                             uint32_t key_length, uint64_t value,
+                             bool *removed) noexcept;
+
+    /* Descend to the leaf holding `key`: whether it is there, the leaf's
+     * offset, the entry's index in it, and the value (possibly a duplicate
+     * link). */
+    bool index_descend(uint64_t offset, uint32_t node_size, uint8_t const *key,
+                       uint32_t key_length, bool *found, uint64_t *leaf,
+                       uint16_t *index, uint64_t *value) noexcept;
+
+    /* Add a value to the entry at `leaf`/`index` whose present value is
+     * `old_value`, making or extending its duplicate array. */
+    bool index_add_value(uint64_t leaf, uint16_t index, uint64_t old_value,
+                         uint64_t value, uint32_t node_size) noexcept;
+
+    /* Remove a value from that entry, collapsing the duplicate array to a
+     * plain value when one is left. */
+    bool index_drop_value(uint64_t leaf, uint16_t index, uint64_t old_value,
+                          uint8_t const *key, uint32_t key_length,
+                          uint64_t value, uint32_t node_size,
+                          bool *removed) noexcept;
+
+    /* Put a tree node back on the header's free list, as Haiku's CachedNode
+     * does, so a later Haiku mount reuses it. */
+    bool free_tree_node(uint64_t offset, uint32_t node_size) noexcept;
+
     Volume *volume_ = nullptr;
     Allocator allocator_;
     Journal journal_;
     uint64_t edit_parent_ = 0; /* the directory inode a tree edit is growing */
+    uint32_t tree_type_ = kTreeStringType; /* the open tree's key type */
 
     uint8_t inode_[kMaxBlockSize] = {};
     uint8_t stream_[data::kBytes] = {};

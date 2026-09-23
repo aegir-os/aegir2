@@ -173,6 +173,13 @@ bool Writer::read_inode_block(uint64_t block, uint8_t *out) noexcept
            (le32(out + inode::kFlags) & kInodeInUse) != 0;
 }
 
+int Writer::key_order(char const *a, uint32_t a_length, uint8_t const *b,
+                      uint32_t b_length) const noexcept
+{
+    return key_compare_typed(tree_type_, reinterpret_cast<uint8_t const *>(a),
+                             a_length, b, b_length);
+}
+
 bool Writer::tree_header(uint64_t parent_block, uint8_t *stream,
                          uint32_t *node_size, uint64_t *root,
                          uint64_t *maximum) noexcept
@@ -192,6 +199,7 @@ bool Writer::tree_header(uint64_t parent_block, uint8_t *stream,
     *node_size = parsed.node_size;
     *root = parsed.root;
     *maximum = parsed.maximum;
+    tree_type_ = parsed.data_type;
     return true;
 }
 
@@ -266,7 +274,7 @@ bool Writer::insert_into(uint64_t offset, uint32_t node_size, char const *name,
     }
     if (info.overflow == kNullLink) {
         bool existed = false;
-        if (!node_insert(work_, node_size, kTreeStringType, node_, name, name_length, value, &existed)) {
+        if (!node_insert(work_, node_size, tree_type_, node_, name, name_length, value, &existed)) {
             return split_leaf(node_, node_size, offset, name, name_length, value, out);
         }
         return node_write(offset, node_size, work_);
@@ -287,7 +295,8 @@ bool Writer::insert_into(uint64_t offset, uint32_t node_size, char const *name,
         if (!node_entry(parent_, node_size, i, key, &key_length, &child_value)) {
             return false;
         }
-        if (key_compare(name, name_length, key, key_length) <= 0) {
+        if (key_order(name, name_length, reinterpret_cast<uint8_t const *>(key),
+                      key_length) <= 0) {
             child_index = i;
             child = child_value;
             break;
@@ -304,7 +313,7 @@ bool Writer::insert_into(uint64_t offset, uint32_t node_size, char const *name,
         return true;
     }
     bool existed = false;
-    if (node_insert(work_, node_size, kTreeStringType, parent_, child_split.separator,
+    if (node_insert(work_, node_size, tree_type_, parent_, child_split.separator,
                     child_split.separator_length, child_split.left, &existed)) {
         uint16_t const new_count = le16(work_ + node::kKeyCount);
         if (static_cast<uint16_t>(child_index + 1) < new_count) {
@@ -344,8 +353,7 @@ bool Writer::split_leaf(uint8_t const *node, uint32_t node_size, uint64_t offset
     auto &cv = c_values_;
     uint16_t pos = count;
     for (uint16_t i = 0; i < count; ++i) {
-        if (key_compare(name, name_length, reinterpret_cast<char const *>(keys[i]),
-                        key_lengths[i]) < 0) {
+        if (key_order(name, name_length, keys[i], key_lengths[i]) < 0) {
             pos = i;
             break;
         }
@@ -421,8 +429,7 @@ bool Writer::split_internal(uint8_t const *node, uint32_t node_size, uint64_t of
     auto &cv = c_values_;
     uint16_t pos = count;
     for (uint16_t i = 0; i < count; ++i) {
-        if (key_compare(name, name_length, reinterpret_cast<char const *>(keys[i]),
-                        key_lengths[i]) < 0) {
+        if (key_order(name, name_length, keys[i], key_lengths[i]) < 0) {
             pos = i;
             break;
         }
@@ -524,7 +531,7 @@ bool Writer::remove_into(uint64_t offset, uint32_t node_size, char const *name,
     }
     if (info.overflow == kNullLink) {
         bool present = false;
-        if (!node_remove(work_, node_size, kTreeStringType, node_, name, name_length, &present)) {
+        if (!node_remove(work_, node_size, tree_type_, node_, name, name_length, &present)) {
             return false;
         }
         if (!present) {
@@ -543,7 +550,8 @@ bool Writer::remove_into(uint64_t offset, uint32_t node_size, char const *name,
         if (!node_entry(node_, node_size, i, key, &key_length, &child_value)) {
             return false;
         }
-        if (key_compare(name, name_length, key, key_length) <= 0) {
+        if (key_order(name, name_length, reinterpret_cast<uint8_t const *>(key),
+                      key_length) <= 0) {
             child_index = i;
             child = child_value;
             break;
@@ -1744,6 +1752,385 @@ bool Writer::attr_remove_blocks(uint64_t inode_block, char const *name,
         return false;
     }
     return destroy(attr_block);
+}
+
+/* ---- Indices (specs/bfs.md): a tree whose keys sort by their type, and
+ * whose leaf value may point at a duplicate node when a key repeats. ---- */
+
+bool Writer::index_insert(uint64_t index_block, uint8_t const *key,
+                          uint32_t key_length, uint64_t value) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(index_insert_blocks(index_block, key, key_length, value));
+}
+
+bool Writer::index_insert_blocks(uint64_t index_block, uint8_t const *key,
+                                 uint32_t key_length, uint64_t value) noexcept
+{
+    if (key == nullptr || key_length == 0 || key_length > kMaxKeyLength) {
+        return false;
+    }
+    uint32_t node_size = 0;
+    uint64_t root = 0;
+    uint64_t maximum = 0;
+    if (!tree_header(index_block, stream_, &node_size, &root, &maximum) ||
+        root + node_size > maximum) {
+        return false;
+    }
+    edit_parent_ = index_block;
+    bool found = false;
+    uint64_t leaf = 0;
+    uint16_t index = 0;
+    uint64_t old_value = 0;
+    if (!index_descend(root, node_size, key, key_length, &found, &leaf, &index,
+                       &old_value)) {
+        return false;
+    }
+    if (!found) {
+        TreeSplit split{};
+        if (!insert_into(root, node_size, reinterpret_cast<char const *>(key),
+                         key_length, value, &split)) {
+            return false;
+        }
+        if (split.split && !write_new_root(root, split, node_size)) {
+            return false;
+        }
+        return true;
+    }
+    return index_add_value(leaf, index, old_value, value, node_size);
+}
+
+bool Writer::index_remove(uint64_t index_block, uint8_t const *key,
+                          uint32_t key_length, uint64_t value,
+                          bool *removed) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(
+        index_remove_blocks(index_block, key, key_length, value, removed));
+}
+
+bool Writer::index_remove_blocks(uint64_t index_block, uint8_t const *key,
+                                 uint32_t key_length, uint64_t value,
+                                 bool *removed) noexcept
+{
+    *removed = false;
+    if (key == nullptr || key_length == 0 || key_length > kMaxKeyLength) {
+        return false;
+    }
+    uint32_t node_size = 0;
+    uint64_t root = 0;
+    uint64_t maximum = 0;
+    if (!tree_header(index_block, stream_, &node_size, &root, &maximum) ||
+        root + node_size > maximum) {
+        return false;
+    }
+    edit_parent_ = index_block;
+    bool found = false;
+    uint64_t leaf = 0;
+    uint16_t index = 0;
+    uint64_t old_value = 0;
+    if (!index_descend(root, node_size, key, key_length, &found, &leaf, &index,
+                       &old_value)) {
+        return false;
+    }
+    if (!found) {
+        return true;
+    }
+    if (!link_is_duplicate(static_cast<int64_t>(old_value))) {
+        if (old_value != value) {
+            return true;
+        }
+        if (!node_read(leaf, node_size, node_)) {
+            return false;
+        }
+        bool present = false;
+        if (!node_remove(work_, node_size, tree_type_, node_,
+                         reinterpret_cast<char const *>(key), key_length,
+                         &present)) {
+            return false;
+        }
+        if (!present) {
+            return true;
+        }
+        *removed = true;
+        return node_write(leaf, node_size, work_);
+    }
+    return index_drop_value(leaf, index, old_value, key, key_length, value,
+                            node_size, removed);
+}
+
+bool Writer::index_descend(uint64_t offset, uint32_t node_size,
+                           uint8_t const *key, uint32_t key_length, bool *found,
+                           uint64_t *leaf, uint16_t *index,
+                           uint64_t *value) noexcept
+{
+    for (uint32_t depth = 0; depth < 32; ++depth) {
+        if (!node_read(offset, node_size, node_)) {
+            return false;
+        }
+        NodeInfo info{};
+        if (!node_info(node_, node_size, &info)) {
+            return false;
+        }
+        if (info.overflow == kNullLink) {
+            *leaf = offset;
+            *found = false;
+            for (uint16_t i = 0; i < info.count; ++i) {
+                char entry_key[kMaxKeyLength];
+                uint32_t entry_length = 0;
+                uint64_t entry_value = 0;
+                if (!node_entry(node_, node_size, i, entry_key, &entry_length,
+                                &entry_value)) {
+                    return false;
+                }
+                if (key_order(reinterpret_cast<char const *>(key), key_length,
+                              reinterpret_cast<uint8_t const *>(entry_key),
+                              entry_length) == 0) {
+                    *found = true;
+                    *index = i;
+                    *value = entry_value;
+                    return true;
+                }
+            }
+            return true;
+        }
+        /* Internal: the first key not below `key` names the child to follow,
+         * whose greatest key is that key; past the last, the overflow child. */
+        uint16_t child_index = info.count;
+        uint64_t child = 0;
+        for (uint16_t i = 0; i < info.count; ++i) {
+            char entry_key[kMaxKeyLength];
+            uint32_t entry_length = 0;
+            uint64_t child_value = 0;
+            if (!node_entry(node_, node_size, i, entry_key, &entry_length,
+                            &child_value)) {
+                return false;
+            }
+            if (key_order(reinterpret_cast<char const *>(key), key_length,
+                          reinterpret_cast<uint8_t const *>(entry_key),
+                          entry_length) <= 0) {
+                child_index = i;
+                child = child_value;
+                break;
+            }
+        }
+        if (child_index == info.count) {
+            child = static_cast<uint64_t>(le64_signed(node_ + node::kOverflowLink));
+        }
+        offset = child;
+    }
+    return false;
+}
+
+bool Writer::index_add_value(uint64_t leaf, uint16_t index, uint64_t old_value,
+                             uint64_t value, uint32_t node_size) noexcept
+{
+    if (link_is_duplicate(static_cast<int64_t>(old_value))) {
+        if (link_type(static_cast<int64_t>(old_value)) != kDuplicateNode) {
+            return false; /* a fragment node: not one Aegir writes */
+        }
+        uint64_t offset = link_offset(static_cast<int64_t>(old_value));
+        for (uint32_t depth = 0; depth < 4096; ++depth) {
+            if (!node_read(offset, node_size, node_)) {
+                return false;
+            }
+            uint32_t const count = duplicate_count(node_, node_size);
+            if (count < duplicate_capacity(node_size)) {
+                /* Insert sorted, as Haiku's duplicate_array does. */
+                uint32_t at = count;
+                for (uint32_t i = 0; i < count; ++i) {
+                    uint64_t existing = 0;
+                    if (!duplicate_value(node_, node_size, i, &existing)) {
+                        return false;
+                    }
+                    if (existing > value) {
+                        at = i;
+                        break;
+                    }
+                }
+                for (uint32_t i = count; i > at; --i) {
+                    uint64_t existing = 0;
+                    (void)duplicate_value(node_, node_size, i - 1, &existing);
+                    put_le64(node_ + node::kOverflowLink + 8 + i * 8, existing);
+                }
+                put_le64(node_ + node::kOverflowLink + 8 + at * 8, value);
+                put_le64(node_ + node::kOverflowLink, count + 1);
+                return node_write(offset, node_size, node_);
+            }
+            int64_t const right = le64_signed(node_ + node::kRightLink);
+            if (right == kNullLink) {
+                uint64_t fresh = 0;
+                if (!append_node(edit_parent_, node_size, &fresh)) {
+                    return false;
+                }
+                put_le64(node_ + node::kRightLink, fresh);
+                if (!node_write(offset, node_size, node_)) {
+                    return false;
+                }
+                duplicate_build(fresh_, node_size, offset,
+                                static_cast<uint64_t>(kNullLink), &value, 1);
+                return node_write(fresh, node_size, fresh_);
+            }
+            if (right == kFreeLink) {
+                return false;
+            }
+            offset = static_cast<uint64_t>(right);
+        }
+        return false;
+    }
+    /* A plain value becomes a duplicate node holding both, in order. */
+    uint64_t fresh = 0;
+    if (!append_node(edit_parent_, node_size, &fresh)) {
+        return false;
+    }
+    uint64_t values[2] = {old_value, value};
+    if (values[0] > values[1]) {
+        uint64_t const swap = values[0];
+        values[0] = values[1];
+        values[1] = swap;
+    }
+    duplicate_build(fresh_, node_size, static_cast<uint64_t>(kNullLink),
+                    static_cast<uint64_t>(kNullLink), values, 2);
+    if (!node_write(fresh, node_size, fresh_) ||
+        !node_read(leaf, node_size, node_)) {
+        return false;
+    }
+    uint64_t const link =
+        static_cast<uint64_t>(make_link(kDuplicateNode, fresh));
+    if (!node_set_value(work_, node_size, node_, index, link)) {
+        return false;
+    }
+    return node_write(leaf, node_size, work_);
+}
+
+bool Writer::index_drop_value(uint64_t leaf, uint16_t index, uint64_t old_value,
+                              uint8_t const *key, uint32_t key_length,
+                              uint64_t value, uint32_t node_size,
+                              bool *removed) noexcept
+{
+    if (link_type(static_cast<int64_t>(old_value)) != kDuplicateNode) {
+        return false;
+    }
+    uint64_t offset = link_offset(static_cast<int64_t>(old_value));
+    uint64_t previous = static_cast<uint64_t>(kNullLink);
+    for (uint32_t depth = 0; depth < 4096; ++depth) {
+        if (!node_read(offset, node_size, node_)) {
+            return false;
+        }
+        uint32_t const count = duplicate_count(node_, node_size);
+        uint32_t at = count;
+        for (uint32_t i = 0; i < count; ++i) {
+            uint64_t existing = 0;
+            if (!duplicate_value(node_, node_size, i, &existing)) {
+                return false;
+            }
+            if (existing == value) {
+                at = i;
+                break;
+            }
+        }
+        if (at == count) {
+            int64_t const right = le64_signed(node_ + node::kRightLink);
+            if (right == kNullLink) {
+                return true; /* not in this key's values */
+            }
+            previous = offset;
+            offset = static_cast<uint64_t>(right);
+            continue;
+        }
+        /* Take the value out, shifting the rest down. */
+        for (uint32_t i = at; i + 1 < count; ++i) {
+            uint64_t next = 0;
+            (void)duplicate_value(node_, node_size, i + 1, &next);
+            put_le64(node_ + node::kOverflowLink + 8 + i * 8, next);
+        }
+        uint32_t const left_count = count - 1;
+        put_le64(node_ + node::kOverflowLink, left_count);
+        *removed = true;
+        int64_t const left = le64_signed(node_ + node::kLeftLink);
+        int64_t const right = le64_signed(node_ + node::kRightLink);
+
+        /* A lone node down to one value is a plain value again. */
+        if (left == kNullLink && right == kNullLink && left_count == 1) {
+            uint64_t remaining = 0;
+            (void)duplicate_value(node_, node_size, 0, &remaining);
+            if (!node_read(leaf, node_size, node_) ||
+                !node_set_value(work_, node_size, node_, index, remaining) ||
+                !node_write(leaf, node_size, work_)) {
+                return false;
+            }
+            return free_tree_node(offset, node_size);
+        }
+        if (left_count == 0) {
+            /* Drop the empty node from the chain first. */
+            if (left == kNullLink) {
+                if (!node_read(leaf, node_size, node_)) {
+                    return false;
+                }
+                if (right == kNullLink) {
+                    bool present = false;
+                    if (!node_remove(work_, node_size, tree_type_, node_,
+                                     reinterpret_cast<char const *>(key),
+                                     key_length, &present)) {
+                        return false;
+                    }
+                    if (!present) {
+                        return true;
+                    }
+                    return node_write(leaf, node_size, work_);
+                }
+                uint64_t const link =
+                    static_cast<uint64_t>(make_link(kDuplicateNode,
+                                                    static_cast<uint64_t>(right)));
+                if (!node_set_value(work_, node_size, node_, index, link) ||
+                    !node_write(leaf, node_size, work_)) {
+                    return false;
+                }
+            } else {
+                if (!node_read(previous, node_size, split_src_)) {
+                    return false;
+                }
+                put_le64(split_src_ + node::kRightLink, right);
+                if (!node_write(previous, node_size, split_src_)) {
+                    return false;
+                }
+                if (right != kNullLink) {
+                    if (!node_read(static_cast<uint64_t>(right), node_size,
+                                   split_src_)) {
+                        return false;
+                    }
+                    put_le64(split_src_ + node::kLeftLink, left);
+                    if (!node_write(static_cast<uint64_t>(right), node_size,
+                                    split_src_)) {
+                        return false;
+                    }
+                }
+            }
+            return free_tree_node(offset, node_size);
+        }
+        return node_write(offset, node_size, node_);
+    }
+    return false;
+}
+
+bool Writer::free_tree_node(uint64_t offset, uint32_t node_size) noexcept
+{
+    if (!node_read(offset, node_size, work_)) {
+        return false;
+    }
+    put_le64(work_ + node::kLeftLink, le64(hdr_ + tree_header::kFreeNode));
+    put_le64(work_ + node::kOverflowLink, static_cast<uint64_t>(kFreeLink));
+    if (!node_write(offset, node_size, work_)) {
+        return false;
+    }
+    put_le64(hdr_ + tree_header::kFreeNode, offset);
+    return header_write();
 }
 
 }  // namespace aegir::bfs
