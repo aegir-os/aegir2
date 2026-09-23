@@ -170,6 +170,15 @@ public:
     bool index_inode(char const *name, uint32_t length,
                      uint64_t *inode_block) const noexcept;
 
+    /** Walk the inodes `key` maps to in the index inode at `index_block`.
+     *  `*position` is 0 to begin and is advanced per value returned, so a
+     *  caller resumes a walk by holding it. False at the end, or when the
+     *  index is malformed. Keys compare by the index's type, and a key another
+     *  inode shares is followed through its duplicate chain (specs/bfs.md's
+     *  indices). */
+    bool index_walk(uint64_t index_block, uint8_t const *key, uint32_t key_length,
+                    uint32_t *position, uint64_t *inode_block) const noexcept;
+
     /** The `index`th entry of `dir`, or false past the last. The cursor is the
      *  caller's index, as the volume protocol's list wants. A directory too
      *  large for a single leaf node is refused, not misread -- the growth
@@ -211,7 +220,8 @@ private:
                            uint64_t offset, uint8_t const *in, uint32_t length,
                            bool direct) const noexcept;
     bool node_header(Inode const &dir, uint32_t *node_size, uint64_t *root,
-                     uint64_t *maximum) const noexcept;
+                     uint64_t *maximum,
+                     uint32_t *data_type = nullptr) const noexcept;
     bool attr_dir_inode(Inode const &inode, Inode *dir) const noexcept;
     bool inode_raw(Inode const &inode, uint32_t *inode_size) const noexcept;
     uint32_t node_key_lengths(uint8_t const *node, uint16_t count,

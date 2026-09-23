@@ -75,6 +75,14 @@ public:
 
     bool valid() const noexcept { return count_ != 0; }
 
+    /** The one equation, when the query is exactly one `attribute op value`;
+     *  null when it is compound. A lone equality is what an index answers. */
+    QueryEquation const *single_equation() const noexcept
+    {
+        return count_ == 1 && !terms_[0].is_operator ? &terms_[0].equation
+                                                     : nullptr;
+    }
+
     /** True when `inode` satisfies the query. The volume is needed for an
      *  equation on a real attribute. */
     bool matches(Volume const &volume, Inode const &inode) const noexcept;

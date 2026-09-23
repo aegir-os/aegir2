@@ -256,6 +256,11 @@ struct Handle {
     uint64_t cursor;
     uint8_t kind; /* 0 file, 1 query */
     uint32_t query_length;
+    /* A query whose single term an index can answer walks the index rather
+     * than the volume: `index_block` names the index, `index_position` is how
+     * far the walk has got, and 0 means scan instead. */
+    uint64_t index_block;
+    uint32_t index_position;
     char query[aegir::metadata::kQueryTextMax];
 };
 
@@ -641,6 +646,96 @@ bool is_queryable(aegir::bfs::Inode const &inode) noexcept
     return inode.name_length != 0;
 }
 
+bool bytes_match(char const *a, uint32_t a_length, char const *b,
+                 uint32_t b_length) noexcept
+{
+    if (a_length != b_length) {
+        return false;
+    }
+    for (uint32_t i = 0; i < a_length; ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The index a query's one equality term can walk, and the key to walk it
+ * with. The key is the bytes the Writer keys that index by: a string
+ * attribute's value, or an int64's little-endian coding. False when the query
+ * is not a lone equality on an indexed attribute. */
+struct IndexTerm {
+    char const *name;
+    uint32_t name_length;
+    uint8_t const *key;
+    uint32_t key_length;
+    uint8_t key_store[8];
+};
+
+bool query_index_term(aegir::bfs::Query const &query, IndexTerm *out) noexcept
+{
+    aegir::bfs::QueryEquation const *eq = query.single_equation();
+    if (eq == nullptr || eq->op != aegir::bfs::kQueryEqual) {
+        return false;
+    }
+    /* The four standard indices share their attribute's name. */
+    bool const string_key =
+        bytes_match(eq->attribute, eq->attribute_length, "name", 4) ||
+        bytes_match(eq->attribute, eq->attribute_length, "BEOS:APP_SIG", 12);
+    bool const integer_key =
+        bytes_match(eq->attribute, eq->attribute_length, "size", 4) ||
+        bytes_match(eq->attribute, eq->attribute_length, "last_modified", 13);
+    if (string_key) {
+        if (eq->literal != aegir::bfs::QueryLiteral::String ||
+            eq->value_length == 0) {
+            return false;
+        }
+        out->key = reinterpret_cast<uint8_t const *>(eq->value);
+        out->key_length = eq->value_length;
+    } else if (integer_key) {
+        if (eq->literal != aegir::bfs::QueryLiteral::Integer &&
+            eq->literal != aegir::bfs::QueryLiteral::Unsigned) {
+            return false;
+        }
+        int64_t const number = eq->literal == aegir::bfs::QueryLiteral::Integer
+                                   ? eq->integer
+                                   : static_cast<int64_t>(eq->unsigned_integer);
+        aegir::bfs::put_le64(out->key_store, static_cast<uint64_t>(number));
+        out->key = out->key_store;
+        out->key_length = 8;
+    } else {
+        return false;
+    }
+    if (out->key_length == 0 || out->key_length > aegir::bfs::kMaxName) {
+        return false;
+    }
+    out->name = eq->attribute;
+    out->name_length = eq->attribute_length;
+    return true;
+}
+
+/* Answer one query entry. The end status instead when the entry does not fit
+ * a message; either way a reply has been sent. */
+void query_emit(aegir::ipc::Owner &port, aegir::bfs::Inode const &inode) noexcept
+{
+    uint64_t answer[aegir::ipc::kMaxWords];
+    uint32_t const name_words = aegir::nmspace::pack_string(
+        answer + 1, inode.name, inode.name_length,
+        aegir::ipc::kMaxWords * 8 - aegir::metadata::kQueryTailWords * 8);
+    if (name_words == 0 ||
+        1 + name_words + aegir::metadata::kQueryTailWords > aegir::ipc::kMaxWords) {
+        uint64_t const status = aegir::metadata::kNotFound;
+        port.reply_words(&status, 1);
+        return;
+    }
+    answer[0] = aegir::metadata::kOk;
+    answer[1 + name_words] =
+        is_directory(inode) ? 0 : static_cast<uint64_t>(inode.size);
+    answer[1 + name_words + 1] =
+        is_directory(inode) ? aegir::volume::kKindDir : aegir::volume::kKindFile;
+    port.reply_words(answer, 1 + name_words + aegir::metadata::kQueryTailWords);
+}
+
 void answer_query_open(aegir::ipc::Owner &port, uint64_t const *words,
                        uint32_t count, uint64_t badge) noexcept
 {
@@ -680,6 +775,16 @@ void answer_query_open(aegir::ipc::Owner &port, uint64_t const *words,
     }
     row->kind = 1;
     row->cursor = 1; /* the scan starts at the first block */
+    row->index_block = 0;
+    row->index_position = 0;
+    /* A lone equality on an indexed attribute answers from that index; a
+     * missing index falls back to the scan. */
+    IndexTerm term;
+    uint64_t index_block = 0;
+    if (query_index_term(g_query, &term) &&
+        g_volume.index_inode(term.name, term.name_length, &index_block)) {
+        row->index_block = index_block;
+    }
     row->query_length = text_length;
     for (uint32_t i = 0; i < text_length; ++i) {
         row->query[i] = text[i];
@@ -706,30 +811,33 @@ void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
         port.reply_words(&status, 1);
         return;
     }
+    /* An indexed term walks the index; each value is still read back and
+     * re-checked, so a stale or shared key entry cannot lie. */
+    if (handle->index_block != 0) {
+        IndexTerm term;
+        if (query_index_term(g_query, &term)) {
+            uint64_t value = 0;
+            while (g_volume.index_walk(handle->index_block, term.key,
+                                       term.key_length, &handle->index_position,
+                                       &value)) {
+                aegir::bfs::Inode inode;
+                if (!g_volume.read_inode(value, &inode) || !is_queryable(inode) ||
+                    !g_query.matches(g_volume, inode)) {
+                    continue;
+                }
+                query_emit(port, inode);
+                return;
+            }
+        }
+        port.reply_words(&status, 1);
+        return;
+    }
     uint64_t block = handle->cursor;
     aegir::bfs::Inode inode;
     while (g_volume.next_inode(&block, &inode)) {
         if (is_queryable(inode) && g_query.matches(g_volume, inode)) {
             handle->cursor = block;
-            uint64_t answer[aegir::ipc::kMaxWords];
-            uint32_t const name_words = aegir::nmspace::pack_string(
-                answer + 1, inode.name, inode.name_length,
-                aegir::ipc::kMaxWords * 8 - aegir::metadata::kQueryTailWords * 8);
-            if (name_words == 0 ||
-                1 + name_words + aegir::metadata::kQueryTailWords >
-                    aegir::ipc::kMaxWords) {
-                port.reply_words(&status, 1);
-                return;
-            }
-            answer[0] = aegir::metadata::kOk;
-            uint64_t const size = is_directory(inode) ? 0
-                                   : static_cast<uint64_t>(inode.size);
-            answer[1 + name_words] = size;
-            answer[1 + name_words + 1] =
-                is_directory(inode) ? aegir::volume::kKindDir
-                                    : aegir::volume::kKindFile;
-            port.reply_words(answer,
-                             1 + name_words + aegir::metadata::kQueryTailWords);
+            query_emit(port, inode);
             return;
         }
     }

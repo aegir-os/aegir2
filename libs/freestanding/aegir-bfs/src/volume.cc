@@ -569,7 +569,7 @@ bool Volume::node_key(uint8_t const *node, uint16_t count, uint16_t index,
 }
 
 bool Volume::node_header(Inode const &dir, uint32_t *node_size, uint64_t *root,
-                         uint64_t *maximum) const noexcept
+                         uint64_t *maximum, uint32_t *data_type) const noexcept
 {
     uint8_t header[tree_header::kBytes];
     if (!read_stream(dir, 0, header, sizeof(header))) {
@@ -581,6 +581,9 @@ bool Volume::node_header(Inode const &dir, uint32_t *node_size, uint64_t *root,
     *node_size = le32(header + tree_header::kNodeSize);
     *root = le64(header + tree_header::kRootNode);
     *maximum = le64(header + tree_header::kMaximumSize);
+    if (data_type != nullptr) {
+        *data_type = le32(header + tree_header::kDataType);
+    }
     if (*node_size == 0 || *node_size > kMaxBlockSize) {
         return false;
     }
@@ -657,6 +660,102 @@ bool Volume::index_inode(char const *name, uint32_t length,
         return false;
     }
     return dir_find(dir, name, length, inode_block);
+}
+
+bool Volume::index_walk(uint64_t index_block, uint8_t const *key,
+                        uint32_t key_length, uint32_t *position,
+                        uint64_t *inode_block) const noexcept
+{
+    Inode index{};
+    if (!read_inode(index_block, &index)) {
+        return false;
+    }
+    uint32_t node_size = 0;
+    uint64_t offset = 0;
+    uint64_t maximum = 0;
+    uint32_t data_type = kTreeStringType;
+    if (!node_header(index, &node_size, &offset, &maximum, &data_type)) {
+        return false;
+    }
+
+    /* Descend to the leaf holding the key, as dir_find does, but the key
+     * compares by the index's type. */
+    uint64_t value = 0;
+    bool found = false;
+    for (uint32_t depth = 0; depth < 16 && !found; ++depth) {
+        if (offset + node_size > maximum ||
+            !read_stream(index, offset, tree_, node_size)) {
+            return false;
+        }
+        int64_t const overflow = le64_signed(tree_ + node::kOverflowLink);
+        uint16_t const count = le16(tree_ + node::kKeyCount);
+        if (count > 512) {
+            return false;
+        }
+        uint16_t key_lengths[512];
+        uint32_t const values_at = node_key_lengths(tree_, count, key_lengths);
+        uint16_t child = count;
+        bool equal = false;
+        for (uint16_t i = 0; i < count; ++i) {
+            uint32_t at = node::kFixed;
+            for (uint16_t k = 0; k < i; ++k) {
+                at += key_lengths[k];
+            }
+            int const order =
+                key_compare_typed(data_type, key, key_length, tree_ + at, key_lengths[i]);
+            if (order <= 0) {
+                child = i;
+                equal = order == 0;
+                break;
+            }
+        }
+        if (overflow == kNullLink) {
+            if (!equal) {
+                return false;
+            }
+            value = le64(tree_ + values_at + child * 8);
+            found = true;
+        } else {
+            offset = child == count ? static_cast<uint64_t>(overflow)
+                                    : le64(tree_ + values_at + child * 8);
+        }
+    }
+    if (!found) {
+        return false;
+    }
+
+    if (!link_is_duplicate(static_cast<int64_t>(value))) {
+        if (*position != 0) {
+            return false; /* a lone value: the walk's first call returns it */
+        }
+        *position = 1;
+        *inode_block = value;
+        return true;
+    }
+    if (link_type(static_cast<int64_t>(value)) != kDuplicateNode) {
+        return false; /* a fragment node: not one Aegir writes */
+    }
+    uint64_t chain = link_offset(static_cast<int64_t>(value));
+    for (uint32_t depth = 0; depth < 4096; ++depth) {
+        if (!read_stream(index, chain, tree_, node_size)) {
+            return false;
+        }
+        uint32_t const count = duplicate_count(tree_, node_size);
+        if (*position < count) {
+            if (!duplicate_value(tree_, node_size, *position, inode_block)) {
+                return false;
+            }
+            ++*position;
+            return true;
+        }
+        *position -= count;
+        int64_t const right = le64_signed(tree_ + node::kRightLink);
+        if (right == kNullLink) {
+            return false;
+        }
+        chain = static_cast<uint64_t>(right);
+    }
+    return false;
 }
 
 bool Volume::dir_entry(Inode const &dir, uint32_t index, char *name,

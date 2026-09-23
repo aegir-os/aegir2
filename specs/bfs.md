@@ -552,6 +552,16 @@ with the operators `=`, `==`, `!=`, `<`, `<=`, `>`, `>=`, combined with `&`
 indexed attributes. A query uses an index when one exists for a term and
 scans otherwise.
 
+A query that is a **single equality** on one of the four standard indexed
+attributes is answered from that index: the literal becomes the index key --
+a string attribute's bytes, or an int64's little-endian coding, the same
+bytes the Writer keys it with -- and the index is walked for the inodes that
+key maps to, following a duplicate chain when several share the key. Each
+inode the walk names is still read back and tested against the expression,
+so a stale entry cannot make the query lie. A compound query, an inequality,
+an attribute with no index, or an index the volume does not have falls back
+to the scan, which is always the correct answer.
+
 - **query open** — in: the query string, flags. Answer: status, a handle.
 - **query next** — in: the handle. Answer: status, one entry (name, kind,
   size), or `kNotFound` at the end. The cursor is the filesystem's, per
