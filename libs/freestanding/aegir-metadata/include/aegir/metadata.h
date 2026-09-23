@@ -112,4 +112,84 @@ constexpr char kNameIcon[] = "BEOS:ICON";
 constexpr char kNameMiniIcon[] = "BEOS:MINI_ICON";
 constexpr char kNameTooltypes[] = "AEGIR:TOOLTYPES";
 
+/* The value codecs: an attribute's data is bytes, and these are the type_code
+ * shapes in the byte order BFS stores, little-endian. The typed access above
+ * vfs::Volume uses them; a client that wants the raw bytes uses the metadata
+ * methods directly. A string's bytes are its characters with no terminator. */
+
+inline void put_u32(uint8_t *at, uint32_t value) noexcept
+{
+    for (uint32_t i = 0; i < 4; ++i) {
+        at[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xff);
+    }
+}
+
+inline uint32_t get_u32(uint8_t const *at) noexcept
+{
+    return static_cast<uint32_t>(at[0]) | (static_cast<uint32_t>(at[1]) << 8) |
+           (static_cast<uint32_t>(at[2]) << 16) |
+           (static_cast<uint32_t>(at[3]) << 24);
+}
+
+inline void put_i32(uint8_t *at, int32_t value) noexcept
+{
+    put_u32(at, static_cast<uint32_t>(value));
+}
+
+inline int32_t get_i32(uint8_t const *at) noexcept
+{
+    return static_cast<int32_t>(get_u32(at));
+}
+
+inline void put_u64(uint8_t *at, uint64_t value) noexcept
+{
+    for (uint32_t i = 0; i < 8; ++i) {
+        at[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xff);
+    }
+}
+
+inline uint64_t get_u64(uint8_t const *at) noexcept
+{
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < 8; ++i) {
+        value |= static_cast<uint64_t>(at[i]) << (i * 8);
+    }
+    return value;
+}
+
+inline void put_i64(uint8_t *at, int64_t value) noexcept
+{
+    put_u64(at, static_cast<uint64_t>(value));
+}
+
+inline int64_t get_i64(uint8_t const *at) noexcept
+{
+    return static_cast<int64_t>(get_u64(at));
+}
+
+inline void put_bool(uint8_t *at, bool value) noexcept
+{
+    at[0] = value ? 1 : 0;
+}
+
+inline bool get_bool(uint8_t const *at) noexcept
+{
+    return at[0] != 0;
+}
+
+inline void put_double(uint8_t *at, double value) noexcept
+{
+    uint64_t bits = 0;
+    __builtin_memcpy(&bits, &value, sizeof(bits));
+    put_u64(at, bits);
+}
+
+inline double get_double(uint8_t const *at) noexcept
+{
+    uint64_t const bits = get_u64(at);
+    double value = 0;
+    __builtin_memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
 }  // namespace aegir::metadata

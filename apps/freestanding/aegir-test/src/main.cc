@@ -34,6 +34,7 @@
 #include <aegir/registry.h>
 #include <aegir/thread.h>
 #include <aegir/volume.h>
+#include <aegir/vfs.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -1330,6 +1331,70 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: BFS writes across a non-contiguous run boundary\n");
+        }
+    }
+
+    /* The typed layer (aegir/metadata.h's codecs) over the same wire: a value
+     * keeps its type and comes back in the C++ shape it went in as, and a
+     * getter refuses a value stored as another type. */
+    {
+        static char const kTyped[] = "TYPED.TXT";
+        uint64_t const handle =
+            vol_open(bfs_write_volume, kTyped, sizeof(kTyped) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool ok = handle != 0 && vol_close(bfs_write_volume, handle) == 1;
+        aegir::vfs::Volume typed(bfs_write_volume);
+        int32_t count = 0;
+        int64_t tally = 0;
+        double ratio = 0.0;
+        bool flag = false;
+        uint8_t raw[6] = {};
+        uint32_t raw_length = 0;
+        uint8_t const kRaw[3] = {1, 2, 3};
+        char text[8] = {};
+        uint32_t text_length = 0;
+        ok = ok &&
+             typed.attr_set_int32(kTyped, sizeof(kTyped) - 1, "AEGIR:COUNT", 11,
+                                  -12345) == aegir::metadata::kOk &&
+             typed.attr_get_int32(kTyped, sizeof(kTyped) - 1, "AEGIR:COUNT", 11,
+                                  count) == aegir::metadata::kOk &&
+             count == -12345 &&
+             typed.attr_set_int64(kTyped, sizeof(kTyped) - 1, "AEGIR:TALLY", 11,
+                                  0x123456789LL) == aegir::metadata::kOk &&
+             typed.attr_get_int64(kTyped, sizeof(kTyped) - 1, "AEGIR:TALLY", 11,
+                                  tally) == aegir::metadata::kOk &&
+             tally == 0x123456789LL &&
+             typed.attr_set_double(kTyped, sizeof(kTyped) - 1, "AEGIR:RATIO", 11,
+                                   2.5) == aegir::metadata::kOk &&
+             typed.attr_get_double(kTyped, sizeof(kTyped) - 1, "AEGIR:RATIO", 11,
+                                   ratio) == aegir::metadata::kOk &&
+             ratio == 2.5 &&
+             typed.attr_set_bool(kTyped, sizeof(kTyped) - 1, "AEGIR:FLAG", 10,
+                                 true) == aegir::metadata::kOk &&
+             typed.attr_get_bool(kTyped, sizeof(kTyped) - 1, "AEGIR:FLAG", 10,
+                                 flag) == aegir::metadata::kOk &&
+             flag &&
+             typed.attr_set_string(kTyped, sizeof(kTyped) - 1, "AEGIR:NOTE", 10,
+                                   "hi", 2) == aegir::metadata::kOk &&
+             typed.attr_get_string(kTyped, sizeof(kTyped) - 1, "AEGIR:NOTE", 10,
+                                   text, sizeof(text),
+                                   text_length) == aegir::metadata::kOk &&
+             text_length == 2 && text[0] == 'h' && text[1] == 'i' &&
+             typed.attr_set_raw(kTyped, sizeof(kTyped) - 1, "AEGIR:RAWB", 10, kRaw,
+                                3) == aegir::metadata::kOk &&
+             typed.attr_get_raw(kTyped, sizeof(kTyped) - 1, "AEGIR:RAWB", 10, raw,
+                                sizeof(raw), raw_length) == aegir::metadata::kOk &&
+             raw_length == 3 && raw[0] == 1 && raw[1] == 2 && raw[2] == 3;
+        int32_t wrong = 0;
+        ok = ok && typed.attr_get_int32(kTyped, sizeof(kTyped) - 1,
+                                        "AEGIR:TALLY", 11,
+                                        wrong) == aegir::metadata::kNotFound;
+        ok = ok && vol_remove(bfs_write_volume, kTyped, sizeof(kTyped) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL BFS typed attributes did not round-trip\n");
+            ++failed;
+        } else {
+            write("  test: BFS attributes round-trip through the typed layer\n");
         }
     }
 

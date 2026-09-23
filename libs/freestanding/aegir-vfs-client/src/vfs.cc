@@ -33,6 +33,62 @@ uint32_t pack_path_name(uint64_t *request, char const *path, uint32_t length,
     return name_words == 0 ? 0 : path_words + name_words;
 }
 
+/* A typed value of a fixed size: stat checks the type and the size, then the
+ * read returns the bytes. A type or size that is not the one asked for is
+ * kNotFound, so an int read as one really was stored as one. */
+uint64_t get_fixed(Volume &volume, char const *path, uint32_t length,
+                   char const *name, uint32_t name_length, uint32_t type_code,
+                   uint32_t size, uint8_t *out) noexcept
+{
+    uint32_t type = 0;
+    uint64_t stored_size = 0;
+    uint64_t const status =
+        volume.attr_stat(path, length, name, name_length, type, stored_size);
+    if (status != metadata::kOk) {
+        return status;
+    }
+    if (type != type_code || stored_size != size) {
+        return metadata::kNotFound;
+    }
+    uint32_t got = size;
+    uint64_t const read =
+        volume.attr_read(path, length, name, name_length, 0, out, got);
+    if (read != metadata::kOk) {
+        return read;
+    }
+    return got == size ? metadata::kOk : metadata::kNotFound;
+}
+
+/* A typed value of any size: the value is copied into `out`, bounded by
+ * `capacity`. */
+uint64_t get_variable(Volume &volume, char const *path, uint32_t length,
+                      char const *name, uint32_t name_length,
+                      uint32_t type_code, uint8_t *out, uint32_t capacity,
+                      uint32_t &out_length) noexcept
+{
+    uint32_t type = 0;
+    uint64_t stored_size = 0;
+    uint64_t const status =
+        volume.attr_stat(path, length, name, name_length, type, stored_size);
+    if (status != metadata::kOk) {
+        return status;
+    }
+    if (type != type_code || stored_size > capacity) {
+        return metadata::kNotFound;
+    }
+    uint32_t got = static_cast<uint32_t>(stored_size);
+    uint64_t const read =
+        volume.attr_read(path, length, name, name_length, 0, out, got);
+    if (read != metadata::kOk) {
+        return read;
+    }
+    if (got != stored_size) {
+        return metadata::kNotFound;
+    }
+    out_length = got;
+    return metadata::kOk;
+}
+
 }  // namespace
 
 aegir::ipc::Consumer find_namespace() noexcept
@@ -453,6 +509,180 @@ uint64_t Volume::attr_list(char const *path, uint32_t length, uint64_t index,
     type = static_cast<uint32_t>(answer[tail]);
     size = answer[tail + 1];
     return metadata::kOk;
+}
+
+uint64_t Volume::attr_get_string(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 char *out, uint32_t capacity,
+                                 uint32_t &out_length) noexcept
+{
+    return get_variable(*this, path, length, name, name_length,
+                        metadata::kTypeString,
+                        reinterpret_cast<uint8_t *>(out), capacity, out_length);
+}
+
+uint64_t Volume::attr_set_string(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 char const *value, uint32_t value_length) noexcept
+{
+    return attr_write(path, length, name, name_length, metadata::kTypeString, 0,
+                      reinterpret_cast<uint8_t const *>(value), value_length);
+}
+
+uint64_t Volume::attr_get_int32(char const *path, uint32_t length,
+                                char const *name, uint32_t name_length,
+                                int32_t &out) noexcept
+{
+    uint8_t bytes[4];
+    uint64_t const status = get_fixed(*this, path, length, name, name_length,
+                                      metadata::kTypeInt32, 4, bytes);
+    if (status == metadata::kOk) {
+        out = metadata::get_i32(bytes);
+    }
+    return status;
+}
+
+uint64_t Volume::attr_set_int32(char const *path, uint32_t length,
+                                char const *name, uint32_t name_length,
+                                int32_t value) noexcept
+{
+    uint8_t bytes[4];
+    metadata::put_i32(bytes, value);
+    return attr_write(path, length, name, name_length, metadata::kTypeInt32, 0,
+                      bytes, 4);
+}
+
+uint64_t Volume::attr_get_uint32(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 uint32_t &out) noexcept
+{
+    uint8_t bytes[4];
+    uint64_t const status = get_fixed(*this, path, length, name, name_length,
+                                      metadata::kTypeUInt32, 4, bytes);
+    if (status == metadata::kOk) {
+        out = metadata::get_u32(bytes);
+    }
+    return status;
+}
+
+uint64_t Volume::attr_set_uint32(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 uint32_t value) noexcept
+{
+    uint8_t bytes[4];
+    metadata::put_u32(bytes, value);
+    return attr_write(path, length, name, name_length, metadata::kTypeUInt32, 0,
+                      bytes, 4);
+}
+
+uint64_t Volume::attr_get_int64(char const *path, uint32_t length,
+                                char const *name, uint32_t name_length,
+                                int64_t &out) noexcept
+{
+    uint8_t bytes[8];
+    uint64_t const status = get_fixed(*this, path, length, name, name_length,
+                                      metadata::kTypeInt64, 8, bytes);
+    if (status == metadata::kOk) {
+        out = metadata::get_i64(bytes);
+    }
+    return status;
+}
+
+uint64_t Volume::attr_set_int64(char const *path, uint32_t length,
+                                char const *name, uint32_t name_length,
+                                int64_t value) noexcept
+{
+    uint8_t bytes[8];
+    metadata::put_i64(bytes, value);
+    return attr_write(path, length, name, name_length, metadata::kTypeInt64, 0,
+                      bytes, 8);
+}
+
+uint64_t Volume::attr_get_uint64(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 uint64_t &out) noexcept
+{
+    uint8_t bytes[8];
+    uint64_t const status = get_fixed(*this, path, length, name, name_length,
+                                      metadata::kTypeUInt64, 8, bytes);
+    if (status == metadata::kOk) {
+        out = metadata::get_u64(bytes);
+    }
+    return status;
+}
+
+uint64_t Volume::attr_set_uint64(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 uint64_t value) noexcept
+{
+    uint8_t bytes[8];
+    metadata::put_u64(bytes, value);
+    return attr_write(path, length, name, name_length, metadata::kTypeUInt64, 0,
+                      bytes, 8);
+}
+
+uint64_t Volume::attr_get_bool(char const *path, uint32_t length,
+                               char const *name, uint32_t name_length,
+                               bool &out) noexcept
+{
+    uint8_t byte = 0;
+    uint64_t const status = get_fixed(*this, path, length, name, name_length,
+                                      metadata::kTypeBool, 1, &byte);
+    if (status == metadata::kOk) {
+        out = metadata::get_bool(&byte);
+    }
+    return status;
+}
+
+uint64_t Volume::attr_set_bool(char const *path, uint32_t length,
+                               char const *name, uint32_t name_length,
+                               bool value) noexcept
+{
+    uint8_t byte = 0;
+    metadata::put_bool(&byte, value);
+    return attr_write(path, length, name, name_length, metadata::kTypeBool, 0,
+                      &byte, 1);
+}
+
+uint64_t Volume::attr_get_double(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 double &out) noexcept
+{
+    uint8_t bytes[8];
+    uint64_t const status = get_fixed(*this, path, length, name, name_length,
+                                      metadata::kTypeDouble, 8, bytes);
+    if (status == metadata::kOk) {
+        out = metadata::get_double(bytes);
+    }
+    return status;
+}
+
+uint64_t Volume::attr_set_double(char const *path, uint32_t length,
+                                 char const *name, uint32_t name_length,
+                                 double value) noexcept
+{
+    uint8_t bytes[8];
+    metadata::put_double(bytes, value);
+    return attr_write(path, length, name, name_length, metadata::kTypeDouble, 0,
+                      bytes, 8);
+}
+
+uint64_t Volume::attr_get_raw(char const *path, uint32_t length,
+                              char const *name, uint32_t name_length,
+                              uint8_t *out, uint32_t capacity,
+                              uint32_t &out_length) noexcept
+{
+    return get_variable(*this, path, length, name, name_length,
+                        metadata::kTypeRaw, out, capacity, out_length);
+}
+
+uint64_t Volume::attr_set_raw(char const *path, uint32_t length,
+                              char const *name, uint32_t name_length,
+                              uint8_t const *value,
+                              uint32_t value_length) noexcept
+{
+    return attr_write(path, length, name, name_length, metadata::kTypeRaw, 0,
+                      value, value_length);
 }
 
 }  // namespace aegir::vfs

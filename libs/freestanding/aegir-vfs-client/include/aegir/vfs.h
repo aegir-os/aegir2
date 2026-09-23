@@ -179,6 +179,55 @@ public:
                        char *name, uint32_t &name_length, uint32_t &type,
                        uint64_t &size) noexcept;
 
+    /* The typed layer (aegir/metadata.h's codecs): the value in a C++ shape,
+     * stored with the matching type_code. A getter refuses an attribute whose
+     * stored type or size is not the one asked for, so an int read as one is
+     * an int. Each answers the protocol's status word. */
+
+    /** A string's bytes, no terminator. `capacity` is the room in `out`;
+     *  `out_length` is the length written. */
+    uint64_t attr_get_string(char const *path, uint32_t length,
+                             char const *name, uint32_t name_length, char *out,
+                             uint32_t capacity, uint32_t &out_length) noexcept;
+    uint64_t attr_set_string(char const *path, uint32_t length,
+                             char const *name, uint32_t name_length,
+                             char const *value, uint32_t value_length) noexcept;
+
+    uint64_t attr_get_int32(char const *path, uint32_t length, char const *name,
+                            uint32_t name_length, int32_t &out) noexcept;
+    uint64_t attr_set_int32(char const *path, uint32_t length, char const *name,
+                            uint32_t name_length, int32_t value) noexcept;
+    uint64_t attr_get_uint32(char const *path, uint32_t length, char const *name,
+                             uint32_t name_length, uint32_t &out) noexcept;
+    uint64_t attr_set_uint32(char const *path, uint32_t length, char const *name,
+                             uint32_t name_length, uint32_t value) noexcept;
+    uint64_t attr_get_int64(char const *path, uint32_t length, char const *name,
+                            uint32_t name_length, int64_t &out) noexcept;
+    uint64_t attr_set_int64(char const *path, uint32_t length, char const *name,
+                            uint32_t name_length, int64_t value) noexcept;
+    uint64_t attr_get_uint64(char const *path, uint32_t length, char const *name,
+                             uint32_t name_length, uint64_t &out) noexcept;
+    uint64_t attr_set_uint64(char const *path, uint32_t length, char const *name,
+                             uint32_t name_length, uint64_t value) noexcept;
+    uint64_t attr_get_bool(char const *path, uint32_t length, char const *name,
+                           uint32_t name_length, bool &out) noexcept;
+    uint64_t attr_set_bool(char const *path, uint32_t length, char const *name,
+                           uint32_t name_length, bool value) noexcept;
+    uint64_t attr_get_double(char const *path, uint32_t length,
+                             char const *name, uint32_t name_length,
+                             double &out) noexcept;
+    uint64_t attr_set_double(char const *path, uint32_t length,
+                             char const *name, uint32_t name_length,
+                             double value) noexcept;
+
+    /** Raw bytes, whatever their length. */
+    uint64_t attr_get_raw(char const *path, uint32_t length, char const *name,
+                          uint32_t name_length, uint8_t *out, uint32_t capacity,
+                          uint32_t &out_length) noexcept;
+    uint64_t attr_set_raw(char const *path, uint32_t length, char const *name,
+                          uint32_t name_length, uint8_t const *value,
+                          uint32_t value_length) noexcept;
+
 private:
     aegir::ipc::Consumer port_;
     uint64_t reply_[aegir::ipc::kMaxWords];

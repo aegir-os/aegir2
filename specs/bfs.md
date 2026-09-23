@@ -455,6 +455,13 @@ an errno: `kOk` success, `kNotFound` `ENODATA`, `kUnsupported` `EOPNOTSUPP`,
 with no buffer returns the size; one with too small a buffer is `ERANGE`. A
 value larger than one envelope is read and written at successive offsets.
 
+Beside the raw protocol is a **typed layer**: `aegir/metadata.h` carries the
+little-endian codecs for the type codes, and `aegir::vfs::Volume` has typed
+access (`attr_set_int32`, `attr_get_string`, `attr_get_raw`, ...) that stores
+the matching `type_code` and, on a read, refuses an attribute whose stored
+type or size is not the one asked for. A client then asks for an `int32` and
+gets one, without assembling the bytes by hand.
+
 ### Type codes and the attribute namespace
 
 The `type_code` is Haiku's; values a client may set:
