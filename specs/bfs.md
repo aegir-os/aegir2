@@ -44,14 +44,14 @@ is `AEGIR_FLAGS`, a little-endian `uint32`.
 
 | Bit | Name | Meaning |
 | --- | ---- | ------- |
-| 0 | `AEGIR_BFS_SPARSE` | a file on this volume may have a hole (see Sparseness) |
+| 0 | `AEGIR_BFS_SPARSE` | unused: tail sparseness needs no gate (see Sparseness) |
 | 1 | `AEGIR_BFS_JOURNAL_FULL` | the volume's metadata *and* data are journaled (see Journal) |
 
 A reader that does not know `AEGIR_FLAGS` reads the superblock as it always
 has. An extension that changes what a file *reads as* is only usable when the
 reader knows the flag; the flag is how a mount decides whether it may serve
-the volume. The one such extension today is sparseness, and it is the reason
-the gate exists.
+the volume. Sparse tails turned out to need no flag -- they are simply a size
+past the runs -- so no bit is set today.
 
 ## Byte order and the superblock
 
@@ -204,7 +204,8 @@ constants for the double-indirect fan-out.
 Crucially, a run walk **stops at the first zero run**. A non-sparse file that
 uses two of its twelve direct runs has zeroes after the second, and that is
 the terminator. A file with a hole in the middle therefore cannot be read by
-Haiku past the hole — which is why sparseness is gated (Sparseness).
+Haiku past the hole, which is why Aegir's sparseness is only the tail and
+never a middle hole (Sparseness).
 
 ## Attributes
 
@@ -268,10 +269,14 @@ A node (`bplustree_node`) is:
 | `all_key_count` | number of keys |
 | `all_key_length` | total bytes of keys |
 
-After the fixed part come the keys, then an array of `uint16` key lengths
-(rounded up to an `off_t` boundary), then an array of `off_t` values. A node
-is a leaf exactly when `overflow_link == BPLUSTREE_NULL`; an internal node's
-values are child node blocks. `BPLUSTREE_FREE` (`-2`) marks a free node.
+After the fixed part come the keys, then an array of `uint16` **cumulative
+offsets** (rounded up to an `off_t` boundary), then an array of `off_t` values.
+The lengths are not per-key bytes: entry `i` is the total length of keys `0..i`,
+so a key's start is entry `i-1` and its length the step between them -- exactly
+what Haiku's `_InsertKey` (`length + previous`) and `bplustree_node::KeyAt`
+(`lengths[i] - lengths[i-1]`) write and read. A node is a leaf exactly when
+`overflow_link == BPLUSTREE_NULL`; an internal node's values are child node
+blocks. `BPLUSTREE_FREE` (`-2`) marks a free node.
 
 Keys are compared by type:
 
@@ -506,17 +511,20 @@ the shape Phase 6 refines.
 ## Sparseness
 
 A sparse file has holes: ranges of zeros with no blocks behind them. BFS's
-extent model has no hole marker — a zero `block_run` ends the run list — so
-Aegir represents a hole as a **zero run in the middle of the data stream** and
-sets the inode's logical size and `max_*_range` fields across it. The inode
-also carries `AEGIR_BFS_SPARSE` at the volume level.
+extent model has no hole marker -- a zero `block_run` ends the run list -- so a
+*hole in the middle* is not representable without an extension, and none is
+taken. Aegir's sparseness is therefore the **tail**: the inode's logical size
+may exceed the bytes its runs cover, and a read of the uncovered tail returns
+zeros with no block behind it. Truncating to a larger size sets the size and
+allocates nothing; a write past the old end allocates only the range it
+writes, and a *seek-forward* write makes its gap real zeroed blocks, because a
+run's position follows the runs before it. Appending after a sparse tail
+likewise fills the tail with real blocks rather than leaving a middle hole.
 
-This is the one extension Haiku cannot read past: its run walk stops at the
-first zero run and every offset beyond the hole fails. It is therefore gated.
-A volume with no sparse file never sets the bit and is fully Haiku-readable. A
-volume that has one still mounts on Haiku, but a sparse file reads only to its
-first hole. This is a decision, not a surprise. Phase 3 implements it; until
-then the bit is never set.
+This needs no format change and no gate bit: a volume Aegir writes remains one
+Haiku reads, because there are no zero runs in the middle of a stream. A file
+whose size exceeds its runs is read by Aegir's own reader as zeros; the run
+list simply ends. Phase 3 implements this; `AEGIR_BFS_SPARSE` is not used.
 
 ## Extensions and their gates
 
@@ -526,7 +534,7 @@ then the bit is never set.
 | Sub-second times | none (Haiku's own encoding) | a clock finer than a second |
 | Clean no-replay fast mount | none | `flags == 'CLEN'` and `log_start == log_end` |
 | Permission enforcement | none (uid/gid/mode are already stored) | Aegir accounts (`specs/auth.md`) |
-| Sparseness | zero runs | `AEGIR_BFS_SPARSE` |
+| Tail sparseness | none (a size past the runs) | none |
 | Full data journaling | none | `AEGIR_BFS_JOURNAL_FULL` |
 
 ### TRIM
@@ -576,9 +584,9 @@ worth a second look before code exists.
 2. **The extension gate is `_reserved[0]`, not the superblock `flags` field.**
    `flags` is BFS's clean/dirty state; `_reserved` is ignored by every reader,
    which is exactly what a gate needs.
-3. **Sparseness is accepted as Haiku-unreadable past a hole**, gated by
-   `AEGIR_BFS_SPARSE`. If that trade is unwanted, sparseness should be dropped
-   rather than done another way, because no other encoding is compatible.
+3. **Sparseness is the tail only** -- a size past the runs, read as zeros --
+   and needs no gate. A middle hole would need a zero run Aegir could read
+   past but Haiku could not, and the trade was not taken.
 4. **The block capabilities are a new method**, not a wider `Identify`, so the
    partition manager's fixed wire and every existing caller are untouched.
 5. **Live queries signal a one-way endpoint and re-read; they do not carry the

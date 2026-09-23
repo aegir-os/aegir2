@@ -410,8 +410,13 @@ uint32_t Volume::node_key_lengths(uint8_t const *node, uint16_t count,
 {
     uint16_t const all_key_length = le16(node + node::kAllKeyLength);
     uint8_t const *at = node + key_align(node::kFixed + all_key_length);
+    /* The stored array is cumulative offsets; a key's length is the step
+     * between its entry and the one before (Haiku's KeyAt). */
+    uint16_t previous = 0;
     for (uint16_t i = 0; i < count; ++i) {
-        lengths[i] = le16(at + i * 2);
+        uint16_t const cumulative = le16(at + i * 2);
+        lengths[i] = static_cast<uint16_t>(cumulative - previous);
+        previous = cumulative;
     }
     return key_align(node::kFixed + all_key_length) + count * 2;
 }

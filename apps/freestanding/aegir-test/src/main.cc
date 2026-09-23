@@ -950,6 +950,51 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* A sparse tail: a file truncated past its runs reads zeros there, with no
+     * block behind them (specs/bfs.md's Sparseness). */
+    {
+        static char const kSparsePath[] = "SPARSE.TXT";
+        uint8_t const head[4] = {'a', 'b', 'c', 'd'};
+        uint64_t const handle =
+            vol_open(bfs_write_volume, kSparsePath, sizeof(kSparsePath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool ok = handle != 0 &&
+                  vol_write(bfs_write_volume, handle, head, sizeof(head)) ==
+                      sizeof(head) &&
+                  vol_close(bfs_write_volume, handle) == 1 &&
+                  vol_truncate(bfs_write_volume, kSparsePath,
+                               sizeof(kSparsePath) - 1, 4096) == 1;
+        aegir::ipc::Consumer volume(bfs_write_volume);
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 3];
+        uint32_t out_words = aegir::nmspace::pack_string(
+            out, kSparsePath, sizeof(kSparsePath) - 1, aegir::nmspace::kPathMax);
+        out[out_words++] = 4000;
+        out[out_words++] = 16;
+        uint64_t in[aegir::volume::kReadHeaderWords + 16 / 8];
+        aegir::ipc::WordsReply const answer = volume.call_words(
+            aegir::volume::kMethodRead, out, out_words, in,
+            aegir::volume::kReadHeaderWords + 16 / 8);
+        ok = ok && answer.error == 0 &&
+             answer.count >= aegir::volume::kReadHeaderWords + 2 && in[0] >= 16;
+        if (ok) {
+            auto const *tail = reinterpret_cast<uint8_t const *>(
+                in + aegir::volume::kReadHeaderWords);
+            for (uint32_t i = 0; i < 16; ++i) {
+                if (tail[i] != 0) {
+                    ok = false;
+                }
+            }
+        }
+        ok = ok &&
+             vol_remove(bfs_write_volume, kSparsePath, sizeof(kSparsePath) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL a BFS sparse tail did not read as zeros\n");
+            ++failed;
+        } else {
+            write("  test: BFS reads a sparse tail as zeros with no blocks\n");
+        }
+    }
+
     /* And the boot image itself, by its volume name. The manifest's first
      * bytes are its own to change, so what this checks is that the ask is
      * answered -- the byte-exact checks are the FAT volumes', above. */

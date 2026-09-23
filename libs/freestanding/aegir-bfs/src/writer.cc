@@ -60,7 +60,7 @@ void build_dir_tree(uint8_t *tree, uint64_t self_block,
     node[node::kFixed + 2] = '.';
     uint32_t const lengths = key_align(node::kFixed + 3);
     put_le16(node + lengths, 1);
-    put_le16(node + lengths + 2, 2);
+    put_le16(node + lengths + 2, 3);
     uint32_t const values = lengths + 2 * 2;
     put_le64(node + values, self_block);
     put_le64(node + values + 8, parent_block);
@@ -94,8 +94,10 @@ void build_node(uint8_t *out, uint32_t node_size, bool leaf, int64_t left,
         at += key_lengths[i];
     }
     uint32_t const lengths = key_align(node::kFixed + all);
+    uint16_t cumulative = 0;
     for (uint16_t i = 0; i < count; ++i) {
-        put_le16(out + lengths + i * 2, key_lengths[i]);
+        cumulative = static_cast<uint16_t>(cumulative + key_lengths[i]);
+        put_le16(out + lengths + i * 2, cumulative);
     }
     uint32_t const values_at = lengths + count * 2;
     for (uint16_t i = 0; i < count; ++i) {
@@ -171,11 +173,12 @@ bool Writer::gather(uint8_t const *node, uint32_t node_size, uint16_t *count_out
     }
     uint32_t const lengths = key_align(node::kFixed + le16(node + node::kAllKeyLength));
     uint32_t const values_at = lengths + info.count * 2;
-    uint32_t at = node::kFixed;
+    uint16_t previous = 0;
     for (uint16_t i = 0; i < info.count; ++i) {
-        g_lengths_[i] = le16(node + lengths + i * 2);
-        g_keys_[i] = node + at;
-        at += g_lengths_[i];
+        uint16_t const cumulative = le16(node + lengths + i * 2);
+        g_lengths_[i] = static_cast<uint16_t>(cumulative - previous);
+        g_keys_[i] = node + node::kFixed + previous;
+        previous = cumulative;
         g_values_[i] = le64(node + values_at + i * 8);
     }
     *count_out = info.count;
@@ -1276,8 +1279,11 @@ bool Writer::write(uint64_t inode_block, uint64_t offset, uint8_t const *bytes,
     if (new_size < old_size) {
         new_size = old_size;
     }
+    /* Only the written range needs blocks: the tail past the old end stays a
+     * hole if this write does not reach it, and a seek-forward write makes
+     * its gap real zeroed blocks because runs are positional. */
     uint64_t const needed =
-        (new_size + volume_->block_size() - 1) / volume_->block_size();
+        (offset + length + volume_->block_size() - 1) / volume_->block_size();
     uint64_t covered = stream_blocks(stream_);
     if (needed > covered && !grow_to(stream_, needed, &covered)) {
         return false;
@@ -1301,20 +1307,24 @@ bool Writer::truncate(uint64_t inode_block, uint64_t size, int64_t time) noexcep
     }
     inode_get_stream(inode_, stream_);
     uint64_t const old_size = static_cast<uint64_t>(inode_size(inode_));
+    /* Growing is sparse: the size may pass beyond the runs, and a read of the
+     * tail returns zeros without a block behind it. The part of the extension
+     * that lands inside an already-allocated block is zeroed, so a stale byte
+     * past the old end cannot reappear. Shrinking cuts the tail the runs no
+     * longer need. */
     uint64_t const new_blocks =
         (size + volume_->block_size() - 1) / volume_->block_size();
-    uint64_t covered = stream_blocks(stream_);
-    if (new_blocks > covered) {
-        if (!grow_to(stream_, new_blocks, &covered)) {
-            return false;
-        }
-    } else if (new_blocks < covered) {
-        if (!trim_stream(stream_, new_blocks)) {
-            return false;
-        }
-    }
-    if (size > old_size && !zero_range(stream_, old_size, size)) {
+    uint64_t const covered = stream_blocks(stream_);
+    if (new_blocks < covered && !trim_stream(stream_, new_blocks)) {
         return false;
+    }
+    if (size > old_size) {
+        uint64_t const covered_bytes =
+            stream_blocks(stream_) * volume_->block_size();
+        uint64_t const hi = size < covered_bytes ? size : covered_bytes;
+        if (old_size < hi && !zero_range(stream_, old_size, hi)) {
+            return false;
+        }
     }
     inode_set_stream(inode_, stream_, static_cast<int64_t>(size), time);
     return volume_->write_block(inode_block, inode_);

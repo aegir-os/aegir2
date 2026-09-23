@@ -22,13 +22,13 @@ bool key_at(uint8_t const *node, uint16_t count, uint16_t index,
     if (index >= count) {
         return false;
     }
+    /* The stored lengths are cumulative offsets (Haiku's KeyAt): a key's
+     * start is the previous entry and its length the step between them. */
     uint32_t const lengths = key_lengths_at(node);
-    uint32_t at = node::kFixed;
-    for (uint16_t i = 0; i < index; ++i) {
-        at += le16(node + lengths + i * 2);
-    }
-    *length = le16(node + lengths + index * 2);
-    *key = node + at;
+    uint16_t const end = le16(node + lengths + index * 2);
+    uint16_t const start = index == 0 ? 0 : le16(node + lengths + (index - 1) * 2);
+    *length = static_cast<uint16_t>(end - start);
+    *key = node + node::kFixed + start;
     return true;
 }
 
@@ -213,9 +213,11 @@ bool node_insert(uint8_t *work, uint32_t node_size, uint8_t const *node,
     uint32_t const lengths = key_align(node::kFixed + new_all);
     uint32_t const values = lengths + (info.count + 1) * 2;
     uint32_t inserted = 0;
+    uint16_t cumulative = 0;
     for (uint16_t i = 0; i < info.count + 1; ++i) {
         if (i == at_index) {
-            put_le16(work + lengths + i * 2, static_cast<uint16_t>(length));
+            cumulative = static_cast<uint16_t>(cumulative + length);
+            put_le16(work + lengths + i * 2, cumulative);
             put_le64(work + values + i * 8, value);
             ++inserted;
             continue;
@@ -226,7 +228,8 @@ bool node_insert(uint8_t *work, uint32_t node_size, uint8_t const *node,
         if (!key_at(node, info.count, old, &key, &key_length)) {
             return false;
         }
-        put_le16(work + lengths + i * 2, key_length);
+        cumulative = static_cast<uint16_t>(cumulative + key_length);
+        put_le16(work + lengths + i * 2, cumulative);
         uint32_t const old_values = key_lengths_at(node) + info.count * 2;
         put_le64(work + values + i * 8, le64(node + old_values + old * 8));
     }
@@ -285,6 +288,7 @@ bool node_remove(uint8_t *work, uint32_t node_size, uint8_t const *node,
     uint32_t const lengths = key_align(node::kFixed + new_all);
     uint32_t const values = lengths + (info.count - 1) * 2;
     uint16_t out = 0;
+    uint16_t cumulative = 0;
     for (uint16_t i = 0; i < info.count; ++i) {
         if (i == found) {
             continue;
@@ -294,7 +298,8 @@ bool node_remove(uint8_t *work, uint32_t node_size, uint8_t const *node,
         if (!key_at(node, info.count, i, &key, &key_length)) {
             return false;
         }
-        put_le16(work + lengths + out * 2, key_length);
+        cumulative = static_cast<uint16_t>(cumulative + key_length);
+        put_le16(work + lengths + out * 2, cumulative);
         uint32_t const old_values = key_lengths_at(node) + info.count * 2;
         put_le64(work + values + out * 8, le64(node + old_values + i * 8));
         ++out;

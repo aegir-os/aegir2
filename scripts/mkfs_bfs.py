@@ -188,8 +188,12 @@ def _tree(entries: list[tuple[bytes, int]]) -> bytes:
         tree[at : at + len(key)] = key
         at += len(key)
     at = base + _align8(28 + all_key_length)
+    # The key-length array holds cumulative offsets, not individual lengths:
+    # Haiku's _InsertKey adds and KeyAt subtracts (BPlusTree.cpp).
+    cumulative = 0
     for key in keys:
-        _w16(tree, at, len(key))
+        cumulative += len(key)
+        _w16(tree, at, cumulative)
         at += 2
     for value in values:
         _w64(tree, at, value)
