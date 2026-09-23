@@ -271,6 +271,19 @@ maps        = true
 memory_kib  = 4096
 restart     = never
 
+# The filesystem libraries' acceptance client (specs/cxx.md step 5): a spawned
+# service that reads the VFS through aegir::filesystem and aegir::vfs, so it
+# needs the namespace port and -- running the hosted runtime -- the maps grant
+# and its own memory.
+[fssmoke]
+binary     = aegir-fs-smoke
+authority  = system
+account    = boot
+needs      = log.main, vfs.namespace
+maps       = true
+memory_kib = 2048
+restart    = never
+
 # The window manager's demonstration client (specs/window-manager.md): a
 # decorated window with all three titlebar gadgets, so the runner can click
 # them. It maps its own arena slice, like the test bed, and its memory is

@@ -304,11 +304,38 @@ The order:
    beside it. The runtime answers the file calls with Aegir-path semantics, and
    a tracked libc++ patch gives `path` the Aegir grammar, modelled on its
    Windows one — a root-name `Volume:`, always absolute, `/` the separator — so
-   `is_absolute`/`root_name`/`absolute` are right. `aegir::filesystem` wraps the
-   namespace (`volumes()` from count/describe, and resolve/list/read) for what
-   `std::filesystem` has no path for; a union (`specs/namespace.md`) is served
-   by the VFS, so the library is a thin wrapper and not a merge engine. Depends
-   on 1 for the current directory.
+   `is_absolute`/`root_name`/`absolute` are right. Depends on 1 for the current
+   directory. The calls split by **linkability**, because the same VFS calls
+   serve a freestanding service and the no-exception runtime dispatcher as well
+   as a hosted program, and only the last wants exceptions:
+
+   1. **The transport** — `libs/freestanding/aegir-vfs-client` (landed):
+      `aegir::vfs`, the namespace's resolve/count/describe and a volume's
+      read/list/open/write/close/mkdir/remove over the two protocol headers,
+      every call a value or a refusal. Freestanding so a service that holds
+      `vfs.namespace` links it without the exception personality, and the
+      runtime's dispatcher stands on the same calls.
+   2. **The wrapper** — `libs/hosted/aegir-filesystem` (started):
+      `aegir::filesystem`, hosted, with `std::filesystem`'s error model — a
+      throwing overload and an `error_code` one — over the transport. Its first
+      call is `volumes()`, the enumeration `std::filesystem` has no path for
+      (capability-free, answered on the namespace port); the path operations
+      that need a resolved volume capability arrive with the runtime's file
+      calls, where the capability's slot and its reuse are decided.
+   3. **The runtime's file calls.** A per-process fd table and the POSIX calls
+      libc++'s `<filesystem>` actually makes (`statat`, `openat`, `read`,
+      `getdents`, `mkdirat`, `unlinkat`, `chdir`/`getcwd`), answered from the
+      transport and translated to errno. This is what turns on `std::filesystem`.
+   4. **The libc++ `path` patch** (tracked) for the `Volume:` grammar.
+
+   The acceptance is `apps/hosted/aegir-fs-smoke`, spawned with `needs =
+   vfs.namespace`: it reads through both halves and prints `FS_SMOKE_OK`.
+   A finding from it: a second client on a FAT volume -- listing it while the
+   test bed reads it, or writing while the test bed writes -- makes the test
+   bed's walk fail (a bad BPB, a refused read), so the filesystem's
+   cross-client state is not as stateless as `aegir/volume.h` claims. The
+   smoke therefore stays on the read-only initrd filesystem, and its write
+   side goes unexercised, until that is its own arc.
 6. **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
    its C dependencies are musl's — while `translation.cc` and `bidi.cc` are
    gated out because they are stubs, not because they cannot compile. The

@@ -66,6 +66,7 @@ set(aegir_initrd_binaries
     aegir-test
     aegir-cxx-smoke
     aegir-env-smoke
+    aegir-fs-smoke
     aegir-gui-demo
 )
 set(aegir_initrd_binary_names
@@ -88,6 +89,7 @@ set(aegir_initrd_binary_names
     "aegir-test"
     "aegir-cxx-smoke"
     "aegir-env-smoke"
+    "aegir-fs-smoke"
     "aegir-gui-demo"
 )
 set(aegir_initrd_strip_dir "${CMAKE_CURRENT_BINARY_DIR}/initrd")
