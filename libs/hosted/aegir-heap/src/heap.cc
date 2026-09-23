@@ -22,14 +22,26 @@
  * Everything else is refused with -ENOSYS, which musl reads through
  * __syscall_ret into an errno. The kernel never sees these -- they are
  * answered entirely from the process's own memory.
+ *
+ * Threads are the second thing this dispatcher answers. musl's pthread_create
+ * reaches clone, which this tree routes to __aegir_clone (the musl patch): a
+ * new thread is a new seL4 TCB in this process's own address space, started by
+ * aegir-thread on the stack and TLS musl prepared. SYS_exit then ends the
+ * calling thread rather than the process, clearing the CLONE_CHILD_CLEARTID
+ * address the way the kernel would -- musl's locks spin on it, so the clear is
+ * what releases a joiner.
  */
+
+#define _GNU_SOURCE 1
 
 #include <aegir/heap.h>
 
 #include <aegir/debug.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/thread.h>
 #include <errno.h>
+#include <sched.h>
 #include <sel4/sel4.h>
 #include <sel4runtime/auxv.h>
 #include <stdarg.h>
@@ -97,6 +109,25 @@ uintptr_t brk_ = 0;
 uintptr_t mmap_ = 0;
 bool ready_ = false;
 
+/* Threads (musl's clone): where a new thread runs, what its objects are charged
+ * to, and the ids it hands out. A library cannot know a process's VSpace on its
+ * own, so init() fills this in from the window it was handed. */
+aegir::thread::Placement g_thread_placement{};
+aegir::mem::Account g_thread_account{"thread", 0, 0, 0};
+int g_next_tid = 0;
+
+/* The calling thread's own TCB, so SYS_exit can end *this* thread instead of
+ * the process. It is thread-local on purpose: each thread sets its own before
+ * it runs (clone_trampoline), and the process's boot thread leaves it zero --
+ * its exit is the process's. */
+__thread seL4_CPtr g_self_tcb = 0;
+
+/* And the address that thread must clear when it exits, which is what the
+ * kernel's CLONE_CHILD_CLEARTID would do. musl gives clone the thread-list
+ * lock here, and both __wait and the joiner's __tl_sync spin until it is
+ * cleared -- a real futex wake is not needed, only the clear. */
+__thread int *g_clear_tid = nullptr;
+
 uintptr_t align_up(uintptr_t value) noexcept
 {
     return (value + kPageBytes - 1) & ~(kPageBytes - 1);
@@ -157,6 +188,40 @@ void activate_musl_tls() noexcept
     __sel4_ipc_buffer = ipc;
 }
 
+/* ---- threads: musl's clone ---- */
+
+/* What a new thread reads on its first instruction. musl's pthread_create
+ * allocates the stack and the pthread struct (the thread's TLS) and hands both
+ * to clone; the function and its argument have nowhere in the Linux ABI to
+ * ride, so they are left in the unused part of the child's own IPC buffer page.
+ * The TCB is here too, so the child can end itself (SYS_exit). */
+struct CloneStart {
+    int (*function)(void *);
+    void *argument;
+    seL4_CPtr tcb;
+    int *clear_tid;  /* where a thread's exit clears CLONE_CHILD_CLEARTID */
+};
+
+/* Where the CloneStart goes in the child's IPC page: past the seL4_IPCBuffer
+ * the kernel itself uses, 16-byte aligned. */
+constexpr uintptr_t kCloneStartOffset = (sizeof(seL4_IPCBuffer) + 15) & ~uintptr_t{15};
+
+/* A new thread's first instruction. Its one argument (a0) points at the
+ * CloneStart left in its IPC page. It records its own TCB -- so SYS_exit ends
+ * it -- and runs the function musl asked for. musl's start never returns: it
+ * goes to __pthread_exit, whose last act is a SYS_exit that suspends this
+ * thread. */
+void clone_trampoline(void *pointer) noexcept
+{
+    auto *start = static_cast<CloneStart *>(pointer);
+    g_self_tcb = start->tcb;
+    g_clear_tid = start->clear_tid;
+    static_cast<void>(start->function(start->argument));
+    seL4_TCB_Suspend(g_self_tcb);
+    for (;;) {
+    }
+}
+
 }  // namespace
 
 /* Before any constructor can allocate: point musl's syscalls at the
@@ -200,7 +265,67 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
 
     /* And with the heap able to serve it, give the process musl's TLS. */
     activate_musl_tls();
+
+    /* Threads: the placement a clone handler needs comes from the window's own
+     * VSpace, which only the process's Scratch knows. The service default
+     * priority leaves room below the process's own. */
+    g_thread_placement.cspace_root = seL4_CapInitThreadCNode;
+    g_thread_placement.vspace_root = scratch.root();
+    g_thread_placement.fault_endpoint = seL4_CapNull;
+    g_thread_placement.priority = seL4_MaxPrio - 1;
+    g_thread_placement.stack_pages = 0;
     return true;
+}
+
+/* musl's clone, answered by starting a real seL4 thread in this process's
+ * address space. musl has already made the stack and the TLS (its pthread
+ * struct); this puts the function and its argument in the child's IPC page and
+ * starts it there. It returns the child's id, which is what pthread_create
+ * expects on the parent's side -- there is no second return in the child,
+ * because the child is a thread that begins at clone_trampoline. */
+extern "C" int __aegir_clone(int (*function)(void *), void *stack, int flags, void *argument,
+                             int *ptid, void *tls, int *ctid) noexcept
+{
+    if (!ready_ || g_thread_placement.vspace_root == 0 || function == nullptr ||
+        stack == nullptr || tls == nullptr) {
+        return -EAGAIN;
+    }
+    /* Every musl clone is a thread that shares this address space; anything
+     * else (a new process, say) is not something this handler starts. */
+    if ((flags & (CLONE_VM | CLONE_THREAD)) != (CLONE_VM | CLONE_THREAD)) {
+        return -EINVAL;
+    }
+
+    aegir::thread::PreparedStack const given{
+        reinterpret_cast<uintptr_t>(stack) & ~static_cast<uintptr_t>(15),
+        reinterpret_cast<uintptr_t>(tls),
+    };
+    aegir::thread::Builder builder(*g_allocator, *g_scratch, g_thread_account);
+    aegir::thread::Pending pending{};
+    if (!builder.prepare(g_thread_placement, clone_trampoline, nullptr, pending, &given)) {
+        return -EAGAIN;
+    }
+
+    /* Leave the child its instructions in its own IPC page, then point it
+     * there -- the hand-off the prepare/resume split exists for. */
+    auto *start = reinterpret_cast<CloneStart *>(pending.thread.ipc_buffer + kCloneStartOffset);
+    start->function = function;
+    start->argument = argument;
+    start->tcb = pending.thread.tcb;
+    start->clear_tid = (flags & CLONE_CHILD_CLEARTID) != 0 ? ctid : nullptr;
+    pending.argument = start;
+    if (!builder.resume(pending)) {
+        return -EAGAIN;
+    }
+
+    int const tid = ++g_next_tid;
+    if ((flags & CLONE_PARENT_SETTID) != 0 && ptid != nullptr) {
+        *ptid = tid;
+    }
+    if ((flags & CLONE_CHILD_SETTID) != 0 && ctid != nullptr) {
+        *ctid = tid;
+    }
+    return tid;
 }
 
 /* ---- the syscall handlers ---- */
@@ -362,8 +487,22 @@ long vsyscall(long sysnum, ...) noexcept
         ret = sys_writev(va_arg(ap, int), va_arg(ap, void const *),
                          va_arg(ap, int));
         break;
-    case 93:  /* SYS_exit */
-    case 94:  /* SYS_exit_group */
+    case 93: /* SYS_exit: end the calling thread, not the process. A thread
+              * that musl's __pthread_exit has finished with suspends here; the
+              * process's boot thread (no TCB of its own) halts the process. */
+        if (g_self_tcb != 0) {
+            /* The kernel's CLONE_CHILD_CLEARTID: a thread's exit clears the
+             * address musl gave clone. The clear alone releases musl's
+             * spinners (__wait, the joiner's __tl_sync), which is all a
+             * futex-less Aegir needs. */
+            if (g_clear_tid != nullptr) {
+                *g_clear_tid = 0;
+            }
+            seL4_TCB_Suspend(g_self_tcb);
+        }
+        aegir::halt();
+        break;
+    case 94: /* SYS_exit_group: end the process */
         aegir::halt();
         break;
     default:

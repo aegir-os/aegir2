@@ -67,6 +67,31 @@ struct Thread {
     uintptr_t ipc_buffer;
 };
 
+/** A stack and thread pointer the caller has already prepared, for a runtime
+ *  (musl) that owns both. `stack` is the initial stack pointer -- 16-byte
+ *  aligned, with room below it -- and `thread_pointer` is the value for `tp`;
+ *  the caller promises the two do not overlap, which is what musl's
+ *  pthread_create arranges. A thread started this way does *not* get
+ *  sel4runtime's TLS image (the caller's runtime built its own) -- only its IPC
+ *  buffer pointer is written into the TLS. */
+struct PreparedStack {
+    uintptr_t stack;
+    uintptr_t thread_pointer;
+};
+
+/** A thread built but not yet running. `prepare` leaves the thread suspended
+ *  in everything but name; `resume` is the one register write that starts it.
+ *  The split exists for a caller that must hand the thread something only the
+ *  builder knows -- the hosted clone handler records the TCB into the child's
+ *  start block -- so it can prepare, do that, and then resume. */
+struct Pending {
+    Thread thread;
+    uintptr_t stack_pointer;
+    uintptr_t thread_pointer;
+    void (*entry)(void *);
+    void *argument;
+};
+
 class Builder {
 public:
     explicit Builder(mem::Allocator &allocator, mem::Scratch &scratch,
@@ -86,6 +111,19 @@ public:
      */
     bool start(Placement const &where, void (*entry)(void *), void *argument,
                Thread &out) noexcept;
+
+    /**
+     * Build a thread and leave it suspended. `given` is the runtime-owned
+     * stack and thread pointer (musl's clone); when it is null the builder
+     * allocates the stack and writes sel4runtime's TLS image, the way start()
+     * does. `out.thread` is filled before resume(); `out.argument` may be
+     * changed between prepare and resume, which is the point of the split.
+     */
+    bool prepare(Placement const &where, void (*entry)(void *), void *argument,
+                 Pending &out, PreparedStack const *given = nullptr) noexcept;
+
+    /** Start a prepared thread. False on failure, with problem() saying why. */
+    bool resume(Pending const &pending) noexcept;
 
     char const *problem() const noexcept { return problem_; }
 

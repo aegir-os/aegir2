@@ -21,6 +21,11 @@ namespace aegir::cxx_smoke {
  *  to the debug console. Returns the number that failed. */
 int run();
 
+/** Run the threading checks -- std::thread started through musl's clone.
+ *  Returns the number that failed. Kept apart from run() because it needs the
+ *  clone handler, which the boot process enables only after the heap is up. */
+int run_threads();
+
 }  // namespace aegir::cxx_smoke
 
 #endif  // AEGIR_CXX_SMOKE_CHECKS_H

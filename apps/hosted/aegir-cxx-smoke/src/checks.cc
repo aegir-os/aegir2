@@ -20,7 +20,9 @@
 #include <aegir/debug.h>
 
 #include <cstdlib>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <typeinfo>
 #include <unordered_map>
 #include <vector>
@@ -157,6 +159,31 @@ void check_rtti()
            "RTTI identifies a dynamic type");
 }
 
+/* std::thread (specs/cxx.md's completion program, step 4): libc++'s thread is
+ * musl's pthread_create, which is musl's clone, which is the hosted runtime's
+ * __aegir_clone -- a real seL4 TCB in this address space. The thread joins,
+ * and takes a std::mutex while it runs; the mutex is the same kind of check as
+ * the exception one, proof of a path (musl's lock, the thread's own TLS) and
+ * not merely of a return value. */
+void check_thread()
+{
+    std::mutex guard;
+    int counter = 0;
+    bool joined = false;
+    try {
+        std::thread worker([&] {
+            std::lock_guard<std::mutex> lock(guard);
+            counter += 1;
+        });
+        worker.join();
+        joined = true;
+    } catch (...) {
+        joined = false;
+    }
+    report(joined && counter == 1,
+           "std::thread runs, joins, and takes a std::mutex");
+}
+
 }  // namespace
 
 int run()
@@ -169,6 +196,13 @@ int run()
     check_exceptions();
     check_rtti();
     return g_failed;
+}
+
+int run_threads()
+{
+    int const before = g_failed;
+    check_thread();
+    return g_failed - before;
 }
 
 }  // namespace aegir::cxx_smoke

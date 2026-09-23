@@ -191,6 +191,10 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The runtime's own std::thread, on top of the clone handler the manual
+     * thread above is the floor of (specs/cxx.md step 4, items 4-5). */
+    failed += aegir::cxx_smoke::run_threads();
+
     aegir::debug_write(failed == 0 ? "CXX_SMOKE_OK\n" : "CXX_SMOKE_FAIL\n");
 
     /* The one run-time exit handler: registered here, run by the bridge once

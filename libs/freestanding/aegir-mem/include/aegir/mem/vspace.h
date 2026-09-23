@@ -97,6 +97,11 @@ public:
     uintptr_t next() const noexcept { return next_; }
     uint64_t mapped_bytes() const noexcept { return mapped_bytes_; }
 
+    /** The VSpace the window lives in: the kernel's name for the root task's,
+     *  or the capability a service's spawner granted. A thread builder needs
+     *  it to configure a new TCB (aegir/thread.h). */
+    seL4_CPtr root() const noexcept { return root_; }
+
 private:
     seL4_BootInfo *bootinfo_;
     /* The VSpace the window lives in: the kernel's name for the root task's, and

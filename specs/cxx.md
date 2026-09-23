@@ -239,7 +239,8 @@ The order:
      and its typeinfo undefined the moment anything needed it. The base hooks
      now have their no-op default bodies.
 4. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
-   but a thread does not start, for two reasons. First, hosted processes never
+   but a thread did not start, for two reasons -- both now addressed. First,
+   hosted processes never
    ran musl's `__libc_start_main` -- sel4runtime calls `main` directly -- so
    `libc.can_do_threads` and `libc.tls_*` were never set and `pthread_create`
    refused with `ENOSYS` before it reached `clone`
@@ -247,7 +248,7 @@ The order:
    hand-written assembly that issues a raw `SYS_clone` `ecall`, which the
    syscall patch does not cover (`arch/riscv64/syscall_arch.h` redirects only
    `__syscall0..6`), so it would not reach the dispatcher even then.
-   `aegir-trinket`'s `WorkerPool` therefore does not spawn. A real thread is
+   `aegir-trinket`'s `WorkerPool` therefore did not spawn. A real thread is
    one seL4 TCB in the process's own address space, and
    `specs/userland.md:85` records the rules (tp, gp, a stack that does not
    overlap the TLS block). The order:
@@ -275,16 +276,29 @@ The order:
       its first refusal. It runs from `init`, not a constructor, because the
       main thread's TLS does not fit musl's builtin static TLS and
       `__init_tls` allocates it through our own mmap.
-   4. **The dispatcher's `SYS_clone`.** `__clone` is raw assembly, so it must be
-      brought onto the `__sysinfo` path before a thread can exist: the parent
-      side becomes a call into the dispatcher, and the child becomes a thread
-      the dispatcher starts at a trampoline that calls `func(arg)` and then
-      exits. `pthread_create` allocates the child's stack and its own `tp` (its
-      pthread struct); the dispatcher writes `tp` and the IPC buffer pointer
-      the way the primitive does, but onto the stack and thread pointer musl
-      chose. `__set_thread_area` and `__unmapself` are assembly too and take
-      the same treatment when they are reached.
-   5. **`std::thread`** then falls out; the acceptance extends the cxx-smoke
+   4. **The clone handler** -- `aegir-heap` (landed). `__clone` is raw assembly,
+      so the musl patch (`third_party/patches/projects/musl/0002`) turns it into
+      a tail call to `__aegir_clone`, which the heap provides. There is no
+      second return: musl has already made the child's stack and its `tp` (its
+      pthread struct), and the handler starts a real seL4 TCB there with the
+      thread primitive. The function and its argument have nowhere in the
+      Linux ABI to ride, and putting them on a stack the thread has not been
+      given is a prologue away from being clobbered, so they are left in the
+      unused part of the child's own IPC page and the trampoline is pointed at
+      them. That frame also carries the child's TCB. Building the thread and
+      starting it are two steps (`prepare`/`resume` in `aegir-thread`) for
+      exactly this hand-off.
+   5. **Ending a thread** (landed). musl's `__pthread_exit` finishes by calling
+      `SYS_exit` in a loop. The dispatcher must end *this* thread, not the
+      process, and it must do what the kernel's `CLONE_CHILD_CLEARTID` would:
+      clear the address musl passed clone (the thread-list lock). The thread's
+      own TCB, and that address, are recorded in its TLS by the trampoline --
+      thread-local, because the process's boot thread has neither and its
+      `SYS_exit` is the process's. The clear matters because Aegir has no
+      futex: musl's `__wait` and the joiner's `__tl_sync` spin on that word, so
+      clearing it is the wake. A thread that exits suspends its TCB; a
+      killed or exited thread is not rebuilt, and its caps are not reclaimed.
+   6. **`std::thread`** then falls out; the acceptance extends the cxx-smoke
       with a thread that joins and a mutex held across two threads.
 5. **The filesystem.** `std::filesystem` in the runtime, and `aegir::filesystem`
    beside it. The runtime answers the file calls with Aegir-path semantics, and
