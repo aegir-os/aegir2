@@ -771,6 +771,116 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The BFS write side (specs/bfs.md): create, write across a block
+     * boundary, read back, list, rename, truncate, and remove a tree
+     * leaf-first -- the allocator, the inode and the directory tree on the
+     * volume Aegir wrote itself. */
+    seL4_CPtr const bfs_write_volume =
+        resolve("BFS:WROTE.TXT", 13, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 42));
+    {
+        constexpr uint32_t kChunk = 900; /* under kWriteMax */
+        constexpr uint64_t kTotal = 3000; /* the block is 2048 bytes */
+        uint8_t bytes[kChunk];
+        uint64_t handle =
+            vol_open(bfs_write_volume, "WROTE.TXT", 9,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        bool ok = handle != 0;
+        for (uint64_t off = 0; ok && off < kTotal;) {
+            uint32_t const n =
+                static_cast<uint32_t>(kTotal - off < kChunk ? kTotal - off : kChunk);
+            for (uint32_t i = 0; i < n; ++i) {
+                bytes[i] = pattern_at(off + i);
+            }
+            ok = vol_write(bfs_write_volume, handle, bytes, n) == n;
+            off += n;
+        }
+        ok = ok && vol_close(bfs_write_volume, handle) == 1;
+        if (!ok) {
+            write("  test: FAIL BFS:WROTE.TXT would not be written\n");
+            ++failed;
+        } else if (!read_and_check_pattern(bfs_write_volume, "WROTE.TXT", 9, kTotal)) {
+            write("  test: FAIL BFS:WROTE.TXT did not read back what was written\n");
+            ++failed;
+        } else {
+            write("  test: BFS:WROTE.TXT reads back what was written (");
+            aegir::debug_write_unsigned(kTotal);
+            write(" bytes across a block boundary)\n");
+        }
+        /* An existing name without create is refused, as on FAT. */
+        if (vol_open(bfs_write_volume, "WROTE.TXT", 9, 0) != 0) {
+            write("  test: FAIL an existing BFS name opened without create\n");
+            ++failed;
+        }
+    }
+
+    /* mkdir builds the missing chain, a file two components down writes and
+     * reads back, and the tree is removed leaf-first. */
+    {
+        static char const kNestPath[] = "NEST/DEEP";
+        static char const kMadePath[] = "NEST/DEEP/MADE.TXT";
+        static char const kMadeContent[] = "made by BFS, in a directory it made\n";
+        constexpr uint32_t kMadeLength = sizeof(kMadeContent) - 1;
+        bool ok = vol_mkdir(bfs_write_volume, kNestPath, sizeof(kNestPath) - 1) == 1;
+        ok = ok && vol_mkdir(bfs_write_volume, kNestPath, sizeof(kNestPath) - 1) == 1;
+        uint64_t const handle =
+            vol_open(bfs_write_volume, kMadePath, sizeof(kMadePath) - 1,
+                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        ok = ok && handle != 0 &&
+             vol_write(bfs_write_volume, handle,
+                       reinterpret_cast<uint8_t const *>(kMadeContent), kMadeLength) ==
+                 kMadeLength &&
+             vol_close(bfs_write_volume, handle) == 1 &&
+             read_and_check(bfs_write_volume, kMadePath, sizeof(kMadePath) - 1,
+                            kMadeContent, kMadeLength);
+        if (!ok) {
+            write("  test: FAIL BFS:NEST/DEEP/MADE.TXT did not make, write and read\n");
+            ++failed;
+        } else {
+            write("  test: BFS:NEST/DEEP/MADE.TXT made, written, read back\n");
+        }
+        if (vol_remove(bfs_write_volume, kNestPath, sizeof(kNestPath) - 1) != 0) {
+            write("  test: FAIL a non-empty BFS directory was removed\n");
+            ++failed;
+        }
+    }
+
+    /* rename and truncate, then the whole tree comes down. */
+    {
+        bool ok = vol_rename(bfs_write_volume, "WROTE.TXT", 9, "MOVED.TXT", 9) == 1 &&
+                  read_and_check_pattern(bfs_write_volume, "MOVED.TXT", 9, 3000) &&
+                  read_refused(bfs_write_volume, "WROTE.TXT", 9);
+        if (!ok) {
+            write("  test: FAIL BFS rename did not move the file\n");
+            ++failed;
+        } else {
+            write("  test: BFS renames a file, bytes unmoved\n");
+        }
+        ok = vol_truncate(bfs_write_volume, "MOVED.TXT", 9, 100) == 1 &&
+             read_and_check_pattern(bfs_write_volume, "MOVED.TXT", 9, 100);
+        if (!ok) {
+            write("  test: FAIL BFS truncate did not cut the file\n");
+            ++failed;
+        } else {
+            write("  test: BFS truncates a file to its head\n");
+        }
+    }
+    {
+        bool const ok =
+            vol_remove(bfs_write_volume, "NEST/DEEP/MADE.TXT",
+                       sizeof("NEST/DEEP/MADE.TXT") - 1) == 1 &&
+            vol_remove(bfs_write_volume, "NEST/DEEP", sizeof("NEST/DEEP") - 1) == 1 &&
+            vol_remove(bfs_write_volume, "NEST", 4) == 1 &&
+            vol_remove(bfs_write_volume, "MOVED.TXT", 9) == 1 &&
+            read_refused(bfs_write_volume, "MOVED.TXT", 9);
+        if (!ok) {
+            write("  test: FAIL BFS remove did not unmake the tree\n");
+            ++failed;
+        } else {
+            write("  test: BFS removes a file and a tree, leaf-first\n");
+        }
+    }
+
     /* And the boot image itself, by its volume name. The manifest's first
      * bytes are its own to change, so what this checks is that the ask is
      * answered -- the byte-exact checks are the FAT volumes', above. */

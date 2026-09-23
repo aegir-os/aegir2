@@ -25,6 +25,7 @@
 #include <aegir/partman.h>
 #include <aegir/volume.h>
 #include <aegir/bfs/volume.h>
+#include <aegir/bfs/writer.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
@@ -36,10 +37,38 @@ constexpr uint32_t kReadMax = aegir::volume::kReadMax;
 /* The volume, and the transport it reads through. The Volume holds its own
  * block buffers (tens of kilobytes), so it is not a local. */
 aegir::bfs::Volume g_volume;
+aegir::bfs::Writer g_writer;
 aegir::ipc::Consumer g_blk;
 uint8_t *g_window = nullptr;
 uint64_t g_first = 0;
 bool g_writable = false;
+
+/* The handle table's page and its serial, exactly as fs-fat keeps them. */
+uint8_t *g_memory = nullptr;
+uint32_t g_memory_bytes = 0;
+uint64_t g_handle_serial = 0;
+
+aegir::ipc::Consumer g_clock;
+bool g_have_clock = false;
+
+uint64_t now_seconds() noexcept
+{
+    if (!g_have_clock) {
+        return 0;
+    }
+    uint64_t answer[aegir::clock::kNowWords] = {};
+    aegir::ipc::WordsReply const reply = g_clock.call_words(
+        aegir::clock::kMethodNow, nullptr, 0, answer, aegir::clock::kNowWords);
+    return reply.error == 0 && reply.count >= 1 ? answer[0] : 0;
+}
+
+/* The inode time is seconds in the high 48 bits and a 16-bit sub-second field
+ * in the low bits; with a seconds clock the low field is zero (specs/bfs.md's
+ * Times). */
+int64_t inode_time() noexcept
+{
+    return static_cast<int64_t>(now_seconds()) << 16;
+}
 
 /* Reading for the volume: a volume-relative 512-byte sector, through the
  * block port and into the window this service was given, copied out before
@@ -59,6 +88,41 @@ bool read_sector(void *context, uint64_t sector, uint8_t *out) noexcept
         out[i] = g_window[i];
     }
     return true;
+}
+
+/* The write's half: the sector goes into the window, then out through the
+ * same block port, clamped by this service's badge exactly as a read is. */
+bool write_sector(void *context, uint64_t sector, uint8_t const *in) noexcept
+{
+    static_cast<void>(context);
+    if (g_window == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < kSectorBytes; ++i) {
+        g_window[i] = in[i];
+    }
+    aegir::ipc::Reply const reply =
+        g_blk.call(aegir::block::kMethodWrite, aegir::block::pack_read(g_first + sector, 1));
+    return reply.error == 0 && reply.word == 1;
+}
+
+/* Mark the volume dirty while an operation runs, clean when it is done. Phase
+ * 3 keeps log_start == log_end, so a clean volume is one Haiku mounts with no
+ * replay (specs/bfs.md). */
+void begin_write() noexcept
+{
+    if (g_writable) {
+        (void)g_volume.set_flags(aegir::bfs::kDirty);
+        (void)g_volume.flush_superblock();
+    }
+}
+
+void end_write(bool ok) noexcept
+{
+    if (g_writable) {
+        (void)g_volume.set_flags(ok ? aegir::bfs::kClean : aegir::bfs::kDirty);
+        (void)g_volume.flush_superblock();
+    }
 }
 
 bool is_directory(aegir::bfs::Inode const &inode) noexcept
@@ -103,6 +167,355 @@ bool walk(char const *path, uint32_t length, aegir::bfs::Inode *out) noexcept
     }
     *out = inode;
     return true;
+}
+
+/* Split a path into the directory that holds its last component and the
+ * component itself, as a write operation wants them. The empty path has no
+ * last component and is refused. */
+bool walk_parent(char const *path, uint32_t length, uint64_t *parent_block,
+                 char const **name, uint32_t *name_length) noexcept
+{
+    uint64_t dir_block = g_volume.root_block();
+    uint32_t start = 0;
+    while (start < length) {
+        uint32_t end = start;
+        while (end < length && path[end] != '/') {
+            ++end;
+        }
+        uint32_t const component = end - start;
+        if (end == length) {
+            if (component == 0) {
+                return false;
+            }
+            *parent_block = dir_block;
+            *name = path + start;
+            *name_length = component;
+            return true;
+        }
+        aegir::bfs::Inode dir;
+        if (!g_volume.read_inode(dir_block, &dir)) {
+            return false;
+        }
+        if (component == 0) {
+            dir_block = g_volume.to_block(dir.parent);
+        } else if (component == 1 && path[start] == '.') {
+            /* the directory itself */
+        } else if (component == 2 && path[start] == '.' && path[start + 1] == '.') {
+            dir_block = g_volume.to_block(dir.parent);
+        } else {
+            uint64_t child = 0;
+            if (!g_volume.dir_find(dir, path + start, component, &child)) {
+                return false;
+            }
+            dir_block = child;
+        }
+        start = end + 1;
+    }
+    return false;
+}
+
+/* mkdir's shape: make every missing component on the way, leaving the ones
+ * that are there alone. An existing component that is a file refuses. */
+bool make_dirs(char const *path, uint32_t length) noexcept
+{
+    uint64_t dir_block = g_volume.root_block();
+    uint32_t start = 0;
+    while (start < length) {
+        uint32_t end = start;
+        while (end < length && path[end] != '/') {
+            ++end;
+        }
+        uint32_t const component = end - start;
+        if (component != 0) {
+            aegir::bfs::Inode dir;
+            if (!g_volume.read_inode(dir_block, &dir)) {
+                return false;
+            }
+            uint64_t child = 0;
+            if (g_volume.dir_find(dir, path + start, component, &child)) {
+                aegir::bfs::Inode made;
+                if (!g_volume.read_inode(child, &made) || !is_directory(made)) {
+                    return false;
+                }
+                dir_block = child;
+            } else {
+                uint64_t created = 0;
+                if (!g_writer.create(dir_block, path + start, component,
+                                     aegir::bfs::kModeDirectory | 0755, inode_time(),
+                                     &created)) {
+                    return false;
+                }
+                dir_block = created;
+            }
+        }
+        start = end + 1;
+    }
+    return true;
+}
+
+/* One open file. The serial is the handle the client names; it is never
+ * reused. The badge is whose it is, and the inode block is where the writes
+ * land. */
+struct Handle {
+    uint64_t serial;
+    uint64_t badge;
+    uint64_t inode_block;
+    uint64_t cursor;
+};
+
+Handle *handle_lookup(uint64_t serial, uint64_t badge) noexcept
+{
+    if (serial == 0 || g_memory == nullptr) {
+        return nullptr;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial == serial) {
+            return rows[i].badge == badge ? rows + i : nullptr;
+        }
+    }
+    return nullptr;
+}
+
+Handle *handle_alloc(uint64_t badge) noexcept
+{
+    if (g_memory == nullptr) {
+        return nullptr;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial == 0) {
+            rows[i].serial = ++g_handle_serial;
+            rows[i].badge = badge;
+            return rows + i;
+        }
+    }
+    return nullptr;
+}
+
+uint64_t handle_reap(uint64_t badge) noexcept
+{
+    if (g_memory == nullptr) {
+        return 0;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    uint64_t reaped = 0;
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial != 0 && rows[i].badge == badge) {
+            rows[i].serial = 0;
+            ++reaped;
+        }
+    }
+    return reaped;
+}
+
+void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
+{
+    uint64_t handle = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(&handle, 1);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1 || !g_writable) {
+        port.reply_words(&handle, 1);
+        return;
+    }
+    uint64_t const flags = words[path_words];
+    uint64_t parent_block = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (!walk_parent(path, path_length, &parent_block, &name, &name_length)) {
+        port.reply_words(&handle, 1);
+        return;
+    }
+    aegir::bfs::Inode parent;
+    if (!g_volume.read_inode(parent_block, &parent)) {
+        port.reply_words(&handle, 1);
+        return;
+    }
+    uint64_t inode_block = 0;
+    uint64_t cursor = 0;
+    bool ok = false;
+    if (g_volume.dir_find(parent, name, name_length, &inode_block)) {
+        aegir::bfs::Inode existing;
+        if (!g_volume.read_inode(inode_block, &existing) || is_directory(existing)) {
+            port.reply_words(&handle, 1);
+            return;
+        }
+        /* An existing name without `create` is refused: opening means
+         * meaning to remake it, as the flag says. Truncate frees the chain
+         * at once; without it the file keeps its bytes. */
+        if ((flags & aegir::volume::kOpenCreate) != 0) {
+            if ((flags & aegir::volume::kOpenTruncate) != 0) {
+                ok = g_writer.truncate(inode_block, 0, inode_time());
+            } else {
+                ok = true;
+            }
+        }
+    } else if ((flags & aegir::volume::kOpenCreate) != 0) {
+        ok = g_writer.create(parent_block, name, name_length,
+                             aegir::bfs::kModeRegular | 0644, inode_time(), &inode_block);
+    }
+    if (ok) {
+        Handle *row = handle_alloc(badge);
+        if (row != nullptr) {
+            row->inode_block = inode_block;
+            row->cursor = cursor;
+            handle = row->serial;
+        }
+    }
+    port.reply_words(&handle, 1);
+}
+
+void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    uint64_t written = 0;
+    if (count < 2) {
+        port.reply_words(&written, 1);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t const bytes = words[1];
+    if (handle == nullptr || bytes > aegir::volume::kWriteMax ||
+        count < 2 + static_cast<uint32_t>((bytes + 7) / 8)) {
+        port.reply_words(&written, 1);
+        return;
+    }
+    auto const *data = reinterpret_cast<uint8_t const *>(words + 2);
+    if (g_writer.write(handle->inode_block, handle->cursor, data,
+                       static_cast<uint32_t>(bytes), inode_time())) {
+        handle->cursor += bytes;
+        written = bytes;
+    }
+    port.reply_words(&written, 1);
+}
+
+void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    uint64_t closed = 0;
+    if (count >= 1) {
+        Handle *handle = handle_lookup(words[0], badge);
+        if (handle != nullptr) {
+            handle->serial = 0;
+            closed = 1;
+        }
+    }
+    port.reply_words(&closed, 1);
+}
+
+void answer_reap(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t reaped = 0;
+    if (count >= 1) {
+        reaped = handle_reap(words[0]);
+    }
+    port.reply_words(&reaped, 1);
+}
+
+void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t made = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (g_writable && count != 0 &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                      &path_length) &&
+        path_length != 0 && make_dirs(path, path_length)) {
+        made = 1;
+    }
+    port.reply_words(&made, 1);
+}
+
+void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t removed = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (g_writable && count != 0 &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                      &path_length)) {
+        uint64_t parent_block = 0;
+        char const *name = nullptr;
+        uint32_t name_length = 0;
+        if (walk_parent(path, path_length, &parent_block, &name, &name_length) &&
+            g_writer.remove(parent_block, name, name_length)) {
+            removed = 1;
+        }
+    }
+    port.reply_words(&removed, 1);
+}
+
+void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t renamed = 0;
+    char const *src = nullptr;
+    uint32_t src_length = 0;
+    if (g_writable && count != 0 &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &src,
+                                      &src_length)) {
+        uint32_t const src_words = 1 + (src_length + 7) / 8;
+        char const *dst = nullptr;
+        uint32_t dst_length = 0;
+        if (count >= src_words + 1 &&
+            aegir::nmspace::unpack_string(words + src_words, count - src_words,
+                                          aegir::nmspace::kPathMax, &dst,
+                                          &dst_length)) {
+            uint64_t src_parent = 0;
+            uint64_t dst_parent = 0;
+            char const *src_name = nullptr;
+            char const *dst_name = nullptr;
+            uint32_t src_name_length = 0;
+            uint32_t dst_name_length = 0;
+            if (walk_parent(src, src_length, &src_parent, &src_name, &src_name_length) &&
+                walk_parent(dst, dst_length, &dst_parent, &dst_name, &dst_name_length) &&
+                src_parent == dst_parent &&
+                g_writer.rename(src_parent, src_name, src_name_length, dst_name,
+                                dst_name_length)) {
+                renamed = 1;
+            }
+        }
+    }
+    port.reply_words(&renamed, 1);
+}
+
+void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
+                     uint32_t count) noexcept
+{
+    uint64_t resized = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (g_writable && count != 0 &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                      &path_length)) {
+        uint32_t const path_words = 1 + (path_length + 7) / 8;
+        if (count >= path_words + 1) {
+            aegir::bfs::Inode inode;
+            if (walk(path, path_length, &inode) && !is_directory(inode)) {
+                uint64_t parent_block = 0;
+                char const *name = nullptr;
+                uint32_t name_length = 0;
+                uint64_t inode_block = 0;
+                if (walk_parent(path, path_length, &parent_block, &name, &name_length) &&
+                    g_volume.read_inode(parent_block, &inode) &&
+                    g_volume.dir_find(inode, name, name_length, &inode_block) &&
+                    g_writer.truncate(inode_block, words[path_words], inode_time())) {
+                    resized = 1;
+                }
+            }
+        }
+    }
+    port.reply_words(&resized, 1);
 }
 
 void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
@@ -295,10 +708,30 @@ int main(int argc, char *argv[])
         aegir::debug_write(" of the device\n");
     }
 
-    if (!g_volume.open(read_sector, nullptr)) {
+    if (!g_volume.open(read_sector, nullptr, g_writable ? write_sector : nullptr)) {
         aegir::debug_write("      FAIL fs.bfs: not a Be File System this reader speaks\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
+    }
+    if (g_writable && !g_writer.open(&g_volume)) {
+        aegir::debug_write("      FAIL fs.bfs: the writer would not open\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+
+    /* The handle table's page, when the spawner gave one: zeroed before it is
+     * trusted, because a retyped frame holds whatever the last owner left and
+     * a nonzero serial would be a handle nobody opened. */
+    uint64_t memory_physical = 0;
+    uint32_t memory_bits = 0;
+    uint64_t memory_address = 0;
+    if (aegir::bootstrap::untyped(&memory_physical, &memory_bits, &memory_address) &&
+        memory_bits != 0 && memory_address != 0) {
+        g_memory = reinterpret_cast<uint8_t *>(memory_address);
+        g_memory_bytes = 1u << memory_bits;
+        for (uint32_t i = 0; i < g_memory_bytes; ++i) {
+            g_memory[i] = 0;
+        }
     }
 
     /* The volume name: the superblock's, NUL-trimmed. */
@@ -381,6 +814,12 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The clock, when the partition manager passed one: made entries and
+     * written files are stamped with the time it answers. */
+    g_clock = aegir::ipc::Consumer::find(aegir::clock::kPortName,
+                                         aegir::clock::kPortNameLength);
+    g_have_clock = g_clock.valid();
+
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
@@ -388,6 +827,35 @@ int main(int argc, char *argv[])
         seL4_Word badge = 0;
         uint32_t const method =
             vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+        /* A mutating method runs dirty and finishes clean, so a clean volume
+         * means the last operation went through whole. A refusal leaves the
+         * volume as it was, which is also clean (specs/bfs.md). */
+        bool mutating = false;
+        switch (method) {
+        case aegir::volume::kMethodOpen:
+            mutating = true;
+            break;
+        case aegir::volume::kMethodWrite:
+            mutating = true;
+            break;
+        case aegir::volume::kMethodMkdir:
+            mutating = true;
+            break;
+        case aegir::volume::kMethodRemove:
+            mutating = true;
+            break;
+        case aegir::volume::kMethodRename:
+            mutating = true;
+            break;
+        case aegir::volume::kMethodTruncate:
+            mutating = true;
+            break;
+        default:
+            break;
+        }
+        if (mutating) {
+            begin_write();
+        }
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count);
@@ -398,11 +866,38 @@ int main(int argc, char *argv[])
         case aegir::volume::kMethodStat:
             answer_stat(vol, words, count);
             break;
+        case aegir::volume::kMethodOpen:
+            answer_open(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodWrite:
+            answer_write(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodClose:
+            answer_close(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodMkdir:
+            answer_mkdir(vol, words, count);
+            break;
+        case aegir::volume::kMethodRemove:
+            answer_remove(vol, words, count);
+            break;
+        case aegir::volume::kMethodRename:
+            answer_rename(vol, words, count);
+            break;
+        case aegir::volume::kMethodTruncate:
+            answer_truncate(vol, words, count);
+            break;
+        case aegir::volume::kMethodReap:
+            answer_reap(vol, words, count);
+            break;
         default:
-            /* The write side, the handle side, attributes and queries: the
-             * growth phases, refused rather than answered wrongly. */
+            /* The metadata methods and queries: the next phases, refused
+             * rather than answered wrongly. */
             answer_refuse(vol);
             break;
+        }
+        if (mutating) {
+            end_write(true);
         }
     }
 }

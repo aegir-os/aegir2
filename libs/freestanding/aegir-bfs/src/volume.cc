@@ -50,9 +50,10 @@ uint64_t Volume::run_bytes(Run const &run) const noexcept
     return static_cast<uint64_t>(run.length) * block_size();
 }
 
-bool Volume::open(ReadSector read, void *context) noexcept
+bool Volume::open(ReadSector read, void *context, WriteSector write) noexcept
 {
     read_ = read;
+    write_ = write;
     context_ = context;
     valid_ = false;
 
@@ -89,14 +90,54 @@ bool Volume::open(ReadSector read, void *context) noexcept
     block_shift_ = block_shift;
     ag_shift_ = ag_shift;
     num_ags_ = num_ags;
+    blocks_per_ag_ = blocks_per_ag;
     num_blocks_ = num_blocks;
+    used_blocks_ = le64(sb + superblock::kUsedBlocks);
     root_ = le_run(sb + superblock::kRootDir);
     indices_ = le_run(sb + superblock::kIndices);
     for (uint32_t i = 0; i < sizeof(name_); ++i) {
         name_[i] = static_cast<char>(sb[i]);
     }
+    for (uint32_t i = 0; i < kSuperblockBytes; ++i) {
+        superblock_[i] = sb[i];
+    }
     valid_ = true;
     return true;
+}
+
+bool Volume::write_block(uint64_t block, uint8_t const *in) const noexcept
+{
+    if (write_ == nullptr) {
+        return false;
+    }
+    uint32_t const sectors = block_size() / kSectorBytes;
+    for (uint32_t i = 0; i < sectors; ++i) {
+        if (!write_(context_, block * sectors + i, in + i * kSectorBytes)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Volume::set_used_blocks(uint64_t used) noexcept
+{
+    used_blocks_ = used;
+    put_le64(superblock_ + superblock::kUsedBlocks, used);
+    return true;
+}
+
+bool Volume::set_flags(uint32_t flags) noexcept
+{
+    put_le32(superblock_ + superblock::kFlags, flags);
+    return true;
+}
+
+bool Volume::flush_superblock() const noexcept
+{
+    if (write_ == nullptr) {
+        return false;
+    }
+    return write_(context_, 1, superblock_);
 }
 
 bool Volume::read_inode(uint64_t block, Inode *out) const noexcept
@@ -138,6 +179,39 @@ bool Volume::read_part(Run const &run, uint64_t skip, uint8_t *out,
         }
         __builtin_memcpy(dst, block_ + within, chunk);
         dst += chunk;
+        byte += chunk;
+        left -= chunk;
+    }
+    return true;
+}
+
+bool Volume::write_part(Run const &run, uint64_t skip, uint8_t const *in,
+                        uint32_t length) const noexcept
+{
+    uint64_t byte = to_block(run) * block_size() + skip;
+    uint8_t const *src = in;
+    uint32_t left = length;
+    while (left > 0) {
+        uint64_t const block = byte / block_size();
+        uint32_t const within = static_cast<uint32_t>(byte % block_size());
+        uint32_t chunk = block_size() - within;
+        if (chunk > left) {
+            chunk = left;
+        }
+        if (within == 0 && chunk == block_size()) {
+            if (!write_block(block, src)) {
+                return false;
+            }
+        } else {
+            if (!read_block(block, block_)) {
+                return false;
+            }
+            __builtin_memcpy(block_ + within, src, chunk);
+            if (!write_block(block, block_)) {
+                return false;
+            }
+        }
+        src += chunk;
         byte += chunk;
         left -= chunk;
     }
@@ -232,6 +306,71 @@ bool Volume::read_stream(Inode const &inode, uint64_t offset, uint8_t *out,
         }
     }
     return true;
+}
+
+bool Volume::write_stream_raw(uint8_t const *stream, uint32_t stream_size,
+                              uint64_t offset, uint8_t const *in,
+                              uint32_t length) const noexcept
+{
+    if (length == 0) {
+        return true;
+    }
+    static_cast<void>(stream_size);
+
+    uint64_t cursor = offset;
+    uint32_t left = length;
+    uint8_t const *src = in;
+    /* Writes the part of [cursor, cursor+left) that `run` covers. */
+    auto handle = [&](Run const &run, uint64_t run_start) -> bool {
+        uint64_t const span = run_bytes(run);
+        uint64_t const req_end = cursor + left;
+        uint64_t const run_end = run_start + span;
+        uint64_t const lo = cursor > run_start ? cursor : run_start;
+        uint64_t const hi = req_end < run_end ? req_end : run_end;
+        if (lo >= hi) {
+            return true;
+        }
+        uint32_t const n = static_cast<uint32_t>(hi - lo);
+        if (!write_part(run, lo - run_start, src + (lo - cursor), n)) {
+            return false;
+        }
+        left -= n;
+        cursor = hi;
+        return true;
+    };
+
+    uint64_t pos = 0;
+    for (uint32_t i = 0; i < data::kDirectCount; ++i) {
+        Run const run = le_run(stream + data::kDirect + i * 8);
+        if (run_is_zero(run)) {
+            return left == 0;
+        }
+        if (!handle(run, pos)) {
+            return false;
+        }
+        pos += run_bytes(run);
+    }
+
+    Run const indirect = le_run(stream + data::kIndirect);
+    uint32_t const runs_per_block = block_size() / 8;
+    if (!run_is_zero(indirect)) {
+        for (uint32_t b = 0; b < indirect.length; ++b) {
+            if (!read_block(to_block(indirect) + b, array_)) {
+                return false;
+            }
+            for (uint32_t j = 0; j < runs_per_block; ++j) {
+                Run const run = le_run(array_ + j * 8);
+                if (run_is_zero(run)) {
+                    return left == 0;
+                }
+                if (!handle(run, pos)) {
+                    return false;
+                }
+                pos += run_bytes(run);
+            }
+        }
+    }
+    return left == 0;
 }
 
 uint32_t Volume::node_key_lengths(uint8_t const *node, uint16_t count,

@@ -30,6 +30,10 @@ namespace aegir::bfs {
  *  block size lives in the superblock the first sectors carry. */
 using ReadSector = bool (*)(void *context, uint64_t sector, uint8_t *out);
 
+/** Write the 512 bytes of `in` to the volume-relative sector `sector`. The
+ *  write half of the same transport; null on a volume opened read-only. */
+using WriteSector = bool (*)(void *context, uint64_t sector, uint8_t const *in);
+
 /** What a caller needs of an inode: its kind, its size, its time, its place in
  *  the tree, and its data stream (so a stream read needs no second visit). */
 struct Inode {
@@ -48,17 +52,38 @@ constexpr uint64_t kKindDir = 2;
 class Volume {
 public:
     /** Read and validate the superblock. False, with the volume invalid, when
-     *  the bytes are not a BFS a little-endian reader speaks. */
-    bool open(ReadSector read, void *context) noexcept;
+     *  the bytes are not a BFS a little-endian reader speaks. `write` is the
+     *  write half of the transport; without one the volume is read-only. */
+    bool open(ReadSector read, void *context,
+              WriteSector write = nullptr) noexcept;
 
     bool valid() const noexcept { return valid_; }
+    bool writable() const noexcept { return write_ != nullptr; }
     uint32_t block_size() const noexcept { return 1u << block_shift_; }
     uint64_t num_blocks() const noexcept { return num_blocks_; }
     uint64_t root_block() const noexcept { return to_block(root_); }
     char const *name() const noexcept { return name_; }
 
+    uint32_t block_shift() const noexcept { return block_shift_; }
+    uint32_t ag_shift() const noexcept { return ag_shift_; }
+    uint32_t num_ags() const noexcept { return num_ags_; }
+    uint32_t blocks_per_ag() const noexcept { return blocks_per_ag_; }
+    uint64_t used_blocks() const noexcept { return used_blocks_; }
+
     /** A run's first block number: (group << ag_shift) | start. */
     uint64_t to_block(Run const &run) const noexcept;
+
+    /** Whole-block I/O. Read is a sequence of sectors; write its other
+     *  direction. The allocate-and-write side of the library needs both. */
+    bool read_block(uint64_t block, uint8_t *out) const noexcept;
+    bool write_block(uint64_t block, uint8_t const *in) const noexcept;
+
+    /** Patch the in-memory superblock and write its sector: the allocated
+     *  count, and the clean/dirty flag. A clean volume has log_start ==
+     *  log_end and stays that way in this phase (specs/bfs.md). */
+    bool set_used_blocks(uint64_t used) noexcept;
+    bool set_flags(uint32_t flags) noexcept;
+    bool flush_superblock() const noexcept;
 
     /** Read the inode at `block`. False on a bad magic, a deleted inode, or a
      *  size that does not match the volume's. */
@@ -68,6 +93,14 @@ public:
      *  a hole. False when the stream cannot supply them. */
     bool read_stream(Inode const &inode, uint64_t offset, uint8_t *out,
                      uint32_t length) const noexcept;
+
+    /** Write `length` bytes of a stream at `offset`. The stream may spill
+     *  into the inode's indirect array, which is read and rewritten here;
+     *  the inode block itself is the caller's to write back. False when the
+     *  stream cannot cover the range. */
+    bool write_stream_raw(uint8_t const *stream, uint32_t stream_size,
+                          uint64_t offset, uint8_t const *in,
+                          uint32_t length) const noexcept;
 
     /** Find `name` in the directory `dir`'s tree. False when it is not there. */
     bool dir_find(Inode const &dir, char const *name, uint32_t length,
@@ -81,10 +114,11 @@ public:
                    uint32_t *name_length, uint64_t *inode_block) const noexcept;
 
 private:
-    bool read_block(uint64_t block, uint8_t *out) const noexcept;
     uint64_t run_bytes(Run const &run) const noexcept;
     bool read_part(Run const &run, uint64_t skip, uint8_t *out,
                    uint32_t length) const noexcept;
+    bool write_part(Run const &run, uint64_t skip, uint8_t const *in,
+                    uint32_t length) const noexcept;
     bool node_header(Inode const &dir, uint32_t *node_size, uint64_t *root,
                      uint64_t *maximum) const noexcept;
     uint32_t node_key_lengths(uint8_t const *node, uint16_t count,
@@ -93,15 +127,19 @@ private:
                   uint32_t *length) const noexcept;
 
     ReadSector read_ = nullptr;
+    WriteSector write_ = nullptr;
     void *context_ = nullptr;
     uint32_t block_shift_ = 0;
     uint32_t ag_shift_ = 0;
     uint32_t num_ags_ = 0;
+    uint32_t blocks_per_ag_ = 0;
     uint64_t num_blocks_ = 0;
+    uint64_t used_blocks_ = 0;
     Run root_{};
     Run indices_{};
     bool valid_ = false;
     char name_[32] = {};
+    uint8_t superblock_[kSuperblockBytes] = {};
 
     mutable uint8_t block_[kMaxBlockSize];
     mutable uint8_t array_[kMaxBlockSize];

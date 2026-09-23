@@ -252,7 +252,7 @@ The B+tree header (`bplustree_header`) is at the start of the stream:
 | Field | Notes |
 | ----- | ----- |
 | `magic` | `0x69f6c2e8` |
-| `node_size` | 1024 by default; a power of two, at least the block size |
+| `node_size` | `BPLUSTREE_NODE_SIZE`, hard-coded 1024 whatever the block size; a directory's stream is two nodes |
 | `max_number_of_levels` | a bound, for validation |
 | `data_type` | the key type (below) |
 | `root_node_pointer` | the root node's block, or `-1` when empty |
@@ -372,12 +372,22 @@ file is a monolith:
   without a libc: `layout.h` (the structs and byte order), `volume.{h,cc}`
   (superblock, block runs, block I/O through the client window),
   `inode.{h,cc}`, `bplustree.{h,cc}`, `allocator.{h,cc}`,
-  `attribute.{h,cc}`, `index.{h,cc}`, `query.{h,cc}`, `journal.{h,cc}`.
+  `writer.{h,cc}`, `attribute.{h,cc}`, `index.{h,cc}`, `query.{h,cc}`,
+  `journal.{h,cc}`.
 - `apps/freestanding/aegir-fs-bfs/` — the volume service: bootstrap, announce,
   and the serve loop, in `aegir-fs-fat`'s shape.
 - `libs/freestanding/aegir-metadata/` — the metadata and query protocol shared
   by the service, the VFS client and the runtime.
 - `scripts/mkfs_bfs.py` — the host-side builder for the test disk.
+
+The write phase lands in steps, and each smaller step is a completed
+implementation rather than a stub. The first is one leaf per directory and
+direct plus indirect runs per stream: a directory that outgrows its 1024-byte
+node, and a stream that outgrows the indirect arrays, are **refused**, not
+miswritten. The node split with its internal cursor, and the double indirect
+runs, come next. Growth is non-sparse: a byte the file grows across is a real
+zeroed block, and a write past the end zero-fills the gap. Every operation
+leaves the volume `'CLEN'` with `log_start == log_end`.
 
 The Aegir additions are **runtime features** wherever possible, because the
 format need not change for them: TRIM is a discard on a freed run, permission

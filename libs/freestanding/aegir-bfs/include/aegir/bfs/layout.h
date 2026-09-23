@@ -38,8 +38,22 @@ constexpr uint32_t kInodeMagic1 = 0x3bbe0ad9;
 constexpr uint32_t kInodeInUse = 0x00000001;
 constexpr uint32_t kInodeDeleted = 0x00000010;
 
+/** The POSIX type bits (sys/stat.h), and BFS's extended type bits. */
+constexpr uint32_t kModeTypeMask = 0xf000;
+constexpr uint32_t kModeDirectory = 0x4000;     /* S_IFDIR */
+constexpr uint32_t kModeRegular = 0x8000;       /* S_IFREG */
+constexpr uint32_t kModeAttrDir = 0x08000000;   /* S_ATTR_DIR */
+constexpr uint32_t kModeAttr = 0x10000000;      /* S_ATTR */
+constexpr uint32_t kModeIndexDir = 0x20000000;  /* S_INDEX_DIR */
+constexpr uint32_t kModeStrIndex = 0x01000000;  /* S_STR_INDEX */
+
 /** The B+tree's magic. */
 constexpr uint32_t kTreeMagic = 0x69f6c2e8;
+constexpr uint32_t kTreeNodeSize = 1024; /* BPLUSTREE_NODE_SIZE, hard-coded */
+constexpr uint32_t kNumArrayBlocks = 4;  /* NUM_ARRAY_BLOCKS */
+
+/** Roles a key type names (bplustree data_type). Directories are string. */
+constexpr uint32_t kTreeStringType = 0;
 
 /** A key in a tree is at most this many bytes; an attribute name too. */
 constexpr uint32_t kMaxName = 255;
@@ -93,6 +107,51 @@ inline Run le_run(uint8_t const *at) noexcept
     run.start = le16(at + 4);
     run.length = le16(at + 6);
     return run;
+}
+
+inline void put_le16(uint8_t *at, uint16_t value) noexcept
+{
+    at[0] = static_cast<uint8_t>(value & 0xff);
+    at[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+}
+
+inline void put_le32(uint8_t *at, uint32_t value) noexcept
+{
+    for (uint32_t i = 0; i < 4; ++i) {
+        at[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xff);
+    }
+}
+
+inline void put_le64(uint8_t *at, uint64_t value) noexcept
+{
+    for (uint32_t i = 0; i < 8; ++i) {
+        at[i] = static_cast<uint8_t>((value >> (i * 8)) & 0xff);
+    }
+}
+
+inline void put_run(uint8_t *at, Run const &run) noexcept
+{
+    put_le32(at, run.allocation_group);
+    put_le16(at + 4, run.start);
+    put_le16(at + 6, run.length);
+}
+
+inline Run run_make(uint32_t allocation_group, uint16_t start,
+                    uint16_t length) noexcept
+{
+    Run run;
+    run.allocation_group = allocation_group;
+    run.start = start;
+    run.length = length;
+    return run;
+}
+
+/** True when two runs sit one after the other on the same allocation group,
+ *  which is what lets an append merge them into one. */
+inline bool runs_contiguous(Run const &a, Run const &b) noexcept
+{
+    return a.allocation_group == b.allocation_group &&
+           static_cast<uint32_t>(a.start) + a.length == b.start;
 }
 
 inline bool run_is_zero(Run const &run) noexcept
