@@ -47,6 +47,16 @@ bool is_indexed_file(uint32_t mode) noexcept
            kModeRegular;
 }
 
+/* The one standard attribute whose values the BEOS:APP_SIG index holds. */
+constexpr char kAppSigIndex[] = "BEOS:APP_SIG";
+constexpr uint32_t kAppSigIndexLength = 12;
+
+bool is_app_sig(char const *name, uint32_t length) noexcept
+{
+    return length == kAppSigIndexLength &&
+           __builtin_memcmp(name, kAppSigIndex, kAppSigIndexLength) == 0;
+}
+
 /* A fresh directory's tree: the header and one leaf holding dot and dotdot. */
 void build_dir_tree(uint8_t *tree, uint64_t self_block,
                     uint64_t parent_block) noexcept
@@ -1633,11 +1643,78 @@ bool Writer::attr_write(uint64_t inode_block, char const *name,
                                     bytes, length, written, time));
 }
 
+bool Writer::attribute_key(uint64_t inode_block, char const *name,
+                           uint32_t name_length, uint8_t *out,
+                           uint32_t *length) noexcept
+{
+    Inode inode{};
+    if (!volume_->read_inode(inode_block, &inode)) {
+        return false;
+    }
+    uint32_t type = 0;
+    uint64_t size = 0;
+    if (!volume_->attr_stat(inode, name, name_length, &type, &size)) {
+        return false;
+    }
+    uint32_t want = *length;
+    if (size < want) {
+        want = static_cast<uint32_t>(size);
+    }
+    *length = want;
+    if (want == 0) {
+        return true;
+    }
+    return volume_->attr_read(inode, name, name_length, 0, out, length);
+}
+
+/* A write keeps the BEOS:APP_SIG index in step when it starts at the
+ * attribute's beginning: the old value's key goes and the new value's is
+ * added (specs/bfs.md). A write into the middle does not change the key
+ * Haiku would compare, so it is left alone. */
 bool Writer::attr_write_blocks(uint64_t inode_block, char const *name,
                                uint32_t name_length, uint32_t type,
                                uint64_t offset, uint8_t const *bytes,
                                uint32_t length, uint32_t *written,
                                int64_t time) noexcept
+{
+    bool const indexed = offset == 0 && is_app_sig(name, name_length);
+    uint32_t old_length = kMaxIndexKey;
+    bool const had_old =
+        indexed && attribute_key(inode_block, name, name_length, index_old_key_,
+                                 &old_length);
+    if (!attr_write_impl(inode_block, name, name_length, type, offset, bytes,
+                         length, written, time)) {
+        return false;
+    }
+    if (!indexed) {
+        return true;
+    }
+    uint32_t new_length = kMaxIndexKey;
+    bool const has_new = attribute_key(inode_block, name, name_length,
+                                       index_new_key_, &new_length);
+    bool const same =
+        had_old == has_new && old_length == new_length &&
+        (new_length == 0 ||
+         __builtin_memcmp(index_old_key_, index_new_key_, new_length) == 0);
+    if (same) {
+        return true;
+    }
+    if (had_old && !index_drop(kAppSigIndex, kAppSigIndexLength, index_old_key_,
+                               old_length, inode_block)) {
+        return false;
+    }
+    if (has_new && !index_add(kAppSigIndex, kAppSigIndexLength, index_new_key_,
+                              new_length, inode_block)) {
+        return false;
+    }
+    return true;
+}
+
+bool Writer::attr_write_impl(uint64_t inode_block, char const *name,
+                             uint32_t name_length, uint32_t type,
+                             uint64_t offset, uint8_t const *bytes,
+                             uint32_t length, uint32_t *written,
+                             int64_t time) noexcept
 {
     if (name_length == 0 || name_length > kMaxName ||
         offset + length < offset) {
@@ -1753,8 +1830,28 @@ bool Writer::attr_remove(uint64_t inode_block, char const *name,
     return finish(attr_remove_blocks(inode_block, name, name_length));
 }
 
+/* Removing the BEOS:APP_SIG attribute takes its value's key out of the
+ * index. */
 bool Writer::attr_remove_blocks(uint64_t inode_block, char const *name,
                                 uint32_t name_length) noexcept
+{
+    bool const indexed = is_app_sig(name, name_length);
+    uint32_t old_length = kMaxIndexKey;
+    bool const had_old =
+        indexed && attribute_key(inode_block, name, name_length, index_old_key_,
+                                 &old_length);
+    if (!attr_remove_impl(inode_block, name, name_length)) {
+        return false;
+    }
+    if (!had_old) {
+        return true;
+    }
+    return index_drop(kAppSigIndex, kAppSigIndexLength, index_old_key_,
+                      old_length, inode_block);
+}
+
+bool Writer::attr_remove_impl(uint64_t inode_block, char const *name,
+                              uint32_t name_length) noexcept
 {
     if (name_length == 0 || name_length > kMaxName) {
         return false;

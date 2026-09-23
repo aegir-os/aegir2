@@ -343,10 +343,14 @@ The Writer maintains the name, size and last_modified indices: creating an
 inode adds it to the name index (and, for a file, the size and last_modified
 indices at its size and time), removing it takes those entries away, renaming
 changes only the name key, and writing or truncating moves the size and
-time keys. This is also why `mkfs` populates the indices rather than leaving
-them empty: a Haiku mount trusts a volume's indices, so an index present but
-stale is worse than one absent. A zero `indices` run is Haiku's own "no index
-directory".
+time keys. The `BEOS:APP_SIG` index follows that attribute: a write that
+starts at its beginning replaces the old value's key with the new value's
+(up to `MAX_INDEX_KEY_LENGTH` 255 bytes), and removing the attribute drops
+the key. A directory is in the name index but not in size or last_modified,
+as Haiku's `Inode::InSizeIndex` and `InLastModifiedIndex` decide. This is
+also why `mkfs` populates the indices rather than leaving them empty: a
+Haiku mount trusts a volume's indices, so an index present but stale is worse
+than one absent. A zero `indices` run is Haiku's own "no index directory".
 
 ## Times
 

@@ -120,6 +120,21 @@ private:
     bool attr_remove_blocks(uint64_t inode_block, char const *name,
                             uint32_t name_length) noexcept;
 
+    /* The attribute work without its index maintenance; the `_blocks` forms
+     * call these and then keep the BEOS:APP_SIG index in step. */
+    bool attr_write_impl(uint64_t inode_block, char const *name,
+                         uint32_t name_length, uint32_t type, uint64_t offset,
+                         uint8_t const *bytes, uint32_t length,
+                         uint32_t *written, int64_t time) noexcept;
+    bool attr_remove_impl(uint64_t inode_block, char const *name,
+                          uint32_t name_length) noexcept;
+
+    /* The first bytes of the attribute `name` on the inode at `inode_block`,
+     * for its index key; false when the attribute is not there. */
+    bool attribute_key(uint64_t inode_block, char const *name,
+                       uint32_t name_length, uint8_t *out,
+                       uint32_t *length) noexcept;
+
     /* Where a node split left things: the node at `offset` became `left`, a
      * fresh node `right` holds the greater half, and `separator` (the
      * greatest key of the left) goes into the parent. */
@@ -237,6 +252,11 @@ private:
     Journal journal_;
     uint64_t edit_parent_ = 0; /* the directory inode a tree edit is growing */
     uint32_t tree_type_ = kTreeStringType; /* the open tree's key type */
+    /* An attribute index keys on the attribute's value, which Haiku caps at
+     * MAX_INDEX_KEY_LENGTH (255) bytes. */
+    static constexpr uint32_t kMaxIndexKey = 255;
+    uint8_t index_old_key_[kMaxIndexKey] = {};
+    uint8_t index_new_key_[kMaxIndexKey] = {};
 
     uint8_t inode_[kMaxBlockSize] = {};
     uint8_t stream_[data::kBytes] = {};
