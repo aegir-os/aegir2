@@ -18,6 +18,3 @@ target_include_directories(aegir-spawn PUBLIC include)
 target_link_libraries(
   aegir-spawn PUBLIC aegir-cxx-policy aegir-bootstrap aegir-mem sel4 sel4runtime aegir-c-headers cpio
 )
-# Lean, and private: freestanding binaries link this object, a hosted one must
-# not inherit -fno-exceptions from it.
-target_compile_options(aegir-spawn PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)

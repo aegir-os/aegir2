@@ -144,45 +144,19 @@ if(AEGIR_HOSTED_CXX)
 endif()
 
 # What a *library* links: C++17 and the warning set, and nothing about
-# exceptions. The lean flags are set privately on each library that has
-# sources (below), because a library's object must carry no exception
-# personality for the freestanding binaries to link it, *and* must not export
-# -fno-exceptions to a hosted consumer -- that negative flag would land after
-# the hosted policy's -fexceptions with no later positive flag to undo it.
+# exceptions. A library's C++ policy is where it lives -- libs/freestanding
+# applies the lean flags at directory scope, libs/hosted links the hosted
+# policy -- because a library must not *export* its policy: a negative flag
+# would land after a hosted consumer's -fexceptions with no later positive flag
+# to undo it, and a freestanding binary can link any freestanding library
+# because none of their objects carries an exception personality.
 add_library(aegir-cxx-policy INTERFACE)
 target_compile_features(aegir-cxx-policy INTERFACE cxx_std_17)
 target_compile_options(aegir-cxx-policy INTERFACE -Wall -Wextra -Werror)
 
-add_subdirectory(libs/aegir-runtime)
-add_subdirectory(libs/aegir-devtree)
-add_subdirectory(libs/aegir-descriptor)
-add_subdirectory(libs/aegir-block)
-add_subdirectory(libs/aegir-entropy)
-add_subdirectory(libs/aegir-input)
-add_subdirectory(libs/aegir-framebuffer)
-add_subdirectory(libs/aegir-console)
-add_subdirectory(libs/aegir-registry)
-add_subdirectory(libs/aegir-namespace)
-add_subdirectory(libs/aegir-volume)
-add_subdirectory(libs/aegir-partman)
-add_subdirectory(libs/aegir-authdb)
-add_subdirectory(libs/aegir-mem)
-add_subdirectory(libs/aegir-bootstrap)
-add_subdirectory(libs/aegir-ipc)
-add_subdirectory(libs/aegir-log)
-add_subdirectory(libs/aegir-manifest)
-add_subdirectory(libs/aegir-spawn)
-add_subdirectory(libs/aegir-virtio)
+add_subdirectory(libs/freestanding)
 if(AEGIR_HOSTED_CXX)
-  add_subdirectory(libs/aegir-heap)
-  add_subdirectory(libs/aegir-environment)
-  add_subdirectory(libs/aegir-cxxabi-shim)
-endif()
-if(AEGIR_TOOLKIT)
-  add_subdirectory(libs/aegir-trinket)
-  add_subdirectory(libs/aegir-bureau)
-  add_subdirectory(libs/aegir-datatypes)
-  add_subdirectory(libs/aegir-classes)
+  add_subdirectory(libs/hosted)
 endif()
 # aegir-hello is director's smoke client, so it is built before the task that
 # packs it into its initrd.

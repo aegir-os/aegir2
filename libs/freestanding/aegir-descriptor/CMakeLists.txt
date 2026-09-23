@@ -17,6 +17,3 @@ target_include_directories(aegir-descriptor PUBLIC include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers have
 # to come from a link (specs/build.md).
 target_link_libraries(aegir-descriptor PUBLIC aegir-cxx-policy sel4 aegir-c-headers)
-# Lean, and private: freestanding binaries link this object, a hosted one must
-# not inherit -fno-exceptions from it.
-target_compile_options(aegir-descriptor PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)
