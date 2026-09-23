@@ -242,4 +242,28 @@ bool Volume::remove(char const *path, uint32_t length) noexcept
     return reply.error == 0 && reply.count == 1 && answer[0] == 1;
 }
 
+bool Volume::rename(char const *src, uint32_t src_length, char const *dst,
+                    uint32_t dst_length) noexcept
+{
+    /* Both strings ride in the one envelope: what is left after the source,
+     * less its length word, bounds the destination. */
+    uint64_t request[aegir::ipc::kMaxWords];
+    uint32_t const src_words =
+        nmspace::pack_string(request, src, src_length, nmspace::kPathMax);
+    if (src_words == 0 || src_words > aegir::ipc::kMaxWords) {
+        return false;
+    }
+    uint32_t const room = aegir::ipc::kMaxWords - src_words;
+    uint32_t const dst_words =
+        nmspace::pack_string(request + src_words, dst, dst_length,
+                             room != 0 ? (room - 1) * 8 : 0);
+    if (dst_words == 0) {
+        return false;
+    }
+    uint64_t answer[1];
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        volume::kMethodRename, request, src_words + dst_words, answer, 1);
+    return reply.error == 0 && reply.count == 1 && answer[0] == 1;
+}
+
 }  // namespace aegir::vfs

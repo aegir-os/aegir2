@@ -118,6 +118,13 @@ Written down so the omissions are decisions, not surprises:
 - **No space query.** `statvfs` and the runtime's `statfs` are not answered;
   the free-cluster count is not cached (the allocation scan is linear, and
   that cost is known and accepted for now).
+- **Rename is within one directory.** The entry is remade under the new name
+  and the old one deleted, its chain kept -- so it works without moving data,
+  but two different parent directories are refused. A rename onto an existing
+  name is refused too (no replace yet). The runtime refuses a rename across
+  volumes with `EXDEV`, judging "same volume" by the volume name the caller
+  wrote, so naming one volume through two aliases in a single call is refused
+  as well.
 - **No FAT12 or ExFAT support.** They are refused, above.
 - **Attribute bits** other than directory are not honored; there is no
   `chmod`.

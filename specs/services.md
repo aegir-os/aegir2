@@ -1041,8 +1041,9 @@ What was decided, and what it took:
   pristine.
 - **fs.fat writes FAT16 and FAT32**: the volume protocol's handle side
   (`specs/vfs.md`) -- open/create/truncate, write at the cursor with the
-  chain extended through the free-cluster scan, close; mkdir and remove,
-  the tree growing and dying. A new cluster is
+  chain extended through the free-cluster scan, close; mkdir, remove, and
+  same-directory rename (the entry remade under the new name, its chain
+  kept), the tree growing, moving and dying. A new cluster is
   zeroed before it joins a chain, because a multiuser system does not leak
   one file's old sectors into another; both FAT copies are written, and on
   FAT32 the FSInfo free count is marked unknown rather than maintained (the

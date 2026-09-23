@@ -340,6 +340,34 @@ uint64_t vol_remove(seL4_CPtr port, char const *path, uint32_t path_length) noex
     return in[0];
 }
 
+/* rename: 1 renamed, 0 refused -- not found, a destination that exists, an
+ * open handle, a read-only volume, or two different directories. */
+uint64_t vol_rename(seL4_CPtr port, char const *src, uint32_t src_length,
+                    char const *dst, uint32_t dst_length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t const src_words =
+        aegir::nmspace::pack_string(out, src, src_length, aegir::nmspace::kPathMax);
+    if (src_words == 0) {
+        return 0;
+    }
+    uint32_t const room = aegir::ipc::kMaxWords - src_words;
+    uint32_t const dst_words =
+        aegir::nmspace::pack_string(out + src_words, dst, dst_length,
+                                    room != 0 ? (room - 1) * 8 : 0);
+    if (dst_words == 0) {
+        return 0;
+    }
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::volume::kMethodRename, out, src_words + dst_words, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
 /* One read, asking for refusal: true when the volume says no. */
 bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
 {
@@ -954,6 +982,51 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: a long name creates, reads, lists whole and removes\n");
+        }
+    }
+
+    /* rename (specs/fat.md): the entry is remade under the new name with its
+     * data unmoved, the old name stops resolving, and a destination that is
+     * there is refused. A directory renames the same way, keeping its chain. */
+    {
+        static char const kBefore[] = "Before Rename.txt";
+        static char const kAfter[] = "After Rename.txt";
+        static char const kRenameBytes[] = "renamed, and the bytes came with it\n";
+        uint64_t handle = vol_open(scratch_volume, kBefore, sizeof(kBefore) - 1,
+                                   aegir::volume::kOpenCreate |
+                                       aegir::volume::kOpenTruncate);
+        bool ok = handle != 0 &&
+                  vol_write(scratch_volume, handle,
+                            reinterpret_cast<uint8_t const *>(kRenameBytes),
+                            sizeof(kRenameBytes) - 1) == sizeof(kRenameBytes) - 1 &&
+                  vol_close(scratch_volume, handle) == 1;
+        ok = ok && vol_rename(scratch_volume, kBefore, sizeof(kBefore) - 1, kAfter,
+                              sizeof(kAfter) - 1) == 1 &&
+             read_and_check(scratch_volume, kAfter, sizeof(kAfter) - 1, kRenameBytes,
+                            sizeof(kRenameBytes) - 1) &&
+             read_refused(scratch_volume, kBefore, sizeof(kBefore) - 1);
+        /* A destination that is there is refused, and the source stays. */
+        handle = vol_open(scratch_volume, kBefore, sizeof(kBefore) - 1,
+                          aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        ok = ok && handle != 0 && vol_close(scratch_volume, handle) == 1 &&
+             vol_rename(scratch_volume, kBefore, sizeof(kBefore) - 1, kAfter,
+                        sizeof(kAfter) - 1) == 0 &&
+             read_and_check(scratch_volume, kBefore, sizeof(kBefore) - 1, "", 0);
+        /* A directory: the chain follows the new name. */
+        static char const kOldDir[] = "Old Folder Name";
+        static char const kNewDir[] = "New Folder Name";
+        ok = ok && vol_mkdir(scratch_volume, kOldDir, sizeof(kOldDir) - 1) == 1 &&
+             vol_rename(scratch_volume, kOldDir, sizeof(kOldDir) - 1, kNewDir,
+                        sizeof(kNewDir) - 1) == 1 &&
+             vol_remove(scratch_volume, kOldDir, sizeof(kOldDir) - 1) == 0 &&
+             vol_remove(scratch_volume, kNewDir, sizeof(kNewDir) - 1) == 1;
+        ok = ok && vol_remove(scratch_volume, kBefore, sizeof(kBefore) - 1) == 1 &&
+             vol_remove(scratch_volume, kAfter, sizeof(kAfter) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL rename did not move the entry and its data\n");
+            ++failed;
+        } else {
+            write("  test: rename moves a file and a directory, data unmoved\n");
         }
     }
 

@@ -205,6 +205,8 @@ struct Target {
     seL4_CPtr volume;
     char rest[kPathCapacity];
     uint32_t rest_length;
+    char volume_name[nmspace::kNameMax]; /* the name the caller wrote, before ':' */
+    uint32_t volume_name_length;
 };
 
 /* Resolve `path` (relative or absolute) into `slot`. False when the path is
@@ -230,6 +232,19 @@ bool resolve_target(char const *path, uint32_t length, seL4_CPtr slot,
     copy_text(out.rest, resolved.rest, resolved.rest_length);
     out.rest_length = resolved.rest_length;
     out.volume = slot;
+    /* The volume part of the absolute path, as written: two resolves of the
+     * same volume through different aliases answer with different aliases, so
+     * only the spelling can say whether two paths share one volume -- and
+     * rename must not cross volumes. */
+    uint32_t name_length = 0;
+    while (name_length < full_length && full[name_length] != ':') {
+        ++name_length;
+    }
+    if (name_length > sizeof(out.volume_name)) {
+        name_length = sizeof(out.volume_name);
+    }
+    copy_text(out.volume_name, full, name_length);
+    out.volume_name_length = name_length;
     return true;
 }
 
@@ -703,6 +718,74 @@ long unlinkat(int dfd, char const *path, int flags) noexcept
         result = 0;
     }
     empty_slot(slot);
+    return result;
+}
+
+/* Rename must not cross volumes -- the filesystem would interpret the other
+ * volume's path in its own tree. Two resolves of one volume answer with
+ * different capabilities, so the caller's own spelling of the volume name is
+ * what can be compared; an alias and the name it points at are not caught
+ * (specs/fat.md). */
+bool same_volume(Target const &a, Target const &b) noexcept
+{
+    if (a.volume_name_length != b.volume_name_length) {
+        return false;
+    }
+    for (uint32_t i = 0; i < a.volume_name_length; ++i) {
+        char ca = a.volume_name[i];
+        char cb = b.volume_name[i];
+        if (ca >= 'a' && ca <= 'z') {
+            ca = static_cast<char>(ca - ('a' - 'A'));
+        }
+        if (cb >= 'a' && cb <= 'z') {
+            cb = static_cast<char>(cb - ('a' - 'A'));
+        }
+        if (ca != cb) {
+            return false;
+        }
+    }
+    return true;
+}
+
+long renameat2(int old_dfd, char const *old_path, int new_dfd, char const *new_path,
+               unsigned flags) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (old_path == nullptr || new_path == nullptr) {
+        return -EFAULT;
+    }
+    if (old_dfd != AT_FDCWD || new_dfd != AT_FDCWD) {
+        return -ENOENT;
+    }
+    if (flags != 0) {
+        return -EINVAL; /* no NOREPLACE or EXCHANGE yet */
+    }
+    /* Two resolves need two capabilities, so this takes two from the pool and
+     * gives them both back -- the transient single slot cannot carry both. */
+    seL4_CPtr const old_slot = take_slot();
+    seL4_CPtr const new_slot = take_slot();
+    if (old_slot == 0 || new_slot == 0) {
+        give_slot(old_slot);
+        give_slot(new_slot);
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target old_target{};
+    Target new_target{};
+    if (resolve_target(old_path, text_length(old_path), old_slot, old_target) &&
+        resolve_target(new_path, text_length(new_path), new_slot, new_target)) {
+        if (!same_volume(old_target, new_target)) {
+            result = -EXDEV;
+        } else if (aegir::vfs::Volume(old_target.volume)
+                       .rename(old_target.rest, old_target.rest_length,
+                               new_target.rest, new_target.rest_length)) {
+            result = 0;
+        }
+    }
+    give_slot(old_slot);
+    give_slot(new_slot);
     return result;
 }
 

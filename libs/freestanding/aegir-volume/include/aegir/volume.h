@@ -82,6 +82,14 @@ constexpr uint32_t kMethodReap = 8;   /* in: badge; answer: how many */
  * (specs/cxx.md step 5). */
 constexpr uint32_t kMethodStat = 9;   /* in: path words; answer: kind, size */
 
+/* rename: a source path and a destination path. The source entry (its
+ * long-name run and its 8.3 slot) is deleted and the destination entry is
+ * made in its place, carrying the same first cluster and size -- the data
+ * does not move. Both names must live in the same directory; a destination
+ * that already exists, an open handle on the source, and a read-only volume
+ * are refused. Answer: 1, or 0 (specs/vfs.md). */
+constexpr uint32_t kMethodRename = 10; /* in: src path words, dst path words; answer: 1, or 0 */
+
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
 constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */

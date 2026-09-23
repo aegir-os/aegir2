@@ -175,6 +175,41 @@ void check_std_filesystem()
     }
 
     {
+        /* rename through std::filesystem: musl's rename is renameat2, the
+         * runtime answers it, and the FAT driver remakes the entry under the
+         * new name with its data unmoved. */
+        static char const kText[] = "renamed, not recopied\n";
+        static char const kBefore[] = "SCRATCH:Before Rename.txt";
+        static char const kAfter[] = "SCRATCH:After Rename.txt";
+        int const fd = ::open(kBefore, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        bool ok = fd >= 0;
+        if (ok) {
+            ok = ::write(fd, kText, sizeof(kText) - 1) ==
+                 static_cast<ssize_t>(sizeof(kText) - 1);
+            ::close(fd);
+        }
+        std::error_code error;
+        if (ok) {
+            fs::rename(kBefore, kAfter, error);
+            ok = !error;
+        }
+        char buffer[64] = {};
+        int const rd = ok ? ::open(kAfter, O_RDONLY) : -1;
+        ok = ok && rd >= 0;
+        if (ok) {
+            ssize_t const got = ::read(rd, buffer, sizeof(buffer));
+            ok = got == static_cast<ssize_t>(sizeof(kText) - 1);
+            for (std::size_t i = 0; ok && i < sizeof(kText) - 1; ++i) {
+                ok = buffer[i] == kText[i];
+            }
+            ::close(rd);
+        }
+        bool const removed = fs::remove(kAfter, error) && !error;
+        report(ok && removed,
+               "std::filesystem::rename moves a long-named file, data unmoved");
+    }
+
+    {
         std::error_code error;
         fs::path const cwd = fs::current_path(error);
         report(!error && !cwd.native().empty(),

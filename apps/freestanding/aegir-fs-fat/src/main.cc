@@ -847,13 +847,14 @@ Slot dir_place(Dir dir, uint8_t const *slots, uint32_t count, uint64_t *sector_o
 
 /* Make a new entry for `name` in `dir`: its long-name run when the name needs
  * one, then the 8.3 slot -- or just the 8.3 slot when the name already is its
- * 8.3 form. `directory` says which kind; `cluster` is a new directory's first
- * cluster. Found places the entry in `out` and reports the 8.3 slot's
- * locator; Full is a full volume or a name no alias can spell, Broken a read
- * or write underneath. */
+ * 8.3 form. `directory` says which kind; `cluster` and `bytes` are the entry's
+ * first cluster and size -- a new file's or directory's are zero, a rename's
+ * are the source's, so the data stays put behind the new name. Found places
+ * the entry in `out` and reports the 8.3 slot's locator; Full is a full volume
+ * or a name no alias can spell, Broken a read or write underneath. */
 Slot dir_create(Dir dir, char const *name, uint32_t name_length, bool directory,
-                uint32_t cluster, aegir::fat::Dirent *out, uint64_t *sector_out,
-                uint32_t *index_out) noexcept
+                uint32_t cluster, uint32_t bytes, aegir::fat::Dirent *out,
+                uint64_t *sector_out, uint32_t *index_out) noexcept
 {
     uint8_t name83[11];
     bool broken = false;
@@ -902,6 +903,9 @@ Slot dir_create(Dir dir, char const *name, uint32_t name_length, bool directory,
     } else {
         aegir::fat::dirent_make(slots + count * 32, name83);
     }
+    /* The first cluster and the size are the caller's: a fresh entry has none,
+     * a rename carries the source's so its chain is not orphaned. */
+    aegir::fat::dirent_update(slots + count * 32, cluster, bytes);
     if (canonical && !alias_used) {
         /* NT case flags: a reader that shows only the 8.3 name still shows
          * the case the name was made with. */
@@ -933,8 +937,8 @@ Slot dir_create(Dir dir, char const *name, uint32_t name_length, bool directory,
     for (uint32_t i = 0; i < name_length; ++i) {
         out->name[i] = name[i];
     }
-    out->first_cluster = directory ? cluster : 0;
-    out->bytes = 0;
+    out->first_cluster = cluster;
+    out->bytes = bytes;
     out->directory = directory;
     return Slot::Found;
 }
@@ -994,7 +998,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         /* The name is not there: creating it writes its long-name run (when
          * the name needs one) and its 8.3 slot into a free run. */
         if ((flags & aegir::volume::kOpenCreate) != 0) {
-            Slot const made = dir_create(dir, last, last_length, false, 0, &dirent,
+            Slot const made = dir_create(dir, last, last_length, false, 0, 0, &dirent,
                                          &dirent_sector, &dirent_index);
             ok = made == Slot::Found;
         }
@@ -1151,7 +1155,7 @@ bool make_dirs(char const *path, uint32_t path_length) noexcept
                     return false;
                 }
                 Slot const made = dir_create(dir, path + at, end - at, true, cluster,
-                                             &dirent, &sector, &index);
+                                             0, &dirent, &sector, &index);
                 if (made != Slot::Found) {
                     return false; /* full, or broken underneath */
                 }
@@ -1243,6 +1247,28 @@ bool handle_names(uint64_t dirent_sector, uint32_t dirent_index) noexcept
     return false;
 }
 
+/* Mark an entry's slots deleted -- its long-name fragments and its 8.3 slot --
+ * with 0xe5, the format's mark. The chain is not touched: a removal frees it
+ * separately, and a rename keeps it, the data living on under the new name. */
+bool mark_deleted(uint64_t sector, uint32_t index, aegir::fat::Lfn const &lfn) noexcept
+{
+    uint32_t const fragments = lfn.active ? lfn.count / 13 : 0;
+    for (uint32_t k = 0; k < fragments; ++k) {
+        if (!read(lfn.fragments[k], 1)) {
+            return false;
+        }
+        g_window[lfn.fragment_index[k] * 32] = 0xe5;
+        if (!write_back(lfn.fragments[k], 1)) {
+            return false;
+        }
+    }
+    if (!read(sector, 1)) {
+        return false;
+    }
+    g_window[index * 32] = 0xe5;
+    return write_back(sector, 1);
+}
+
 void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     uint64_t removed = 0;
@@ -1275,24 +1301,89 @@ void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
     /* The chain goes back to free, in every FAT copy, and every slot of the
      * entry says deleted: 0xe5, the format's mark. A long name's fragments are
      * deleted with it, so no stale run is left for a later name to adopt. */
-    bool ok = chain_free(dirent.first_cluster);
-    uint32_t const fragments = lfn.active ? lfn.count / 13 : 0;
-    for (uint32_t k = 0; ok && k < fragments; ++k) {
-        if (!read(lfn.fragments[k], 1)) {
-            ok = false;
-            break;
-        }
-        g_window[lfn.fragment_index[k] * 32] = 0xe5;
-        ok = write_back(lfn.fragments[k], 1);
-    }
-    if (ok && read(dirent_sector, 1)) {
-        g_window[dirent_index * 32] = 0xe5;
-        ok = write_back(dirent_sector, 1);
-    }
+    bool const ok = chain_free(dirent.first_cluster) &&
+                    mark_deleted(dirent_sector, dirent_index, lfn);
     if (ok) {
         removed = 1;
     }
     port.reply_words(&removed, 1);
+}
+
+/* True when two resolved parents name the same directory: both the root, or
+ * the same cluster chain. A rename across directories is not this version's
+ * move (specs/fat.md). */
+bool same_dir(Dir const &a, Dir const &b) noexcept
+{
+    if (a.root != b.root) {
+        return false;
+    }
+    return a.root || a.cluster == b.cluster;
+}
+
+void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t renamed = 0;
+    char const *src = nullptr;
+    uint32_t src_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &src,
+                                       &src_length)) {
+        port.reply_words(&renamed, 1);
+        return;
+    }
+    uint32_t const src_words = 1 + (src_length + 7) / 8;
+    char const *dst = nullptr;
+    uint32_t dst_length = 0;
+    if (count < src_words ||
+        !aegir::nmspace::unpack_string(words + src_words, count - src_words,
+                                       aegir::nmspace::kPathMax, &dst, &dst_length)) {
+        port.reply_words(&renamed, 1);
+        return;
+    }
+    Dir src_dir;
+    Dir dst_dir;
+    char const *src_last = nullptr;
+    uint32_t src_last_length = 0;
+    char const *dst_last = nullptr;
+    uint32_t dst_last_length = 0;
+    aegir::fat::Dirent dirent;
+    uint64_t dirent_sector = 0;
+    uint32_t dirent_index = 0;
+    aegir::fat::Lfn lfn{};
+    if (!g_writable ||
+        !walk(src, src_length, false, &src_dir, &src_last, &src_last_length) ||
+        !walk(dst, dst_length, false, &dst_dir, &dst_last, &dst_last_length) ||
+        !same_dir(src_dir, dst_dir) ||
+        dir_slot(src_dir, src_last, src_last_length, &dirent, &dirent_sector,
+                 &dirent_index, &lfn) != Slot::Found ||
+        handle_names(dirent_sector, dirent_index)) {
+        port.reply_words(&renamed, 1);
+        return;
+    }
+    /* A destination that is there already is refused: replacing a file is not
+     * this version's move. */
+    {
+        aegir::fat::Dirent existing;
+        uint64_t existing_sector = 0;
+        uint32_t existing_index = 0;
+        if (dir_slot(dst_dir, dst_last, dst_last_length, &existing, &existing_sector,
+                     &existing_index, nullptr) == Slot::Found) {
+            port.reply_words(&renamed, 1);
+            return;
+        }
+    }
+    /* Make the new entry carrying the old data, then delete the old one: the
+     * cluster is not freed, so the bytes live on under the new name. */
+    aegir::fat::Dirent made;
+    uint64_t made_sector = 0;
+    uint32_t made_index = 0;
+    if (dir_create(src_dir, dst_last, dst_last_length, dirent.directory,
+                   dirent.first_cluster, dirent.bytes, &made, &made_sector,
+                   &made_index) == Slot::Found &&
+        mark_deleted(dirent_sector, dirent_index, lfn)) {
+        renamed = 1;
+    }
+    port.reply_words(&renamed, 1);
 }
 
 void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
@@ -1805,6 +1896,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodRemove:
             answer_remove(vol, words, count);
+            break;
+        case aegir::volume::kMethodRename:
+            answer_rename(vol, words, count);
             break;
         case aegir::volume::kMethodReap:
             answer_reap(vol, words, count);

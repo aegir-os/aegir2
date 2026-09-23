@@ -511,6 +511,11 @@ long vsyscall(long sysnum, ...) noexcept
         ret = files::unlinkat(va_arg(ap, int), va_arg(ap, char const *),
                               va_arg(ap, int));
         break;
+    case 276: /* SYS_renameat2: musl's rename() on riscv64 */
+        ret = files::renameat2(va_arg(ap, int), va_arg(ap, char const *),
+                               va_arg(ap, int), va_arg(ap, char const *),
+                               va_arg(ap, unsigned));
+        break;
     case 49: /* SYS_chdir */
         ret = files::chdir(va_arg(ap, char const *));
         break;

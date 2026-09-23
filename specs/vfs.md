@@ -181,6 +181,15 @@ write side has **handles** — the only per-client state a filesystem holds:
   file keeps its chain — removing is a name's death, not the file's; the
   chain is freed when the last handle closes. (FAT's version of the rule:
   see below.)
+- **rename** — words: a source path and a destination path. The source entry
+  is remade under the destination name, carrying the same first cluster and
+  size, and the source name is deleted: the data does not move. Both names
+  must live in the same directory (FAT's rename is a directory-entry
+  rewrite; a cross-directory move is a later method), a destination that
+  already exists is refused, and the source's chain is not freed. Reply: 1,
+  or 0 — not found, a read-only volume, an open handle on the source, two
+  directories, or a source and destination on different volumes (the runtime
+  refuses that last one before the call: `EXDEV`).
 - **reap** — words: a badge. Every handle the badge holds is dropped, as
   though closed. The reply is how many. auth calls it on every volume the
   namespace names when a session exits (`specs/auth.md`'s Session reclaim).

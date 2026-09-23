@@ -133,6 +133,13 @@ public:
     bool make_directory(char const *path, uint32_t length) noexcept;
     bool remove(char const *path, uint32_t length) noexcept;
 
+    /** Rename `src` to `dst`: the entry is remade under the new name, its
+     *  data unmoved (volume::kMethodRename). Both names must be in the same
+     *  directory; a destination that exists and an open handle on the source
+     *  are refused. False on refusal. */
+    bool rename(char const *src, uint32_t src_length, char const *dst,
+                uint32_t dst_length) noexcept;
+
 private:
     aegir::ipc::Consumer port_;
     uint64_t reply_[aegir::ipc::kMaxWords];
