@@ -66,6 +66,43 @@ void build_dir_tree(uint8_t *tree, uint64_t self_block,
     put_le64(node + values + 8, parent_block);
 }
 
+/* Build a B+tree node image in key order. A leaf has an overflow link of -1;
+ * an internal node's overflow link is its rightmost child. */
+void build_node(uint8_t *out, uint32_t node_size, bool leaf, int64_t left,
+                int64_t right, int64_t overflow, uint8_t const *const *keys,
+                uint16_t const *key_lengths, uint64_t const *values,
+                uint16_t count) noexcept
+{
+    for (uint32_t i = 0; i < node_size; ++i) {
+        out[i] = 0;
+    }
+    put_le64(out + node::kLeftLink, static_cast<uint64_t>(left));
+    put_le64(out + node::kRightLink, static_cast<uint64_t>(right));
+    put_le64(out + node::kOverflowLink,
+             leaf ? static_cast<uint64_t>(kNullLink) : static_cast<uint64_t>(overflow));
+    put_le16(out + node::kKeyCount, count);
+    uint32_t all = 0;
+    for (uint16_t i = 0; i < count; ++i) {
+        all += key_lengths[i];
+    }
+    put_le16(out + node::kAllKeyLength, static_cast<uint16_t>(all));
+    uint32_t at = node::kFixed;
+    for (uint16_t i = 0; i < count; ++i) {
+        for (uint16_t k = 0; k < key_lengths[i]; ++k) {
+            out[at + k] = keys[i][k];
+        }
+        at += key_lengths[i];
+    }
+    uint32_t const lengths = key_align(node::kFixed + all);
+    for (uint16_t i = 0; i < count; ++i) {
+        put_le16(out + lengths + i * 2, key_lengths[i]);
+    }
+    uint32_t const values_at = lengths + count * 2;
+    for (uint16_t i = 0; i < count; ++i) {
+        put_le64(out + values_at + i * 8, values[i]);
+    }
+}
+
 }  // namespace
 
 bool Writer::open(Volume *volume) noexcept
@@ -101,18 +138,368 @@ bool Writer::tree_header(uint64_t parent_block, uint8_t *stream,
     }
     inode_get_stream(inode_, stream);
     Inode const view = inode_view(inode_);
-    uint8_t header[tree_header::kBytes];
-    if (!volume_->read_stream(view, 0, header, sizeof(header))) {
+    if (!volume_->read_stream(view, 0, hdr_, sizeof(hdr_))) {
         return false;
     }
     TreeHeader parsed{};
-    if (!tree_header_parse(header, &parsed)) {
+    if (!tree_header_parse(hdr_, &parsed)) {
         return false;
     }
     *node_size = parsed.node_size;
     *root = parsed.root;
     *maximum = parsed.maximum;
     return true;
+}
+
+bool Writer::node_read(uint64_t offset, uint32_t node_size, uint8_t *out) noexcept
+{
+    return volume_->read_stream(inode_view(inode_), offset, out, node_size);
+}
+
+bool Writer::node_write(uint64_t offset, uint32_t node_size,
+                        uint8_t const *node) noexcept
+{
+    return volume_->write_stream_raw(stream_, data::kBytes, offset, node, node_size);
+}
+
+bool Writer::gather(uint8_t const *node, uint32_t node_size, uint16_t *count_out,
+                    int64_t *overflow_out) noexcept
+{
+    NodeInfo info{};
+    if (!node_info(node, node_size, &info) || info.count > kMaxNodeEntries) {
+        return false;
+    }
+    uint32_t const lengths = key_align(node::kFixed + le16(node + node::kAllKeyLength));
+    uint32_t const values_at = lengths + info.count * 2;
+    uint32_t at = node::kFixed;
+    for (uint16_t i = 0; i < info.count; ++i) {
+        g_lengths_[i] = le16(node + lengths + i * 2);
+        g_keys_[i] = node + at;
+        at += g_lengths_[i];
+        g_values_[i] = le64(node + values_at + i * 8);
+    }
+    *count_out = info.count;
+    *overflow_out = info.overflow;
+    return true;
+}
+
+bool Writer::header_write() noexcept
+{
+    return volume_->write_stream_raw(stream_, data::kBytes, 0, hdr_, sizeof(hdr_));
+}
+
+bool Writer::append_node(uint64_t parent_block, uint32_t node_size,
+                         uint64_t *out_offset) noexcept
+{
+    uint64_t const offset = le64(hdr_ + tree_header::kMaximumSize);
+    uint64_t const end = offset + node_size;
+    uint32_t const needed = blocks_for(end, volume_->block_size());
+    uint64_t covered = stream_blocks(stream_);
+    if (needed > covered && !grow_to(stream_, needed, &covered)) {
+        return false;
+    }
+    *out_offset = offset;
+    put_le64(hdr_ + tree_header::kMaximumSize, end);
+    inode_set_stream(inode_, stream_, static_cast<int64_t>(end), inode_mtime(inode_));
+    if (!volume_->write_block(parent_block, inode_)) {
+        return false;
+    }
+    return header_write();
+}
+
+bool Writer::insert_into(uint64_t offset, uint32_t node_size, char const *name,
+                         uint32_t name_length, uint64_t value,
+                         TreeSplit *out) noexcept
+{
+    out->split = false;
+    if (!node_read(offset, node_size, node_)) {
+        return false;
+    }
+    NodeInfo info{};
+    if (!node_info(node_, node_size, &info)) {
+        return false;
+    }
+    if (info.overflow == kNullLink) {
+        bool existed = false;
+        if (!node_insert(work_, node_size, node_, name, name_length, value, &existed)) {
+            return split_leaf(node_, node_size, offset, name, name_length, value, out);
+        }
+        return node_write(offset, node_size, work_);
+    }
+    /* An internal node: the first key the name is not greater than names the
+     * child to follow, or the overflow child past the last key. The node is
+     * copied to parent_ first, because the recursion below reuses node_. */
+    uint16_t count = info.count;
+    for (uint32_t i = 0; i < node_size; ++i) {
+        parent_[i] = node_[i];
+    }
+    uint16_t child_index = count;
+    uint64_t child = 0;
+    for (uint16_t i = 0; i < count; ++i) {
+        char key[kMaxName];
+        uint32_t key_length = 0;
+        uint64_t child_value = 0;
+        if (!node_entry(parent_, node_size, i, key, &key_length, &child_value)) {
+            return false;
+        }
+        if (key_compare(name, name_length, key, key_length) <= 0) {
+            child_index = i;
+            child = child_value;
+            break;
+        }
+    }
+    if (child_index == count) {
+        child = static_cast<uint64_t>(le64_signed(parent_ + node::kOverflowLink));
+    }
+    TreeSplit child_split{};
+    if (!insert_into(child, node_size, name, name_length, value, &child_split)) {
+        return false;
+    }
+    if (!child_split.split) {
+        return true;
+    }
+    bool existed = false;
+    if (node_insert(work_, node_size, parent_, child_split.separator,
+                    child_split.separator_length, child_split.left, &existed)) {
+        uint16_t const new_count = le16(work_ + node::kKeyCount);
+        if (static_cast<uint16_t>(child_index + 1) < new_count) {
+            uint32_t const lengths =
+                key_align(node::kFixed + le16(work_ + node::kAllKeyLength));
+            uint32_t const values_at = lengths + new_count * 2;
+            put_le64(work_ + values_at + (child_index + 1) * 8, child_split.right);
+        } else {
+            put_le64(work_ + node::kOverflowLink, child_split.right);
+        }
+        return node_write(offset, node_size, work_);
+    }
+    return split_internal(parent_, node_size, offset, child_split.separator,
+                          child_split.separator_length, child_split.left,
+                          child_split.right, out);
+}
+
+bool Writer::split_leaf(uint8_t const *node, uint32_t node_size, uint64_t offset,
+                        char const *name, uint32_t name_length, uint64_t value,
+                        TreeSplit *out) noexcept
+{
+    uint16_t count = 0;
+    int64_t overflow = 0;
+    if (!gather(node, node_size, &count, &overflow) ||
+        static_cast<uint32_t>(count) + 1 > kMaxNodeEntries) {
+        return false;
+    }
+    auto &keys = g_keys_;
+    auto &key_lengths = g_lengths_;
+    auto &values = g_values_;
+    auto &ck = c_keys_;
+    auto &ckl = c_lengths_;
+    auto &cv = c_values_;
+    uint16_t pos = count;
+    for (uint16_t i = 0; i < count; ++i) {
+        if (key_compare(name, name_length, reinterpret_cast<char const *>(keys[i]),
+                        key_lengths[i]) < 0) {
+            pos = i;
+            break;
+        }
+    }
+    for (uint16_t i = 0; i < pos; ++i) {
+        ck[i] = keys[i];
+        ckl[i] = key_lengths[i];
+        cv[i] = values[i];
+    }
+    ck[pos] = reinterpret_cast<uint8_t const *>(name);
+    ckl[pos] = static_cast<uint16_t>(name_length);
+    cv[pos] = value;
+    for (uint16_t i = pos; i < count; ++i) {
+        ck[i + 1] = keys[i];
+        ckl[i + 1] = key_lengths[i];
+        cv[i + 1] = values[i];
+    }
+    uint16_t const total = count + 1;
+    uint16_t const m = total / 2;
+    int64_t const old_left = le64_signed(node + node::kLeftLink);
+    int64_t const old_right = le64_signed(node + node::kRightLink);
+
+    uint64_t other = 0;
+    if (!append_node(edit_parent_, node_size, &other)) {
+        return false;
+    }
+    build_node(fresh_, node_size, true, old_left, static_cast<int64_t>(other),
+               kNullLink, ck, ckl, cv, m);
+    build_node(work_, node_size, true, static_cast<int64_t>(offset), old_right,
+               kNullLink, ck + m, ckl + m, cv + m, static_cast<uint16_t>(total - m));
+    if (!node_write(offset, node_size, fresh_) ||
+        !node_write(other, node_size, work_)) {
+        return false;
+    }
+    if (old_right != kNullLink && old_right != kFreeLink) {
+        if (!node_read(static_cast<uint64_t>(old_right), node_size, node_)) {
+            return false;
+        }
+        put_le64(node_ + node::kLeftLink, other);
+        if (!node_write(static_cast<uint64_t>(old_right), node_size, node_)) {
+            return false;
+        }
+    }
+    out->split = true;
+    out->separator_length = ckl[m - 1];
+    for (uint16_t i = 0; i < ckl[m - 1]; ++i) {
+        out->separator[i] = static_cast<char>(ck[m - 1][i]);
+    }
+    out->left = offset;
+    out->right = other;
+    return true;
+}
+
+bool Writer::split_internal(uint8_t const *node, uint32_t node_size, uint64_t offset,
+                            char const *name, uint32_t name_length, uint64_t value,
+                            uint64_t replace_with, TreeSplit *out) noexcept
+{
+    uint16_t count = 0;
+    int64_t overflow = 0;
+    if (!gather(node, node_size, &count, &overflow) ||
+        static_cast<uint32_t>(count) + 1 > kMaxNodeEntries) {
+        return false;
+    }
+    auto &keys = g_keys_;
+    auto &key_lengths = g_lengths_;
+    auto &values = g_values_;
+    auto &ck = c_keys_;
+    auto &ckl = c_lengths_;
+    auto &cv = c_values_;
+    uint16_t pos = count;
+    for (uint16_t i = 0; i < count; ++i) {
+        if (key_compare(name, name_length, reinterpret_cast<char const *>(keys[i]),
+                        key_lengths[i]) < 0) {
+            pos = i;
+            break;
+        }
+    }
+    for (uint16_t i = 0; i < pos; ++i) {
+        ck[i] = keys[i];
+        ckl[i] = key_lengths[i];
+        cv[i] = values[i];
+    }
+    ck[pos] = reinterpret_cast<uint8_t const *>(name);
+    ckl[pos] = static_cast<uint16_t>(name_length);
+    cv[pos] = value;
+    for (uint16_t i = pos; i < count; ++i) {
+        ck[i + 1] = keys[i];
+        ckl[i + 1] = key_lengths[i];
+        cv[i + 1] = values[i];
+    }
+    uint16_t const total = count + 1; /* keys and values both */
+    int64_t combined_overflow = overflow;
+    if (static_cast<uint16_t>(pos + 1) <= total - 1) {
+        cv[pos + 1] = replace_with;
+    } else {
+        combined_overflow = static_cast<int64_t>(replace_with);
+    }
+
+    uint16_t j = total / 2;
+    if (j < 1) {
+        j = 1;
+    }
+    if (j >= total) {
+        j = total - 1;
+    }
+    int64_t const old_left = le64_signed(node + node::kLeftLink);
+    int64_t const old_right = le64_signed(node + node::kRightLink);
+
+    uint64_t other = 0;
+    if (!append_node(edit_parent_, node_size, &other)) {
+        return false;
+    }
+    build_node(fresh_, node_size, false, old_left, static_cast<int64_t>(other),
+               static_cast<int64_t>(cv[j]), ck, ckl, cv, j);
+    build_node(work_, node_size, false, static_cast<int64_t>(offset), old_right,
+               combined_overflow, ck + j + 1, ckl + j + 1, cv + j + 1,
+               static_cast<uint16_t>(total - j - 1));
+    if (!node_write(offset, node_size, fresh_) ||
+        !node_write(other, node_size, work_)) {
+        return false;
+    }
+    if (old_right != kNullLink && old_right != kFreeLink) {
+        if (!node_read(static_cast<uint64_t>(old_right), node_size, node_)) {
+            return false;
+        }
+        put_le64(node_ + node::kLeftLink, other);
+        if (!node_write(static_cast<uint64_t>(old_right), node_size, node_)) {
+            return false;
+        }
+    }
+    out->split = true;
+    out->separator_length = ckl[j];
+    for (uint16_t i = 0; i < ckl[j]; ++i) {
+        out->separator[i] = static_cast<char>(ck[j][i]);
+    }
+    out->left = offset;
+    out->right = other;
+    return true;
+}
+
+bool Writer::write_new_root(uint64_t root_block, TreeSplit const &split,
+                            uint32_t node_size) noexcept
+{
+    uint8_t const *keys[1] = {reinterpret_cast<uint8_t const *>(split.separator)};
+    uint16_t const key_lengths[1] = {static_cast<uint16_t>(split.separator_length)};
+    uint64_t const values[1] = {split.left};
+    uint64_t new_root = 0;
+    if (!append_node(edit_parent_, node_size, &new_root)) {
+        return false;
+    }
+    build_node(fresh_, node_size, false, kNullLink, kNullLink,
+               static_cast<int64_t>(split.right), keys, key_lengths, values, 1);
+    if (!node_write(new_root, node_size, fresh_)) {
+        return false;
+    }
+    put_le64(hdr_ + tree_header::kRootNode, new_root);
+    uint32_t const levels = le32(hdr_ + tree_header::kMaxLevels);
+    put_le32(hdr_ + tree_header::kMaxLevels, levels + 1);
+    static_cast<void>(root_block);
+    return header_write();
+}
+
+bool Writer::remove_into(uint64_t offset, uint32_t node_size, char const *name,
+                         uint32_t name_length, bool *removed) noexcept
+{
+    if (!node_read(offset, node_size, node_)) {
+        return false;
+    }
+    NodeInfo info{};
+    if (!node_info(node_, node_size, &info)) {
+        return false;
+    }
+    if (info.overflow == kNullLink) {
+        bool present = false;
+        if (!node_remove(work_, node_size, node_, name, name_length, &present)) {
+            return false;
+        }
+        if (!present) {
+            *removed = false;
+            return true;
+        }
+        *removed = true;
+        return node_write(offset, node_size, work_);
+    }
+    uint64_t child = 0;
+    uint16_t child_index = info.count;
+    for (uint16_t i = 0; i < info.count; ++i) {
+        char key[kMaxName];
+        uint32_t key_length = 0;
+        uint64_t child_value = 0;
+        if (!node_entry(node_, node_size, i, key, &key_length, &child_value)) {
+            return false;
+        }
+        if (key_compare(name, name_length, key, key_length) <= 0) {
+            child_index = i;
+            child = child_value;
+            break;
+        }
+    }
+    if (child_index == info.count) {
+        child = static_cast<uint64_t>(le64_signed(node_ + node::kOverflowLink));
+    }
+    return remove_into(child, node_size, name, name_length, removed);
 }
 
 bool Writer::tree_edit(uint64_t parent_block, char const *name,
@@ -122,47 +509,38 @@ bool Writer::tree_edit(uint64_t parent_block, char const *name,
     uint32_t node_size = 0;
     uint64_t root = 0;
     uint64_t maximum = 0;
-    if (!tree_header(parent_block, stream_, &node_size, &root, &maximum)) {
+    if (!tree_header(parent_block, stream_, &node_size, &root, &maximum) ||
+        node_size > kMaxBlockSize || root + node_size > maximum) {
         return false;
     }
-    if (root + node_size > maximum || node_size > kMaxBlockSize) {
-        return false;
-    }
-    Inode const view = inode_view(inode_);
-    if (!volume_->read_stream(view, root, node_, node_size)) {
-        return false;
-    }
-    NodeInfo info{};
-    if (!node_info(node_, node_size, &info)) {
-        return false;
-    }
-    if (info.overflow != kNullLink) {
-        /* An internal root is a directory past one node: the split is the
-         * next step, and a wrong write here would be corruption. */
-        return false;
-    }
-    bool present = false;
+    edit_parent_ = parent_block;
     if (insert) {
-        if (!node_insert(work_, node_size, node_, name, name_length, value, &present)) {
-            return false;
-        }
-        if (present) {
+        uint64_t existing = 0;
+        if (volume_->dir_find(inode_view(inode_), name, name_length, &existing)) {
             *existed = true;
             return true;
         }
-    } else {
-        if (!node_remove(work_, node_size, node_, name, name_length, &present)) {
+        TreeSplit split{};
+        if (!insert_into(root, node_size, name, name_length, value, &split)) {
             return false;
         }
-        if (!present) {
-            *existed = false;
-            return true;
+        if (split.split) {
+            if (!write_new_root(root, split, node_size)) {
+                return false;
+            }
         }
+        *existed = false;
+        return true;
     }
-    if (!volume_->write_stream_raw(stream_, data::kBytes, root, work_, node_size)) {
+    bool removed = false;
+    if (!remove_into(root, node_size, name, name_length, &removed)) {
         return false;
     }
-    *existed = !insert;
+    if (!removed) {
+        *existed = false;
+        return true;
+    }
+    *existed = true;
     return true;
 }
 
@@ -260,28 +638,56 @@ bool Writer::dir_is_empty(uint64_t dir_block) noexcept
     if (!tree_header_parse(header, &parsed)) {
         return false;
     }
-    if (!volume_->read_stream(view, parsed.root, node_, parsed.node_size)) {
-        return false;
+    /* Descend to the leftmost leaf, then walk the leaves counting entries: a
+     * directory is empty when the only names it holds are dot and dotdot. */
+    uint64_t offset = parsed.root;
+    for (uint32_t depth = 0; depth < 16; ++depth) {
+        if (offset + parsed.node_size > parsed.maximum ||
+            !volume_->read_stream(view, offset, node_, parsed.node_size)) {
+            return false;
+        }
+        if (le64_signed(node_ + node::kOverflowLink) == kNullLink) {
+            break;
+        }
+        uint16_t const count = le16(node_ + node::kKeyCount);
+        uint32_t const values_at =
+            key_align(node::kFixed + le16(node_ + node::kAllKeyLength)) + count * 2;
+        offset = count > 0 ? le64(node_ + values_at)
+                           : static_cast<uint64_t>(le64_signed(node_ + node::kOverflowLink));
     }
-    NodeInfo info{};
-    if (!node_info(node_, parsed.node_size, &info) ||
-        info.overflow != kNullLink) {
-        return false;
+    uint32_t entries = 0;
+    bool ok = true;
+    uint64_t const max_nodes = parsed.maximum / parsed.node_size + 1;
+    for (uint64_t walked = 0;
+         walked <= max_nodes && offset + parsed.node_size <= parsed.maximum;
+         ++walked) {
+        if (!volume_->read_stream(view, offset, node_, parsed.node_size) ||
+            le64_signed(node_ + node::kOverflowLink) != kNullLink) {
+            return false;
+        }
+        uint16_t const count = le16(node_ + node::kKeyCount);
+        for (uint16_t i = 0; i < count; ++i) {
+            char key[kMaxName];
+            uint32_t key_length = 0;
+            uint64_t ignored = 0;
+            if (!node_entry(node_, parsed.node_size, i, key, &key_length, &ignored)) {
+                return false;
+            }
+            ++entries;
+            bool const dot = key_length == 1 && key[0] == '.';
+            bool const dotdot =
+                key_length == 2 && key[0] == '.' && key[1] == '.';
+            if (!dot && !dotdot) {
+                ok = false;
+            }
+        }
+        offset = le64(node_ + node::kRightLink);
+        if (offset == static_cast<uint64_t>(kNullLink) ||
+            offset == static_cast<uint64_t>(kFreeLink)) {
+            break;
+        }
     }
-    if (info.count != 2) {
-        return false;
-    }
-    char first[kMaxName];
-    char second[kMaxName];
-    uint32_t first_length = 0;
-    uint32_t second_length = 0;
-    uint64_t ignored = 0;
-    if (!node_entry(node_, parsed.node_size, 0, first, &first_length, &ignored) ||
-        !node_entry(node_, parsed.node_size, 1, second, &second_length, &ignored)) {
-        return false;
-    }
-    return first_length == 1 && first[0] == '.' && second_length == 2 &&
-           second[0] == '.' && second[1] == '.';
+    return ok && entries == 2;
 }
 
 bool Writer::free_stream(uint8_t const *stream) noexcept

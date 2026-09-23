@@ -881,6 +881,75 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* A directory that outgrows its one B+tree node: create enough files to
+     * split the leaf, count them all back through the leaves, then take them
+     * down. The names are S000..S074 so the split lands on a known order. */
+    {
+        static char const kSplitDir[] = "SPLIT";
+        constexpr uint32_t kFiles = 75;
+        char path[10]; /* "SPLIT/Sxx" */
+        for (uint32_t i = 0; i < sizeof(kSplitDir) - 1; ++i) {
+            path[i] = kSplitDir[i];
+        }
+        path[5] = '/';
+        path[6] = 'S';
+        path[9] = '\0';
+        bool ok = vol_mkdir(bfs_write_volume, kSplitDir, sizeof(kSplitDir) - 1) == 1;
+        uint32_t created = 0;
+        for (uint32_t i = 0; ok && i < kFiles; ++i) {
+            path[7] = static_cast<char>('0' + (i / 10) % 10);
+            path[8] = static_cast<char>('0' + i % 10);
+            path[9] = '\0';
+            uint64_t const handle =
+                vol_open(bfs_write_volume, path, 9,
+                         aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            ok = handle != 0 && vol_close(bfs_write_volume, handle) == 1;
+            if (ok) {
+                ++created;
+            }
+        }
+        uint32_t listed = 0;
+        for (uint32_t idx = 0;; ++idx) {
+            aegir::ipc::Consumer volume(bfs_write_volume);
+            uint64_t out[aegir::nmspace::kPathMax / 8 + 2];
+            uint32_t const out_words = aegir::nmspace::pack_string(
+                out, kSplitDir, sizeof(kSplitDir) - 1, aegir::nmspace::kPathMax);
+            out[out_words] = idx;
+            uint64_t in[aegir::ipc::kMaxWords];
+            aegir::ipc::WordsReply const answer = volume.call_words(
+                aegir::volume::kMethodList, out, out_words + 1, in,
+                aegir::ipc::kMaxWords);
+            if (answer.error != 0 || answer.count == 0) {
+                break;
+            }
+            char const *found = nullptr;
+            uint32_t found_length = 0;
+            if (aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                              &found, &found_length) &&
+                found_length == 3 && found[0] == 'S') {
+                ++listed;
+            }
+        }
+        ok = ok && listed == kFiles;
+        for (uint32_t i = 0; ok && i < kFiles; ++i) {
+            path[7] = static_cast<char>('0' + (i / 10) % 10);
+            path[8] = static_cast<char>('0' + i % 10);
+            path[9] = '\0';
+            ok = vol_remove(bfs_write_volume, path, 9) == 1;
+        }
+        ok = ok && vol_remove(bfs_write_volume, kSplitDir, sizeof(kSplitDir) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL a BFS directory did not split and come back (");
+            aegir::debug_write_unsigned(created);
+            write(" made, ");
+            aegir::debug_write_unsigned(listed);
+            write(" listed)\n");
+            ++failed;
+        } else {
+            write("  test: BFS grows a directory past one node and lists it whole\n");
+        }
+    }
+
     /* And the boot image itself, by its volume name. The manifest's first
      * bytes are its own to change, so what this checks is that the ask is
      * answered -- the byte-exact checks are the FAT volumes', above. */

@@ -7,6 +7,8 @@
 
 #include <aegir/bfs/volume.h>
 
+#include <aegir/bfs/bplustree.h>
+
 namespace aegir::bfs {
 
 namespace {
@@ -435,66 +437,51 @@ bool Volume::dir_find(Inode const &dir, char const *name, uint32_t length,
         return false;
     }
     for (uint32_t depth = 0; depth < 16; ++depth) {
-        if (offset + node_size > maximum || !read_stream(dir, offset, tree_, node_size)) {
+        if (offset + node_size > maximum ||
+            !read_stream(dir, offset, tree_, node_size)) {
             return false;
         }
         int64_t const overflow = le64_signed(tree_ + node::kOverflowLink);
         uint16_t const count = le16(tree_ + node::kKeyCount);
+        if (count > 512) {
+            return false;
+        }
         uint16_t key_lengths[512];
         uint32_t const values_at = node_key_lengths(tree_, count, key_lengths);
 
-        uint16_t child = count; /* the index to descend, for an internal node */
-        uint16_t found = count;
+        /* Under BFS's convention an internal node's key i is the greatest key
+         * in child i, so the first key the name is not greater than names the
+         * child to follow (or the overflow child past the last key). */
+        uint16_t child = count;
+        bool equal = false;
         for (uint16_t i = 0; i < count; ++i) {
-            uint16_t const key_length = key_lengths[i];
-            if (key_length > kMaxName) {
-                return false;
-            }
-            /* A key's bytes are packed in order; find this one's start. */
             uint32_t at = node::kFixed;
             for (uint16_t k = 0; k < i; ++k) {
                 at += key_lengths[k];
             }
-            uint8_t const *key = tree_ + at;
-            if (name_equals(reinterpret_cast<char const *>(key), key_length, name,
-                            length)) {
-                found = i;
+            uint16_t const key_length = key_lengths[i];
+            if (key_length > kMaxName) {
+                return false;
+            }
+            int const order = key_compare(name, length,
+                                          reinterpret_cast<char const *>(tree_ + at),
+                                          key_length);
+            if (order <= 0) {
+                child = i;
+                equal = order == 0;
                 break;
             }
-        }
-        if (found != count) {
-            *inode_block = le64(tree_ + values_at + found * 8);
-            return true;
         }
         if (overflow == kNullLink) {
-            return false;
-        }
-        /* An internal node: descend into the last key not greater than the
-         * name -- the block that must hold it. */
-        for (uint16_t i = 0; i < count; ++i) {
-            uint32_t at = node::kFixed;
-            for (uint16_t k = 0; k < i; ++k) {
-                at += key_lengths[k];
-            }
-            uint16_t const key_length = key_lengths[i];
-            if (key_length > kMaxName) {
+            if (!equal) {
                 return false;
             }
-            uint32_t const common = key_length < length ? key_length : length;
-            bool less = false;
-            for (uint32_t c = 0; c < common; ++c) {
-                if (name[c] != static_cast<char>(tree_[at + c])) {
-                    less = name[c] < static_cast<char>(tree_[at + c]);
-                    break;
-                }
-            }
-            child = i;
-            if (less) {
-                child = i == 0 ? 0 : i - 1;
-                break;
-            }
+            *inode_block = le64(tree_ + values_at + child * 8);
+            return true;
         }
-        offset = le64(tree_ + values_at + child * 8);
+        offset = child == count
+                     ? static_cast<uint64_t>(overflow)
+                     : le64(tree_ + values_at + child * 8);
     }
     return false;
 }
@@ -503,27 +490,52 @@ bool Volume::dir_entry(Inode const &dir, uint32_t index, char *name,
                        uint32_t *name_length, uint64_t *inode_block) const noexcept
 {
     uint32_t node_size = 0;
-    uint64_t root = 0;
+    uint64_t offset = 0;
     uint64_t maximum = 0;
-    if (!node_header(dir, &node_size, &root, &maximum)) {
+    if (!node_header(dir, &node_size, &offset, &maximum)) {
         return false;
     }
-    if (!read_stream(dir, root, tree_, node_size)) {
-        return false;
+    /* Descend to the leftmost leaf: the first child of each internal node. */
+    for (uint32_t depth = 0; depth < 16; ++depth) {
+        if (offset + node_size > maximum ||
+            !read_stream(dir, offset, tree_, node_size)) {
+            return false;
+        }
+        if (le64_signed(tree_ + node::kOverflowLink) == kNullLink) {
+            break;
+        }
+        uint16_t const count = le16(tree_ + node::kKeyCount);
+        uint16_t key_lengths[512];
+        uint32_t const values_at = node_key_lengths(tree_, count, key_lengths);
+        offset = count > 0 ? le64(tree_ + values_at)
+                           : static_cast<uint64_t>(le64_signed(tree_ + node::kOverflowLink));
     }
-    /* A cursor over internal nodes is the growth phase's; until then a
-     * directory too large for one node is refused rather than misread. */
-    if (le64_signed(tree_ + node::kOverflowLink) != kNullLink) {
-        return false;
+    /* Walk the leaves through their right links, counting entries. An empty
+     * leaf -- a directory that lost entries it once held -- is skipped. */
+    uint32_t remaining = index;
+    uint64_t const max_nodes = maximum / node_size + 1;
+    for (uint64_t walked = 0; walked <= max_nodes && offset + node_size <= maximum;
+         ++walked) {
+        if (!read_stream(dir, offset, tree_, node_size) ||
+            le64_signed(tree_ + node::kOverflowLink) != kNullLink) {
+            return false;
+        }
+        uint16_t const count = le16(tree_ + node::kKeyCount);
+        if (remaining < count) {
+            uint16_t key_lengths[512];
+            uint32_t const values_at = node_key_lengths(tree_, count, key_lengths);
+            return node_key(tree_, count, static_cast<uint16_t>(remaining), name,
+                            name_length) &&
+                   (*inode_block = le64(tree_ + values_at + remaining * 8), true);
+        }
+        remaining -= count;
+        offset = le64(tree_ + node::kRightLink);
+        if (offset == static_cast<uint64_t>(kNullLink) ||
+            offset == static_cast<uint64_t>(kFreeLink)) {
+            break;
+        }
     }
-    uint16_t const count = le16(tree_ + node::kKeyCount);
-    if (index >= count) {
-        return false;
-    }
-    uint16_t key_lengths[512];
-    uint32_t const values_at = node_key_lengths(tree_, count, key_lengths);
-    return node_key(tree_, count, static_cast<uint16_t>(index), name, name_length) &&
-           (*inode_block = le64(tree_ + values_at + index * 8), true);
+    return false;
 }
 
 }  // namespace aegir::bfs

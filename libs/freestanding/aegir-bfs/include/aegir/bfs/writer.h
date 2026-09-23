@@ -66,12 +66,44 @@ public:
     bool destroy(uint64_t block) noexcept;
 
 private:
+    /* Where a node split left things: the node at `offset` became `left`, a
+     * fresh node `right` holds the greater half, and `separator` (the
+     * greatest key of the left) goes into the parent. */
+    struct TreeSplit {
+        bool split;
+        char separator[kMaxName];
+        uint32_t separator_length;
+        uint64_t left;
+        uint64_t right;
+    };
+
     bool read_inode_block(uint64_t block, uint8_t *out) noexcept;
     bool tree_header(uint64_t parent_block, uint8_t *stream, uint32_t *node_size,
                      uint64_t *root, uint64_t *maximum) noexcept;
     bool tree_edit(uint64_t parent_block, char const *name, uint32_t name_length,
                    uint64_t value, bool insert, bool *existed) noexcept;
     bool dir_is_empty(uint64_t dir_block) noexcept;
+
+    /* Borrow a node's entries into the gather arrays below. */
+    bool gather(uint8_t const *node, uint32_t node_size, uint16_t *count_out,
+                int64_t *overflow_out) noexcept;
+    bool node_read(uint64_t offset, uint32_t node_size, uint8_t *out) noexcept;
+    bool node_write(uint64_t offset, uint32_t node_size, uint8_t const *node) noexcept;
+    bool header_write() noexcept;
+    bool append_node(uint64_t parent_block, uint32_t node_size,
+                     uint64_t *out_offset) noexcept;
+    bool insert_into(uint64_t offset, uint32_t node_size, char const *name,
+                     uint32_t name_length, uint64_t value, TreeSplit *out) noexcept;
+    bool remove_into(uint64_t offset, uint32_t node_size, char const *name,
+                     uint32_t name_length, bool *removed) noexcept;
+    bool split_leaf(uint8_t const *node, uint32_t node_size, uint64_t offset,
+                    char const *name, uint32_t name_length, uint64_t value,
+                    TreeSplit *out) noexcept;
+    bool split_internal(uint8_t const *node, uint32_t node_size, uint64_t offset,
+                        char const *name, uint32_t name_length, uint64_t value,
+                        uint64_t replace_with, TreeSplit *out) noexcept;
+    bool write_new_root(uint64_t root_block, TreeSplit const &split,
+                        uint32_t node_size) noexcept;
 
     bool append_run(uint8_t *stream, Run const &run) noexcept;
     uint64_t stream_blocks(uint8_t const *stream) const noexcept;
@@ -83,12 +115,26 @@ private:
 
     Volume *volume_ = nullptr;
     Allocator allocator_;
+    uint64_t edit_parent_ = 0; /* the directory inode a tree edit is growing */
 
     uint8_t inode_[kMaxBlockSize] = {};
     uint8_t stream_[data::kBytes] = {};
+    uint8_t hdr_[tree_header::kBytes] = {};
     mutable uint8_t node_[kMaxBlockSize] = {};
+    uint8_t parent_[kMaxBlockSize] = {};
     uint8_t work_[kMaxBlockSize] = {};
+    uint8_t fresh_[kMaxBlockSize] = {};
     uint8_t zero_[kMaxBlockSize] = {};
+
+    /* A node holds far fewer than this many entries; the arrays are members,
+     * not locals, because a split runs on a service stack. */
+    static constexpr uint32_t kMaxNodeEntries = 200;
+    uint8_t const *g_keys_[kMaxNodeEntries] = {};
+    uint16_t g_lengths_[kMaxNodeEntries] = {};
+    uint64_t g_values_[kMaxNodeEntries] = {};
+    uint8_t const *c_keys_[kMaxNodeEntries] = {};
+    uint16_t c_lengths_[kMaxNodeEntries] = {};
+    uint64_t c_values_[kMaxNodeEntries] = {};
 };
 
 }  // namespace aegir::bfs
