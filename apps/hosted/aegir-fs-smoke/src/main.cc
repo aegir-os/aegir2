@@ -200,17 +200,64 @@ int main(int argc, char *argv[])
         report(found, "Initrd: lists services.manifest");
     }
 
+    /* A directory listing on a FAT volume -- the case that exposed the shared
+     * window: a second client lists while the test bed reads, and with a
+     * window per client neither disturbs the other (aegir/block.h). */
+    {
+        Namespace::Resolved resolved{};
+        seL4_CPtr const slot = g_objects.alloc_slot();
+        bool found = false;
+        if (slot != 0 && resolve_wait(space, "AEGIR:", sizeof("AEGIR:") - 1, slot, resolved)) {
+            Volume volume(resolved.volume);
+            for (uint64_t index = 0;; ++index) {
+                Volume::Entry entry{};
+                if (!volume.list(resolved.rest, resolved.rest_length, index, entry)) {
+                    break;
+                }
+                if (entry.name_length == 9 && same_bytes(entry.name, "AEGIR.TXT", 9)) {
+                    found = true;
+                }
+            }
+        }
+        report(found, "AEGIR: lists AEGIR.TXT");
+    }
+
     /* The hosted wrapper, in its own translation unit (the libc++ half). It
      * runs here, after the resolves above have waited for the namespace to
      * have volumes -- volumes() is a one-shot, as std::filesystem's calls
      * are. */
     g_failed += aegir::fs_smoke::run();
 
-    /* The write side (open/write/close, mkdir, remove) is not exercised here:
-     * its success path is the test bed's, and its only writable volumes are
-     * FAT, which a second client races -- the finding recorded in
-     * specs/cxx.md step 5. The initrd volume implements neither, so calling
-     * it would wait on a reply that never comes. */
+    /* The write side, on the writable scratch volume, under a name of our own
+     * so the test bed and this smoke never collide -- and, with a window per
+     * client, never corrupt each other either. */
+    {
+        Namespace::Resolved resolved{};
+        seL4_CPtr const slot = g_objects.alloc_slot();
+        char const text[] = "aegir filesystem\n";
+        bool ok = false;
+        if (slot != 0 &&
+            resolve_wait(space, "SCRATCH:FS_SMOKE.TXT",
+                         sizeof("SCRATCH:FS_SMOKE.TXT") - 1, slot, resolved)) {
+            Volume volume(resolved.volume);
+            uint64_t const handle =
+                volume.open(resolved.rest, resolved.rest_length,
+                            aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            bool const wrote = handle != 0 &&
+                               volume.write(handle, text, sizeof(text) - 1) &&
+                               volume.close(handle);
+            char buffer[sizeof(text)] = {};
+            uint32_t const have = wrote ? read_prefix(volume, resolved.rest,
+                                                      resolved.rest_length, buffer,
+                                                      sizeof(text) - 1)
+                                        : 0;
+            bool const matches = have == sizeof(text) - 1 &&
+                                 same_bytes(buffer, text, sizeof(text) - 1);
+            bool const removed = volume.remove(resolved.rest, resolved.rest_length);
+            ok = wrote && matches && removed;
+        }
+        report(ok, "SCRATCH: writes, reads back and removes a file");
+    }
 
     aegir::debug_write(g_failed == 0 ? "FS_SMOKE_OK\n" : "FS_SMOKE_FAIL\n");
 

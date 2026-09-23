@@ -421,14 +421,15 @@ in *that cap*, not in the frame: a copy made **before** any mapping carries no A
 and may be mapped into a different address space -- which is how one physical page
 serves two VSpaces, and the only way.
 
-The storage stack lives on this. A block port's shared window is mapped into the
-driver *and* into every client, so the device manager mints copy sets of the window's
-frame caps before anything maps them: the originals go to the driver, one set stays
-pristine as the source for client grants, and each consumer's set is minted from a set
-nobody has mapped. A copy made *after* a mapping inherits the mapping's ASID and is
-useless -- the order is the whole mechanism. The partition manager is granted two sets
-per port -- its own, and one reserved for the children it starts -- so a set it never
-maps can mint mappable windows for filesystem services without bound.
+The storage stack lives on this. A block port's window is mapped into the
+driver *and* into the client that owns it, so the device manager mints copy
+sets of the window's frame caps before anything maps them: the originals go to
+the driver, one pristine set is the source for the partition manager's own
+window grant, and a copy made *after* a mapping inherits the mapping's ASID and
+is useless -- the order is the whole mechanism. Each filesystem's window is not
+a copy of that set but new frames, carved by the partition manager from its own
+untyped, because a window shared by two clients is not safe under preemption
+(`libs/aegir-block`): the client that is preempted finds another's data.
 
 ### IRQControl cannot be copied; custody moves whole
 

@@ -792,11 +792,6 @@ int main(int argc, char *argv[])
             struct BoundPort {
                 seL4_CPtr port;
                 seL4_CPtr window;   /* the pristine set: one frame cap per page */
-                seL4_CPtr children; /* a second pristine set, for the port's
-                                       clients to hand to *their* children:
-                                       nobody ever maps it, so mints from it
-                                       stay mappable (kernel/src/arch/riscv/
-                                       kernel/vspace.c:869-878) */
                 uint32_t window_pages;
                 uint32_t window_page_bits; /* what the frames of the window
                                               set are: 4 KiB, or mega pages
@@ -886,7 +881,6 @@ int main(int argc, char *argv[])
                 uint32_t window_pages = 0;
                 uint32_t window_page_bits = seL4_PageBits;
                 seL4_CPtr window_client = 0;
-                seL4_CPtr window_children = 0;
                 seL4_CPtr window_smoke = 0;
                 if (driver->window_bits != 0) {
                 /* A window of 2 MiB or more rides as mega pages: a framebuffer
@@ -954,9 +948,8 @@ int main(int argc, char *argv[])
                     return base;
                 };
                 window_client = mint_window_set();
-                window_children = mint_window_set();
                 window_smoke = mint_window_set();
-                if (window_client == 0 || window_children == 0 || window_smoke == 0) {
+                if (window_client == 0 || window_smoke == 0) {
                     write_line("FAIL", "the shared window's frames could not be copied");
                     continue;
                 }
@@ -1182,7 +1175,7 @@ int main(int argc, char *argv[])
                 /* The binding is whole: port served, window checked when the
                  * driver has one. What the partition manager gets is this
                  * list. */
-                bound[bound_count] = BoundPort{block_port, window_client, window_children,
+                bound[bound_count] = BoundPort{block_port, window_client,
                                                window_pages, window_page_bits,
                                                window_physical, binding.name,
                                                binding.name_length, b};
@@ -1222,12 +1215,13 @@ int main(int argc, char *argv[])
                                            partmgr_account, &fault_error);
                 uint32_t window_grant_count = 0;
                 for (uint32_t i = 0; i < bound_count; ++i) {
-                    /* Two groups per port: the partition manager's own pages,
-                     * then the set reserved for the children it will start.
-                     * Only the block ports' windows ride: they are the ports
-                     * the manager pairs the frames with, 4 KiB at a time. */
+                    /* One group per port: the partition manager's own pages.
+                     * It carves a window per filesystem it starts, so the
+                     * children's frames do not come from here. Only the block
+                     * ports' windows ride: they are the ports the manager pairs
+                     * the frames with, 4 KiB at a time. */
                     if (block_window(bound[i].name, bound[i].name_length)) {
-                        window_grant_count += 2 * bound[i].window_pages;
+                        window_grant_count += bound[i].window_pages;
                     }
                 }
                 /* The registry's caller half rides with the manager's grants
@@ -1301,15 +1295,17 @@ int main(int argc, char *argv[])
                             bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
                             0};
                     }
-                    /* The windows as frame capabilities, two groups per port in
-                     * the ports' own order -- the manager's own pages, then the
-                     * set reserved for its children -- pages ascending within a
-                     * group, and only the block ports' windows granted (the
-                     * pairing above is 4 KiB a page; a scanout window's mega
-                     * pages are not the storage stack's to hand out). All minted
-                     * from pristine sets, so they arrive with
-                     * no ASID and the child may map them (kernel/src/arch/
-                     * riscv/kernel/vspace.c:869-878). */
+                    /* The windows as frame capabilities, one group per port in
+                     * the ports' own order -- the manager's own pages, pages
+                     * ascending within a group, and only the block ports'
+                     * windows granted (the pairing above is 4 KiB a page; a
+                     * scanout window's mega pages are not the storage stack's
+                     * to hand out). All minted from pristine sets, so they
+                     * arrive with no ASID and the child may map them
+                     * (kernel/src/arch/riscv/kernel/vspace.c:869-878). The
+                     * partition manager carves a window per filesystem it
+                     * starts, because a window shared by two clients is not
+                     * safe under preemption (aegir/block.h). */
                     uint32_t at = 0;
                     for (uint32_t i = 0; i < bound_count; ++i) {
                         if (!block_window(bound[i].name, bound[i].name_length)) {
@@ -1319,12 +1315,6 @@ int main(int argc, char *argv[])
                             frames[at] = {bound[i].window_physical +
                                               static_cast<uint64_t>(p) * 4096,
                                           4096, bound[i].window + p};
-                            ++at;
-                        }
-                        for (uint32_t p = 0; p < bound[i].window_pages; ++p) {
-                            frames[at] = {bound[i].window_physical +
-                                              static_cast<uint64_t>(p) * 4096,
-                                          4096, bound[i].children + p};
                             ++at;
                         }
                     }

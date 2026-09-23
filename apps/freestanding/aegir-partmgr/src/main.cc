@@ -52,13 +52,11 @@ bool name_is_block_port(char const *name, uint32_t length)
            name[3] == '.';
 }
 
-/* A partition the table walk found, remembered for the spawn phase. The two
- * phases are separate because they cannot overlap: a filesystem service
- * serves through the same window frames the walk reads through -- one
- * physical buffer per device, and every consumer's caps name those same
- * frames -- so the walk's last read comes before the first spawn, and the
- * "serve the one announce between spawn and ready" rhythm below never
- * touches the window at all. */
+/* A partition the table walk found, remembered for the spawn phase. The walk
+ * maps our own window; each child gets a window of its own, carved in the
+ * spawn phase (aegir/block.h), so the two phases no longer share frames --
+ * the walk-first order is simply the shape, and the "serve the one announce
+ * between spawn and ready" rhythm below never touches a window at all. */
 struct Pending {
     seL4_CPtr port;        /* the block port's caller half */
     char device_name[8];   /* Identify's name field */
@@ -66,39 +64,43 @@ struct Pending {
     uint32_t partition;    /* its index in the table */
     uint64_t first_lba;
     uint64_t sector_count;
-    uint32_t port_index;   /* which window's frames its child maps with */
     uint32_t boot;         /* the Aegir system type GUID said so */
     Pending *next;
 };
 
-/* A copy set of a window's frames, minted from one of the granted groups into
- * slots of our own, for one filesystem service to be mapped with. The group
- * it comes from is never mapped by anyone, so the copies arrive with no ASID
- * -- a frame's first mapping pins its ASID into the capability, and a set
- * that stayed unmapped mints mappable copies for ever
- * (kernel/src/arch/riscv/kernel/vspace.c:869-878). */
-seL4_CPtr mint_window_set(uint32_t first_grant, uint32_t pages) noexcept
+/* A window of `pages` 4 KiB frames carved from our untyped, so a filesystem
+ * service reads through frames of its own: one window per client is what makes
+ * the driver's DMA safe across clients, because a second client's call cannot
+ * overwrite the frames a preempted one is still reading (aegir/block.h). The
+ * manager used to mint the same frames for every child. Returns the base frame
+ * cap -- consecutive slots, which is what the spawner maps -- and the physical
+ * base, or zero. */
+seL4_CPtr carve_window(aegir::mem::Account &account, uint32_t pages,
+                       uint64_t *physical_out) noexcept
 {
+    /* Untypeds are powers of two, so a window's region is too; round the page
+     * count up. */
+    uint32_t bits = seL4_PageBits;
+    while ((1u << (bits - seL4_PageBits)) < pages) {
+        ++bits;
+    }
+    seL4_Error error = seL4_NoError;
+    uint64_t physical = 0;
+    seL4_CPtr const untyped = g_objects.carve_untyped(bits, account, &error, &physical);
+    if (untyped == 0) {
+        return 0;
+    }
     seL4_CPtr base = 0;
     for (uint32_t p = 0; p < pages; ++p) {
-        uint64_t source = 0;
-        if (!aegir::bootstrap::device_capability(first_grant + p, nullptr, nullptr,
-                                                 &source)) {
-            return 0;
-        }
-        seL4_CPtr const slot = g_objects.alloc_slot();
-        if (slot == 0 ||
-            seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
-                            aegir::bootstrap::kCNodeBits,
-                            aegir::bootstrap::kSlotOwnCNode,
-                            static_cast<seL4_CPtr>(source), aegir::bootstrap::kCNodeBits,
-                            seL4_AllRights, 0) != seL4_NoError) {
+        seL4_CPtr const frame = g_objects.carve_page(untyped, account, &error);
+        if (frame == 0) {
             return 0;
         }
         if (p == 0) {
-            base = slot;
+            base = frame;
         }
     }
+    *physical_out = physical;
     return base;
 }
 
@@ -146,8 +148,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                       char const *device_name, uint32_t device_name_length,
                       uint32_t partition, uint64_t first_lba, uint64_t sector_count,
                       uint32_t boot,
-                      seL4_CPtr block_port, uint32_t children_grant,
-                      uint64_t window_physical, uint32_t window_pages,
+                      seL4_CPtr block_port, uint32_t window_pages,
                       void const *fs_image, uint32_t fs_image_bytes,
                       uint64_t badge) noexcept
 {
@@ -206,8 +207,10 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
      * remember who has what open. The bound is the grant -- the clamp
      * table's shape, one service back -- and reaching it is a loud
      * refusal. */
-    seL4_CPtr const window = mint_window_set(children_grant, window_pages);
     aegir::mem::Account child_account{"fs", 0, 0, 0};
+    uint64_t child_window_physical = 0;
+    seL4_CPtr const window =
+        carve_window(child_account, window_pages, &child_window_physical);
     constexpr uint32_t kFsMemoryBits = 12; /* one page */
     seL4_Error memory_error = seL4_NoError;
     uint64_t memory_physical = 0;
@@ -276,7 +279,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.devices_bytes = range_length;
     request.window_frame = window;
     request.window_bytes = window_pages * 4096u;
-    request.window_physical = window_physical;
+    request.window_physical = child_window_physical;
     /* The handle-table page: where it lands and how big it is travel in the
      * block's untyped entry, the way a driver's memory does (the child
      * serves no DMA, so the physical base is information, not plumbing). */
@@ -287,16 +290,17 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.fault_endpoint = fault;
     request.badge = badge;
 
-    /* The range, enforced before the child exists to hold the badge: the
-     * driver learns which sectors this badge may read, and only the badge-0
-     * caller -- this manager -- may tell it (aegir/block.h). Then the proof,
-     * asked with the child's own badge: sector 0 is no GPT partition's to
-     * read, so a clamp that holds refuses it. */
-    uint64_t const clamp_out[3] = {badge, first_lba, sector_count};
+    /* The range and the child's own window, enforced before the child exists
+     * to hold the badge: the driver learns which sectors this badge may read,
+     * and which physical window its data lands in, and only the badge-0 caller
+     * -- this manager -- may tell it (aegir/block.h). Then the proof, asked
+     * with the child's own badge: sector 0 is no GPT partition's to read, so a
+     * clamp that holds refuses it. */
+    uint64_t const clamp_out[4] = {badge, first_lba, sector_count, child_window_physical};
     uint64_t clamp_answer = 0;
     aegir::ipc::Consumer const clamp_port(block_port);
     aegir::ipc::WordsReply const clamped = clamp_port.call_words(
-        aegir::block::kMethodClamp, clamp_out, 3, &clamp_answer, 1);
+        aegir::block::kMethodClamp, clamp_out, 4, &clamp_answer, 1);
     bool holds = false;
     seL4_CPtr const probe = g_objects.alloc_slot();
     if (probe != 0 &&
@@ -474,12 +478,13 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    /* The windows arrive as frame capabilities in two groups per port -- ours
-     * to read through, and a set reserved for the filesystem services we
-     * start -- each group pages ascending, the ports in their own order. The
-     * convention is the device manager's, because a capability carries no
-     * name to pair by. */
-    if (port_count == 0 || grant_count == 0 || grant_count % (2 * port_count) != 0) {
+    /* The windows arrive as frame capabilities, one group per port, pages
+     * ascending, the ports in their own order -- ours to read tables through.
+     * A filesystem service we start gets a window of its own, carved from our
+     * untyped, because a second client of a shared window could overwrite the
+     * frames under a preempted reader (aegir/block.h). The convention is the
+     * device manager's, because a capability carries no name to pair by. */
+    if (port_count == 0 || grant_count == 0 || grant_count % port_count != 0) {
         aegir::debug_write("      partition manager: ");
         aegir::debug_write_unsigned(port_count);
         aegir::debug_write(" block ports, ");
@@ -488,7 +493,7 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    uint32_t const pages_per_window = grant_count / (2 * port_count);
+    uint32_t const pages_per_window = grant_count / port_count;
 
     /* What starting a filesystem service takes: the pool its address space id
      * comes from, the delegatable log, and the helper's image as bytes -- the
@@ -619,8 +624,8 @@ int main(int argc, char *argv[])
             uint64_t grant_physical = 0;
             uint32_t grant_bytes = 0;
             uint64_t grant_slot = 0;
-            /* Our group of this port's frames is the first of the two. */
-            uint32_t const grant = port_index * 2 * pages_per_window + p;
+            /* Our group of this port's frames. */
+            uint32_t const grant = port_index * pages_per_window + p;
             if (!aegir::bootstrap::device_capability(grant, &grant_physical, &grant_bytes,
                                                      &grant_slot)) {
                 mapped = false;
@@ -780,7 +785,6 @@ int main(int argc, char *argv[])
                             pending->first_lba = partition.first_lba;
                             pending->sector_count =
                                 partition.last_lba - partition.first_lba + 1;
-                            pending->port_index = port_index;
                             pending->boot = system ? 1 : 0;
                             pending->next = pendings;
                             pendings = pending;
@@ -795,28 +799,20 @@ int main(int argc, char *argv[])
         for (uint32_t p = pages_per_window; p > 0; --p) {
             uint64_t grant_slot = 0;
             static_cast<void>(aegir::bootstrap::device_capability(
-                port_index * 2 * pages_per_window + p - 1, nullptr, nullptr, &grant_slot));
+                port_index * pages_per_window + p - 1, nullptr, nullptr, &grant_slot));
             g_scratch.unmap(static_cast<seL4_CPtr>(grant_slot));
         }
         ++port_index;
     }
 
     /* The walk is done, and with it every read through a window. Now the
-     * spawns: each child serves through its window's frames from the moment
-     * it starts, which is exactly what the walk could not have happening
-     * underneath it (Pending, above). A child's group of its port's frames
-     * is the second of the two. */
+     * spawns: each child gets a window carved for it from our untyped, so no
+     * two children read through the same frames (aegir/block.h). */
     for (Pending *pending = pendings; pending != nullptr; pending = pending->next) {
-        uint32_t const children_grant =
-            pending->port_index * 2 * pages_per_window + pages_per_window;
-        uint64_t window_physical = 0;
-        static_cast<void>(aegir::bootstrap::device_capability(
-            children_grant, &window_physical, nullptr, nullptr));
         start_filesystem(spawner, static_cast<seL4_CPtr>(spawn_log_slot), nmspace,
                          announce, pending->device_name, pending->device_name_length,
                          pending->partition, pending->first_lba, pending->sector_count,
-                         pending->boot, pending->port, children_grant, window_physical,
-                         pages_per_window,
+                         pending->boot, pending->port, pages_per_window,
                          reinterpret_cast<void const *>(fs_image_address), fs_image_bytes,
                          512u + fs_started);
         ++fs_started;

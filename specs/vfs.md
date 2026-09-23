@@ -197,10 +197,10 @@ when throughput matters: the client transfers a buffer capability at `open`,
 the filesystem DMAs into it, and `read`/`write` reply with a count. It needs
 no protocol change, only new methods — which is what method numbers are for.
 
-A filesystem that serves from a shared window (the block layer's) copies the
-data out into the reply inside the one call: the window's "content belongs to
-the most recent call" caveat (`libs/aegir-block`) never reaches the volume's
-clients.
+A filesystem reads through a window of its own -- the block layer gives each
+client its own frames, so no other client's DMA can overwrite what it is
+reading (`libs/aegir-block`) -- and copies the data out into the reply inside
+the one call.
 
 ## Who registers, who serves
 
@@ -231,9 +231,10 @@ clients.
 ## The supervisor that serves, without the demux
 
 The partition manager's rhythm needs no badge mark at all. It walks every
-partition table *first* and spawns afterwards, because a serving child uses
-the same window frames the walk reads through — the walk's last read comes
-before the first spawn. Then, per child: spawn, receive the one announce
+partition table *first* and spawns afterwards. The original reason -- a serving
+child used the same window frames the walk read through -- is gone now that
+each child gets a window of its own (`libs/aegir-block`); the walk-first order
+is simply the shape. Then, per child: spawn, receive the one announce
 (the child blocks in it until answered), register with the VFS, reply, and
 only then wait for the child's ready. The announce receive sees nothing but
 the one call it is waiting for, so there is nothing to tell apart. (The

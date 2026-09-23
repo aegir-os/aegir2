@@ -967,33 +967,40 @@ What was decided, and what it took:
   per driver (`compatible=... id=... prefix=... bus=... binary=... memory=13
   window=16`), packed into the initrd and parsed by the device manager
   (libs/aegir-descriptor). Adding a driver is adding a row, not a recompile. The
-  `window` field is the driver's to declare: how big the shared window its port
+  `window` field is the driver's to declare: how big a client's window its port
   serves through is, in bits.
 - **A block device names itself.** The public namespace is the driver's business
   and nobody else's: the driver derives its unit from its instance name
   (`blk.virtio0` is unit 0) and answers `identify` with **BD0**. The device
   manager binds instances and never learns which of them are block devices.
 - **The block port** (libs/aegir-block, v1 in full): `identify` writes the answer
-  (name, sector count and size, the window's capacity) into the shared window;
+  (name, sector count and size, the window's capacity) into the caller's window;
   `read` packs first-sector and count into one word (48 + 16 bits) and DMAs
-  straight into the window. Bulk data never crosses the message. One window per
-  device suffices because `seL4_Call` serializes: there is exactly one outstanding
-  request per window, and that is structural rather than a lock. The window is
-  mapped by the spawner, at spawn time, into everyone who uses it -- a service
-  cannot map into its own address space -- and the bootstrap block carries it as
-  a `SharedWindow` entry: virtual address, size, and the physical base a driver
-  points virtqueue descriptors at.
+  straight into the caller's window. Bulk data never crosses the message. **One
+  window per client, not per device**: the endpoint serializes the DMAs, but it
+  cannot stop one client's window from being written while that client is
+  preempted between its call and its consumption, so each client reads through
+  frames of its own. The window is mapped by the spawner, at spawn time, into
+  the client that owns it -- a service cannot map into its own address space --
+  and the bootstrap block carries it as a `SharedWindow` entry: virtual address,
+  size, and the physical base a driver points virtqueue descriptors at. The
+  driver learns which window belongs to which caller from the caller's clamp
+  (`kMethodClamp` carries the window's physical base); the badge-0 caller, the
+  device's manager, reads through the window it was itself started with.
 - **Window frame caps multiply because a frame's first mapping pins its ASID into
   the capability** (specs/authority.md records the rule and the kernel lines).
   Every consumer gets its own cap set, minted before any mapping from a set that
-  stays pristine.
+  stays pristine -- and, now, its own frames: the partition manager carves a
+  window per filesystem from its untyped, so no two readers share a window.
 - **The device manager spawns the partition manager.** The alternative -- director
   starting it as a boot-set peer -- was rejected with the drivers: the director
   would have to learn the storage stack's insides. What the partition manager is
   handed is what bound: each block port's caller half (under the driver's
-  instance name), the window frame caps in two groups (its own, and a set
-  reserved for the children it starts), an untyped, the ASID pool, its VSpace
-  root, the delegatable log, and the filesystem helper's image as a blob.
+  instance name), its own window frame caps (one group per port, pages
+  ascending), an untyped, the ASID pool, its VSpace root, the delegatable log,
+  and the filesystem helper's image as a blob. It carves a filesystem's window
+  from its untyped when it starts one, because a window shared by two clients is
+  not safe under preemption (aegir/block.h).
 - **The partition manager enumerates.** It maps each window, calls `identify`,
   and walks the GPT (protective MBR, header, entries). The entry table is read
   in window-sized runs, not one call, because the format's own minimum of 128
@@ -1005,10 +1012,12 @@ What was decided, and what it took:
   written by the manager and parsed by the service; the service adds the offset
   to every read it makes. And it is enforced, not just read: the manager
   records the range with the driver (`kMethodClamp`, `libs/aegir-block`) before
-  the child exists, the driver clamps every read by the caller's badge --
-  badge 0 is the manager and the whole device, any other badge its recorded
-  range, an unrecorded badge nothing -- and the manager proves each clamp
-  holds by asking for sector 0 with the child's own badge and being refused.
+  the child exists, together with the physical base of the window it carved for
+  the child, the driver clamps every read by the caller's badge and DMAs into
+  that badge's window -- badge 0 is the manager and the whole device, any other
+  badge its recorded range, an unrecorded badge nothing -- and the manager
+  proves each clamp holds by asking for sector 0 with the child's own badge and
+  being refused.
 - **The filesystem service's image travels as bytes** (`binary_image`), one
   helper at a time, because the whole initrd is 1.2 MiB and a copy per spawning
   service does not fit a service-sized delegation.
@@ -1057,12 +1066,14 @@ What was decided, and what it took:
   single-shot -- the available ring always published slot 0 and the wait
   asked *nonzero* rather than *advanced* -- so the second read of a boot
   answered with the first request's used entry and a status of 0xff; the
-  rings carry cursors now. And the shared window's content belongs to the
-  most recent call by *anyone*: the endpoint serializes the DMAs, not the
-  consumers, so a partition manager that waits on the filesystem child it
-  just started resumes to a window full of that child's reads -- the second
-  partition "did not exist" until the manager re-read the entry chunk after
-  each spawn.
+  rings carry cursors now. And one shared window per device did not hold: the
+  endpoint serializes the DMAs, not the consumers, so a partition manager that
+  waited on the filesystem child it had just started resumed to a window full
+  of that child's reads -- the second partition "did not exist" until the
+  manager re-read the entry chunk after each spawn. The same hazard corrupted
+  two filesystem clients once a second one existed, and the fix is the model
+  above: a window per client, its physical base carried to the driver with the
+  clamp.
 
 Still open, in the order they arrive: a shell on the input path, and
 resolve checks once volumes have an ownership model to check

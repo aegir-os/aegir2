@@ -329,13 +329,14 @@ The order:
    4. **The libc++ `path` patch** (tracked) for the `Volume:` grammar.
 
    The acceptance is `apps/hosted/aegir-fs-smoke`, spawned with `needs =
-   vfs.namespace`: it reads through both halves and prints `FS_SMOKE_OK`.
-   A finding from it: a second client on a FAT volume -- listing it while the
-   test bed reads it, or writing while the test bed writes -- makes the test
-   bed's walk fail (a bad BPB, a refused read), so the filesystem's
-   cross-client state is not as stateless as `aegir/volume.h` claims. The
-   smoke therefore stays on the read-only initrd filesystem, and its write
-   side goes unexercised, until that is its own arc.
+   vfs.namespace`: it reads through both halves -- counting and describing
+   volumes, reading and listing the initrd, listing the AEGIR FAT volume, and
+   writing, reading back and removing a file on the scratch FAT volume -- and
+   prints `FS_SMOKE_OK`.
+   A finding from it, fixed in the same arc: a second client on a FAT volume
+   used to corrupt the first, because every block-device client mapped one
+   shared DMA window. Each client now reads through a window of its own
+   (`aegir/block.h`; the partition manager carves one per filesystem).
 6. **Locale, iconv and BiDi/RTL.** The toolkit keeps `locale.cc` in its build —
    its C dependencies are musl's — while `translation.cc` and `bidi.cc` are
    gated out because they are stubs, not because they cannot compile. The

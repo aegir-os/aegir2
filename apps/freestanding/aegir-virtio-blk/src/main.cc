@@ -49,15 +49,16 @@ void write_unsigned_line(char const *label, uint64_t value) noexcept
     aegir::debug_write("\n");
 }
 
-/* The clamp table: which badge may read which sectors, recorded once per
- * badge by the badge-0 caller -- the device's manager -- before the child
- * that will hold the badge exists (aegir/block.h). It grows into this
- * service's own memory past the queue, on demand; when that memory is gone
- * a clamp is refused, not silently capped. */
+/* The clamp table: which badge may read which sectors, and which physical
+ * window its data lands in, recorded once per badge by the badge-0 caller --
+ * the device's manager -- before the child that will hold the badge exists
+ * (aegir/block.h). It grows into this service's own memory past the queue, on
+ * demand; when that memory is gone a clamp is refused, not silently capped. */
 struct Clamp {
     uint64_t badge;
     uint64_t first;
     uint64_t sectors;
+    uint64_t window_physical;
     Clamp *next;
 };
 
@@ -75,7 +76,8 @@ Clamp const *find_clamp(uint64_t badge) noexcept
     return nullptr;
 }
 
-bool record_clamp(uint64_t badge, uint64_t first, uint64_t sectors) noexcept
+bool record_clamp(uint64_t badge, uint64_t first, uint64_t sectors,
+                  uint64_t window_physical) noexcept
 {
     if (find_clamp(badge) != nullptr ||
         g_clamp_free + sizeof(Clamp) > g_clamp_end) {
@@ -85,6 +87,7 @@ bool record_clamp(uint64_t badge, uint64_t first, uint64_t sectors) noexcept
     clamp->badge = badge;
     clamp->first = first;
     clamp->sectors = sectors;
+    clamp->window_physical = window_physical;
     clamp->next = g_clamps;
     g_clamps = clamp;
     g_clamp_free += sizeof(Clamp);
@@ -106,6 +109,19 @@ bool clamp_allows(uint64_t badge, uint64_t first, uint32_t sectors, uint64_t cap
     Clamp const *clamp = find_clamp(badge);
     return clamp != nullptr && first >= clamp->first &&
            first + sectors <= clamp->first + clamp->sectors;
+}
+
+/* The physical window a caller's data belongs in: the manager (badge 0) reads
+ * through the window the driver itself was started with, every other caller
+ * through the window its manager carved and recorded with its clamp
+ * (aegir/block.h). A badge with no clamp is caught by clamp_allows first. */
+uint64_t window_for(uint64_t badge, uint64_t manager_window) noexcept
+{
+    if (badge == 0) {
+        return manager_window;
+    }
+    Clamp const *clamp = find_clamp(badge);
+    return clamp != nullptr ? clamp->window_physical : 0;
 }
 
 }  // namespace
@@ -350,16 +366,20 @@ int main(int argc, char *argv[])
     write_line("virtio-blk", "ready");
 
     /* The serve loop. A request arrives as a method and words; its data
-     * crosses through the window -- identify writes its answer there, and a
-     * read DMAs straight into it, because the window's physical base is an
-     * address the device can be pointed at. Calls serialize at the endpoint,
-     * so one window is all the protocol needs (aegir/block.h). */
+     * crosses through the caller's window -- identify writes its answer there,
+     * and a read DMAs straight into it, because a window's physical base is an
+     * address the device can be pointed at. Each caller has its own window
+     * (aegir/block.h), so a caller that is preempted between its call and its
+     * consumption still finds its own data when it resumes. */
     for (;;) {
-        uint64_t words[3];
+        uint64_t words[4];
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = port.receive_words(words, 3, &count, &badge);
+        uint32_t const method = port.receive_words(words, 4, &count, &badge);
         if (method == aegir::block::kMethodIdentify) {
+            /* Identify is the device manager's call, badge 0; it answers into
+             * the window the driver itself was started with, which is the one
+             * the manager maps. */
             *reinterpret_cast<aegir::block::Identify *>(window_address) = identify;
             port.reply(sizeof(aegir::block::Identify));
         } else if (method == aegir::block::kMethodRead && count == 1) {
@@ -368,10 +388,11 @@ int main(int argc, char *argv[])
             /* A refused read answers zero with the window untouched. */
             uint32_t done = 0;
             if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
+                uint64_t const caller_window = window_for(badge, window_physical);
                 for (uint32_t i = 0; i < sectors; ++i) {
                     aegir::virtio::ReadResult const result = aegir::virtio::read_sector(
                         registers, queue, first + i,
-                        window_physical +
+                        caller_window +
                             static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes,
                         nullptr);
                     if (!result.completed || result.status != 0) {
@@ -385,13 +406,14 @@ int main(int argc, char *argv[])
             uint64_t const first = aegir::block::read_first(words[0]);
             uint32_t const sectors = aegir::block::read_count(words[0]);
             /* The write's range question is the read's own, word for word;
-             * the sectors leave the window instead of landing in it. */
+             * the sectors leave the caller's window instead of landing in it. */
             uint32_t done = 0;
             if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
+                uint64_t const caller_window = window_for(badge, window_physical);
                 for (uint32_t i = 0; i < sectors; ++i) {
                     aegir::virtio::ReadResult const result = aegir::virtio::write_sector(
                         registers, queue, first + i,
-                        window_physical +
+                        caller_window +
                             static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes);
                     if (!result.completed || result.status != 0) {
                         break;
@@ -400,12 +422,14 @@ int main(int argc, char *argv[])
                 }
             }
             port.reply(done);
-        } else if (method == aegir::block::kMethodClamp && count == 3 && badge == 0) {
-            /* A range grant, recorded once: the manager is the badge-0
-             * caller, and the badge it names must not have one yet. */
+        } else if (method == aegir::block::kMethodClamp && count == 4 && badge == 0) {
+            /* A range grant and the client's window, recorded once: the
+             * manager is the badge-0 caller, and the badge it names must not
+             * have one yet. */
             uint64_t recorded = 0;
-            if (words[0] != 0 && words[2] != 0 && words[1] + words[2] <= capacity &&
-                record_clamp(words[0], words[1], words[2])) {
+            if (words[0] != 0 && words[2] != 0 && words[3] != 0 &&
+                words[1] + words[2] <= capacity &&
+                record_clamp(words[0], words[1], words[2], words[3])) {
                 recorded = 1;
             }
             port.reply(recorded);
