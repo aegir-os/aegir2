@@ -239,12 +239,29 @@ The order:
      and its typeinfo undefined the moment anything needed it. The base hooks
      now have their no-op default bodies.
 4. **Threads.** `<thread>`/`<mutex>` compile and link against musl's pthread,
-   but a thread does not start: `pthread_create` reaches `clone`, which the
-   dispatcher refuses, and with exceptions off `std::thread`'s constructor would
-   abort. `aegir-trinket`'s `WorkerPool` therefore does not spawn. A real
-   thread is one seL4 TCB in the process's own address space, and
-   `specs/userland.md`'s threading section already records the rules (tp, gp, a
-   stack that does not overlap the TLS block).
+   but a thread does not start: `pthread_create` reaches `__clone`
+   (`projects/musl/src/thread/clone.c`), a raw `SYS_clone` (riscv64 syscall
+   220), and the dispatcher has no case for it, so it returns `-ENOSYS`.
+   `aegir-trinket`'s `WorkerPool` therefore does not spawn. A real thread is
+   one seL4 TCB in the process's own address space, and
+   `specs/userland.md:85` records the rules (tp, gp, a stack that does not
+   overlap the TLS block). The order:
+
+   1. **A thread-creation primitive** (in `aegir-spawn`, beside the process
+      path that already does the same for a process's boot thread): retype a
+      `seL4_TCB` from the process's own untyped, write its user context with
+      the three rules, set its IPC buffer with `seL4_TCB_SetIPCBuffer` (libsel4
+      reaches the buffer through the TLS variable `__sel4_ipc_buffer`), and
+      start it. A freestanding smoke proves a second thread runs and writes to
+      the console -- the first checkpoint, and it needs no musl.
+   2. **Each thread's IPC buffer and TLS block**, from the process's heap
+      (`aegir-heap`'s window), because the boot thread's is not shared.
+   3. **The dispatcher's `SYS_clone`**, which resumes the child at the
+      *caller's* return address with a 0 return value per musl's contract --
+      the fiddly part, and the one that turns the primitive into
+      `pthread_create`.
+   4. **`std::thread`** then falls out; the acceptance extends the cxx-smoke
+      with a thread that joins and a mutex held across two threads.
 5. **The filesystem.** `std::filesystem` in the runtime, and `aegir::filesystem`
    beside it. The runtime answers the file calls with Aegir-path semantics, and
    a tracked libc++ patch gives `path` the Aegir grammar, modelled on its
