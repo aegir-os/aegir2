@@ -523,6 +523,55 @@ long vsyscall(long sysnum, ...) noexcept
     case 46: /* SYS_ftruncate */
         ret = files::ftruncate(va_arg(ap, int), va_arg(ap, long));
         break;
+    case 5: /* SYS_setxattr */
+        ret = files::setxattr(va_arg(ap, char const *), va_arg(ap, char const *),
+                              va_arg(ap, void const *), va_arg(ap, size_t),
+                              va_arg(ap, int));
+        break;
+    case 6: /* SYS_lsetxattr */
+        ret = files::lsetxattr(va_arg(ap, char const *), va_arg(ap, char const *),
+                               va_arg(ap, void const *), va_arg(ap, size_t),
+                               va_arg(ap, int));
+        break;
+    case 7: /* SYS_fsetxattr */
+        ret = files::fsetxattr(va_arg(ap, int), va_arg(ap, char const *),
+                               va_arg(ap, void const *), va_arg(ap, size_t),
+                               va_arg(ap, int));
+        break;
+    case 8: /* SYS_getxattr */
+        ret = files::getxattr(va_arg(ap, char const *), va_arg(ap, char const *),
+                              va_arg(ap, void *), va_arg(ap, size_t));
+        break;
+    case 9: /* SYS_lgetxattr */
+        ret = files::lgetxattr(va_arg(ap, char const *), va_arg(ap, char const *),
+                               va_arg(ap, void *), va_arg(ap, size_t));
+        break;
+    case 10: /* SYS_fgetxattr */
+        ret = files::fgetxattr(va_arg(ap, int), va_arg(ap, char const *),
+                               va_arg(ap, void *), va_arg(ap, size_t));
+        break;
+    case 11: /* SYS_listxattr */
+        ret = files::listxattr(va_arg(ap, char const *), va_arg(ap, char *),
+                               va_arg(ap, size_t));
+        break;
+    case 12: /* SYS_llistxattr */
+        ret = files::llistxattr(va_arg(ap, char const *), va_arg(ap, char *),
+                                va_arg(ap, size_t));
+        break;
+    case 13: /* SYS_flistxattr */
+        ret = files::flistxattr(va_arg(ap, int), va_arg(ap, char *),
+                                va_arg(ap, size_t));
+        break;
+    case 14: /* SYS_removexattr */
+        ret = files::removexattr(va_arg(ap, char const *), va_arg(ap, char const *));
+        break;
+    case 15: /* SYS_lremovexattr */
+        ret = files::lremovexattr(va_arg(ap, char const *),
+                                  va_arg(ap, char const *));
+        break;
+    case 16: /* SYS_fremovexattr */
+        ret = files::fremovexattr(va_arg(ap, int), va_arg(ap, char const *));
+        break;
     case 113: /* SYS_clock_gettime: the clock service behind it (aegir/clock.h) */
         ret = time::clock_gettime(va_arg(ap, int), va_arg(ap, void *));
         break;

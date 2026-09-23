@@ -446,6 +446,15 @@ inode through the directory trees. A path that names a file whose inode has no
 attribute directory is `kNotFound`, not `kUnsupported` — the filesystem *has*
 metadata, this file simply has none.
 
+The runtime maps the metadata protocol onto the POSIX xattr calls, so a hosted
+program reaches it through musl's `getxattr`/`setxattr`/`listxattr`/
+`removexattr` and their `f`- and `l`-forms (and the freestanding `aegir::vfs`
+client reaches it directly, carrying the status word). The status word becomes
+an errno: `kOk` success, `kNotFound` `ENODATA`, `kUnsupported` `EOPNOTSUPP`,
+`kInvalidName` `ERANGE`, `kReadOnly` `EROFS`, `kNoSpace` `ENOSPC`. A `getxattr`
+with no buffer returns the size; one with too small a buffer is `ERANGE`. A
+value larger than one envelope is read and written at successive offsets.
+
 ### Type codes and the attribute namespace
 
 The `type_code` is Haiku's; values a client may set:

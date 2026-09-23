@@ -54,6 +54,26 @@ long chdir(char const *path) noexcept;
 long getcwd(char *buffer, size_t size) noexcept;
 long fcntl(int fd, int command, long argument) noexcept;
 
+/* The attribute calls (specs/bfs.md's metadata protocol). A filesystem that
+ * has no attributes answers EOPNOTSUPP; one that has them but not this name
+ * answers ENODATA. `l`-prefixed names are the symlink forms, which read the
+ * same as the path forms on a filesystem with no symlinks. */
+long setxattr(char const *path, char const *name, void const *value, size_t size,
+              int flags) noexcept;
+long lsetxattr(char const *path, char const *name, void const *value, size_t size,
+               int flags) noexcept;
+long fsetxattr(int fd, char const *name, void const *value, size_t size,
+               int flags) noexcept;
+long getxattr(char const *path, char const *name, void *value, size_t size) noexcept;
+long lgetxattr(char const *path, char const *name, void *value, size_t size) noexcept;
+long fgetxattr(int fd, char const *name, void *value, size_t size) noexcept;
+long listxattr(char const *path, char *list, size_t size) noexcept;
+long llistxattr(char const *path, char *list, size_t size) noexcept;
+long flistxattr(int fd, char *list, size_t size) noexcept;
+long removexattr(char const *path, char const *name) noexcept;
+long lremovexattr(char const *path, char const *name) noexcept;
+long fremovexattr(int fd, char const *name) noexcept;
+
 }  // namespace aegir::heap::files
 
 #endif  // AEGIR_HEAP_FILES_H

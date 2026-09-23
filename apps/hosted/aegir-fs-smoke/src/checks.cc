@@ -18,10 +18,13 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <cerrno>
 #include <exception>
 #include <fcntl.h>
 #include <filesystem>
 #include <system_error>
+#include <sys/xattr.h>
 #include <time.h>
 #include <unistd.h>
 #include <vector>
@@ -321,6 +324,76 @@ void check_timestamps()
            "std::filesystem::last_write_time is the time the file was written");
 }
 
+/* The metadata protocol through the POSIX xattr calls (specs/bfs.md). BFS
+ * keeps attributes, in the inode or in an attribute inode; FAT has none and
+ * the runtime maps the protocol's status word onto errno, so EOPNOTSUPP and
+ * ENODATA stay apart. */
+void check_attributes()
+{
+    static char const kPath[] = "BFS:ATTRX.TXT";
+    static char const kName[] = "BEOS:TYPE";
+    static char const kValue[] = "text/plain";
+    static char const kFdName[] = "AEGIR:FDTEST";
+    int const fd = ::open(kPath, O_CREAT | O_TRUNC | O_RDWR, 0644);
+    bool ok = fd >= 0;
+    if (fd >= 0) {
+        ok = ::setxattr(kPath, kName, kValue, sizeof(kValue) - 1, 0) == 0;
+        ok = ok && ::fsetxattr(fd, kFdName, "viafd", 5, 0) == 0;
+        ssize_t const needed = ::getxattr(kPath, kName, nullptr, 0);
+        ok = ok && needed == static_cast<ssize_t>(sizeof(kValue) - 1);
+        char value[16] = {};
+        ssize_t const got = ::getxattr(kPath, kName, value, sizeof(value));
+        ok = ok && got == static_cast<ssize_t>(sizeof(kValue) - 1) &&
+             std::memcmp(value, kValue, static_cast<size_t>(got)) == 0;
+        char from_fd[8] = {};
+        ssize_t const fd_got = ::fgetxattr(fd, kFdName, from_fd, sizeof(from_fd));
+        ok = ok && fd_got == 5 && std::memcmp(from_fd, "viafd", 5) == 0;
+        /* listxattr: the names, each NUL-terminated. */
+        ssize_t const list_needed = ::listxattr(kPath, nullptr, 0);
+        ok = ok && list_needed > 0;
+        if (ok) {
+            std::vector<char> list(static_cast<std::size_t>(list_needed));
+            ssize_t const listed = ::listxattr(kPath, list.data(), list.size());
+            bool saw_type = false;
+            bool saw_fd = false;
+            ok = listed == list_needed;
+            for (std::size_t i = 0; ok && i < list.size();) {
+                char const *entry = list.data() + i;
+                std::size_t const length = std::strlen(entry);
+                if (std::strcmp(entry, kName) == 0) {
+                    saw_type = true;
+                }
+                if (std::strcmp(entry, kFdName) == 0) {
+                    saw_fd = true;
+                }
+                i += length + 1;
+            }
+            ok = ok && saw_type && saw_fd;
+        }
+        /* Removing makes it gone: ENODATA, not EOPNOTSUPP. */
+        ok = ok && ::removexattr(kPath, kName) == 0;
+        errno = 0;
+        ssize_t const gone = ::getxattr(kPath, kName, value, sizeof(value));
+        ok = ok && gone == -1 && errno == ENODATA;
+        (void)::fremovexattr(fd, kFdName);
+        ::close(fd);
+    }
+    ::unlink(kPath);
+    report(ok, "POSIX xattr reads, writes, lists and removes BFS attributes");
+
+    /* A filesystem with no attributes says so: EOPNOTSUPP, not ENODATA. */
+    static char const kFatPath[] = "SCRATCH:NoAttrs.txt";
+    int const fat_fd = ::open(kFatPath, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (fat_fd >= 0) {
+        ::close(fat_fd);
+    }
+    errno = 0;
+    ssize_t const unsupported = ::getxattr(kFatPath, kName, nullptr, 0);
+    bool const fat_ok = unsupported == -1 && errno == EOPNOTSUPP;
+    ::unlink(kFatPath);
+    report(fat_ok, "a filesystem with no attributes answers EOPNOTSUPP");
+}
+
 }  // namespace
 
 int run()
@@ -329,6 +402,7 @@ int run()
     check_std_filesystem();
     check_clock();
     check_timestamps();
+    check_attributes();
     return g_failed;
 }
 

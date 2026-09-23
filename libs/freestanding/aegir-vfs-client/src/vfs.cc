@@ -15,6 +15,26 @@
 
 namespace aegir::vfs {
 
+namespace {
+
+/* A path and an attribute name as two strings in sequence, for the metadata
+ * protocol. Zero when either does not fit the envelope. */
+uint32_t pack_path_name(uint64_t *request, char const *path, uint32_t length,
+                        char const *name, uint32_t name_length) noexcept
+{
+    uint32_t const path_words =
+        nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (path_words == 0) {
+        return 0;
+    }
+    uint32_t const name_words = nmspace::pack_string(request + path_words, name,
+                                                     name_length,
+                                                     metadata::kAttrNameMax);
+    return name_words == 0 ? 0 : path_words + name_words;
+}
+
+}  // namespace
+
 aegir::ipc::Consumer find_namespace() noexcept
 {
     return aegir::ipc::Consumer::find(nmspace::kPortName, nmspace::kPortNameLength);
@@ -280,6 +300,159 @@ bool Volume::truncate(char const *path, uint32_t length, uint64_t size) noexcept
     aegir::ipc::WordsReply const reply = port_.call_words(
         volume::kMethodTruncate, request, path_words + 1, answer, 1);
     return reply.error == 0 && reply.count == 1 && answer[0] == 1;
+}
+
+uint64_t Volume::attr_stat(char const *path, uint32_t length, char const *name,
+                           uint32_t name_length, uint32_t &type,
+                           uint64_t &size) noexcept
+{
+    uint64_t request[aegir::ipc::kMaxWords];
+    uint32_t const words = pack_path_name(request, path, length, name, name_length);
+    if (words == 0) {
+        return metadata::kNotFound;
+    }
+    uint64_t answer[metadata::kAttrStatTailWords + 1] = {};
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(metadata::kMethodAttrStat, request, words, answer,
+                         metadata::kAttrStatTailWords + 1);
+    if (reply.error != 0 || reply.count < 1) {
+        return metadata::kNotFound;
+    }
+    if (answer[0] == metadata::kOk) {
+        type = static_cast<uint32_t>(answer[1]);
+        size = answer[2];
+    }
+    return answer[0];
+}
+
+uint64_t Volume::attr_read(char const *path, uint32_t length, char const *name,
+                           uint32_t name_length, uint64_t offset, void *data,
+                           uint32_t &read_length) noexcept
+{
+    uint64_t request[aegir::ipc::kMaxWords];
+    uint32_t words = pack_path_name(request, path, length, name, name_length);
+    if (words == 0 || words + 2 > aegir::ipc::kMaxWords) {
+        return metadata::kNotFound;
+    }
+    uint64_t const wanted =
+        read_length < metadata::kAttrDataMax ? read_length : metadata::kAttrDataMax;
+    request[words++] = offset;
+    request[words++] = wanted;
+    uint64_t answer[metadata::kAttrReadHeaderWords + metadata::kAttrDataMax / 8] = {};
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        metadata::kMethodAttrRead, request, words, answer,
+        metadata::kAttrReadHeaderWords + metadata::kAttrDataMax / 8);
+    if (reply.error != 0 || reply.count < 1) {
+        return metadata::kNotFound;
+    }
+    if (answer[0] == metadata::kOk) {
+        uint64_t const count = answer[1];
+        if (count > wanted ||
+            reply.count < metadata::kAttrReadHeaderWords + (count + 7) / 8) {
+            return metadata::kNotFound;
+        }
+        auto *out = static_cast<uint8_t *>(data);
+        auto const *packed = reinterpret_cast<uint8_t const *>(
+            answer + metadata::kAttrReadHeaderWords);
+        for (uint64_t i = 0; i < count; ++i) {
+            out[i] = packed[i];
+        }
+        read_length = static_cast<uint32_t>(count);
+    }
+    return answer[0];
+}
+
+uint64_t Volume::attr_write(char const *path, uint32_t length,
+                            char const *name, uint32_t name_length,
+                            uint32_t type, uint64_t offset, void const *data,
+                            uint32_t data_length) noexcept
+{
+    if (data_length > metadata::kAttrDataMax) {
+        return metadata::kNoSpace;
+    }
+    uint64_t request[aegir::ipc::kMaxWords];
+    uint32_t words = pack_path_name(request, path, length, name, name_length);
+    if (words == 0) {
+        return metadata::kNotFound;
+    }
+    uint32_t const data_words = (data_length + 7) / 8;
+    if (words + 3 + data_words > aegir::ipc::kMaxWords) {
+        return metadata::kNoSpace;
+    }
+    request[words++] = type;
+    request[words++] = offset;
+    request[words++] = data_length;
+    auto *packed = reinterpret_cast<uint8_t *>(request + words);
+    auto const *source = static_cast<uint8_t const *>(data);
+    for (uint32_t i = 0; i < data_length; ++i) {
+        packed[i] = source[i];
+    }
+    words += data_words;
+    uint64_t answer[metadata::kAttrWriteTailWords] = {};
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(metadata::kMethodAttrWrite, request, words, answer,
+                         metadata::kAttrWriteTailWords);
+    if (reply.error != 0 || reply.count < 1) {
+        return metadata::kNotFound;
+    }
+    return answer[0];
+}
+
+uint64_t Volume::attr_remove(char const *path, uint32_t length,
+                             char const *name, uint32_t name_length) noexcept
+{
+    uint64_t request[aegir::ipc::kMaxWords];
+    uint32_t const words = pack_path_name(request, path, length, name, name_length);
+    if (words == 0) {
+        return metadata::kNotFound;
+    }
+    uint64_t answer[1] = {};
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(metadata::kMethodAttrRemove, request, words, answer, 1);
+    if (reply.error != 0 || reply.count < 1) {
+        return metadata::kNotFound;
+    }
+    return answer[0];
+}
+
+uint64_t Volume::attr_list(char const *path, uint32_t length, uint64_t index,
+                           char *name, uint32_t &name_length, uint32_t &type,
+                           uint64_t &size) noexcept
+{
+    uint64_t request[aegir::ipc::kMaxWords];
+    uint32_t words =
+        nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (words == 0 || words + 1 > aegir::ipc::kMaxWords) {
+        return metadata::kNotFound;
+    }
+    request[words++] = index;
+    uint64_t answer[aegir::ipc::kMaxWords] = {};
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(metadata::kMethodAttrList, request, words, answer,
+                         aegir::ipc::kMaxWords);
+    if (reply.error != 0 || reply.count < 1) {
+        return metadata::kNotFound;
+    }
+    if (answer[0] != metadata::kOk) {
+        return answer[0];
+    }
+    char const *seen = nullptr;
+    uint32_t seen_length = 0;
+    if (!nmspace::unpack_string(answer + 1, reply.count - 1, metadata::kAttrNameMax,
+                                &seen, &seen_length)) {
+        return metadata::kNotFound;
+    }
+    uint32_t const tail = 2 + (seen_length + 7) / 8;
+    if (reply.count < tail + metadata::kAttrListTailWords) {
+        return metadata::kNotFound;
+    }
+    for (uint32_t i = 0; i < seen_length; ++i) {
+        name[i] = seen[i];
+    }
+    name_length = seen_length;
+    type = static_cast<uint32_t>(answer[tail]);
+    size = answer[tail + 1];
+    return metadata::kOk;
 }
 
 }  // namespace aegir::vfs

@@ -15,4 +15,4 @@ project(aegir-vfs-client CXX)
 add_library(aegir-vfs-client STATIC src/vfs.cc)
 
 target_include_directories(aegir-vfs-client PUBLIC include)
-target_link_libraries(aegir-vfs-client PUBLIC aegir-cxx-policy aegir-ipc aegir-namespace aegir-volume sel4 sel4runtime)
+target_link_libraries(aegir-vfs-client PUBLIC aegir-cxx-policy aegir-ipc aegir-metadata aegir-namespace aegir-volume sel4 sel4runtime)

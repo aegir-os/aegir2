@@ -22,6 +22,7 @@
 #define AEGIR_VFS_H
 
 #include <aegir/ipc/port.h>
+#include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
@@ -145,6 +146,38 @@ public:
      *  is freed on a shrink, zeroed clusters are added on a grow. A directory,
      *  a missing name, and a read-only volume are refused. False on refusal. */
     bool truncate(char const *path, uint32_t length, uint64_t size) noexcept;
+
+    /* Attributes (aegir/metadata.h). Unlike the calls above, each answers the
+     * protocol's status word: metadata::kOk, or kUnsupported / kNotFound /
+     * kReadOnly / ... The caller tells "no such attribute" from "no metadata"
+     * by it. */
+
+    /** `name`'s type_code and size. */
+    uint64_t attr_stat(char const *path, uint32_t length, char const *name,
+                       uint32_t name_length, uint32_t &type,
+                       uint64_t &size) noexcept;
+
+    /** Read `name`'s value at `offset`. `length` is the room in `data` and, on
+     *  return, the bytes read. A value larger than one envelope is read at
+     *  successive offsets. */
+    uint64_t attr_read(char const *path, uint32_t length, char const *name,
+                       uint32_t name_length, uint64_t offset, void *data,
+                       uint32_t &read_length) noexcept;
+
+    /** Write `name`'s value at `offset`, making it with `type` when absent. */
+    uint64_t attr_write(char const *path, uint32_t length, char const *name,
+                        uint32_t name_length, uint32_t type, uint64_t offset,
+                        void const *data, uint32_t data_length) noexcept;
+
+    /** Remove `name`. */
+    uint64_t attr_remove(char const *path, uint32_t length, char const *name,
+                         uint32_t name_length) noexcept;
+
+    /** The `index`th attribute's name, type and size; kNotFound past the
+     *  last. */
+    uint64_t attr_list(char const *path, uint32_t length, uint64_t index,
+                       char *name, uint32_t &name_length, uint32_t &type,
+                       uint64_t &size) noexcept;
 
 private:
     aegir::ipc::Consumer port_;

@@ -32,6 +32,7 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/mem/allocator.h>
+#include <aegir/metadata.h>
 #include <aegir/vfs.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
@@ -850,6 +851,311 @@ long ftruncate(int fd, long length) noexcept
         entry->offset = static_cast<uint64_t>(length);
     }
     return 0;
+}
+
+/* ---- attributes ---- */
+
+/* The metadata protocol's status word as an errno. A filesystem with no
+ * attributes answers kUnsupported, which is EOPNOTSUPP; one with attributes
+ * but not this name answers kNotFound, which for an attribute is ENODATA. */
+int status_errno(uint64_t status) noexcept
+{
+    switch (status) {
+    case aegir::metadata::kOk:
+        return 0;
+    case aegir::metadata::kUnsupported:
+        return EOPNOTSUPP;
+    case aegir::metadata::kNotFound:
+        return ENODATA;
+    case aegir::metadata::kInvalidName:
+        return ERANGE;
+    case aegir::metadata::kReadOnly:
+        return EROFS;
+    case aegir::metadata::kNoSpace:
+        return ENOSPC;
+    case aegir::metadata::kNotADirectory:
+        return ENOTDIR;
+    case aegir::metadata::kIsADirectory:
+        return EISDIR;
+    default:
+        return EIO;
+    }
+}
+
+/* Write a value of any size: one attr_write carries at most kAttrDataMax, so
+ * a larger value goes at successive offsets. */
+long write_attribute(aegir::vfs::Volume volume, char const *rest,
+                     uint32_t rest_length, char const *name, size_t size,
+                     void const *value) noexcept
+{
+    auto const *bytes = static_cast<uint8_t const *>(value);
+    uint64_t offset = 0;
+    for (;;) {
+        if (offset >= size) {
+            break;
+        }
+        uint32_t const chunk = static_cast<uint32_t>(
+            size - offset < aegir::metadata::kAttrDataMax
+                ? size - offset
+                : aegir::metadata::kAttrDataMax);
+        uint64_t const status = volume.attr_write(
+            rest, rest_length, name, text_length(name), aegir::metadata::kTypeRaw,
+            offset, bytes + offset, chunk);
+        if (status != aegir::metadata::kOk) {
+            return -status_errno(status);
+        }
+        offset += chunk;
+    }
+    if (size == 0) {
+        uint64_t const status = volume.attr_write(
+            rest, rest_length, name, text_length(name), aegir::metadata::kTypeRaw,
+            0, nullptr, 0);
+        if (status != aegir::metadata::kOk) {
+            return -status_errno(status);
+        }
+    }
+    return 0;
+}
+
+long read_attribute(aegir::vfs::Volume volume, char const *rest,
+                    uint32_t rest_length, char const *name, void *value,
+                    size_t size) noexcept
+{
+    uint32_t type = 0;
+    uint64_t value_size = 0;
+    uint64_t status = volume.attr_stat(rest, rest_length, name, text_length(name),
+                                       type, value_size);
+    if (status != aegir::metadata::kOk) {
+        return -status_errno(status);
+    }
+    if (size == 0) {
+        return static_cast<long>(value_size);
+    }
+    if (size < value_size) {
+        return -ERANGE;
+    }
+    auto *out = static_cast<uint8_t *>(value);
+    uint64_t offset = 0;
+    while (offset < value_size) {
+        uint32_t got = static_cast<uint32_t>(
+            value_size - offset < aegir::metadata::kAttrDataMax
+                ? value_size - offset
+                : aegir::metadata::kAttrDataMax);
+        status = volume.attr_read(rest, rest_length, name, text_length(name),
+                                  offset, out + offset, got);
+        if (status != aegir::metadata::kOk) {
+            return -status_errno(status);
+        }
+        if (got == 0) {
+            break;
+        }
+        offset += got;
+    }
+    return static_cast<long>(value_size);
+}
+
+long list_attributes(aegir::vfs::Volume volume, char const *rest,
+                     uint32_t rest_length, char *list, size_t size) noexcept
+{
+    char name[aegir::metadata::kAttrNameMax];
+    uint64_t total = 0;
+    for (uint64_t index = 0;; ++index) {
+        uint32_t name_length = 0;
+        uint32_t type = 0;
+        uint64_t attribute_size = 0;
+        uint64_t const status =
+            volume.attr_list(rest, rest_length, index, name, name_length, type,
+                             attribute_size);
+        if (status == aegir::metadata::kNotFound) {
+            break;
+        }
+        if (status != aegir::metadata::kOk) {
+            return -status_errno(status);
+        }
+        total += name_length + 1;
+    }
+    if (size == 0) {
+        return static_cast<long>(total);
+    }
+    if (size < total) {
+        return -ERANGE;
+    }
+    size_t used = 0;
+    for (uint64_t index = 0;; ++index) {
+        uint32_t name_length = 0;
+        uint32_t type = 0;
+        uint64_t attribute_size = 0;
+        uint64_t const status =
+            volume.attr_list(rest, rest_length, index, name, name_length, type,
+                             attribute_size);
+        if (status != aegir::metadata::kOk) {
+            break;
+        }
+        for (uint32_t i = 0; i < name_length; ++i) {
+            list[used + i] = name[i];
+        }
+        list[used + name_length] = '\0';
+        used += name_length + 1;
+    }
+    return static_cast<long>(used);
+}
+
+long setxattr(char const *path, char const *name, void const *value, size_t size,
+              int flags) noexcept
+{
+    static_cast<void>(flags);
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr || name == nullptr || (value == nullptr && size != 0)) {
+        return -EFAULT;
+    }
+    seL4_CPtr const slot = transient_slot();
+    if (slot == 0) {
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target target{};
+    if (resolve_target(path, text_length(path), slot, target)) {
+        result = write_attribute(aegir::vfs::Volume(target.volume), target.rest,
+                                 target.rest_length, name, size, value);
+    }
+    empty_slot(slot);
+    return result;
+}
+
+long lsetxattr(char const *path, char const *name, void const *value, size_t size,
+               int flags) noexcept
+{
+    return setxattr(path, name, value, size, flags);
+}
+
+long fsetxattr(int fd, char const *name, void const *value, size_t size,
+               int flags) noexcept
+{
+    static_cast<void>(flags);
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr || name == nullptr || (value == nullptr && size != 0)) {
+        return -EBADF;
+    }
+    return write_attribute(aegir::vfs::Volume(entry->volume), entry->path,
+                           entry->path_length, name, size, value);
+}
+
+long getxattr(char const *path, char const *name, void *value, size_t size) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr || name == nullptr || (value == nullptr && size != 0)) {
+        return -EFAULT;
+    }
+    seL4_CPtr const slot = transient_slot();
+    if (slot == 0) {
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target target{};
+    if (resolve_target(path, text_length(path), slot, target)) {
+        result = read_attribute(aegir::vfs::Volume(target.volume), target.rest,
+                                target.rest_length, name, value, size);
+    }
+    empty_slot(slot);
+    return result;
+}
+
+long lgetxattr(char const *path, char const *name, void *value, size_t size) noexcept
+{
+    return getxattr(path, name, value, size);
+}
+
+long fgetxattr(int fd, char const *name, void *value, size_t size) noexcept
+{
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr || name == nullptr || (value == nullptr && size != 0)) {
+        return -EBADF;
+    }
+    return read_attribute(aegir::vfs::Volume(entry->volume), entry->path,
+                          entry->path_length, name, value, size);
+}
+
+long listxattr(char const *path, char *list, size_t size) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr || (list == nullptr && size != 0)) {
+        return -EFAULT;
+    }
+    seL4_CPtr const slot = transient_slot();
+    if (slot == 0) {
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target target{};
+    if (resolve_target(path, text_length(path), slot, target)) {
+        result = list_attributes(aegir::vfs::Volume(target.volume), target.rest,
+                                 target.rest_length, list, size);
+    }
+    empty_slot(slot);
+    return result;
+}
+
+long llistxattr(char const *path, char *list, size_t size) noexcept
+{
+    return listxattr(path, list, size);
+}
+
+long flistxattr(int fd, char *list, size_t size) noexcept
+{
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr || (list == nullptr && size != 0)) {
+        return -EBADF;
+    }
+    return list_attributes(aegir::vfs::Volume(entry->volume), entry->path,
+                           entry->path_length, list, size);
+}
+
+long removexattr(char const *path, char const *name) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr || name == nullptr) {
+        return -EFAULT;
+    }
+    seL4_CPtr const slot = transient_slot();
+    if (slot == 0) {
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target target{};
+    if (resolve_target(path, text_length(path), slot, target)) {
+        uint64_t const status =
+            aegir::vfs::Volume(target.volume)
+                .attr_remove(target.rest, target.rest_length, name,
+                             text_length(name));
+        result = status == aegir::metadata::kOk ? 0 : -status_errno(status);
+    }
+    empty_slot(slot);
+    return result;
+}
+
+long lremovexattr(char const *path, char const *name) noexcept
+{
+    return removexattr(path, name);
+}
+
+long fremovexattr(int fd, char const *name) noexcept
+{
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr || name == nullptr) {
+        return -EBADF;
+    }
+    uint64_t const status = aegir::vfs::Volume(entry->volume)
+                                .attr_remove(entry->path, entry->path_length,
+                                             name, text_length(name));
+    return status == aegir::metadata::kOk ? 0 : -status_errno(status);
 }
 
 long chdir(char const *path) noexcept
