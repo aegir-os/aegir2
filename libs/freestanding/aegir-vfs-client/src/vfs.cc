@@ -143,6 +143,26 @@ bool Volume::list(char const *path, uint32_t length, uint64_t index, Entry &out)
     return true;
 }
 
+bool Volume::stat(char const *path, uint32_t length, Info &out) noexcept
+{
+    uint64_t request[nmspace::kPathMax / 8 + 1];
+    uint32_t const request_words =
+        nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (request_words == 0) {
+        return false;
+    }
+    uint64_t answer[volume::kStatTailWords];
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(volume::kMethodStat, request, request_words, answer,
+                         volume::kStatTailWords);
+    if (reply.error != 0 || reply.count != volume::kStatTailWords) {
+        return false;
+    }
+    out.kind = answer[0];
+    out.size = answer[1];
+    return true;
+}
+
 uint64_t Volume::open(char const *path, uint32_t length, uint64_t flags) noexcept
 {
     uint64_t request[nmspace::kPathMax / 8 + 2];

@@ -173,6 +173,31 @@ int main(int argc, char *argv[])
                "Initrd:services.manifest reads and begins '# Aegir'");
     }
 
+    /* stat: a path's kind and size without listing a directory -- what
+     * std::filesystem::status stands on. The root is a directory; a file is
+     * a file with a size. */
+    {
+        Namespace::Resolved resolved{};
+        seL4_CPtr const slot = g_objects.alloc_slot();
+        Volume::Info info{};
+        bool const file_ok =
+            slot != 0 &&
+            resolve_wait(space, "Initrd:services.manifest",
+                         sizeof("Initrd:services.manifest") - 1, slot, resolved) &&
+            Volume(resolved.volume).stat(resolved.rest, resolved.rest_length, info) &&
+            info.kind == aegir::volume::kKindFile && info.size > 0;
+
+        Namespace::Resolved root{};
+        seL4_CPtr const root_slot = g_objects.alloc_slot();
+        Volume::Info root_info{};
+        bool const dir_ok =
+            root_slot != 0 &&
+            resolve_wait(space, "Initrd:", sizeof("Initrd:") - 1, root_slot, root) &&
+            Volume(root.volume).stat(root.rest, root.rest_length, root_info) &&
+            root_info.kind == aegir::volume::kKindDir;
+        report(file_ok && dir_ok, "stat reports a file's kind and size and a root's kind");
+    }
+
     /* A directory listing on the initrd volume: the same filesystem the read
      * above used, so this proves list() without racing the test bed on the FAT
      * volumes it walks. (Listing a FAT volume from a second client while the

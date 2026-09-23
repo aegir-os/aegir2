@@ -171,6 +171,34 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 
+void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t kind = 0;
+    uint64_t size = 0;
+    if (path_length == 0) {
+        /* The root is the archive itself: a directory with no size. */
+        kind = aegir::volume::kKindDir;
+    } else {
+        uint64_t entry_size = 0;
+        if (find_entry(path, path_length, &entry_size) == nullptr) {
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        kind = aegir::volume::kKindFile;
+        size = entry_size;
+    }
+    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size};
+    port.reply_words(answer, aegir::volume::kStatTailWords);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -273,6 +301,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodList:
             answer_list(port, words, count);
+            break;
+        case aegir::volume::kMethodStat:
+            answer_stat(port, words, count);
             break;
         default:
             /* A method this version does not know is answered by saying

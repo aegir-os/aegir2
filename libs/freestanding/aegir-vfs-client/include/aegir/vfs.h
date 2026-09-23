@@ -114,6 +114,16 @@ public:
     };
     bool list(char const *path, uint32_t length, uint64_t index, Entry &out) noexcept;
 
+    /** One path's kind and size, without listing the directory it lives in
+     *  (volume::kMethodStat). Kind is volume::kKindFile or kKindDir; a
+     *  directory's size is zero. False when the path is not there or the
+     *  volume refuses. */
+    struct Info {
+        uint64_t kind;
+        uint64_t size;
+    };
+    bool stat(char const *path, uint32_t length, Info &out) noexcept;
+
     /* The write side (specs/vfs.md): handles, the only per-client state a
      * filesystem holds. Zero is never a handle, and one is never reused. */
     uint64_t open(char const *path, uint32_t length, uint64_t flags) noexcept;

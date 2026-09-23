@@ -1074,6 +1074,40 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 
+void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t kind = 0;
+    uint64_t size = 0;
+    if (path_length == 0) {
+        /* The empty path is the root: a directory, no size. */
+        kind = aegir::volume::kKindDir;
+    } else {
+        /* The last component is the thing itself; the walk stops before it
+         * and the directory it lives in is where it is looked up. */
+        Dir dir;
+        char const *last = nullptr;
+        uint32_t last_length = 0;
+        aegir::fat::Dirent dirent;
+        if (!walk(path, path_length, false, &dir, &last, &last_length) ||
+            !find_in_dir(dir, last, last_length, 0, &dirent)) {
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        kind = dirent.directory ? aegir::volume::kKindDir : aegir::volume::kKindFile;
+        size = dirent.directory ? 0 : dirent.bytes;
+    }
+    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size};
+    port.reply_words(answer, aegir::volume::kStatTailWords);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -1396,6 +1430,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodList:
             answer_list(vol, words, count);
+            break;
+        case aegir::volume::kMethodStat:
+            answer_stat(vol, words, count);
             break;
         case aegir::volume::kMethodOpen:
             answer_open(vol, words, count, badge);

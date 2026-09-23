@@ -74,6 +74,13 @@ constexpr uint32_t kMethodRemove = 7; /* in: path words; answer: 1, or 0 */
  * closed -- the session teardown's mechanism, called today by whoever
  * knows the badge (specs/vfs.md). Answer: how many were dropped. */
 constexpr uint32_t kMethodReap = 8;   /* in: badge; answer: how many */
+/* stat: a path. The walk ends at the thing the path names -- the empty path
+ * is the root, always a directory. Answer: the kind and the size
+ * (kStatTailWords words), or nothing when the path is not there. A directory
+ * has no size, so its size word is zero. Like list, stat needs no handle and
+ * no per-client state; it is what `std::filesystem::status` stands on
+ * (specs/cxx.md step 5). */
+constexpr uint32_t kMethodStat = 9;   /* in: path words; answer: kind, size */
 
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
@@ -99,5 +106,8 @@ constexpr uint32_t kReadHeaderWords = 2;
 
 /** list's answer after the name string: the entry's size and its kind. */
 constexpr uint32_t kListTailWords = 2;
+
+/** stat's answer: the entry's kind and its size, in that order. */
+constexpr uint32_t kStatTailWords = 2;
 
 }  // namespace aegir::volume

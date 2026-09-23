@@ -141,6 +141,12 @@ FAT matches each component as an 8.3 name, case-folded.
   path names — the empty path lists the root. Reply: one entry (name, size,
   kind), or end-of-directory. The cursor is the caller's index, the registry
   describe pattern again.
+- **stat** — words: a path. The walk ends at the thing the path names — the
+  empty path is the root, always a directory. Reply: the kind and the size
+  (`kStatTailWords` words), or nothing when the path is not there. A
+  directory's size is zero. Like list it needs no handle and no per-client
+  state; it is the call `std::filesystem::status` stands on (`specs/cxx.md`
+  step 5).
 
 Writes are a different shape, because a usable userspace API is one: a
 program opens a file and then streams, and asking it to re-walk the path and
