@@ -66,6 +66,20 @@ NESTED = [
      b"two components deep, and the walk found it\n"),
 ]
 
+# Long names, the VFAT layer the 8.3 form cannot spell (specs/fat.md): one in
+# a root, and one that names a directory so a component walk crosses a long
+# name too. mtools writes each as a long-name run plus a generated 8.3 alias;
+# the reader must match the long form, not only the alias.
+# (volume, name, content).
+LONG_ROOT = [
+    ("AEGIR", "Readme With A Long Name.txt",
+     b"a long name, read back whole -- the 8.3 form cannot spell it\n"),
+]
+LONG_NESTED = [
+    ("AEGIR", "A Long Folder", "Inside Long Name.txt",
+     b"a long directory, a long file, and the walk still ends at it\n"),
+]
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -164,8 +178,31 @@ def main() -> int:
             print(f"make_disk: the nested file did not land:\n{listing.stdout}",
                   file=sys.stderr)
             return 1
+
+    for name, long_name, long_content in LONG_ROOT:
+        first = next(p[1] for p in PARTITIONS if p[0] == name)
+        volume = f"{args.image}@@{first * SECTOR}"
+        with tempfile.TemporaryDirectory() as staging:
+            source = Path(staging) / long_name
+            source.write_bytes(long_content)
+            subprocess.run(
+                ["mcopy", "-i", volume, str(source), f"::{long_name}"],
+                check=True, capture_output=True)
+
+    for name, directory, long_name, long_content in LONG_NESTED:
+        first = next(p[1] for p in PARTITIONS if p[0] == name)
+        volume = f"{args.image}@@{first * SECTOR}"
+        subprocess.run(["mmd", "-i", volume, f"::{directory}"], check=True,
+                       capture_output=True)
+        with tempfile.TemporaryDirectory() as staging:
+            source = Path(staging) / long_name
+            source.write_bytes(long_content)
+            subprocess.run(
+                ["mcopy", "-i", volume, str(source), f"::{directory}/{long_name}"],
+                check=True, capture_output=True)
+
     print(f"make_disk: {args.image}: GPT, four FAT partitions, "
-          "two known files, one nested, one empty volume, one FAT16")
+          "two known files, one nested, long names, one empty volume, one FAT16")
     return 0
 
 

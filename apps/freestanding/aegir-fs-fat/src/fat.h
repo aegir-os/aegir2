@@ -50,25 +50,66 @@ Flavor bpb(uint8_t const *sector, Volume *volume) noexcept;
 /** A cluster's first sector, volume-relative. */
 uint64_t cluster_sector(Volume const &volume, uint32_t cluster) noexcept;
 
-/** One directory entry, narrowed to what a listing shows: the 8.3 name as
- *  "NAME.EXT", the first cluster, and the size. */
+/** The longest a long name may be, in UTF-16 code units, and the UTF-8 buffer
+ *  that holds its widest encoding: three bytes per unit for the BMP, which is
+ *  the most a code unit can expand to (a surrogate pair spends two units on
+ *  four bytes, so it is smaller). */
+constexpr uint32_t kLongNameUnits = 255;
+constexpr uint32_t kLongNameBytes = 3 * kLongNameUnits;
+
+/** One directory entry, narrowed to what a listing shows: the name as it is
+ *  meant to be read -- the long form where one exists, else the 8.3 form --
+ *  the first cluster, and the size. */
 struct Dirent {
-    char name[13];
+    char name[kLongNameBytes];
     uint32_t name_length;
     uint32_t first_cluster;
     uint32_t bytes;
     bool directory;
 };
 
-/** What one 32-byte slot turned out to be. */
-enum class Entry : uint32_t {
-    End,  /* a zero first byte: the directory is over */
-    Skip, /* deleted, a long-name fragment, or the volume label */
-    Used,
+/** What one 32-byte slot is, before a long-name run is considered. */
+enum class SlotKind : uint32_t {
+    End,     /* a zero first byte: nothing past here is used */
+    Deleted, /* 0xe5 in the first byte: the slot is free */
+    Lfn,     /* a long-name fragment (attribute 0x0f) */
+    Label,   /* the volume label (attribute 0x08) */
+    Short,   /* a file or directory entry */
 };
 
-/** Read one 32-byte slot. */
-Entry dirent(uint8_t const *raw, Dirent *out) noexcept;
+/** Classify one slot by its leading byte and attribute. */
+SlotKind slot_kind(uint8_t const *raw) noexcept;
+
+/** Read a short slot's fields. The name is its 8.3 form; the scanner
+ *  substitutes a long name when a valid run precedes it (Lfn, below). */
+void short_dirent(uint8_t const *raw, Dirent *out) noexcept;
+
+/** A long-name run under assembly. Its slots precede the 8.3 slot they belong
+ *  to, stored tail first: reading forward, the slot with the highest sequence
+ *  number (and `0x40` in its first byte) comes first, sequence one last. Feed
+ *  each fragment as it is read, then ask whether the run belongs to the 8.3
+ *  name that follows. */
+struct Lfn {
+    uint16_t units[kLongNameUnits];
+    uint32_t count;    /* how many units the run's slots claim */
+    uint32_t expected; /* the sequence number the next slot must carry; 0 done */
+    uint8_t checksum;  /* the 8.3 name's checksum, from every slot of the run */
+    bool active;
+};
+
+/** Start an empty run. */
+void lfn_reset(Lfn *run) noexcept;
+
+/** Feed one fragment (a slot `slot_kind` calls `Lfn`). A fragment with no head
+ *  or out of order discards the run rather than adopting the wrong name. */
+void lfn_feed(Lfn *run, uint8_t const *slot) noexcept;
+
+/** True when the run is complete and is this 8.3 name's: the checksums agree. */
+bool lfn_matches(Lfn const &run, uint8_t const *short_name) noexcept;
+
+/** Decode a complete run to UTF-8, stopping at the name's terminator. The
+ *  answer is the byte count; the buffer must hold `kLongNameBytes`. */
+uint32_t lfn_decode(Lfn const &run, char *out) noexcept;
 
 /** End of a cluster chain is a range of marks, not one sentinel. */
 constexpr uint32_t kEoc32 = 0x0ffffff8;

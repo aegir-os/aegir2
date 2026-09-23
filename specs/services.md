@@ -1024,7 +1024,10 @@ What was decided, and what it took:
 - **fs.fat reads FAT16 and FAT32**: BPB, the root
   directory, and a file's cluster chain -- the chain step is the one place
   the flavors differ (4-byte entries and one end-of-chain floor on FAT32,
-  2-byte and another on FAT16, and the file walk branches on both). The
+  2-byte and another on FAT16, and the file walk branches on both). Long
+  names travel too: a run of VFAT fragments before the 8.3 slot, tied to it
+  by the name's checksum and decoded UTF-16LE to UTF-8, so a component
+  matches the long name first and the 8.3 alias second (specs/fat.md). The
   test disk is built host-side without root (sgdisk writes the GPT, mtools
   fills each partition through `image@@offset`; scripts/make_disk.py):
   four partitions, AEGIR and SECOND and SCRATCH on FAT32 and the fourth

@@ -110,6 +110,37 @@ void check_std_filesystem()
     }
 
     {
+        /* A long name (VFAT, specs/fat.md) through std::filesystem: status,
+         * size, and a directory walk that must show the long form whole, not
+         * the generated 8.3 alias. Sys: is AEGIR:, the system volume. */
+        static char const kExpected[] =
+            "a long name, read back whole -- the 8.3 form cannot spell it\n";
+        std::error_code error;
+        fs::path const named("Sys:Readme With A Long Name.txt");
+        bool const is_file = fs::is_regular_file(named, error) && !error;
+        std::uintmax_t size = 0;
+        if (!error) {
+            size = fs::file_size(named, error);
+        }
+        report(is_file && !error && size == sizeof(kExpected) - 1,
+               "std::filesystem reads a long-named file's status and size");
+    }
+
+    {
+        std::error_code error;
+        bool found = false;
+        fs::directory_iterator const end;
+        for (fs::directory_iterator it("Sys:", error); !error && it != end;
+             it.increment(error)) {
+            if (it->path().filename() == "A Long Folder") {
+                found = true;
+            }
+        }
+        report(!error && found,
+               "std::filesystem::directory_iterator shows a long name whole");
+    }
+
+    {
         std::error_code error;
         fs::path const cwd = fs::current_path(error);
         report(!error && !cwd.native().empty(),

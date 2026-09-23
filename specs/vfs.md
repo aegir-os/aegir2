@@ -132,7 +132,8 @@ The path a method takes is the component path from above: `/` separates
 components, each a name in the directory above it, the empty path is the
 root, and an empty component is the parent (the Amiga convention — `//`
 from a subdirectory is the root, and the parent of the root is the root).
-FAT matches each component as an 8.3 name, case-folded.
+FAT matches each component against the long name first and the 8.3 name
+second, ASCII-case-folded (specs/fat.md).
 
 - **read** — words: path (after the colon), offset. The walk ends at the
   file the path names. Reply: data words inline

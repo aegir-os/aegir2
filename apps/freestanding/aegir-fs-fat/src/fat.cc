@@ -38,6 +38,17 @@ void put32(uint8_t *at, uint32_t value) noexcept
     }
 }
 
+/* The VFAT checksum of an 8.3 name, the one every slot of a long-name run
+ * carries so a stale run cannot be adopted by a neighbour. */
+uint8_t name_checksum(uint8_t const short_name[11]) noexcept
+{
+    uint8_t sum = 0;
+    for (uint32_t i = 0; i < 11; ++i) {
+        sum = static_cast<uint8_t>(((sum & 1) << 7) + (sum >> 1) + short_name[i]);
+    }
+    return sum;
+}
+
 }  // namespace
 
 Flavor bpb(uint8_t const *sector, Volume *volume) noexcept
@@ -104,15 +115,25 @@ uint64_t cluster_sector(Volume const &volume, uint32_t cluster) noexcept
            static_cast<uint64_t>(cluster - 2) * volume.sectors_per_cluster;
 }
 
-Entry dirent(uint8_t const *raw, Dirent *out) noexcept
+SlotKind slot_kind(uint8_t const *raw) noexcept
 {
     if (raw[0] == 0x00) {
-        return Entry::End;
+        return SlotKind::End;
     }
-    if (raw[0] == 0xe5 || raw[11] == 0x0f || (raw[11] & 0x08) != 0) {
-        /* Deleted, a long-name fragment, or the volume label. */
-        return Entry::Skip;
+    if (raw[0] == 0xe5) {
+        return SlotKind::Deleted;
     }
+    if (raw[11] == 0x0f) {
+        return SlotKind::Lfn;
+    }
+    if ((raw[11] & 0x08) != 0) {
+        return SlotKind::Label;
+    }
+    return SlotKind::Short;
+}
+
+void short_dirent(uint8_t const *raw, Dirent *out) noexcept
+{
     /* 8.3, padded with spaces: trim them, and join with a dot only when there
      * is an extension. */
     uint32_t base = 8;
@@ -137,7 +158,104 @@ Entry dirent(uint8_t const *raw, Dirent *out) noexcept
         (static_cast<uint32_t>(word16(raw + 20)) << 16) | word16(raw + 26);
     out->bytes = word32(raw + 28);
     out->directory = (raw[11] & 0x10) != 0;
-    return Entry::Used;
+}
+
+void lfn_reset(Lfn *run) noexcept
+{
+    run->count = 0;
+    run->expected = 0;
+    run->checksum = 0;
+    run->active = false;
+}
+
+void lfn_feed(Lfn *run, uint8_t const *slot) noexcept
+{
+    /* The low six bits are the sequence number; 0x40 marks the run's first
+     * physical slot (which holds the name's tail), 0x80 is never set on a
+     * live slot. Twenty slots is the format's ceiling: 20*13 > 255. */
+    uint8_t const field = slot[0];
+    uint32_t const sequence = field & 0x3f;
+    if (sequence == 0 || sequence > kLongNameUnits / 13 + 1) {
+        lfn_reset(run);
+        return;
+    }
+    if ((field & 0x40) != 0) {
+        /* The head slot names the run's length. */
+        run->count = sequence * 13;
+        run->expected = sequence - 1;
+        run->checksum = slot[13];
+        run->active = true;
+    } else if (!run->active || sequence != run->expected) {
+        /* A fragment with no head, or out of order: not this entry's run. */
+        lfn_reset(run);
+        return;
+    } else {
+        run->expected = sequence - 1;
+    }
+    /* Place the slot's thirteen units by sequence number: the first physical
+     * slot is the name's last chunk, so it lands last. */
+    static uint32_t const offsets[3] = {1, 14, 28};
+    static uint32_t const counts[3] = {5, 6, 2};
+    uint32_t unit = (sequence - 1) * 13;
+    for (uint32_t g = 0; g < 3; ++g) {
+        for (uint32_t j = 0; j < counts[g]; ++j) {
+            uint16_t const lo = slot[offsets[g] + j * 2];
+            uint16_t const hi = slot[offsets[g] + j * 2 + 1];
+            if (unit < kLongNameUnits) {
+                run->units[unit] = static_cast<uint16_t>(lo | (hi << 8));
+            }
+            ++unit;
+        }
+    }
+}
+
+bool lfn_matches(Lfn const &run, uint8_t const *short_name) noexcept
+{
+    if (!run.active || run.expected != 0 || run.count == 0) {
+        return false;
+    }
+    return name_checksum(short_name) == run.checksum;
+}
+
+uint32_t lfn_decode(Lfn const &run, char *out) noexcept
+{
+    uint32_t bytes = 0;
+    uint32_t const units = run.count < kLongNameUnits ? run.count : kLongNameUnits;
+    for (uint32_t i = 0; i < units; ++i) {
+        uint32_t const unit = run.units[i];
+        if (unit == 0x0000) {
+            break; /* the name's terminator */
+        }
+        if (unit == 0xffff) {
+            continue; /* padding */
+        }
+        if (unit < 0x80) {
+            out[bytes++] = static_cast<char>(unit);
+        } else if (unit < 0x800) {
+            out[bytes++] = static_cast<char>(0xc0 | (unit >> 6));
+            out[bytes++] = static_cast<char>(0x80 | (unit & 0x3f));
+        } else if (unit >= 0xd800 && unit < 0xdc00) {
+            /* A high surrogate pairs with the next unit into a code point. */
+            if (i + 1 < units && run.units[i + 1] >= 0xdc00 && run.units[i + 1] < 0xe000) {
+                uint32_t const point =
+                    0x10000 + ((unit - 0xd800) << 10) + (run.units[i + 1] - 0xdc00);
+                out[bytes++] = static_cast<char>(0xf0 | (point >> 18));
+                out[bytes++] = static_cast<char>(0x80 | ((point >> 12) & 0x3f));
+                out[bytes++] = static_cast<char>(0x80 | ((point >> 6) & 0x3f));
+                out[bytes++] = static_cast<char>(0x80 | (point & 0x3f));
+                ++i;
+            } else {
+                out[bytes++] = '?'; /* a lone surrogate is not a name */
+            }
+        } else if (unit >= 0xdc00 && unit < 0xe000) {
+            out[bytes++] = '?';
+        } else {
+            out[bytes++] = static_cast<char>(0xe0 | (unit >> 12));
+            out[bytes++] = static_cast<char>(0x80 | ((unit >> 6) & 0x3f));
+            out[bytes++] = static_cast<char>(0x80 | (unit & 0x3f));
+        }
+    }
+    return bytes;
 }
 
 uint32_t next32(uint8_t const *fat_sector, uint32_t cluster_mod_128) noexcept

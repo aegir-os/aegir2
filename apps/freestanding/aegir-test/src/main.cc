@@ -530,6 +530,66 @@ int main(int argc, char *argv[])
         write("  test: AEGIR:DOCS/NESTED.TXT reads back, two components deep\n");
     }
 
+    /* A long name (VFAT), read whole and listed whole: the root holds one, and
+     * the 8.3 alias only abbreviates it, so a reader that matched only the
+     * alias would find the wrong name (specs/fat.md). */
+    static char const kLongName[] = "Readme With A Long Name.txt";
+    static char const kLongPath[] = "AEGIR:Readme With A Long Name.txt";
+    static char const kLongTxt[] =
+        "a long name, read back whole -- the 8.3 form cannot spell it\n";
+    seL4_CPtr const long_volume =
+        resolve(kLongPath, sizeof(kLongPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 14));
+    if (!read_and_check(long_volume, rest, rest_length, kLongTxt,
+                        text_length(kLongTxt))) {
+        write("  test: FAIL AEGIR:Readme With A Long Name.txt did not read back\n");
+        ++failed;
+    } else {
+        write("  test: AEGIR: reads a long-named file\n");
+    }
+    {
+        aegir::ipc::Consumer volume(long_volume);
+        bool found = false;
+        for (uint32_t i = 0;; ++i) {
+            uint64_t out[2] = {0, i}; /* the root, then the index */
+            uint64_t in[aegir::ipc::kMaxWords];
+            aegir::ipc::WordsReply const answer = volume.call_words(
+                aegir::volume::kMethodList, out, 2, in, aegir::ipc::kMaxWords);
+            if (answer.error != 0 || answer.count == 0) {
+                break;
+            }
+            char const *name = nullptr;
+            uint32_t name_length = 0;
+            if (aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                              &name, &name_length) &&
+                name_length == sizeof(kLongName) - 1 &&
+                same_bytes(name, kLongName, name_length)) {
+                found = true;
+            }
+        }
+        if (!found) {
+            write("  test: FAIL AEGIR: listing did not show the long name whole\n");
+            ++failed;
+        } else {
+            write("  test: AEGIR: lists a long name whole\n");
+        }
+    }
+
+    /* A long name as a directory component: the walk crosses it. */
+    static char const kLongNestedPath[] = "AEGIR:A Long Folder/Inside Long Name.txt";
+    static char const kLongNestedTxt[] =
+        "a long directory, a long file, and the walk still ends at it\n";
+    seL4_CPtr const long_nested_volume =
+        resolve(kLongNestedPath, sizeof(kLongNestedPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 15));
+    if (!read_and_check(long_nested_volume, rest, rest_length, kLongNestedTxt,
+                        text_length(kLongNestedTxt))) {
+        write("  test: FAIL AEGIR:A Long Folder/Inside Long Name.txt did not read back\n");
+        ++failed;
+    } else {
+        write("  test: AEGIR: walks through a long-named directory\n");
+    }
+
     /* The same capability lists the volume's root: the empty rest names the
      * one directory version one knows. */
     {

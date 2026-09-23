@@ -346,6 +346,32 @@ bool same_name(char const *a, uint32_t a_length, char const *b, uint32_t b_lengt
     return true;
 }
 
+/* One slot as a scan sees it. A long-name fragment is kept in `run` for the
+ * entry that follows; a short entry fills `out` -- with the long name when a
+ * valid run precedes it, else its own 8.3 form -- and is the only kind that
+ * answers true. The label and a deleted slot report nothing and cannot sit
+ * inside a run, so they discard one. */
+bool scan_entry(aegir::fat::Lfn *run, uint8_t const *raw,
+                aegir::fat::Dirent *out) noexcept
+{
+    switch (aegir::fat::slot_kind(raw)) {
+    case aegir::fat::SlotKind::Lfn:
+        aegir::fat::lfn_feed(run, raw);
+        return false;
+    case aegir::fat::SlotKind::Short:
+        break;
+    default:
+        aegir::fat::lfn_reset(run);
+        return false;
+    }
+    aegir::fat::short_dirent(raw, out);
+    if (aegir::fat::lfn_matches(*run, raw)) {
+        out->name_length = aegir::fat::lfn_decode(*run, out->name);
+    }
+    aegir::fat::lfn_reset(run);
+    return true;
+}
+
 /* One directory, as the walks name one: the root -- a fixed region on
  * FAT16, a cluster chain like any other on FAT32, so the flag matters only
  * there -- or a subdirectory, always a chain. */
@@ -367,14 +393,15 @@ bool find_in_dir(Dir dir, char const *name, uint32_t name_length, uint32_t index
 {
     uint32_t seen = 0;
     bool found = false;
+    aegir::fat::Lfn run{};
     auto consider = [&](uint32_t entry_count) -> bool {
         for (uint32_t i = 0; i < entry_count; ++i) {
-            aegir::fat::Dirent dirent;
-            aegir::fat::Entry const kind = aegir::fat::dirent(g_window + i * 32, &dirent);
-            if (kind == aegir::fat::Entry::End) {
+            uint8_t const *raw = g_window + i * 32;
+            if (raw[0] == 0x00) {
                 return true;
             }
-            if (kind == aegir::fat::Entry::Skip) {
+            aegir::fat::Dirent dirent;
+            if (!scan_entry(&run, raw, &dirent)) {
                 continue;
             }
             if (name != nullptr) {
@@ -498,6 +525,7 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
     bool have_free = false;
     uint64_t free_sector = 0;
     uint32_t free_index = 0;
+    aegir::fat::Lfn run{};
     if (dir.root) {
         for (uint32_t s = 0; s < g_volume.root_sectors; ++s) {
             uint64_t const at = g_volume.root_start + s;
@@ -522,11 +550,11 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
                         free_index = i;
                         have_free = true;
                     }
+                    aegir::fat::lfn_reset(&run);
                     continue;
                 }
                 aegir::fat::Dirent dirent;
-                if (aegir::fat::dirent(raw, &dirent) == aegir::fat::Entry::Used &&
-                    name != nullptr &&
+                if (scan_entry(&run, raw, &dirent) && name != nullptr &&
                     same_name(dirent.name, dirent.name_length, name, name_length)) {
                     *out = dirent;
                     *sector_out = at;
@@ -574,11 +602,11 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
                         free_index = i;
                         have_free = true;
                     }
+                    aegir::fat::lfn_reset(&run);
                     continue;
                 }
                 aegir::fat::Dirent dirent;
-                if (aegir::fat::dirent(raw, &dirent) == aegir::fat::Entry::Used &&
-                    name != nullptr &&
+                if (scan_entry(&run, raw, &dirent) && name != nullptr &&
                     same_name(dirent.name, dirent.name_length, name, name_length)) {
                     *out = dirent;
                     *sector_out = at + s;
@@ -871,6 +899,7 @@ void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
 bool dir_is_empty(uint32_t cluster) noexcept
 {
     uint32_t c = cluster;
+    aegir::fat::Lfn run{};
     while (c >= 2 && c < chain_eoc()) {
         if (!read(aegir::fat::cluster_sector(g_volume, c),
                   g_volume.sectors_per_cluster)) {
@@ -882,7 +911,7 @@ bool dir_is_empty(uint32_t cluster) noexcept
                 return true; /* End: nothing past here is used */
             }
             aegir::fat::Dirent dirent;
-            if (aegir::fat::dirent(raw, &dirent) != aegir::fat::Entry::Used) {
+            if (!scan_entry(&run, raw, &dirent)) {
                 continue;
             }
             if ((dirent.name_length == 1 && dirent.name[0] == '.') ||
@@ -1270,14 +1299,15 @@ int main(int argc, char *argv[])
      * read back below. */
     aegir::fat::Dirent target{};
     bool have_target = false;
+    aegir::fat::Lfn run{};
     auto list_entries = [&](uint32_t entry_count) {
         for (uint32_t i = 0; i < entry_count; ++i) {
-            aegir::fat::Dirent dirent;
-            aegir::fat::Entry const kind = aegir::fat::dirent(window + i * 32, &dirent);
-            if (kind == aegir::fat::Entry::End) {
+            uint8_t const *raw = window + i * 32;
+            if (raw[0] == 0x00) {
                 return true;
             }
-            if (kind == aegir::fat::Entry::Skip || dirent.directory) {
+            aegir::fat::Dirent dirent;
+            if (!scan_entry(&run, raw, &dirent) || dirent.directory) {
                 continue;
             }
             aegir::debug_write("      ");
