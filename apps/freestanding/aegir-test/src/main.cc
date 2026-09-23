@@ -31,6 +31,7 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
 #include <aegir/registry.h>
+#include <aegir/thread.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -44,6 +45,21 @@ aegir::ipc::Consumer g_nmspace;
  * its own). The window block's slice mapping is what they serve. */
 aegir::mem::Allocator g_test_objects(nullptr);
 aegir::mem::Scratch g_test_scratch(nullptr);
+
+/* What this process's own objects are charged to. Everything here is boot
+ * work, so it is one account. */
+aegir::mem::Account g_test_account{"aegir-test", 0, 0, 0};
+
+/* The notice between the test thread and this one: a notification in this
+ * process's CSpace (the thread addresses it the same way, because it shares
+ * the CSpace) and a flag the thread sets. Both are globals on purpose -- the
+ * thread reaching them is what proves its global pointer, and making a syscall
+ * on the notification is what proves its thread pointer. */
+struct ThreadNotice {
+    seL4_CPtr slot;
+    volatile uint64_t ran;
+};
+ThreadNotice g_thread_notice;
 
 void write(char const *text)
 {
@@ -415,6 +431,25 @@ uint64_t login(aegir::ipc::Consumer const &port, char const *name,
 }
 
 }  // namespace
+
+/* What the test thread runs. It has no caller and no startup frame -- a thread
+ * gets only the argument its starter passed -- so it must not return: no
+ * return address was set for it. It reaches a global (g_thread_notice) and
+ * makes syscalls (the console write and the signal), which is exactly what a
+ * wrong stack, thread pointer or global pointer would break. It then blocks on
+ * the notification, which is how a thread ends here without suspending the
+ * process's own thread: seL4_CapInitThreadTCB is slot 1, and that is *this*
+ * process's boot thread, not this one. */
+void thread_entry(void *)
+{
+    write("  test: the thread ran, on its own stack, TLS and global pointer\n");
+    g_thread_notice.ran = 1;
+    seL4_Signal(g_thread_notice.slot);
+    for (;;) {
+        seL4_Word badge = 0;
+        seL4_Wait(g_thread_notice.slot, &badge);
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -1478,6 +1513,55 @@ int main(int argc, char *argv[])
         } else {
             write("  test: the console composited two windows, redrew what the destroy uncovered,\n");
             write("        and routed the click, the key, and the pointer\n");
+        }
+    }
+
+    /* A thread in this process: one seL4 TCB that shares the address space and
+     * gets its own stack, TLS block and IPC buffer. It is the base the
+     * runtime's std::thread will stand on (specs/cxx.md step 4), and the check
+     * is that it makes syscalls at all -- a thread whose thread pointer or
+     * global pointer is wrong faults on its first one and never signals. The
+     * starter blocks on the notification first: on one CPU the thread cannot
+     * run until the starter yields. */
+    {
+        uint64_t vspace_slot = 0;
+        bool const have_vspace = aegir::bootstrap::capability("vspace", 6, &vspace_slot);
+        seL4_Error thread_error = seL4_NoError;
+        seL4_CPtr const notice =
+            g_test_objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
+                                        g_test_account, &thread_error);
+        g_thread_notice.ran = 0;
+        g_thread_notice.slot = notice;
+        aegir::thread::Thread thread{};
+        aegir::thread::Builder builder(g_test_objects, g_test_scratch, g_test_account);
+        aegir::thread::Placement const where{
+            seL4_CapInitThreadCNode,
+            static_cast<seL4_CPtr>(vspace_slot),
+            seL4_CapNull,
+            seL4_MaxPrio - 1,
+            4,
+        };
+        bool const started = notice != 0 && have_vspace &&
+                             builder.start(where, thread_entry, nullptr, thread);
+        bool ok = started;
+        if (started) {
+            seL4_Word badge = 0;
+            seL4_Recv(notice, &badge);
+            ok = g_thread_notice.ran == 1;
+        }
+        if (!ok) {
+            char const *why = started ? "the thread did not signal" : builder.problem();
+            if (!have_vspace) {
+                why = "this process was given no vspace";
+            } else if (notice == 0) {
+                why = "no memory for the notification";
+            }
+            write("  test: FAIL a thread could not be started in this process (");
+            write(why);
+            write(")\n");
+            ++failed;
+        } else {
+            write("  test: a second thread ran in this process's address space\n");
         }
     }
 

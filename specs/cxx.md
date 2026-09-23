@@ -247,13 +247,14 @@ The order:
    `specs/userland.md:85` records the rules (tp, gp, a stack that does not
    overlap the TLS block). The order:
 
-   1. **A thread-creation primitive** (in `aegir-spawn`, beside the process
-      path that already does the same for a process's boot thread): retype a
-      `seL4_TCB` from the process's own untyped, write its user context with
-      the three rules, set its IPC buffer with `seL4_TCB_SetIPCBuffer` (libsel4
-      reaches the buffer through the TLS variable `__sel4_ipc_buffer`), and
-      start it. A freestanding smoke proves a second thread runs and writes to
-      the console -- the first checkpoint, and it needs no musl.
+   1. **A thread-creation primitive** -- `libs/freestanding/aegir-thread`
+      (landed): retype a `seL4_TCB` from the process's own untyped, write its
+      user context with the three rules, name its IPC buffer in the TCB
+      configuration (`seL4_TCB_Configure`, the same call the spawner uses for a
+      process's boot thread -- libsel4 reaches the buffer through the TLS
+      variable `__sel4_ipc_buffer`), and start it. The freestanding smoke is a
+      check in `aegir-test`: a second thread runs, reaches a global and the
+      console through its own TLS, and signals the starter.
    2. **Each thread's IPC buffer and TLS block**, from the process's heap
       (`aegir-heap`'s window), because the boot thread's is not shared.
    3. **The dispatcher's `SYS_clone`**, which resumes the child at the
