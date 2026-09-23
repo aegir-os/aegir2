@@ -106,10 +106,14 @@ letters, digits, `-` and `_` only. A name past those is refused, not mangled.
 
 A 8.3 slot carries creation, last-write and last-access date-time words in
 DOS format: date as `(year−1980)<<9 | month<<5 | day`, time as
-`hour<<11 | minute<<5 | second/2`. There is no time source in the system
-yet, so the service currently writes zeroes and reports none; the fields are
-read and written for real once the clock source lands (the arc's tail), and
-the service gets the time from the clock port rather than inventing one.
+`hour<<11 | minute<<5 | second/2`. **The service stamps them from the clock
+port** (`clock.main`, `aegir/clock.h`), asked once per create, write and
+rename and converted to and from Unix seconds as UTC (FAT has no zone, and
+the DOS second is even — the last bit is dropped). The write time is what
+`stat` reports as the entry's mtime, which the runtime turns into the kstat's
+`st_mtim`; access and creation mirror the write time rather than lie with
+zero. A machine with no clock leaves the fields zero, "no time" on both
+sides, and a file's `last_write_time` is then the epoch.
 
 ## Deferred
 

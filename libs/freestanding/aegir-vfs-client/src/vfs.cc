@@ -160,6 +160,7 @@ bool Volume::stat(char const *path, uint32_t length, Info &out) noexcept
     }
     out.kind = answer[0];
     out.size = answer[1];
+    out.mtime = answer[2];
     return true;
 }
 

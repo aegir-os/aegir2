@@ -121,6 +121,7 @@ public:
     struct Info {
         uint64_t kind;
         uint64_t size;
+        uint64_t mtime; /* whole seconds since the Unix epoch, 0 for none */
     };
     bool stat(char const *path, uint32_t length, Info &out) noexcept;
 

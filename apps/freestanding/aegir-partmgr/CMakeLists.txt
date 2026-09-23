@@ -20,6 +20,6 @@ add_executable(aegir-partmgr src/main.cc src/gpt.cc)
 target_compile_options(aegir-partmgr PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-partmgr PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block aegir-ipc
+  aegir-partmgr PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block aegir-clock aegir-ipc
                         aegir-log aegir-mem aegir-namespace aegir-partman aegir-registry aegir-spawn sel4 muslc sel4runtime
 )

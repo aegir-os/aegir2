@@ -25,6 +25,7 @@
 
 #include <aegir/block.h>
 #include <aegir/bootstrap.h>
+#include <aegir/clock.h>
 #include <aegir/debug.h>
 #include <aegir/descriptor.h>
 #include <aegir/ipc/port.h>
@@ -80,6 +81,23 @@ bool g_writable = false;
 uint8_t *g_memory = nullptr;
 uint32_t g_memory_bytes = 0;
 uint64_t g_handle_serial = 0;
+
+/* The clock, when the partition manager passed one: entries are stamped with
+ * the time it answers, and without it the fields stay zero (specs/fat.md). */
+aegir::ipc::Consumer g_clock;
+bool g_have_clock = false;
+
+/* The time to stamp with, or zero when there is no clock. */
+uint64_t now_seconds() noexcept
+{
+    if (!g_have_clock) {
+        return 0;
+    }
+    uint64_t answer[aegir::clock::kNowWords] = {};
+    aegir::ipc::WordsReply const reply = g_clock.call_words(
+        aegir::clock::kMethodNow, nullptr, 0, answer, aegir::clock::kNowWords);
+    return reply.error == 0 && reply.count >= 1 ? answer[0] : 0;
+}
 
 /* One open file. The serial is the handle the client names; it is never
  * reused, so a stale handle answers "not one" rather than naming a new
@@ -176,6 +194,24 @@ bool write_back(uint64_t lba, uint32_t count) noexcept
     aegir::ipc::Reply const reply =
         g_blk.call(aegir::block::kMethodWrite, aegir::block::pack_read(g_first + lba, count));
     return reply.error == 0 && reply.word == count;
+}
+
+/* Stamp an entry's slot with the current time, read-modify-write. A machine
+ * with no clock leaves the fields zero -- "no time", not 1970 (specs/fat.md). */
+bool stamp_slot(uint64_t sector, uint32_t index) noexcept
+{
+    uint64_t const seconds = now_seconds();
+    if (seconds == 0) {
+        return true;
+    }
+    uint16_t date = 0;
+    uint16_t time = 0;
+    aegir::fat::unix_to_dos(seconds, &date, &time);
+    if (!read(sector, 1)) {
+        return false;
+    }
+    aegir::fat::dirent_set_time(g_window + index * 32, date, time);
+    return write_back(sector, 1);
 }
 
 /* The chain's flavor, in the four places the formats differ: an entry's
@@ -1000,7 +1036,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         if ((flags & aegir::volume::kOpenCreate) != 0) {
             Slot const made = dir_create(dir, last, last_length, false, 0, 0, &dirent,
                                          &dirent_sector, &dirent_index);
-            ok = made == Slot::Found;
+            ok = made == Slot::Found && stamp_slot(dirent_sector, dirent_index);
         }
     }
     if (ok) {
@@ -1066,9 +1102,17 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
         handle->size = handle->cursor;
     }
     if (written > 0 && read(handle->dirent_sector, 1)) {
-        aegir::fat::dirent_update(g_window + handle->dirent_index * 32,
-                                  handle->first_cluster,
+        uint8_t *slot = g_window + handle->dirent_index * 32;
+        aegir::fat::dirent_update(slot, handle->first_cluster,
                                   static_cast<uint32_t>(handle->size));
+        /* The write time moves with the bytes, when there is a clock. */
+        uint64_t const seconds = now_seconds();
+        if (seconds != 0) {
+            uint16_t date = 0;
+            uint16_t time = 0;
+            aegir::fat::unix_to_dos(seconds, &date, &time);
+            aegir::fat::dirent_set_time(slot, date, time);
+        }
         static_cast<void>(write_back(handle->dirent_sector, 1));
     }
     port.reply_words(&written, 1);
@@ -1156,7 +1200,7 @@ bool make_dirs(char const *path, uint32_t path_length) noexcept
                 }
                 Slot const made = dir_create(dir, path + at, end - at, true, cluster,
                                              0, &dirent, &sector, &index);
-                if (made != Slot::Found) {
+                if (made != Slot::Found || !stamp_slot(sector, index)) {
                     return false; /* full, or broken underneath */
                 }
             } else {
@@ -1380,6 +1424,7 @@ void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
     if (dir_create(src_dir, dst_last, dst_last_length, dirent.directory,
                    dirent.first_cluster, dirent.bytes, &made, &made_sector,
                    &made_index) == Slot::Found &&
+        stamp_slot(made_sector, made_index) &&
         mark_deleted(dirent_sector, dirent_index, lfn)) {
         renamed = 1;
     }
@@ -1641,6 +1686,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     }
     uint64_t kind = 0;
     uint64_t size = 0;
+    uint64_t mtime = 0;
     if (path_length == 0) {
         /* The empty path is the root: a directory, no size. */
         kind = aegir::volume::kKindDir;
@@ -1658,8 +1704,9 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         }
         kind = dirent.directory ? aegir::volume::kKindDir : aegir::volume::kKindFile;
         size = dirent.directory ? 0 : dirent.bytes;
+        mtime = aegir::fat::dos_to_unix(dirent.date, dirent.time);
     }
-    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size};
+    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size, mtime};
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 
@@ -1989,6 +2036,13 @@ int main(int argc, char *argv[])
             aegir::debug_write(": announced, serving\n");
         }
     }
+
+    /* The clock, when the partition manager passed one: entries are stamped
+     * with the time it answers, and without one the fields stay zero
+     * (specs/fat.md). */
+    g_clock = aegir::ipc::Consumer::find(aegir::clock::kPortName,
+                                         aegir::clock::kPortNameLength);
+    g_have_clock = g_clock.valid();
 
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     for (;;) {

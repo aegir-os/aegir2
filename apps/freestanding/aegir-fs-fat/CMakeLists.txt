@@ -22,5 +22,5 @@ target_compile_options(aegir-fs-fat PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-fs-fat PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block
-                       aegir-descriptor aegir-ipc aegir-log aegir-namespace aegir-partman aegir-volume sel4 muslc sel4runtime
+                       aegir-descriptor aegir-clock aegir-ipc aegir-log aegir-namespace aegir-partman aegir-volume sel4 muslc sel4runtime
 )

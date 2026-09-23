@@ -22,6 +22,7 @@
 #include <aegir/block.h>
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/clock.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/mem/allocator.h>
@@ -144,7 +145,8 @@ void append_number(char *out, uint32_t *at, uint64_t value) noexcept
  * The child blocks in its announce until we answer, so the answer is served
  * here, between the spawn and the wait for its ready. */
 void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
-                      aegir::ipc::Consumer const &nmspace, seL4_CPtr announce,
+                      seL4_CPtr spawn_clock, aegir::ipc::Consumer const &nmspace,
+                      seL4_CPtr announce,
                       char const *device_name, uint32_t device_name_length,
                       uint32_t partition, uint64_t first_lba, uint64_t sector_count,
                       uint32_t boot,
@@ -242,7 +244,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
         return;
     }
 
-    aegir::spawn::PortGrant const ports[] = {
+    aegir::spawn::PortGrant ports[5] = {
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, spawn_log, seL4_CapRights_new(1, 0, 0, 1),
          badge, 0},
@@ -263,6 +265,16 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
          aegir::bootstrap::kSlotFirstDeclared + 3, announce,
          seL4_CapRights_new(1, 0, 0, 1), 0, 0},
     };
+    uint32_t port_count = 4;
+    if (spawn_clock != 0) {
+        /* The clock, when the manifest declared one: the filesystem asks it
+         * for the time it stamps entries with (specs/fat.md). A machine with
+         * no clock simply has no timestamps. */
+        ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
+                             aegir::bootstrap::kSlotFirstDeclared + 4, spawn_clock,
+                             seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+        ++port_count;
+    }
     aegir::spawn::Request request{};
     request.name = name;
     request.name_length = name_length;
@@ -278,7 +290,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.stack_pages = 4;
     request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
-    request.port_count = 4;
+    request.port_count = port_count;
     request.devices = range;
     request.devices_bytes = range_length;
     request.window_frame = window;
@@ -505,6 +517,7 @@ int main(int argc, char *argv[])
      * fit a delegation this size (specs/services.md). */
     uint64_t spawn_log_slot = 0;
     uint64_t pool_slot = 0;
+    uint64_t spawn_clock_slot = 0;
     uint64_t fs_image_address = 0;
     uint32_t fs_image_bytes = 0;
     bool const can_spawn =
@@ -512,6 +525,13 @@ int main(int argc, char *argv[])
         aegir::bootstrap::capability("asid-pool", 9, &pool_slot) &&
         aegir::bootstrap::devices(&fs_image_address, &fs_image_bytes) &&
         fs_image_bytes != 0;
+    /* The clock is optional: a filesystem without one still serves, its
+     * timestamps zero (specs/fat.md). Director gives a spawning service an
+     * unbadged `spawn:` copy of each covered child's ports, so the name here
+     * is the spawn: one, not the port's own. */
+    static char const kSpawnClock[] = "spawn:clock.main";
+    static_cast<void>(aegir::bootstrap::capability(kSpawnClock, sizeof(kSpawnClock) - 1,
+                                                   &spawn_clock_slot));
     if (!can_spawn) {
         aegir::debug_write("      partition manager: no pool, delegatable log or "
                            "filesystem image -- reading tables only\n");
@@ -813,7 +833,8 @@ int main(int argc, char *argv[])
      * spawns: each child gets a window carved for it from our untyped, so no
      * two children read through the same frames (aegir/block.h). */
     for (Pending *pending = pendings; pending != nullptr; pending = pending->next) {
-        start_filesystem(spawner, static_cast<seL4_CPtr>(spawn_log_slot), nmspace,
+        start_filesystem(spawner, static_cast<seL4_CPtr>(spawn_log_slot),
+                         static_cast<seL4_CPtr>(spawn_clock_slot), nmspace,
                          announce, pending->device_name, pending->device_name_length,
                          pending->partition, pending->first_lba, pending->sector_count,
                          pending->boot, pending->port, pages_per_window,

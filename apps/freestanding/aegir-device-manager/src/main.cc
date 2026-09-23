@@ -776,6 +776,13 @@ int main(int argc, char *argv[])
             uint64_t nmspace_slot = 0;
             bool const have_nmspace =
                 aegir::bootstrap::capability("spawn:vfs.namespace", 19, &nmspace_slot);
+            /* The clock, when the manifest declares one and the partition
+             * manager needs it: the filesystem services it starts stamp their
+             * entries with the time it answers (specs/fat.md). Optional -- a
+             * machine with no clock still serves, its timestamps zero. */
+            uint64_t clock_slot = 0;
+            bool const have_clock =
+                aegir::bootstrap::capability("spawn:clock.main", 16, &clock_slot);
             if (binding_count > 0 && !have_log) {
                 write_line("FAIL", "no delegatable log.main was given");
             }
@@ -1229,9 +1236,11 @@ int main(int argc, char *argv[])
                  * partition manager is the first service that asks. */
                 uint32_t const registry_rows = registry_endpoint != 0 ? 1 : 0;
                 uint32_t const nmspace_rows = have_nmspace ? 1 : 0;
+                uint32_t const clock_rows = have_clock ? 1 : 0;
+                uint32_t const fixed_rows = 4 + registry_rows + nmspace_rows + clock_rows;
                 auto *ports = static_cast<aegir::spawn::PortGrant *>(
                     arena.allocate(sizeof(aegir::spawn::PortGrant) *
-                                   (4 + registry_rows + nmspace_rows + bound_count)));
+                                   (fixed_rows + bound_count)));
                 auto *frames = static_cast<aegir::spawn::DeviceGrant *>(arena.allocate(
                     sizeof(aegir::spawn::DeviceGrant) *
                     (window_grant_count != 0 ? window_grant_count : 1)));
@@ -1295,6 +1304,18 @@ int main(int argc, char *argv[])
                             bound[i].port, seL4_CapRights_new(1, 0, 0, 1), 0,
                             0};
                     }
+                    if (clock_rows != 0) {
+                        /* The clock rides last, under the name the partition
+                         * manager reads it by and passes on to each filesystem
+                         * it starts -- the same delegatable copy the log
+                         * travels as. */
+                        static char const kSpawnClockGrant[] = "spawn:clock.main";
+                        uint32_t const index = 4 + registry_rows + nmspace_rows + bound_count;
+                        ports[index] = {kSpawnClockGrant, sizeof(kSpawnClockGrant) - 1,
+                                        aegir::bootstrap::kSlotFirstDeclared + index,
+                                        static_cast<seL4_CPtr>(clock_slot), seL4_AllRights,
+                                        0, 0};
+                    }
                     /* The windows as frame capabilities, one group per port in
                      * the ports' own order -- the manager's own pages, pages
                      * ascending within a group, and only the block ports'
@@ -1327,7 +1348,7 @@ int main(int argc, char *argv[])
                     request.account_length = 6;
                     request.priority = seL4_MaxPrio - 1;
                     request.ports = ports;
-                    request.port_count = 4 + registry_rows + nmspace_rows + bound_count;
+                    request.port_count = 4 + registry_rows + nmspace_rows + clock_rows + bound_count;
                     request.give_vspace = true;
                     /* The filesystem service's image, as bytes: the whole
                      * initrd is 1.2 MiB and does not fit a service-sized

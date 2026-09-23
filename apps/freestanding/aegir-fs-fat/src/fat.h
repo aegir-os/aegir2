@@ -65,6 +65,8 @@ struct Dirent {
     uint32_t name_length;
     uint32_t first_cluster;
     uint32_t bytes;
+    uint16_t date; /* the write date, DOS-packed */
+    uint16_t time; /* the write time, DOS-packed */
     bool directory;
 };
 
@@ -185,6 +187,28 @@ void dirent_set_case(uint8_t slot[32], bool base_lower, bool ext_lower) noexcept
 
 /** Patch an existing slot after a write: the first cluster and the size. */
 void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noexcept;
+
+/** The slot's three DOS date-time fields, at these offsets: creation time and
+ *  date, last-access date, and last-write time and date (Microsoft's FAT
+ *  specification, "FAT Directory Entry"). */
+constexpr uint32_t kDirentCreateTime = 14;
+constexpr uint32_t kDirentCreateDate = 16;
+constexpr uint32_t kDirentAccessDate = 18;
+constexpr uint32_t kDirentWriteTime = 22;
+constexpr uint32_t kDirentWriteDate = 24;
+
+/** Set a slot's creation, last-access and last-write time to one DOS date and
+ *  time. A zero date means "no time" -- what a machine with no clock writes. */
+void dirent_set_time(uint8_t slot[32], uint16_t date, uint16_t time) noexcept;
+
+/** Read a slot's last-write DOS date and time. */
+void dirent_time(uint8_t const *slot, uint16_t *date, uint16_t *time) noexcept;
+
+/** Convert between the DOS date/time words and Unix seconds (UTC -- FAT has no
+ *  zone, so this is the midnight-1980 convention). A zero time converts to
+ *  zero seconds and back, "no time" on both sides. */
+uint64_t dos_to_unix(uint16_t date, uint16_t time) noexcept;
+void unix_to_dos(uint64_t seconds, uint16_t *date, uint16_t *time) noexcept;
 
 /** Set one entry in a FAT sector the caller holds (the mirror of next*). */
 void set_next32(uint8_t *fat_sector, uint32_t cluster_mod_128, uint32_t value) noexcept;

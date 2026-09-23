@@ -172,6 +172,8 @@ void short_dirent(uint8_t const *raw, Dirent *out) noexcept
     out->first_cluster =
         (static_cast<uint32_t>(word16(raw + 20)) << 16) | word16(raw + 26);
     out->bytes = word32(raw + 28);
+    out->date = word16(raw + kDirentWriteDate);
+    out->time = word16(raw + kDirentWriteTime);
     out->directory = (raw[11] & 0x10) != 0;
 }
 
@@ -506,6 +508,90 @@ void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noe
     put16(slot + kDirentClusterHigh, static_cast<uint16_t>(first_cluster >> 16));
     put16(slot + kDirentClusterLow, static_cast<uint16_t>(first_cluster));
     put32(slot + kDirentSize, bytes);
+}
+
+namespace {
+
+/* Howard Hinnant's civil-date algorithms: the days since 1970-01-01 for a
+ * Gregorian date, and the reverse. FAT's epoch is 1980 and it carries no time
+ * zone, so the DOS words are read and written as UTC. */
+int64_t days_from_civil(int64_t y, unsigned m, unsigned d) noexcept
+{
+    y -= m <= 2;
+    int64_t const era = (y >= 0 ? y : y - 399) / 400;
+    unsigned const yoe = static_cast<unsigned>(y - era * 400);
+    unsigned const doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    unsigned const doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + static_cast<int64_t>(doe) - 719468;
+}
+
+void civil_from_days(int64_t z, int64_t *y, unsigned *m, unsigned *d) noexcept
+{
+    z += 719468;
+    int64_t const era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned const doe = static_cast<unsigned>(z - era * 146097);
+    unsigned const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t const year = static_cast<int64_t>(yoe) + era * 400;
+    unsigned const doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned const mp = (5 * doy + 2) / 153;
+    *d = doy - (153 * mp + 2) / 5 + 1;
+    *m = mp + (mp < 10 ? 3 : -9);
+    *y = year + (*m <= 2 ? 1 : 0);
+}
+
+}  // namespace
+
+void dirent_set_time(uint8_t slot[32], uint16_t date, uint16_t time) noexcept
+{
+    put16(slot + kDirentCreateTime, time);
+    put16(slot + kDirentCreateDate, date);
+    put16(slot + kDirentAccessDate, date);
+    put16(slot + kDirentWriteTime, time);
+    put16(slot + kDirentWriteDate, date);
+}
+
+void dirent_time(uint8_t const *slot, uint16_t *date, uint16_t *time) noexcept
+{
+    *date = word16(slot + kDirentWriteDate);
+    *time = word16(slot + kDirentWriteTime);
+}
+
+uint64_t dos_to_unix(uint16_t date, uint16_t time) noexcept
+{
+    if (date == 0) {
+        return 0; /* no time */
+    }
+    uint32_t const year = 1980u + ((date >> 9) & 0x7fu);
+    uint32_t const month = (date >> 5) & 0x0fu;
+    uint32_t const day = date & 0x1fu;
+    uint32_t const hour = (time >> 11) & 0x1fu;
+    uint32_t const minute = (time >> 5) & 0x3fu;
+    uint32_t const second = (time & 0x1fu) * 2u;
+    int64_t const days = days_from_civil(year, month, day);
+    return static_cast<uint64_t>(days) * 86400u + hour * 3600u + minute * 60u + second;
+}
+
+void unix_to_dos(uint64_t seconds, uint16_t *date, uint16_t *time) noexcept
+{
+    if (seconds == 0) {
+        *date = 0;
+        *time = 0;
+        return;
+    }
+    int64_t const days = static_cast<int64_t>(seconds / 86400u);
+    uint32_t const rem = static_cast<uint32_t>(seconds % 86400u);
+    int64_t year = 0;
+    unsigned month = 0;
+    unsigned day = 0;
+    civil_from_days(days, &year, &month, &day);
+    if (year < 1980) {
+        *date = 0;
+        *time = 0;
+        return;
+    }
+    *date = static_cast<uint16_t>(((year - 1980) << 9) | (month << 5) | day);
+    *time = static_cast<uint16_t>(((rem / 3600) << 11) | (((rem % 3600) / 60) << 5) |
+                                  ((rem % 60) / 2));
 }
 
 void set_next32(uint8_t *fat_sector, uint32_t cluster_mod_128, uint32_t value) noexcept

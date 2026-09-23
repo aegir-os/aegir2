@@ -378,7 +378,7 @@ int install(seL4_CPtr slot, Target const &target, uint64_t handle, bool director
     return fd;
 }
 
-void fill_kstat(Kstat *out, uint64_t kind, uint64_t size) noexcept
+void fill_kstat(Kstat *out, uint64_t kind, uint64_t size, uint64_t mtime) noexcept
 {
     *out = Kstat{};
     out->st_mode = static_cast<mode_t>(
@@ -388,6 +388,11 @@ void fill_kstat(Kstat *out, uint64_t kind, uint64_t size) noexcept
     out->st_size = size;
     out->st_blksize = 4096;
     out->st_blocks = (size + 511) / 512;
+    /* The one time the filesystem reports is the last-write time; the other
+     * two mirror it rather than lying with zero (specs/fat.md's Times). */
+    out->st_atime_sec = static_cast<long>(mtime);
+    out->st_mtime_sec = static_cast<long>(mtime);
+    out->st_ctime_sec = static_cast<long>(mtime);
 }
 
 /* One file's kind and size into a kstat, by path or by the fd that names it. */
@@ -404,7 +409,7 @@ bool stat_target(char const *path, uint32_t length, Kstat *out) noexcept
         ok = aegir::vfs::Volume(target.volume)
                  .stat(target.rest, target.rest_length, info);
         if (ok) {
-            fill_kstat(out, info.kind, info.size);
+            fill_kstat(out, info.kind, info.size, info.mtime);
         }
     }
     empty_slot(slot);
@@ -417,7 +422,7 @@ bool stat_entry(Entry const &entry, Kstat *out) noexcept
     if (!aegir::vfs::Volume(entry.volume).stat(entry.path, entry.path_length, info)) {
         return false;
     }
-    fill_kstat(out, info.kind, info.size);
+    fill_kstat(out, info.kind, info.size, info.mtime);
     return true;
 }
 

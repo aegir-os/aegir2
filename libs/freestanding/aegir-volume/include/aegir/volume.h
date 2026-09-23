@@ -123,7 +123,9 @@ constexpr uint32_t kReadHeaderWords = 2;
 /** list's answer after the name string: the entry's size and its kind. */
 constexpr uint32_t kListTailWords = 2;
 
-/** stat's answer: the entry's kind and its size, in that order. */
-constexpr uint32_t kStatTailWords = 2;
+/** stat's answer after the path: the entry's kind and its size, then its
+ *  last-write time as whole seconds since the Unix epoch (zero when the
+ *  filesystem has no time source). */
+constexpr uint32_t kStatTailWords = 3;
 
 }  // namespace aegir::volume

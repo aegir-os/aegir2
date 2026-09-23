@@ -15,6 +15,7 @@
 #include <aegir/debug.h>
 #include <aegir/filesystem.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -294,6 +295,32 @@ void check_clock()
            "clock_gettime returns a plausible monotonic time");
 }
 
+/* The FAT service stamps each entry with the time the clock gave it
+ * (specs/fat.md's Times), and the runtime reads the stamp into the kstat's
+ * mtime, which is what std::filesystem::last_write_time reads. */
+void check_timestamps()
+{
+    namespace fs = std::filesystem;
+    static char const kPath[] = "SCRATCH:Stamped.txt";
+    int const fd = ::open(kPath, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    bool ok = fd >= 0 && ::write(fd, "t", 1) == 1;
+    if (fd >= 0) {
+        ::close(fd);
+    }
+    std::error_code error;
+    fs::file_time_type written{};
+    if (ok) {
+        written = fs::last_write_time(kPath, error);
+        ok = !error;
+    }
+    fs::file_time_type const now = fs::file_time_type::clock::now();
+    auto const age = now - written;
+    ok = ok && age < std::chrono::hours(1) && age > std::chrono::hours(-1);
+    bool const removed = fs::remove(kPath, error) && !error;
+    report(ok && removed,
+           "std::filesystem::last_write_time is the time the file was written");
+}
+
 }  // namespace
 
 int run()
@@ -301,6 +328,7 @@ int run()
     check_volumes();
     check_std_filesystem();
     check_clock();
+    check_timestamps();
     return g_failed;
 }
 
