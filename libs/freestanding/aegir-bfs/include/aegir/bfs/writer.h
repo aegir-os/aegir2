@@ -22,6 +22,7 @@
 #define AEGIR_BFS_WRITER_H
 
 #include <aegir/bfs/allocator.h>
+#include <aegir/bfs/journal.h>
 #include <aegir/bfs/layout.h>
 #include <aegir/bfs/volume.h>
 #include <stdint.h>
@@ -80,6 +81,31 @@ public:
                      uint32_t name_length) noexcept;
 
 private:
+    /* Each public operation is one journal transaction (specs/bfs.md): the
+     * metadata it changes is buffered and written to the log before any block
+     * goes home, so a crash leaves either nothing or a log replay can repair.
+     * The `_blocks` forms are the operation without the transaction, for an
+     * operation that already holds one (an attribute write into its inode, or
+     * a removal's destroy). */
+    bool finish(bool ok) noexcept;
+    bool create_blocks(uint64_t parent_block, char const *name,
+                       uint32_t name_length, uint32_t mode, int64_t time,
+                       uint64_t *out_block) noexcept;
+    bool remove_blocks(uint64_t parent_block, char const *name,
+                       uint32_t name_length) noexcept;
+    bool rename_blocks(uint64_t parent_block, char const *from,
+                       uint32_t from_length, char const *to,
+                       uint32_t to_length) noexcept;
+    bool write_blocks(uint64_t inode_block, uint64_t offset, uint8_t const *bytes,
+                      uint32_t length, int64_t time) noexcept;
+    bool truncate_blocks(uint64_t inode_block, uint64_t size, int64_t time) noexcept;
+    bool attr_write_blocks(uint64_t inode_block, char const *name,
+                           uint32_t name_length, uint32_t type, uint64_t offset,
+                           uint8_t const *bytes, uint32_t length,
+                           uint32_t *written, int64_t time) noexcept;
+    bool attr_remove_blocks(uint64_t inode_block, char const *name,
+                            uint32_t name_length) noexcept;
+
     /* Where a node split left things: the node at `offset` became `left`, a
      * fresh node `right` holds the greater half, and `separator` (the
      * greatest key of the left) goes into the parent. */
@@ -139,6 +165,7 @@ private:
 
     Volume *volume_ = nullptr;
     Allocator allocator_;
+    Journal journal_;
     uint64_t edit_parent_ = 0; /* the directory inode a tree edit is growing */
 
     uint8_t inode_[kMaxBlockSize] = {};

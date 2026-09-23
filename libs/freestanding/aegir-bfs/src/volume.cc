@@ -10,6 +10,7 @@
 #include <aegir/bfs/attribute.h>
 #include <aegir/bfs/bplustree.h>
 #include <aegir/bfs/inode.h>
+#include <aegir/bfs/journal.h>
 
 namespace aegir::bfs {
 
@@ -33,7 +34,7 @@ bool name_equals(char const *a, uint32_t a_length, char const *b,
     return true;
 }
 
-bool Volume::read_block(uint64_t block, uint8_t *out) const noexcept
+bool Volume::read_block_now(uint64_t block, uint8_t *out) const noexcept
 {
     uint32_t const sectors = block_size() / kSectorBytes;
     for (uint32_t i = 0; i < sectors; ++i) {
@@ -42,11 +43,6 @@ bool Volume::read_block(uint64_t block, uint8_t *out) const noexcept
         }
     }
     return true;
-}
-
-uint64_t Volume::to_block(Run const &run) const noexcept
-{
-    return (static_cast<uint64_t>(run.allocation_group) << ag_shift_) | run.start;
 }
 
 uint64_t Volume::run_bytes(Run const &run) const noexcept
@@ -99,6 +95,9 @@ bool Volume::open(ReadSector read, void *context, WriteSector write) noexcept
     used_blocks_ = le64(sb + superblock::kUsedBlocks);
     root_ = le_run(sb + superblock::kRootDir);
     indices_ = le_run(sb + superblock::kIndices);
+    log_ = le_run(sb + superblock::kLog);
+    log_start_ = le64(sb + superblock::kLogStart);
+    log_end_ = le64(sb + superblock::kLogEnd);
     for (uint32_t i = 0; i < sizeof(name_); ++i) {
         name_[i] = static_cast<char>(sb[i]);
     }
@@ -109,7 +108,65 @@ bool Volume::open(ReadSector read, void *context, WriteSector write) noexcept
     return true;
 }
 
+uint64_t Volume::to_block(Run const &run) const noexcept
+{
+    return (static_cast<uint64_t>(run.allocation_group) << ag_shift_) | run.start;
+}
+
+Run Volume::to_run(uint64_t block) const noexcept
+{
+    Run run{};
+    run.allocation_group = static_cast<uint32_t>(block >> ag_shift_);
+    run.start = static_cast<uint16_t>(block & ((1ull << ag_shift_) - 1));
+    run.length = 1;
+    return run;
+}
+
+bool Volume::validate_run(Run const &run) const noexcept
+{
+    if (run.length == 0 || run.allocation_group >= num_ags_) {
+        return false;
+    }
+    /* A run sits inside its allocation group's span (1 << ag_shift blocks),
+     * as Haiku's ValidateBlockRun checks, and inside the volume. */
+    uint64_t const span = 1ull << ag_shift_;
+    if (static_cast<uint64_t>(run.start) + run.length > span) {
+        return false;
+    }
+    return to_block(run) + run.length <= num_blocks_;
+}
+
+bool Volume::set_log_start(uint64_t position) noexcept
+{
+    log_start_ = position;
+    put_le64(superblock_ + superblock::kLogStart, position);
+    return true;
+}
+
+bool Volume::set_log_end(uint64_t position) noexcept
+{
+    log_end_ = position;
+    put_le64(superblock_ + superblock::kLogEnd, position);
+    return true;
+}
+
+bool Volume::read_block(uint64_t block, uint8_t *out) const noexcept
+{
+    if (journal_ != nullptr && journal_->peek(block, out)) {
+        return true;
+    }
+    return read_block_now(block, out);
+}
+
 bool Volume::write_block(uint64_t block, uint8_t const *in) const noexcept
+{
+    if (journal_ != nullptr && journal_->active()) {
+        return journal_->log(block, in);
+    }
+    return write_block_now(block, in);
+}
+
+bool Volume::write_block_now(uint64_t block, uint8_t const *in) const noexcept
 {
     if (write_ == nullptr) {
         return false;
@@ -138,10 +195,38 @@ bool Volume::set_flags(uint32_t flags) noexcept
 
 bool Volume::flush_superblock() const noexcept
 {
+    /* While a transaction is open, the commit owns the superblock: it writes
+     * the allocated count with the log cursors. Writing it mid-transaction
+     * would put a half-done operation on the disk with no log to repair it. */
+    if (journal_ != nullptr && journal_->active()) {
+        return true;
+    }
+    return write_superblock_now();
+}
+
+bool Volume::write_superblock_now() const noexcept
+{
     if (write_ == nullptr) {
         return false;
     }
     return write_(context_, 1, superblock_);
+}
+
+void Volume::save_superblock(uint8_t *out) const noexcept
+{
+    for (uint32_t i = 0; i < kSuperblockBytes; ++i) {
+        out[i] = superblock_[i];
+    }
+}
+
+void Volume::restore_superblock(uint8_t const *in) noexcept
+{
+    for (uint32_t i = 0; i < kSuperblockBytes; ++i) {
+        superblock_[i] = in[i];
+    }
+    used_blocks_ = le64(superblock_ + superblock::kUsedBlocks);
+    log_start_ = le64(superblock_ + superblock::kLogStart);
+    log_end_ = le64(superblock_ + superblock::kLogEnd);
 }
 
 bool Volume::read_inode(uint64_t block, Inode *out) const noexcept
@@ -192,7 +277,7 @@ bool Volume::read_part(Run const &run, uint64_t skip, uint8_t *out,
 }
 
 bool Volume::write_part(Run const &run, uint64_t skip, uint8_t const *in,
-                        uint32_t length) const noexcept
+                        uint32_t length, bool direct) const noexcept
 {
     uint64_t byte = to_block(run) * block_size() + skip;
     uint8_t const *src = in;
@@ -205,7 +290,8 @@ bool Volume::write_part(Run const &run, uint64_t skip, uint8_t const *in,
             chunk = left;
         }
         if (within == 0 && chunk == block_size()) {
-            if (!write_block(block, src)) {
+            if (!(direct ? write_block_now(block, src)
+                         : write_block(block, src))) {
                 return false;
             }
         } else {
@@ -213,7 +299,8 @@ bool Volume::write_part(Run const &run, uint64_t skip, uint8_t const *in,
                 return false;
             }
             __builtin_memcpy(block_ + within, src, chunk);
-            if (!write_block(block, block_)) {
+            if (!(direct ? write_block_now(block, block_)
+                         : write_block(block, block_))) {
                 return false;
             }
         }
@@ -318,6 +405,20 @@ bool Volume::write_stream_raw(uint8_t const *stream, uint32_t stream_size,
                               uint64_t offset, uint8_t const *in,
                               uint32_t length) const noexcept
 {
+    return write_stream_impl(stream, stream_size, offset, in, length, false);
+}
+
+bool Volume::write_stream_direct(uint8_t const *stream, uint32_t stream_size,
+                                 uint64_t offset, uint8_t const *in,
+                                 uint32_t length) const noexcept
+{
+    return write_stream_impl(stream, stream_size, offset, in, length, true);
+}
+
+bool Volume::write_stream_impl(uint8_t const *stream, uint32_t stream_size,
+                               uint64_t offset, uint8_t const *in,
+                               uint32_t length, bool direct) const noexcept
+{
     if (length == 0) {
         return true;
     }
@@ -337,7 +438,7 @@ bool Volume::write_stream_raw(uint8_t const *stream, uint32_t stream_size,
             return true;
         }
         uint32_t const n = static_cast<uint32_t>(hi - lo);
-        if (!write_part(run, lo - run_start, src + (lo - offset), n)) {
+        if (!write_part(run, lo - run_start, src + (lo - offset), n, direct)) {
             return false;
         }
         left -= n;

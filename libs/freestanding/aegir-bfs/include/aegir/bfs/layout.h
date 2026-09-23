@@ -240,6 +240,26 @@ constexpr uint32_t kAllKeyLength = 26;
 constexpr uint32_t kFixed = 28;
 }  // namespace node
 
+/** The journal's run array: a block-sized header listing, in ascending block
+ *  order, the target blocks a transaction changed. Its size equals the block
+ *  size, so a freshly allocated one is ready to use. Be's replay can only
+ *  handle runs of length one, so every run here is one block. */
+namespace run_array {
+constexpr uint32_t kCount = 0;
+constexpr uint32_t kMaxRuns = 4;
+constexpr uint32_t kRuns = 8;
+constexpr uint32_t kFixed = 8; /* sizeof(run_array) */
+
+/** The `max_runs` field: Haiku caps it at 127 no matter the block size
+ *  (run_array::MaxRuns), and its usable count is one less, for an off-by-one
+ *  in Be's own implementation. */
+inline uint32_t max_runs(uint32_t block_size) noexcept
+{
+    uint32_t const fits = (block_size - kFixed) / 8; /* sizeof(block_run) */
+    return fits < 128 ? fits : 127;
+}
+}  // namespace run_array
+
 /** Round up to the next off_t boundary, as key_align does. */
 inline uint32_t key_align(uint32_t value) noexcept
 {

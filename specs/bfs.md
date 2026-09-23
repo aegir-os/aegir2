@@ -339,18 +339,20 @@ fills it without any format change.
 ## The journal
 
 BFS is a journaling filesystem. The log is the `log_blocks` run at the front
-of the volume; `log_start` and `log_end` are block numbers that bound the
-pending entries, and the superblock's `flags` is `'DIRT'` while entries are
-pending and `'CLEN'` when the volume is clean.
+of the volume; `log_start` and `log_end` are **block positions within that
+run** (0..log_length), and the superblock's `flags` is `'DIRT'` while entries
+are pending and `'CLEN'` when the volume is clean.
 
 A transaction writes, in order:
 
 1. One or more **run array** blocks. A `run_array` is a block-sized header —
    `int32 count; int32 max_runs; block_run runs[]` — listing, in ascending
    block order, the target blocks the transaction changed. Its size is the
-   block size, so a freshly allocated one is ready to use; its capacity is
-   `(block_size - sizeof(run_array)) / sizeof(block_run)` minus one, for an
-   off-by-one in Be's implementation.
+   block size, so a freshly allocated one is ready to use; the `max_runs`
+   field is capped at 127 whatever the block size (Haiku's
+   `run_array::MaxRuns`) and its usable count is one less, for an off-by-one
+   in Be's implementation. **Be's replay can only expand runs of length one**,
+   so every run is a single block.
 2. Immediately after each array block, the **data blocks** for its runs, in
    order. So the log is a flat stream of `[array][data…][array][data…]`.
 
@@ -361,12 +363,22 @@ run; then it sets `log_start = log_end` and the volume clean. A clean volume
 has `flags == 'CLEN'` and `log_start == log_end`, so replay is a no-op — the
 **clean-volume fast mount**: no scanning, no replay.
 
-Aegir's Phase 5 implements this log. Phase 3 (writes) runs without it: it
-keeps `log_start == log_end` and the volume `'CLEN'` after every operation, so
-each operation is atomic enough for a cleanly-managed volume and Haiku sees a
-clean volume it can mount. `AEGIR_BFS_JOURNAL_FULL` marks a volume whose data
-blocks, not only its metadata, are journaled; until that bit is set, the log
-records metadata only (the same as BeOS's own choice).
+The log records **metadata only** — inodes, directory and attribute B+tree
+nodes, the allocation bitmap and the superblock — the same choice BeOS made.
+File data is never journalled, so a file written when the machine dies may
+lose its tail, but the filesystem's own structures stay consistent.
+`AEGIR_BFS_JOURNAL_FULL` marks a volume whose data blocks are journalled too;
+it is not set.
+
+One operation is one transaction. An operation reads back blocks it wrote
+earlier in the same transaction (a run inserted into an indirect array is read
+again to place the next run), so the transaction buffers the blocks it changed
+and the volume reads through the buffer until commit. The buffer holds
+`kMaxJournalBlocks` blocks; a metadata operation that needs more is refused
+rather than committed in pieces. Commit buffers the whole entry, writes it to
+the log, marks the volume dirty, then checkpoints the blocks to their homes
+and retires the log — so a crash leaves either nothing or a log that replay
+repairs.
 
 ## The service and the library
 

@@ -107,24 +107,11 @@ bool write_sector(void *context, uint64_t sector, uint8_t const *in) noexcept
     return reply.error == 0 && reply.word == 1;
 }
 
-/* Mark the volume dirty while an operation runs, clean when it is done. Phase
- * 3 keeps log_start == log_end, so a clean volume is one Haiku mounts with no
- * replay (specs/bfs.md). */
-void begin_write() noexcept
-{
-    if (g_writable) {
-        (void)g_volume.set_flags(aegir::bfs::kDirty);
-        (void)g_volume.flush_superblock();
-    }
-}
-
-void end_write(bool ok) noexcept
-{
-    if (g_writable) {
-        (void)g_volume.set_flags(ok ? aegir::bfs::kClean : aegir::bfs::kDirty);
-        (void)g_volume.flush_superblock();
-    }
-}
+/* The Writer turns each operation into a journal transaction: it writes the
+ * metadata to the log, marks the volume 'DIRT' with log_end past the entry,
+ * then puts the blocks home and marks it 'CLEN' with log_start == log_end
+ * (specs/bfs.md's journal). A clean volume is one Haiku mounts with no
+ * replay. */
 
 bool is_directory(aegir::bfs::Inode const &inode) noexcept
 {
@@ -1073,41 +1060,6 @@ int main(int argc, char *argv[])
         seL4_Word badge = 0;
         uint32_t const method =
             vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
-        /* A mutating method runs dirty and finishes clean, so a clean volume
-         * means the last operation went through whole. A refusal leaves the
-         * volume as it was, which is also clean (specs/bfs.md). */
-        bool mutating = false;
-        switch (method) {
-        case aegir::volume::kMethodOpen:
-            mutating = true;
-            break;
-        case aegir::volume::kMethodWrite:
-            mutating = true;
-            break;
-        case aegir::volume::kMethodMkdir:
-            mutating = true;
-            break;
-        case aegir::volume::kMethodRemove:
-            mutating = true;
-            break;
-        case aegir::volume::kMethodRename:
-            mutating = true;
-            break;
-        case aegir::volume::kMethodTruncate:
-            mutating = true;
-            break;
-        case aegir::metadata::kMethodAttrWrite:
-            mutating = true;
-            break;
-        case aegir::metadata::kMethodAttrRemove:
-            mutating = true;
-            break;
-        default:
-            break;
-        }
-        if (mutating) {
-            begin_write();
-        }
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count);
@@ -1162,9 +1114,6 @@ int main(int argc, char *argv[])
              * rather than answered wrongly. */
             answer_refuse(vol);
             break;
-        }
-        if (mutating) {
-            end_write(true);
         }
     }
 }

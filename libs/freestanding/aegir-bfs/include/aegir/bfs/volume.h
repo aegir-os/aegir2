@@ -51,6 +51,8 @@ struct Inode {
 constexpr uint64_t kKindFile = 1;
 constexpr uint64_t kKindDir = 2;
 
+class Journal;
+
 class Volume {
 public:
     /** Read and validate the superblock. False, with the volume invalid, when
@@ -61,6 +63,10 @@ public:
 
     bool valid() const noexcept { return valid_; }
     bool writable() const noexcept { return write_ != nullptr; }
+    bool clean() const noexcept
+    {
+        return le32(superblock_ + superblock::kFlags) == kClean;
+    }
     uint32_t block_size() const noexcept { return 1u << block_shift_; }
     uint64_t num_blocks() const noexcept { return num_blocks_; }
     uint64_t root_block() const noexcept { return to_block(root_); }
@@ -72,20 +78,53 @@ public:
     uint32_t blocks_per_ag() const noexcept { return blocks_per_ag_; }
     uint64_t used_blocks() const noexcept { return used_blocks_; }
 
+    /** The log region, and its two cursors. The cursors are block positions
+     *  within the log run, in [0, log_length()); a clean volume has them
+     *  equal (specs/bfs.md's journal). */
+    Run log() const noexcept { return log_; }
+    uint64_t log_length() const noexcept { return log_.length; }
+    uint64_t log_start() const noexcept { return log_start_; }
+    uint64_t log_end() const noexcept { return log_end_; }
+    bool set_log_start(uint64_t position) noexcept;
+    bool set_log_end(uint64_t position) noexcept;
+
+    /** The journal a transaction runs through, or null when writes go
+     *  straight to the disk. */
+    void attach_journal(Journal *journal) noexcept { journal_ = journal; }
+    Journal *journal() const noexcept { return journal_; }
+
     /** A run's first block number: (group << ag_shift) | start. */
     uint64_t to_block(Run const &run) const noexcept;
 
-    /** Whole-block I/O. Read is a sequence of sectors; write its other
-     *  direction. The allocate-and-write side of the library needs both. */
+    /** The one-block run that names `block`, and whether a run is within the
+     *  volume (the journal's replay checks it). */
+    Run to_run(uint64_t block) const noexcept;
+    bool validate_run(Run const &run) const noexcept;
+
+    /** Whole-block I/O. `write_block` is journalled when a transaction is
+     *  open -- it buffers the new image and writes it to the disk at commit
+     *  -- and read_block sees those buffered images, so an operation that
+     *  writes a block and reads it back within one transaction reads what it
+     *  wrote. The `_now` forms always go to the disk: file data, the log
+     *  itself and the replay use them. */
     bool read_block(uint64_t block, uint8_t *out) const noexcept;
     bool write_block(uint64_t block, uint8_t const *in) const noexcept;
+    bool read_block_now(uint64_t block, uint8_t *out) const noexcept;
+    bool write_block_now(uint64_t block, uint8_t const *in) const noexcept;
 
     /** Patch the in-memory superblock and write its sector: the allocated
-     *  count, and the clean/dirty flag. A clean volume has log_start ==
-     *  log_end and stays that way in this phase (specs/bfs.md). */
+     *  count, and the clean/dirty flag. `flush_superblock` is deferred while
+     *  a transaction is open -- the commit writes the superblock -- and the
+     *  `_now` form always writes it. */
     bool set_used_blocks(uint64_t used) noexcept;
     bool set_flags(uint32_t flags) noexcept;
     bool flush_superblock() const noexcept;
+    bool write_superblock_now() const noexcept;
+
+    /** The superblock image, for a transaction to snapshot and restore: an
+     *  aborted operation must not leave the in-memory allocated count moved. */
+    void save_superblock(uint8_t *out) const noexcept;
+    void restore_superblock(uint8_t const *in) noexcept;
 
     /** Read the inode at `block`. False on a bad magic, a deleted inode, or a
      *  size that does not match the volume's. */
@@ -99,10 +138,17 @@ public:
     /** Write `length` bytes of a stream at `offset`. The stream may spill
      *  into the inode's indirect array, which is read and rewritten here;
      *  the inode block itself is the caller's to write back. False when the
-     *  stream cannot cover the range. */
+     *  stream cannot cover the range. Journalled, for a stream that is
+     *  metadata (a directory's or attribute tree's blocks). */
     bool write_stream_raw(uint8_t const *stream, uint32_t stream_size,
                           uint64_t offset, uint8_t const *in,
                           uint32_t length) const noexcept;
+
+    /** The same write, always to the disk: file data, which was never
+     *  journalled (specs/bfs.md's metadata-only log). */
+    bool write_stream_direct(uint8_t const *stream, uint32_t stream_size,
+                             uint64_t offset, uint8_t const *in,
+                             uint32_t length) const noexcept;
 
     /** Find `name` in the directory `dir`'s tree. False when it is not there. */
     bool dir_find(Inode const &dir, char const *name, uint32_t length,
@@ -144,7 +190,10 @@ private:
     bool read_part(Run const &run, uint64_t skip, uint8_t *out,
                    uint32_t length) const noexcept;
     bool write_part(Run const &run, uint64_t skip, uint8_t const *in,
-                    uint32_t length) const noexcept;
+                    uint32_t length, bool direct) const noexcept;
+    bool write_stream_impl(uint8_t const *stream, uint32_t stream_size,
+                           uint64_t offset, uint8_t const *in, uint32_t length,
+                           bool direct) const noexcept;
     bool node_header(Inode const &dir, uint32_t *node_size, uint64_t *root,
                      uint64_t *maximum) const noexcept;
     bool attr_dir_inode(Inode const &inode, Inode *dir) const noexcept;
@@ -165,6 +214,10 @@ private:
     uint64_t used_blocks_ = 0;
     Run root_{};
     Run indices_{};
+    Run log_{};
+    uint64_t log_start_ = 0;
+    uint64_t log_end_ = 0;
+    Journal *journal_ = nullptr;
     bool valid_ = false;
     char name_[32] = {};
     uint8_t superblock_[kSuperblockBytes] = {};

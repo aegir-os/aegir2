@@ -142,8 +142,24 @@ bool Writer::open(Volume *volume) noexcept
     if (!allocator_.open(volume)) {
         return false;
     }
+    if (!journal_.open(volume) || !journal_.replay()) {
+        return false;
+    }
     for (uint32_t i = 0; i < kMaxBlockSize; ++i) {
         zero_[i] = 0;
+    }
+    return true;
+}
+
+bool Writer::finish(bool ok) noexcept
+{
+    if (!ok) {
+        journal_.abort();
+        return false;
+    }
+    if (!journal_.commit()) {
+        journal_.abort();
+        return false;
     }
     return true;
 }
@@ -584,6 +600,18 @@ bool Writer::tree_edit(uint64_t parent_block, char const *name,
 bool Writer::create(uint64_t parent_block, char const *name,
                     uint32_t name_length, uint32_t mode, int64_t time,
                     uint64_t *out_block) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(create_blocks(parent_block, name, name_length, mode, time,
+                                out_block));
+}
+
+bool Writer::create_blocks(uint64_t parent_block, char const *name,
+                           uint32_t name_length, uint32_t mode, int64_t time,
+                           uint64_t *out_block) noexcept
 {
     if (name_length == 0 || name_length > kMaxName) {
         return false;
@@ -1136,7 +1164,7 @@ bool Writer::grow_to(uint8_t *stream, uint64_t needed_blocks,
         }
         uint64_t const at = volume_->to_block(run);
         for (uint32_t b = 0; b < run.length; ++b) {
-            if (!volume_->write_block(at + b, zero_)) {
+            if (!volume_->write_block_now(at + b, zero_)) {
                 (void)allocator_.free(run);
                 return false;
             }
@@ -1170,8 +1198,8 @@ bool Writer::zero_range(uint8_t *stream, uint64_t from, uint64_t to) noexcept
         if (chunk > kMaxBlockSize) {
             chunk = kMaxBlockSize;
         }
-        if (!volume_->write_stream_raw(stream, data::kBytes, pos, zero_,
-                                       static_cast<uint32_t>(chunk))) {
+        if (!volume_->write_stream_direct(stream, data::kBytes, pos, zero_,
+                                      static_cast<uint32_t>(chunk))) {
             return false;
         }
         pos += chunk;
@@ -1296,6 +1324,17 @@ bool Writer::trim_stream(uint8_t *stream, uint64_t new_blocks) noexcept
 bool Writer::write(uint64_t inode_block, uint64_t offset, uint8_t const *bytes,
                    uint32_t length, int64_t time) noexcept
 {
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(write_blocks(inode_block, offset, bytes, length, time));
+}
+
+bool Writer::write_blocks(uint64_t inode_block, uint64_t offset,
+                          uint8_t const *bytes, uint32_t length,
+                          int64_t time) noexcept
+{
     if (!read_inode_block(inode_block, inode_)) {
         return false;
     }
@@ -1319,7 +1358,8 @@ bool Writer::write(uint64_t inode_block, uint64_t offset, uint8_t const *bytes,
     if (offset > old_size && !zero_range(stream_, old_size, offset)) {
         return false;
     }
-    if (!volume_->write_stream_raw(stream_, data::kBytes, offset, bytes, length)) {
+    if (!volume_->write_stream_direct(stream_, data::kBytes, offset, bytes,
+                                      length)) {
         return false;
     }
     inode_set_stream(inode_, stream_, static_cast<int64_t>(new_size), time);
@@ -1327,6 +1367,16 @@ bool Writer::write(uint64_t inode_block, uint64_t offset, uint8_t const *bytes,
 }
 
 bool Writer::truncate(uint64_t inode_block, uint64_t size, int64_t time) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(truncate_blocks(inode_block, size, time));
+}
+
+bool Writer::truncate_blocks(uint64_t inode_block, uint64_t size,
+                             int64_t time) noexcept
 {
     if (!read_inode_block(inode_block, inode_)) {
         return false;
@@ -1359,6 +1409,16 @@ bool Writer::truncate(uint64_t inode_block, uint64_t size, int64_t time) noexcep
 bool Writer::remove(uint64_t parent_block, char const *name,
                     uint32_t name_length) noexcept
 {
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(remove_blocks(parent_block, name, name_length));
+}
+
+bool Writer::remove_blocks(uint64_t parent_block, char const *name,
+                           uint32_t name_length) noexcept
+{
     if (!read_inode_block(parent_block, inode_)) {
         return false;
     }
@@ -1384,6 +1444,17 @@ bool Writer::remove(uint64_t parent_block, char const *name,
 
 bool Writer::rename(uint64_t parent_block, char const *from, uint32_t from_length,
                     char const *to, uint32_t to_length) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(rename_blocks(parent_block, from, from_length, to, to_length));
+}
+
+bool Writer::rename_blocks(uint64_t parent_block, char const *from,
+                           uint32_t from_length, char const *to,
+                           uint32_t to_length) noexcept
 {
     if (!read_inode_block(parent_block, inode_)) {
         return false;
@@ -1511,6 +1582,20 @@ bool Writer::attr_write(uint64_t inode_block, char const *name,
                         uint8_t const *bytes, uint32_t length,
                         uint32_t *written, int64_t time) noexcept
 {
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(attr_write_blocks(inode_block, name, name_length, type, offset,
+                                    bytes, length, written, time));
+}
+
+bool Writer::attr_write_blocks(uint64_t inode_block, char const *name,
+                               uint32_t name_length, uint32_t type,
+                               uint64_t offset, uint8_t const *bytes,
+                               uint32_t length, uint32_t *written,
+                               int64_t time) noexcept
+{
     if (name_length == 0 || name_length > kMaxName ||
         offset + length < offset) {
         return false;
@@ -1555,7 +1640,7 @@ bool Writer::attr_write(uint64_t inode_block, char const *name,
         if (!attr_dir(inode_block, time, &dir_block) ||
             !attr_inode_create(dir_block, name, name_length, type, time,
                                &attr_block) ||
-            !write(attr_block, 0, attr_, new_length, time) ||
+            !write_blocks(attr_block, 0, attr_, new_length, time) ||
             !read_inode_block(inode_block, inode_) ||
             !small_remove(inode_, inode_size, name, name_length) ||
             !volume_->write_block(inode_block, inode_)) {
@@ -1578,7 +1663,7 @@ bool Writer::attr_write(uint64_t inode_block, char const *name,
                 attribute.type != type) {
                 return false;
             }
-            if (!write(attr_block, offset, bytes, length, time)) {
+            if (!write_blocks(attr_block, offset, bytes, length, time)) {
                 return false;
             }
             *written = length;
@@ -1608,7 +1693,7 @@ bool Writer::attr_write(uint64_t inode_block, char const *name,
     if (!attr_dir(inode_block, time, &dir_block) ||
         !attr_inode_create(dir_block, name, name_length, type, time,
                            &attr_block) ||
-        !write(attr_block, offset, bytes, length, time)) {
+        !write_blocks(attr_block, offset, bytes, length, time)) {
         return false;
     }
     *written = length;
@@ -1617,6 +1702,16 @@ bool Writer::attr_write(uint64_t inode_block, char const *name,
 
 bool Writer::attr_remove(uint64_t inode_block, char const *name,
                          uint32_t name_length) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(attr_remove_blocks(inode_block, name, name_length));
+}
+
+bool Writer::attr_remove_blocks(uint64_t inode_block, char const *name,
+                                uint32_t name_length) noexcept
 {
     if (name_length == 0 || name_length > kMaxName) {
         return false;
