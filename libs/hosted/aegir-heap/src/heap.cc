@@ -71,6 +71,10 @@ extern struct aegir_libc __libc;
  * so the one function needed is declared here (specs/userland.md records the
  * same workaround for the root task). */
 auxv_t const *sel4runtime_auxv(void);
+
+/* musl's thread-pointer setup, which __libc_start_main calls and a hosted
+ * Aegir process never reaches (see activate_musl_tls below). */
+void __init_tls(size_t *aux);
 }
 
 namespace aegir::heap {
@@ -119,6 +123,40 @@ bool map_page(uintptr_t address) noexcept
     return g_scratch->map_at(address, frame);
 }
 
+/* Give the process musl's TLS. musl's __init_libc rewrites the raw auxv into a
+ * flat array indexed by tag before handing it to __init_tls
+ * (projects/musl/src/env/__libc_start_main.c:25-29), and a hosted Aegir
+ * process never runs __init_libc -- sel4runtime calls main directly
+ * (projects/sel4runtime/src/start.c:20). Without this libc.tls_head/tls_size/
+ * tls_align stay zero and libc.can_do_threads stays zero, and pthread_create
+ * refuses with ENOSYS before it ever reaches clone
+ * (projects/musl/src/thread/pthread_create.c:249). Building the same flat
+ * array from the vector sel4runtime passes is the one piece of __init_libc the
+ * runtime needs.
+ *
+ * It runs only once the heap can serve the mmap the main thread's TLS is
+ * placed with: the image does not fit musl's builtin static TLS, so
+ * __init_tls allocates it through our own dispatcher -- which is why this is
+ * called from init() and not from a constructor. */
+constexpr size_t kAuxCount = 38;  /* musl's AUX_CNT */
+
+void activate_musl_tls() noexcept
+{
+    size_t aux[kAuxCount] = {};
+    auxv_t const *vector = sel4runtime_auxv();
+    for (size_t i = 0; vector[i].a_type != AT_NULL; ++i) {
+        if (static_cast<size_t>(vector[i].a_type) < kAuxCount) {
+            aux[vector[i].a_type] = static_cast<size_t>(vector[i].a_un.a_val);
+        }
+    }
+    /* The IPC buffer pointer lives in TLS and libsel4 reads it on every
+     * syscall, so replacing the thread pointer would lose it; carry it into
+     * the new TLS. */
+    seL4_IPCBuffer *const ipc = seL4_GetIPCBuffer();
+    __init_tls(aux);
+    __sel4_ipc_buffer = ipc;
+}
+
 }  // namespace
 
 /* Before any constructor can allocate: point musl's syscalls at the
@@ -159,6 +197,9 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     __libc.page_size = kPageBytes;
     __libc.auxv = reinterpret_cast<size_t *>(const_cast<auxv_t *>(sel4runtime_auxv()));
     __sysinfo = reinterpret_cast<size_t>(&vsyscall);
+
+    /* And with the heap able to serve it, give the process musl's TLS. */
+    activate_musl_tls();
     return true;
 }
 
