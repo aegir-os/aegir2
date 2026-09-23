@@ -339,10 +339,14 @@ so `name` and `BEOS:APP_SIG` read bytewise and `last_modified` and `size` read
 their int64 keys numerically. Repeated keys go in a duplicate node, so the
 mkfs `last_modified` index holds every inode at time zero under the one key.
 
-Maintaining the indices as files come and go is the next step of this phase,
-and it is the reason `mkfs` must populate them rather than leave them empty: a
-Haiku mount trusts a volume's indices, so an index present but stale is worse
-than one absent. A zero `indices` run is Haiku's own "no index directory".
+The Writer maintains the name, size and last_modified indices: creating an
+inode adds it to the name index (and, for a file, the size and last_modified
+indices at its size and time), removing it takes those entries away, renaming
+changes only the name key, and writing or truncating moves the size and
+time keys. This is also why `mkfs` populates the indices rather than leaving
+them empty: a Haiku mount trusts a volume's indices, so an index present but
+stale is worse than one absent. A zero `indices` run is Haiku's own "no index
+directory".
 
 ## Times
 

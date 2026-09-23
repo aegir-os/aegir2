@@ -646,6 +646,19 @@ bool Volume::dir_find(Inode const &dir, char const *name, uint32_t length,
     return false;
 }
 
+bool Volume::index_inode(char const *name, uint32_t length,
+                         uint64_t *inode_block) const noexcept
+{
+    if (run_is_zero(indices_)) {
+        return false;
+    }
+    Inode dir{};
+    if (!read_inode(to_block(indices_), &dir)) {
+        return false;
+    }
+    return dir_find(dir, name, length, inode_block);
+}
+
 bool Volume::dir_entry(Inode const &dir, uint32_t index, char *name,
                        uint32_t *name_length, uint64_t *inode_block) const noexcept
 {

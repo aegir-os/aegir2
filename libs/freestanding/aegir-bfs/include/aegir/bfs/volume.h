@@ -161,6 +161,15 @@ public:
     bool dir_find(Inode const &dir, char const *name, uint32_t length,
                   uint64_t *inode_block) const noexcept;
 
+    /** The indices directory's run, from the superblock; a zero run when the
+     *  volume has no indices (specs/bfs.md). */
+    Run indices_root() const noexcept { return indices_; }
+
+    /** The block of the index inode named `name` under the indices directory.
+     *  False when the volume has no indices, or no such index. */
+    bool index_inode(char const *name, uint32_t length,
+                     uint64_t *inode_block) const noexcept;
+
     /** The `index`th entry of `dir`, or false past the last. The cursor is the
      *  caller's index, as the volume protocol's list wants. A directory too
      *  large for a single leaf node is refused, not misread -- the growth

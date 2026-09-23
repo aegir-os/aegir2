@@ -36,9 +36,10 @@
 namespace aegir::bfs {
 
 /** The most blocks one transaction may change. Metadata transactions are a
- *  handful; the log itself holds hundreds, so this bound is the operation's,
- *  not the disk's. */
-constexpr uint32_t kMaxJournalBlocks = 16;
+ *  handful, but an operation that maintains the indices touches the parent
+ *  tree and up to three index trees, and any of them may split; the bound is
+ *  the operation's, not the disk's, and the log itself holds hundreds. */
+constexpr uint32_t kMaxJournalBlocks = 32;
 
 class Journal {
 public:

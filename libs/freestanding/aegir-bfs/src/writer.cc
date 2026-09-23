@@ -33,6 +33,20 @@ uint32_t blocks_for(uint64_t bytes, uint32_t block_size) noexcept
     return static_cast<uint32_t>((bytes + block_size - 1) / block_size);
 }
 
+/* A regular node is a file, a directory or a symlink -- what the name index
+ * holds. A file is only a plain file, which the size and last_modified
+ * indices hold (specs/bfs.md, Haiku's Inode::InNameIndex and neighbours). */
+bool is_regular_node(uint32_t mode) noexcept
+{
+    return (mode & (kModeAttrDir | kModeAttr | kModeIndexDir)) == 0;
+}
+
+bool is_indexed_file(uint32_t mode) noexcept
+{
+    return (mode & (kModeTypeMask | kModeAttrDir | kModeAttr | kModeIndexDir)) ==
+           kModeRegular;
+}
+
 /* A fresh directory's tree: the header and one leaf holding dot and dotdot. */
 void build_dir_tree(uint8_t *tree, uint64_t self_block,
                     uint64_t parent_block) noexcept
@@ -693,7 +707,7 @@ bool Writer::create_blocks(uint64_t parent_block, char const *name,
         return false;
     }
     *out_block = block;
-    return true;
+    return index_on_create(block, name, name_length, mode, 0, time);
 }
 
 bool Writer::dir_is_empty(uint64_t dir_block) noexcept
@@ -1347,7 +1361,9 @@ bool Writer::write_blocks(uint64_t inode_block, uint64_t offset,
         return false;
     }
     inode_get_stream(inode_, stream_);
+    uint32_t const mode = inode_mode(inode_);
     uint64_t const old_size = static_cast<uint64_t>(inode_size(inode_));
+    int64_t const old_time = inode_mtime(inode_);
     uint64_t new_size = offset + length;
     if (new_size < old_size) {
         new_size = old_size;
@@ -1371,7 +1387,12 @@ bool Writer::write_blocks(uint64_t inode_block, uint64_t offset,
         return false;
     }
     inode_set_stream(inode_, stream_, static_cast<int64_t>(new_size), time);
-    return volume_->write_block(inode_block, inode_);
+    if (!volume_->write_block(inode_block, inode_)) {
+        return false;
+    }
+    return index_on_resize(inode_block, mode, static_cast<int64_t>(old_size),
+                           static_cast<int64_t>(new_size)) &&
+           index_on_time(inode_block, mode, old_time, time);
 }
 
 bool Writer::truncate(uint64_t inode_block, uint64_t size, int64_t time) noexcept
@@ -1390,7 +1411,9 @@ bool Writer::truncate_blocks(uint64_t inode_block, uint64_t size,
         return false;
     }
     inode_get_stream(inode_, stream_);
+    uint32_t const mode = inode_mode(inode_);
     uint64_t const old_size = static_cast<uint64_t>(inode_size(inode_));
+    int64_t const old_time = inode_mtime(inode_);
     /* Growing is sparse: the size may pass beyond the runs, and a read of the
      * tail returns zeros without a block behind it. The part of the extension
      * that lands inside an already-allocated block is zeroed, so a stale byte
@@ -1411,7 +1434,12 @@ bool Writer::truncate_blocks(uint64_t inode_block, uint64_t size,
         }
     }
     inode_set_stream(inode_, stream_, static_cast<int64_t>(size), time);
-    return volume_->write_block(inode_block, inode_);
+    if (!volume_->write_block(inode_block, inode_)) {
+        return false;
+    }
+    return index_on_resize(inode_block, mode, static_cast<int64_t>(old_size),
+                           static_cast<int64_t>(size)) &&
+           index_on_time(inode_block, mode, old_time, time);
 }
 
 bool Writer::remove(uint64_t parent_block, char const *name,
@@ -1438,13 +1466,20 @@ bool Writer::remove_blocks(uint64_t parent_block, char const *name,
     if (!read_inode_block(child, inode_)) {
         return false;
     }
-    bool const directory = mode_is_directory(inode_mode(inode_));
+    uint32_t const child_mode = inode_mode(inode_);
+    int64_t const child_size = inode_size(inode_);
+    int64_t const child_time = inode_mtime(inode_);
+    bool const directory = mode_is_directory(child_mode);
     if (directory && !dir_is_empty(child)) {
         return false;
     }
     bool present = false;
     if (!tree_edit(parent_block, name, name_length, 0, false, &present) ||
         !present) {
+        return false;
+    }
+    if (!index_on_remove(child, name, name_length, child_mode, child_size,
+                         child_time)) {
         return false;
     }
     return destroy(child);
@@ -1488,7 +1523,7 @@ bool Writer::rename_blocks(uint64_t parent_block, char const *from,
         (void)tree_edit(parent_block, from, from_length, child, true, &restored);
         return false;
     }
-    return true;
+    return index_on_rename(child, from, from_length, to, to_length);
 }
 
 bool Writer::attr_dir(uint64_t inode_block, int64_t time,
@@ -2068,7 +2103,10 @@ bool Writer::index_drop_value(uint64_t leaf, uint16_t index, uint64_t old_value,
             return free_tree_node(offset, node_size);
         }
         if (left_count == 0) {
-            /* Drop the empty node from the chain first. */
+            /* Drop the empty node from the chain. When it was the head, the
+             * leaf's link moves to its successor, which becomes the head and
+             * so must lose its left link -- it pointed at the node just
+             * freed. */
             if (left == kNullLink) {
                 if (!node_read(leaf, node_size, node_)) {
                     return false;
@@ -2084,6 +2122,16 @@ bool Writer::index_drop_value(uint64_t leaf, uint16_t index, uint64_t old_value,
                         return true;
                     }
                     return node_write(leaf, node_size, work_);
+                }
+                if (!node_read(static_cast<uint64_t>(right), node_size,
+                               split_src_)) {
+                    return false;
+                }
+                put_le64(split_src_ + node::kLeftLink,
+                         static_cast<uint64_t>(kNullLink));
+                if (!node_write(static_cast<uint64_t>(right), node_size,
+                                split_src_)) {
+                    return false;
                 }
                 uint64_t const link =
                     static_cast<uint64_t>(make_link(kDuplicateNode,
@@ -2131,6 +2179,126 @@ bool Writer::free_tree_node(uint64_t offset, uint32_t node_size) noexcept
     }
     put_le64(hdr_ + tree_header::kFreeNode, offset);
     return header_write();
+}
+
+/* ---- Index maintenance (specs/bfs.md): the standard indices follow an inode
+ * as it is made, renamed, resized and removed. ---- */
+
+bool Writer::index_add(char const *index, uint32_t index_length,
+                       uint8_t const *key, uint32_t key_length,
+                       uint64_t value) noexcept
+{
+    uint64_t block = 0;
+    if (!volume_->index_inode(index, index_length, &block)) {
+        return true; /* no index directory, or no such index */
+    }
+    return index_insert_blocks(block, key, key_length, value);
+}
+
+bool Writer::index_drop(char const *index, uint32_t index_length,
+                        uint8_t const *key, uint32_t key_length,
+                        uint64_t value) noexcept
+{
+    uint64_t block = 0;
+    if (!volume_->index_inode(index, index_length, &block)) {
+        return true;
+    }
+    bool removed = false;
+    return index_remove_blocks(block, key, key_length, value, &removed);
+}
+
+bool Writer::index_on_create(uint64_t block, char const *name,
+                             uint32_t name_length, uint32_t mode, int64_t size,
+                             int64_t time) noexcept
+{
+    if (is_regular_node(mode)) {
+        if (!index_add("name", 4, reinterpret_cast<uint8_t const *>(name),
+                       name_length, block)) {
+            return false;
+        }
+    }
+    if (is_indexed_file(mode)) {
+        uint8_t key[8];
+        put_le64(key, static_cast<uint64_t>(size));
+        if (!index_add("size", 4, key, 8, block)) {
+            return false;
+        }
+        put_le64(key, static_cast<uint64_t>(time));
+        if (!index_add("last_modified", 13, key, 8, block)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Writer::index_on_remove(uint64_t block, char const *name,
+                             uint32_t name_length, uint32_t mode, int64_t size,
+                             int64_t time) noexcept
+{
+    if (is_regular_node(mode)) {
+        if (!index_drop("name", 4, reinterpret_cast<uint8_t const *>(name),
+                        name_length, block)) {
+            return false;
+        }
+    }
+    if (is_indexed_file(mode)) {
+        uint8_t key[8];
+        put_le64(key, static_cast<uint64_t>(size));
+        if (!index_drop("size", 4, key, 8, block)) {
+            return false;
+        }
+        put_le64(key, static_cast<uint64_t>(time));
+        if (!index_drop("last_modified", 13, key, 8, block)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Writer::index_on_rename(uint64_t block, char const *from,
+                             uint32_t from_length, char const *to,
+                             uint32_t to_length) noexcept
+{
+    /* Only a regular node has a name in the index, and only a regular
+     * directory's entries are renamed here. */
+    if (!index_drop("name", 4, reinterpret_cast<uint8_t const *>(from),
+                    from_length, block)) {
+        return false;
+    }
+    return index_add("name", 4, reinterpret_cast<uint8_t const *>(to),
+                     to_length, block);
+}
+
+bool Writer::index_on_resize(uint64_t block, uint32_t mode, int64_t old_size,
+                             int64_t new_size) noexcept
+{
+    if (old_size == new_size || !is_indexed_file(mode)) {
+        return true;
+    }
+    uint8_t old_key[8];
+    uint8_t new_key[8];
+    put_le64(old_key, static_cast<uint64_t>(old_size));
+    put_le64(new_key, static_cast<uint64_t>(new_size));
+    if (!index_drop("size", 4, old_key, 8, block)) {
+        return false;
+    }
+    return index_add("size", 4, new_key, 8, block);
+}
+
+bool Writer::index_on_time(uint64_t block, uint32_t mode, int64_t old_time,
+                           int64_t new_time) noexcept
+{
+    if (old_time == new_time || !is_indexed_file(mode)) {
+        return true;
+    }
+    uint8_t old_key[8];
+    uint8_t new_key[8];
+    put_le64(old_key, static_cast<uint64_t>(old_time));
+    put_le64(new_key, static_cast<uint64_t>(new_time));
+    if (!index_drop("last_modified", 13, old_key, 8, block)) {
+        return false;
+    }
+    return index_add("last_modified", 13, new_key, 8, block);
 }
 
 }  // namespace aegir::bfs

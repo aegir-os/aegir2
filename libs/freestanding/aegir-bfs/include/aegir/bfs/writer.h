@@ -214,6 +214,24 @@ private:
      * does, so a later Haiku mount reuses it. */
     bool free_tree_node(uint64_t offset, uint32_t node_size) noexcept;
 
+    /* The name, size and last_modified indices follow an inode as it is made,
+     * renamed, resized and removed (specs/bfs.md). Each `index_add`/`index_drop`
+     * is a no-op on a volume with no such index. */
+    bool index_add(char const *index, uint32_t index_length, uint8_t const *key,
+                   uint32_t key_length, uint64_t value) noexcept;
+    bool index_drop(char const *index, uint32_t index_length, uint8_t const *key,
+                    uint32_t key_length, uint64_t value) noexcept;
+    bool index_on_create(uint64_t block, char const *name, uint32_t name_length,
+                         uint32_t mode, int64_t size, int64_t time) noexcept;
+    bool index_on_remove(uint64_t block, char const *name, uint32_t name_length,
+                         uint32_t mode, int64_t size, int64_t time) noexcept;
+    bool index_on_rename(uint64_t block, char const *from, uint32_t from_length,
+                         char const *to, uint32_t to_length) noexcept;
+    bool index_on_resize(uint64_t block, uint32_t mode, int64_t old_size,
+                         int64_t new_size) noexcept;
+    bool index_on_time(uint64_t block, uint32_t mode, int64_t old_time,
+                       int64_t new_time) noexcept;
+
     Volume *volume_ = nullptr;
     Allocator allocator_;
     Journal journal_;
