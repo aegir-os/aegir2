@@ -49,6 +49,17 @@ if [[ ! -d "${MUSL_INSTALL}/include" ]]; then
     exit 1
 fi
 
+# The Aegir path grammar is what -D_LIBCPP_AEGIR turns on; a libc++ built
+# without it would define the macro but keep the POSIX grammar, and the
+# library and the user-code policy would disagree. `make deps` applies it
+# (scripts/apply_patches.py); this refuses to build that libc++ rather than
+# produce one whose path predicates are wrong.
+PATCH="${ROOT_DIR}/third_party/patches/projects/llvm-project/0002-aegir-path-grammar.patch"
+if ! git -C "${LLVM_PROJECT}" apply --reverse --check "${PATCH}" >/dev/null 2>&1; then
+    echo "ERROR: the Aegir path-grammar patch is not applied; run 'make deps'" >&2
+    exit 1
+fi
+
 rm -rf "${BUILD_DIR}" "${INSTALL_DIR}"
 mkdir -p "${BUILD_DIR}" "${INSTALL_DIR}"
 
