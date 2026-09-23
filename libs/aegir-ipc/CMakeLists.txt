@@ -14,3 +14,6 @@ add_library(aegir-ipc STATIC src/port.cc)
 
 target_include_directories(aegir-ipc PUBLIC include)
 target_link_libraries(aegir-ipc PUBLIC aegir-cxx-policy aegir-bootstrap sel4 sel4runtime aegir-c-headers)
+# Lean, and private: freestanding binaries link this object, a hosted one must
+# not inherit -fno-exceptions from it.
+target_compile_options(aegir-ipc PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)

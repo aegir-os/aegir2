@@ -26,7 +26,7 @@ if(AEGIR_HOSTED_CXX)
   # process's own memory into musl's heap; aegir-mem and aegir-bootstrap are
   # how it adopts the untyped and the window the spawn kit gave it.
   target_link_libraries(
-    aegir-cxx-smoke PRIVATE aegir-cxx-policy-hosted aegir-heap aegir-runtime aegir-bootstrap
+    aegir-cxx-smoke PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-runtime aegir-bootstrap
                              aegir-mem sel4 sel4runtime
   )
 else()

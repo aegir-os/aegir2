@@ -17,13 +17,13 @@ foreach(library libunwind.a libc++abi.a libc++.a)
   endif()
 endforeach()
 
-# libunwind - stack unwinding
-add_library(unwind STATIC IMPORTED GLOBAL)
-set_target_properties(
-  unwind
-  PROPERTIES IMPORTED_LOCATION "${AEGIR_CXX_INSTALL_DIR}/lib/libunwind.a"
-             INTERFACE_INCLUDE_DIRECTORIES "${AEGIR_CXX_INSTALL_DIR}/include"
-)
+# Stack unwinding is libgcc's, not libunwind's. The riscv64 bare-metal
+# toolchain ships no libgcc_eh, but its libgcc.a carries _Unwind_* and the
+# frames are registered by the crtbegin.o the link already includes. libunwind
+# is built (specs/cxx.md) but its baremetal configuration wants the
+# linker-provided __eh_frame_* symbols this link does not have, and whichever
+# archive the linker reaches first wins -- so libunwind is deliberately not
+# linked, and never gets the chance.
 
 # libc++abi - low-level C++ ABI
 add_library(cxxabi STATIC IMPORTED GLOBAL)
@@ -32,7 +32,6 @@ set_target_properties(
   PROPERTIES IMPORTED_LOCATION "${AEGIR_CXX_INSTALL_DIR}/lib/libc++abi.a"
              INTERFACE_INCLUDE_DIRECTORIES
                "${AEGIR_CXX_INSTALL_DIR}/include;${AEGIR_CXX_INSTALL_DIR}/include/c++/v1"
-             INTERFACE_LINK_LIBRARIES unwind
 )
 
 # libc++ - C++ standard library. Its headers are under include/c++/v1, which is

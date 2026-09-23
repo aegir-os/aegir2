@@ -20,6 +20,6 @@ add_executable(aegir-fs-fat src/main.cc src/fat.cc)
 target_compile_options(aegir-fs-fat PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-fs-fat PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-block
+  aegir-fs-fat PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-block
                        aegir-descriptor aegir-ipc aegir-log aegir-namespace aegir-partman aegir-volume sel4 muslc sel4runtime
 )

@@ -27,3 +27,6 @@ target_include_directories(aegir-runtime PUBLIC include)
 # library explicitly.
 target_link_libraries(aegir-runtime PUBLIC aegir-cxx-policy sel4 sel4runtime)
 target_link_libraries(aegir-runtime PRIVATE aegir-c-headers)
+# Lean, and private: freestanding binaries link this object, a hosted one must
+# not inherit -fno-exceptions from it.
+target_compile_options(aegir-runtime PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)

@@ -19,3 +19,6 @@ target_include_directories(aegir-mem PUBLIC include)
 # object types come from. muslc supplies <stdint.h> and memcpy/memset: user code
 # is compiled -nostdinc, so C headers have to come from a link (specs/build.md).
 target_link_libraries(aegir-mem PUBLIC aegir-cxx-policy sel4 sel4runtime aegir-c-headers)
+# Lean, and private: freestanding binaries link this object, a hosted one must
+# not inherit -fno-exceptions from it.
+target_compile_options(aegir-mem PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)

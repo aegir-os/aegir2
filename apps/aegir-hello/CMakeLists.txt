@@ -23,6 +23,6 @@ target_compile_options(aegir-hello PRIVATE -Wall -Wextra -Werror)
 # aegir-bootstrap is how it learns who it is (specs/director.md); aegir-ipc is
 # how it talks to the port it was given, and aegir-log is that port's protocol.
 target_link_libraries(
-  aegir-hello PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log sel4
+  aegir-hello PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc aegir-log sel4
                      muslc sel4runtime
 )

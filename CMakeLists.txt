@@ -101,15 +101,19 @@ target_compile_options(
 )
 
 if(AEGIR_HOSTED_CXX)
-  # Tier 1 (specs/cxx.md): the hosted standard library, with exceptions and RTTI
-  # still off so the user-code policy matches the libc++ archive's own
-  # _LIBCPP_ODR_SIGNATURE (libcxx/include/__config). Thread-safe statics are off
-  # for the same single-threaded reason as the freestanding policy. -D_GNU_SOURCE
-  # is what makes musl's headers declare the POSIX surface libc++ uses;
-  # _LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS works around GCC 14's
-  # unusable __remove_pointer builtin (see scripts/build_libcxx.sh). The policy
-  # links the full musl and libc++ because choosing the hosted runtime *is* the
-  # policy's job.
+  # The hosted standard library, with exceptions and RTTI on
+  # (specs/cxx.md's completion program, step 3): the user-code policy has to
+  # match the libc++ archive's own _LIBCPP_ODR_SIGNATURE, which embeds the
+  # exceptions choice (libcxx/include/__config), so both are built with them on.
+  # -fasynchronous-unwind-tables undoes the environment's
+  # -fno-asynchronous-unwind-tables (tools/seL4's environment_flags.cmake):
+  # without .eh_frame a throw cannot walk a user frame. Thread-safe statics stay
+  # off for the same single-threaded reason as the freestanding policy (threads
+  # are step 4). -D_GNU_SOURCE is what makes musl's headers declare the POSIX
+  # surface libc++ uses; _LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS works
+  # around GCC 14's unusable __remove_pointer builtin (see
+  # scripts/build_libcxx.sh). The policy links the full musl and libc++ because
+  # choosing the hosted runtime *is* the policy's job.
   #
   # -O2 is not optional here. libc++'s containers are always-inline, and at -O0
   # GCC gives every inlined call its own stack slots and never reuses them: one
@@ -126,8 +130,9 @@ if(AEGIR_HOSTED_CXX)
     aegir-cxx-policy-hosted
     INTERFACE
       -O2
-      -fno-exceptions
-      -fno-rtti
+      -fasynchronous-unwind-tables
+      -fexceptions
+      -frtti
       -fno-threadsafe-statics
       -D_GNU_SOURCE
       -D_LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS
@@ -135,12 +140,18 @@ if(AEGIR_HOSTED_CXX)
       -Wextra
       -Werror
   )
-  target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi unwind musl_full)
+  target_link_libraries(aegir-cxx-policy-hosted INTERFACE cxx cxxabi musl_full)
 endif()
 
-# Default policy alias for backward compatibility (freestanding)
+# What a *library* links: C++17 and the warning set, and nothing about
+# exceptions. The lean flags are set privately on each library that has
+# sources (below), because a library's object must carry no exception
+# personality for the freestanding binaries to link it, *and* must not export
+# -fno-exceptions to a hosted consumer -- that negative flag would land after
+# the hosted policy's -fexceptions with no later positive flag to undo it.
 add_library(aegir-cxx-policy INTERFACE)
-target_link_libraries(aegir-cxx-policy INTERFACE aegir-cxx-policy-freestanding)
+target_compile_features(aegir-cxx-policy INTERFACE cxx_std_17)
+target_compile_options(aegir-cxx-policy INTERFACE -Wall -Wextra -Werror)
 
 add_subdirectory(libs/aegir-runtime)
 add_subdirectory(libs/aegir-devtree)
@@ -165,6 +176,7 @@ add_subdirectory(libs/aegir-virtio)
 if(AEGIR_HOSTED_CXX)
   add_subdirectory(libs/aegir-heap)
   add_subdirectory(libs/aegir-environment)
+  add_subdirectory(libs/aegir-cxxabi-shim)
 endif()
 if(AEGIR_TOOLKIT)
   add_subdirectory(libs/aegir-trinket)

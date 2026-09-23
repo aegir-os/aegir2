@@ -25,7 +25,7 @@ target_compile_options(aegir-console PRIVATE -Wall -Wextra -Werror)
 # aegir-framebuffer are the driver introductions, aegir-mem the window this
 # service maps them through (specs/console.md).
 target_link_libraries(
-  aegir-console PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+  aegir-console PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                         aegir-registry aegir-framebuffer aegir-console-protocol aegir-mem sel4
                         muslc sel4runtime
 )

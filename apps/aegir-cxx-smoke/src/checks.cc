@@ -21,6 +21,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <typeinfo>
 #include <unordered_map>
 #include <vector>
 
@@ -103,6 +104,59 @@ void check_reuse()
     std::free(second);
 }
 
+/* Exceptions (specs/cxx.md's completion program, step 3): a throw has to walk
+ * every frame between it and its catch, running the destructors on the way, so
+ * the check is that the destructor ran and not merely that the catch was
+ * reached. The frame object below is what unwinding proves: without .eh_frame
+ * the throw calls std::terminate rather than unwind. */
+int g_unwound = 0;
+
+struct Unwinder {
+    int *counter;
+    explicit Unwinder(int *c) : counter(c) {}
+    ~Unwinder() { *counter += 1; }
+};
+
+void throw_through()
+{
+    Unwinder unwinder(&g_unwound);
+    throw 0x51; /* a live frame object when the throw leaves this frame */
+}
+
+void check_exceptions()
+{
+    bool caught = false;
+    try {
+        throw_through();
+    } catch (int value) {
+        caught = value == 0x51;
+    }
+    report(caught && g_unwound == 1,
+           "a throw unwinds a frame and runs its destructor");
+}
+
+/* RTTI: a polymorphic base, downcast through dynamic_cast. That the cast
+ * succeeds is the proof -- it is the runtime's type table, not the compiler's
+ * static type, that answers. */
+struct Base {
+    virtual ~Base() = default;
+};
+
+struct Derived : Base {
+    int marker = 7;
+};
+
+void check_rtti()
+{
+    Derived derived;
+    Base *base = &derived;
+    Derived *down = dynamic_cast<Derived *>(base);
+    std::string const name = typeid(*base).name();
+    report(down != nullptr && down->marker == 7 &&
+               name.find("Derived") != std::string::npos,
+           "RTTI identifies a dynamic type");
+}
+
 }  // namespace
 
 int run()
@@ -112,6 +166,8 @@ int run()
     check_vector();
     check_map();
     check_reuse();
+    check_exceptions();
+    check_rtti();
     return g_failed;
 }
 

@@ -16,3 +16,7 @@ target_include_directories(aegir-bootstrap PUBLIC include)
 # sel4runtime carries sel4runtime/auxv.h, which is what a child reads its own
 # vector through; muslc is where <stdint.h> comes from (specs/build.md).
 target_link_libraries(aegir-bootstrap PUBLIC aegir-cxx-policy sel4 sel4runtime aegir-c-headers)
+# Lean, and private: this object links into the freestanding binaries, so it
+# must carry no exception personality, and it must not export -fno-exceptions
+# to a hosted consumer.
+target_compile_options(aegir-bootstrap PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)

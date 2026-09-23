@@ -43,6 +43,7 @@ add_library(aegir-trinket STATIC
     src/font.cc
     src/unicode.cc
     src/locale.cc
+    src/theme.cc
     src/theme_xen.cc
     src/worker.cc
     "${AEGIR_TERMINUS_EMBED}"
@@ -57,6 +58,7 @@ target_include_directories(aegir-trinket PUBLIC include)
 # for the freeing heap the standard library allocates from.
 target_link_libraries(aegir-trinket PUBLIC
     aegir-cxx-policy-hosted
+    aegir-cxxabi-shim
     aegir-runtime
     aegir-console-protocol
     aegir-input

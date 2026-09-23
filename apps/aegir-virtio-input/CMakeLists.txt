@@ -20,6 +20,6 @@ add_executable(aegir-virtio-input src/main.cc)
 target_compile_options(aegir-virtio-input PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-virtio-input PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-input aegir-ipc aegir-log aegir-virtio sel4
+  aegir-virtio-input PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-input aegir-ipc aegir-log aegir-virtio sel4
                              muslc sel4runtime
 )

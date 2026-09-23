@@ -15,3 +15,6 @@ add_library(aegir-manifest STATIC src/manifest.cc)
 
 target_include_directories(aegir-manifest PUBLIC include)
 target_link_libraries(aegir-manifest PUBLIC aegir-cxx-policy aegir-mem)
+# Lean, and private: freestanding binaries link this object, a hosted one must
+# not inherit -fno-exceptions from it.
+target_compile_options(aegir-manifest PRIVATE -fno-exceptions -fno-rtti -fno-threadsafe-statics)

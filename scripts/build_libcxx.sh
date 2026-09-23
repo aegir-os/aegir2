@@ -4,13 +4,20 @@
 #
 # The vendored LLVM runtimes build is driven against the target's already-built
 # full musl: musl's headers are the C library libc++ compiles against, and its
-# archive is what the final link uses. This is the tier-1 configuration
-# (specs/cxx.md): exceptions and RTTI are *off*, matching the user code policy,
-# so libc++'s headers and its archive agree on the `_LIBCPP_ODR_SIGNATURE` that
-# embeds the exceptions choice (libcxx/include/__config). Threads stay *on* so
-# <thread>/<mutex> compile and link against musl's pthread; actually starting a
-# thread needs a working clone, which is a later milestone. Localization and
+# archive is what the final link uses. Exceptions and RTTI are *on*
+# (specs/cxx.md's completion program, step 3): the archive's `_LIBCPP_ODR_SIGNATURE`
+# embeds the exceptions choice (libcxx/include/__config), so the library and the
+# user-code policy have to agree -- both are built with them on. Threads stay on
+# so <thread>/<mutex> compile and link against musl's pthread; actually starting
+# a thread needs a working clone, which is a later milestone. Localization and
 # std::filesystem are off until the arcs that need them.
+#
+# Unwind tables are what make a throw walk frames: libc++'s CFLAGS do not carry
+# the environment's -fno-asynchronous-unwind-tables, so the library has
+# .eh_frame; the user-code policy re-enables it for the same reason. libc++abi
+# uses libgcc's unwinder (LIBCXXABI_USE_LLVM_UNWINDER=OFF) -- libunwind is
+# built and linked, but the GCC toolchain's crt/libgcc_eh pair is what the
+# personality and _Unwind_* calls resolve against.
 #
 # Usage: scripts/build_libcxx.sh [TARGET]     (default: aegir)
 #
@@ -88,8 +95,8 @@ cmake "${LLVM_PROJECT}/runtimes" \
     -DLLVM_ENABLE_SPHINX=OFF \
     -DLIBCXX_ENABLE_SHARED=OFF \
     -DLIBCXX_ENABLE_STATIC=ON \
-    -DLIBCXX_ENABLE_EXCEPTIONS=OFF \
-    -DLIBCXX_ENABLE_RTTI=OFF \
+    -DLIBCXX_ENABLE_EXCEPTIONS=ON \
+    -DLIBCXX_ENABLE_RTTI=ON \
     -DLIBCXX_ENABLE_THREADS=ON \
     -DLIBCXX_HAS_PTHREAD_API=ON \
     -DLIBCXX_ENABLE_FILESYSTEM=OFF \
@@ -102,7 +109,7 @@ cmake "${LLVM_PROJECT}/runtimes" \
     -DLIBCXX_INCLUDE_TESTS=OFF \
     -DLIBCXXABI_ENABLE_SHARED=OFF \
     -DLIBCXXABI_ENABLE_STATIC=ON \
-    -DLIBCXXABI_ENABLE_EXCEPTIONS=OFF \
+    -DLIBCXXABI_ENABLE_EXCEPTIONS=ON \
     -DLIBCXXABI_ENABLE_THREADS=ON \
     -DLIBCXXABI_USE_COMPILER_RT=OFF \
     -DLIBCXXABI_USE_LLVM_UNWINDER=OFF \

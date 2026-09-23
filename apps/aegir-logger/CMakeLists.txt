@@ -16,6 +16,6 @@ add_executable(aegir-logger src/main.cc)
 target_compile_options(aegir-logger PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-logger PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log sel4 muslc
+  aegir-logger PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc aegir-log sel4 muslc
                        sel4runtime
 )

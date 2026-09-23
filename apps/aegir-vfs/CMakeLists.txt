@@ -14,6 +14,6 @@ add_executable(aegir-vfs src/main.cc)
 target_compile_options(aegir-vfs PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-vfs PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+  aegir-vfs PRIVATE aegir-cxx-policy aegir-cxx-policy-freestanding aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                     aegir-namespace aegir-volume sel4 muslc sel4runtime
 )
