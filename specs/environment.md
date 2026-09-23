@@ -53,7 +53,9 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   or a syscall.
 - **The C and C++ mapping is the filesystem arc's.** `getcwd`/`chdir` and
   `std::filesystem::current_path()` reach the same state; the runtime answers
-  them there, not here.
+  them there, not here. Landed with `specs/cxx.md` step 5: the runtime's file
+  layer (`aegir-heap/src/files.cc`) owns the one buffer, and
+  `aegir::environment` is its C++ face over a plain-C bridge.
 
 ## The shape
 

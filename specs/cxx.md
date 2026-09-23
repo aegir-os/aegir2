@@ -311,28 +311,51 @@ The order:
 
    1. **The transport** — `libs/freestanding/aegir-vfs-client` (landed):
       `aegir::vfs`, the namespace's resolve/count/describe and a volume's
-      read/list/open/write/close/mkdir/remove over the two protocol headers,
-      every call a value or a refusal. Freestanding so a service that holds
-      `vfs.namespace` links it without the exception personality, and the
+      read/list/stat/open/write/close/mkdir/remove over the two protocol
+      headers, every call a value or a refusal. Freestanding so a service that
+      holds `vfs.namespace` links it without the exception personality, and the
       runtime's dispatcher stands on the same calls.
-   2. **The wrapper** — `libs/hosted/aegir-filesystem` (started):
+   2. **The wrapper** — `libs/hosted/aegir-filesystem` (landed): 
       `aegir::filesystem`, hosted, with `std::filesystem`'s error model — a
-      throwing overload and an `error_code` one — over the transport. Its first
-      call is `volumes()`, the enumeration `std::filesystem` has no path for
-      (capability-free, answered on the namespace port); the path operations
-      that need a resolved volume capability arrive with the runtime's file
-      calls, where the capability's slot and its reuse are decided.
-   3. **The runtime's file calls.** A per-process fd table and the POSIX calls
-      libc++'s `<filesystem>` actually makes (`statat`, `openat`, `read`,
-      `getdents`, `mkdirat`, `unlinkat`, `chdir`/`getcwd`), answered from the
-      transport and translated to errno. This is what turns on `std::filesystem`.
-   4. **The libc++ `path` patch** (tracked) for the `Volume:` grammar.
+      throwing overload and an `error_code` one — over the transport. Its
+      first call is `volumes()`, the enumeration `std::filesystem` has no
+      path for (capability-free, answered on the namespace port). The
+      path operations that need a resolved volume capability wait for
+      `std::filesystem` to want them, where the capability's slot and its
+      reuse are decided.
+   3. **The runtime's file calls** — `libs/hosted/aegir-heap/src/files.cc`
+      (landed). musl's filesystem functions and `std::filesystem` issue
+      Linux syscalls; `heap.cc`'s dispatcher answers them from the
+      process's own memory, resolving Aegir paths through `aegir::vfs`
+      instead of asking the kernel. A per-process fd table (grows on
+      demand) holds each open file's volume capability, its
+      volume-relative path, a write handle when it is open for writing, and
+      its read cursor; a directory is the same minus the handle, with a
+      listing cursor. `openat`, `close`, `read`, `write`, `lseek`,
+      `newfstatat`/`fstat` (musl's kstat path, not statx), `getdents64`,
+      `mkdirat`, `unlinkat`, `chdir`, `getcwd` and `fcntl` are the calls
+      answered; each is a value or a negative errno. Transient resolves
+      reuse one capability slot (the allocator never takes a used slot
+      back, so the layer keeps its own free list), and the current
+      directory is one buffer the runtime owns, so `chdir`/`getcwd`,
+      `std::filesystem::current_path()` and `aegir::environment` read the
+      same string. libc++ is built with `LIBCXX_ENABLE_FILESYSTEM=ON`; a
+      tracked musl patch (`0003`) lets `getcwd` accept a `Volume:` root,
+      which musl's own `/`-only check would otherwise refuse. This is what
+      turns on `std::filesystem`.
+   4. **The libc++ `path` patch** (tracked, next) for the `Volume:`
+      grammar: `is_absolute`, `root_name` and `absolute` are not yet right
+      for an Aegir path, though the calls themselves already work on
+      absolute paths.
 
    The acceptance is `apps/hosted/aegir-fs-smoke`, spawned with `needs =
    vfs.namespace`: it reads through both halves -- counting and describing
    volumes, reading and listing the initrd, listing the AEGIR FAT volume, and
-   writing, reading back and removing a file on the scratch FAT volume -- and
-   prints `FS_SMOKE_OK`.
+   writing, reading back and removing a file on the scratch FAT volume, each
+   of the read/list/stat calls proved with `aegir::vfs` -- and then runs
+   `std::filesystem` over the same filesystem: `status`/`file_size`,
+   `is_directory`, a `directory_iterator`, `create_directory` + `remove`, and
+   `current_path()`. It prints `FS_SMOKE_OK`.
    A finding from it, fixed in the same arc: a second client on a FAT volume
    used to corrupt the first, because every block-device client mapped one
    shared DMA window. Each client now reads through a window of its own

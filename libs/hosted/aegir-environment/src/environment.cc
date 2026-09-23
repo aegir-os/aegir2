@@ -7,9 +7,8 @@
 
 #include <aegir/environment.h>
 
-#include <aegir/bootstrap.h>
-
 #include <cstring>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,16 +23,24 @@ char const *const *sel4runtime_argv(void);
 char const *const *sel4runtime_envp(void);
 }
 
+/* The current directory lives in the runtime, because chdir/getcwd and
+ * std::filesystem::current_path reach the same state (specs/environment.md):
+ * this library is the C++ face of it, not a second copy. aegir-heap owns the
+ * buffer and answers the two calls. */
+extern "C" {
+char const *aegir_heap_current_dir(uint32_t *length) noexcept;
+int aegir_heap_set_current_dir(char const *path, uint32_t length) noexcept;
+}
+
 namespace aegir::environment {
 
 namespace {
 
-/* The process's own settings, laid over what it inherited: `setenv` and
- * `set_current_dir` write here, and the frame and the block stay read-only. */
+/* The process's own settings, laid over what it inherited: `setenv` writes
+ * here, and the frame and the block stay read-only. The current directory is
+ * the runtime's, not this state's. */
 struct State {
     std::vector<std::pair<std::string, std::string>> settings;
-    std::string cwd;
-    bool cwd_set = false;
 };
 
 State &state()
@@ -95,11 +102,8 @@ bool setenv(char const *name, char const *value) noexcept
 
 std::string_view current_dir() noexcept
 {
-    if (state().cwd_set) {
-        return state().cwd;
-    }
     uint32_t length = 0;
-    char const *found = bootstrap::current_dir(&length);
+    char const *found = aegir_heap_current_dir(&length);
     if (found == nullptr) {
         return {};
     }
@@ -108,9 +112,7 @@ std::string_view current_dir() noexcept
 
 bool set_current_dir(std::string_view path) noexcept
 {
-    state().cwd.assign(path.data(), path.size());
-    state().cwd_set = true;
-    return true;
+    return aegir_heap_set_current_dir(path.data(), static_cast<uint32_t>(path.size())) == 0;
 }
 
 }  // namespace aegir::environment

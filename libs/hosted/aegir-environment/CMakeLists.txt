@@ -16,5 +16,5 @@ target_include_directories(aegir-environment PUBLIC include)
 
 target_link_libraries(aegir-environment PUBLIC
     aegir-cxx-policy-hosted
-    aegir-bootstrap
+    aegir-heap
 )

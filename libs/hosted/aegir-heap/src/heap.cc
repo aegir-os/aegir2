@@ -36,6 +36,8 @@
 
 #include <aegir/heap.h>
 
+#include "files.h"
+
 #include <aegir/debug.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
@@ -244,6 +246,9 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     g_allocator = &allocator;
     g_scratch = &scratch;
 
+    /* The file layer's capability slots come from the same allocator. */
+    files::adopt(allocator);
+
     /* The top of the window, page-aligned so brk arithmetic stays on page
      * boundaries, and below nothing the window already holds. */
     uintptr_t const top = align_down(scratch.limit());
@@ -420,13 +425,14 @@ long sys_madvise(void *addr, size_t length, int advice) noexcept
     return 0;
 }
 
-/* SYS_write: the serial console. musl's own stdio is not wired (Aegir writes
- * through aegir-runtime), but the standard library's diagnostics do reach
- * write(), and losing them would make a terminate mute. */
+/* SYS_write: the serial console for the standard streams, a file for an fd
+ * the runtime opened. musl's stdio and the standard library's diagnostics both
+ * reach here; the console is what the smokes speak on, the files are what the
+ * filesystem arc adds (specs/cxx.md step 5). */
 long sys_write(int fd, void const *buffer, size_t length) noexcept
 {
     if (fd != 1 && fd != 2) {
-        return -EBADF;
+        return files::write(fd, buffer, length);
     }
     auto const *bytes = static_cast<uint8_t const *>(buffer);
     for (size_t i = 0; i < length; ++i) {
@@ -486,6 +492,51 @@ long vsyscall(long sysnum, ...) noexcept
     case 66: /* SYS_writev */
         ret = sys_writev(va_arg(ap, int), va_arg(ap, void const *),
                          va_arg(ap, int));
+        break;
+    /* ---- the file calls (specs/cxx.md step 5): answered from aegir::vfs,
+     * one function per syscall. The numbers are musl's riscv64 table
+     * (arch/riscv64/bits/syscall.h.in), the same source the memory cases
+     * above are read from. ---- */
+    case 17: /* SYS_getcwd */
+        ret = files::getcwd(va_arg(ap, char *), va_arg(ap, size_t));
+        break;
+    case 25: /* SYS_fcntl */
+        ret = files::fcntl(va_arg(ap, int), va_arg(ap, int), va_arg(ap, long));
+        break;
+    case 34: /* SYS_mkdirat */
+        ret = files::mkdirat(va_arg(ap, int), va_arg(ap, char const *),
+                             va_arg(ap, int));
+        break;
+    case 35: /* SYS_unlinkat */
+        ret = files::unlinkat(va_arg(ap, int), va_arg(ap, char const *),
+                              va_arg(ap, int));
+        break;
+    case 49: /* SYS_chdir */
+        ret = files::chdir(va_arg(ap, char const *));
+        break;
+    case 56: /* SYS_openat */
+        ret = files::openat(va_arg(ap, int), va_arg(ap, char const *),
+                            va_arg(ap, int), va_arg(ap, int));
+        break;
+    case 57: /* SYS_close */
+        ret = files::close(va_arg(ap, int));
+        break;
+    case 61: /* SYS_getdents64 */
+        ret = files::getdents(va_arg(ap, int), va_arg(ap, void *),
+                              va_arg(ap, size_t));
+        break;
+    case 62: /* SYS_lseek */
+        ret = files::lseek(va_arg(ap, int), va_arg(ap, long), va_arg(ap, int));
+        break;
+    case 63: /* SYS_read */
+        ret = files::read(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t));
+        break;
+    case 79: /* SYS_newfstatat: the stat family on riscv64 (musl's kstat path) */
+        ret = files::newfstatat(va_arg(ap, int), va_arg(ap, char const *),
+                                va_arg(ap, void *), va_arg(ap, int));
+        break;
+    case 80: /* SYS_fstat */
+        ret = files::fstat(va_arg(ap, int), va_arg(ap, void *));
         break;
     case 93: /* SYS_exit: end the calling thread, not the process. A thread
               * that musl's __pthread_exit has finished with suspends here; the

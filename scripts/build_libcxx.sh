@@ -9,8 +9,9 @@
 # embeds the exceptions choice (libcxx/include/__config), so the library and the
 # user-code policy have to agree -- both are built with them on. Threads stay on
 # so <thread>/<mutex> compile and link against musl's pthread; actually starting
-# a thread needs a working clone, which is a later milestone. Localization and
-# std::filesystem are off until the arcs that need them.
+# a thread needs a working clone, which is a later milestone. Localization is
+# off until the arc that needs it; std::filesystem is on, because the runtime
+# answers its calls (specs/cxx.md step 5).
 #
 # Unwind tables are what make a throw walk frames: libc++'s CFLAGS do not carry
 # the environment's -fno-asynchronous-unwind-tables, so the library has
@@ -99,7 +100,7 @@ cmake "${LLVM_PROJECT}/runtimes" \
     -DLIBCXX_ENABLE_RTTI=ON \
     -DLIBCXX_ENABLE_THREADS=ON \
     -DLIBCXX_HAS_PTHREAD_API=ON \
-    -DLIBCXX_ENABLE_FILESYSTEM=OFF \
+    -DLIBCXX_ENABLE_FILESYSTEM=ON \
     -DLIBCXX_ENABLE_LOCALIZATION=OFF \
     -DLIBCXX_HAS_MUSL_LIBC=ON \
     -DLIBCXX_CXX_ABI=libcxxabi \

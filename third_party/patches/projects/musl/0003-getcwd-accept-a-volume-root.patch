@@ -1,0 +1,15 @@
+diff --git a/src/unistd/getcwd.c b/src/unistd/getcwd.c
+--- a/src/unistd/getcwd.c
++++ b/src/unistd/getcwd.c
+@@ -17,7 +17,10 @@
+ 	long ret = syscall(SYS_getcwd, buf, size);
+ 	if (ret < 0)
+ 		return 0;
+-	if (ret == 0 || buf[0] != '/') {
++	/* Aegir's paths are rooted at a volume name -- "Volume:rest" -- not at
++	 * '/'; the kernel's getcwd answers one, and a path that is neither is
++	 * not a path it can return. */
++	if (ret == 0 || (buf[0] != '/' && strchr(buf, ':') == 0)) {
+ 		errno = ENOENT;
+ 		return 0;
+ 	}

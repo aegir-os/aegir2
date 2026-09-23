@@ -16,7 +16,9 @@
 #include <aegir/filesystem.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <system_error>
 #include <vector>
 
@@ -57,11 +59,70 @@ void check_volumes()
            "the throwing volumes() agrees with the error_code one");
 }
 
+/* std::filesystem over the runtime's file calls. Every call here lands in
+ * musl (stat/open/readdir/mkdir/remove/getcwd) and so in the runtime's file
+ * layer (aegir-heap/src/files.cc), which answers it from aegir::vfs. The
+ * paths are Aegir's -- absolute, "Volume:rest" -- so no mapping or current
+ * directory is involved except where current_path names it. */
+void check_std_filesystem()
+{
+    namespace fs = std::filesystem;
+
+    {
+        std::error_code error;
+        fs::path const manifest("Initrd:services.manifest");
+        bool const is_file = fs::is_regular_file(manifest, error) && !error;
+        std::uintmax_t size = 0;
+        if (!error) {
+            size = fs::file_size(manifest, error);
+        }
+        report(is_file && !error && size > 0,
+               "std::filesystem reads Initrd:services.manifest's status and size");
+    }
+
+    {
+        std::error_code error;
+        bool const is_dir = fs::is_directory(fs::path("Initrd:"), error) && !error;
+        report(is_dir, "std::filesystem sees the Initrd: root as a directory");
+    }
+
+    {
+        std::error_code error;
+        bool found = false;
+        fs::directory_iterator const end;
+        for (fs::directory_iterator it("Initrd:", error); !error && it != end;
+             it.increment(error)) {
+            if (it->path().filename() == "services.manifest") {
+                found = true;
+            }
+        }
+        report(!error && found, "std::filesystem::directory_iterator walks Initrd:");
+    }
+
+    {
+        std::error_code error;
+        fs::path const directory("SCRATCH:SMOKEDIR");
+        bool const made = fs::create_directory(directory, error) && !error;
+        bool const now_dir = fs::is_directory(directory, error) && !error;
+        bool const removed = fs::remove(directory, error) && !error;
+        report(made && now_dir && removed,
+               "std::filesystem creates and removes a directory on SCRATCH:");
+    }
+
+    {
+        std::error_code error;
+        fs::path const cwd = fs::current_path(error);
+        report(!error && !cwd.native().empty(),
+               "std::filesystem::current_path reports the process's directory");
+    }
+}
+
 }  // namespace
 
 int run()
 {
     check_volumes();
+    check_std_filesystem();
     return g_failed;
 }
 
