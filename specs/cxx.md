@@ -343,10 +343,16 @@ The order:
       tracked musl patch (`0003`) lets `getcwd` accept a `Volume:` root,
       which musl's own `/`-only check would otherwise refuse. This is what
       turns on `std::filesystem`.
-   4. **The libc++ `path` patch** (tracked, next) for the `Volume:`
-      grammar: `is_absolute`, `root_name` and `absolute` are not yet right
-      for an Aegir path, though the calls themselves already work on
-      absolute paths.
+   4. **The libc++ `path` patch** —
+      `third_party/patches/projects/llvm-project/0002` (landed) gives `path`
+      the Aegir grammar, modelled on libc++'s Windows one and turned on by
+      `_LIBCPP_AEGIR` (defined by the libc++ build and by
+      `aegir-cxx-policy-hosted`, because `path`'s predicates are inline in the
+      header and must match the library's): a root name is a volume
+      (`Name:`), `is_absolute()` is `has_root_name()` — "always absolute" —
+      and `/` stays the separator. `root_name`, `relative_path` and
+      `absolute` are right, and a relative path joins the current directory
+      as `Volume:component` rather than `Volume:/component`.
 
    The acceptance is `apps/hosted/aegir-fs-smoke`, spawned with `needs =
    vfs.namespace`: it reads through both halves -- counting and describing
@@ -354,8 +360,9 @@ The order:
    writing, reading back and removing a file on the scratch FAT volume, each
    of the read/list/stat calls proved with `aegir::vfs` -- and then runs
    `std::filesystem` over the same filesystem: `status`/`file_size`,
-   `is_directory`, a `directory_iterator`, `create_directory` + `remove`, and
-   `current_path()`. It prints `FS_SMOKE_OK`.
+   `is_directory`, a `directory_iterator`, `create_directory` + `remove`,
+   `current_path()`, and the grammar (`is_absolute`/`root_name`/`absolute`).
+   It prints `FS_SMOKE_OK`.
    A finding from it, fixed in the same arc: a second client on a FAT volume
    used to corrupt the first, because every block-device client mapped one
    shared DMA window. Each client now reads through a window of its own

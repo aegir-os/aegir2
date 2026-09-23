@@ -115,6 +115,21 @@ void check_std_filesystem()
         report(!error && !cwd.native().empty(),
                "std::filesystem::current_path reports the process's directory");
     }
+
+    {
+        /* The tracked Aegir path grammar (specs/cxx.md step 5): a root name is
+         * a volume, and such a path is absolute. A relative path joins the
+         * current directory the same way. */
+        fs::path const rooted("Initrd:services.manifest");
+        bool const grammar = rooted.is_absolute() &&
+                             rooted.root_name() == "Initrd:" &&
+                             rooted.relative_path() == "services.manifest" &&
+                             fs::absolute(rooted) == rooted;
+        fs::path const joined = fs::absolute(fs::path("thing"));
+        bool const relative = joined.is_absolute() && joined.filename() == "thing";
+        report(grammar && relative,
+               "std::filesystem gives a path the Aegir grammar (Volume: root, absolute)");
+    }
 }
 
 }  // namespace

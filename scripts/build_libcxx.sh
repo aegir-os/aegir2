@@ -70,7 +70,13 @@ RANLIB="$(command -v riscv64-unknown-elf-ranlib)"
 # add_pointer/remove_pointer instead of the compiler builtins. GCC 14 reports
 # __has_builtin(__remove_pointer) but rejects the builtin in the signature
 # libc++ uses it in (__filesystem/path.h), so the builtin path does not compile.
-CFLAGS="-march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2 -D_GNU_SOURCE -isystem ${MUSL_INSTALL}/include"
+#
+# _LIBCPP_AEGIR turns on the tracked Aegir path grammar patch
+# (third_party/patches/projects/llvm-project/0002): path's root name is a
+# volume -- "Volume:rest" -- and such a path is absolute (specs/cxx.md step 5).
+# The user-code policy defines it too, because path's grammar predicates are
+# inline in the header and must agree with this library.
+CFLAGS="-march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2 -D_GNU_SOURCE -D_LIBCPP_AEGIR -isystem ${MUSL_INSTALL}/include"
 CXXFLAGS="${CFLAGS} -D_LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS"
 
 cd "${BUILD_DIR}"

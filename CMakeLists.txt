@@ -105,7 +105,9 @@ if(AEGIR_HOSTED_CXX)
   # are step 4). -D_GNU_SOURCE is what makes musl's headers declare the POSIX
   # surface libc++ uses; _LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS works
   # around GCC 14's unusable __remove_pointer builtin (see
-  # scripts/build_libcxx.sh). The policy links the full musl and libc++ because
+  # scripts/build_libcxx.sh). -D_LIBCPP_AEGIR is the tracked Aegir path grammar
+  # (specs/cxx.md step 5): it must be defined here too, because path's grammar
+  # predicates are inline in the header and have to match the library's. The policy links the full musl and libc++ because
   # choosing the hosted runtime *is* the policy's job.
   #
   # -O2 is not optional here. libc++'s containers are always-inline, and at -O0
@@ -129,6 +131,7 @@ if(AEGIR_HOSTED_CXX)
       -fno-threadsafe-statics
       -D_GNU_SOURCE
       -D_LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS
+      -D_LIBCPP_AEGIR
       -Wall
       -Wextra
       -Werror

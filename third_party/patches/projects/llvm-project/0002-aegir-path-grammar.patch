@@ -1,0 +1,85 @@
+diff --git a/libcxx/include/__filesystem/path.h b/libcxx/include/__filesystem/path.h
+--- a/libcxx/include/__filesystem/path.h
++++ b/libcxx/include/__filesystem/path.h
+@@ -844,6 +844,11 @@
+       return false;
+     // Seems to be a server root name
+     return true;
++#  elif defined(_LIBCPP_AEGIR)
++    // An Aegir path is absolute when it names a volume -- "Volume:rest"
++    // (specs/vfs.md). The volume is the root name and the rest is relative to
++    // it; there is no separate root directory, so a leading '/' is not a root.
++    return has_root_name();
+ #  else
+     return has_root_directory();
+ #  endif
+diff --git a/libcxx/src/filesystem/path.cpp b/libcxx/src/filesystem/path.cpp
+--- a/libcxx/src/filesystem/path.cpp
++++ b/libcxx/src/filesystem/path.cpp
+@@ -121,11 +121,18 @@
+ string_view_t path::__filename() const {
+   if (empty())
+     return {};
++#if defined(_LIBCPP_AEGIR)
++  // Aegir's root name is a volume, not a directory: "Volume:" alone has no
++  // filename, where upstream would read the root name back as one.
++  if (!has_relative_path())
++    return {};
++#else
+   {
+     PathParser PP = PathParser::CreateBegin(__pn_);
+     if (ConsumeRootDir(&PP))
+       return {};
+   }
++#endif
+   return *(--PathParser::CreateEnd(__pn_));
+ }
+ 
+diff --git a/libcxx/src/filesystem/path_parser.h b/libcxx/src/filesystem/path_parser.h
+--- a/libcxx/src/filesystem/path_parser.h
++++ b/libcxx/src/filesystem/path_parser.h
+@@ -323,6 +323,33 @@
+       return consumeNSeparators(consumeName(P, End), End, 2);
+   }
+ 
++#if defined(_LIBCPP_AEGIR)
++  // Aegir's root name is a volume name followed by ':' -- "Volume:" -- at the
++  // start of the path (specs/vfs.md). It is the drive letter's shape with a
++  // longer name: it scans forwards when lexing, backwards when iterating back,
++  // and returns one past the ':' forwards, one before the name backwards.
++  PosPtr consumeVolumeName(PosPtr P, PosPtr End) const noexcept {
++    if (P == End)
++      return nullptr;
++    if (P < End) {
++      PosPtr Colon = P;
++      while (Colon != End && !isSeparator(*Colon) && *Colon != ':')
++        ++Colon;
++      if (Colon == P || Colon == End || *Colon != ':')
++        return nullptr;
++      return Colon + 1;
++    }
++    if (*P != ':')
++      return nullptr;
++    PosPtr Cursor = P - 1;
++    if (Cursor == End || isSeparator(*Cursor))
++      return nullptr;
++    while (Cursor != End && !isSeparator(*Cursor))
++      --Cursor;
++    return Cursor;
++  }
++#endif
++
+   PosPtr consumeRootName(PosPtr P, PosPtr End) const noexcept {
+ #if defined(_LIBCPP_WIN32API)
+     if (PosPtr Ret = consumeDriveLetter(P, End))
+@@ -330,6 +357,10 @@
+     if (PosPtr Ret = consumeNetworkRoot(P, End))
+       return Ret;
+ #endif
++#if defined(_LIBCPP_AEGIR)
++    if (PosPtr Ret = consumeVolumeName(P, End))
++      return Ret;
++#endif
+     return nullptr;
+   }
+ };
