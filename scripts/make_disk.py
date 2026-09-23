@@ -30,6 +30,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from mkfs_bfs import make_bfs
+
 SECTOR = 512
 DISK_BYTES = 32 << 20
 # The Aegir system volume's partition type GUID (specs/services.md): the
@@ -37,12 +39,17 @@ DISK_BYTES = 32 << 20
 # partition manager reads and the VFS aliases as Sys:. The discovery shape
 # is systemd's Discoverable Partitions Specification -- one GUID per role.
 AEGIR_SYSTEM_GUID = "5cd58811-9bf5-4af3-8682-9b76edce3535"
+# The Be File System's GPT type (specs/bfs.md): the disk says which partition
+# is BFS, and the filesystem registry turns that into the service that serves
+# it.
+BEFS_GUID = "42465331-3ba3-10f1-802a-4861696b7521"
 # The partitions: name, first LBA, last LBA (None = to the end of the disk),
 # and the file each volume's root will hold. The first starts at the
 # conventional LBA -- the first megabyte is the GPT's, which is also what
 # real partitioning tools leave. What the filesystem services will be asked
 # to find: the contents are the checksum, a reader that got the wrong
-# sectors does not print them.
+# sectors does not print them. BFS is built by mkfs_bfs, not mtools, so its
+# last two fields are unused.
 PARTITIONS = [
     ("AEGIR", 2048, 18431, "AEGIR.TXT",
      b"aegir read this file off a disk it enumerated itself\n"),
@@ -56,6 +63,20 @@ PARTITIONS = [
     # is the format's own definition of the flavor. mtools picks from the
     # geometry, so the minfo check below is the checksum, not a courtesy.
     ("FAT16", 32768, 43007, None, None),
+    # The Be File System: Aegir's own. mkfs_bfs makes a root with a known
+    # file and a directory with a nested file, so the read half has something
+    # to walk.
+    ("BFS", 43008, 63487, None, None),
+]
+
+# The BFS volume's tree: a known file and a directory with a nested file, so
+# the component walk crosses a directory the way the FAT one does.
+BFS_TREE = [
+    ("file", "HELLO.TXT", b"a Be File System file, read off a disk Aegir built itself\n"),
+    ("dir", "SUBDIR", [
+        ("file", "NESTED.TXT",
+         b"two components deep, through a Be File System directory\n"),
+    ]),
 ]
 
 # Beyond the root files: a directory with a file in it, so the component
@@ -99,7 +120,12 @@ def main() -> int:
     # Microsoft basic data, the type a FAT volume on GPT carries.
     sgdisk = ["sgdisk", "--clear"]
     for number, (name, first, last, _, _) in enumerate(PARTITIONS, start=1):
-        typecode = AEGIR_SYSTEM_GUID if number == 1 else "0700"
+        if number == 1:
+            typecode = AEGIR_SYSTEM_GUID
+        elif name == "BFS":
+            typecode = BEFS_GUID
+        else:
+            typecode = "0700"
         sgdisk += [f"--new={number}:{first}:{last if last is not None else 0}",
                    f"--typecode={number}:{typecode}",
                    f"--change-name={number}:{name}"]
@@ -107,6 +133,10 @@ def main() -> int:
     subprocess.run(sgdisk, check=True, capture_output=True)
 
     for name, first, _, known_name, known_content in PARTITIONS:
+        if name == "BFS":
+            # Not mtools': the BFS volume is built by scripts/mkfs_bfs.py,
+            # below, so its on-disk format is the one specs/bfs.md fixes.
+            continue
         volume = f"{args.image}@@{first * SECTOR}"
         if name == "FAT16":
             # FAT16 on purpose: -c 1 makes the cluster count decide, and the
@@ -201,8 +231,22 @@ def main() -> int:
                 ["mcopy", "-i", volume, str(source), f"::{directory}/{long_name}"],
                 check=True, capture_output=True)
 
-    print(f"make_disk: {args.image}: GPT, four FAT partitions, "
-          "two known files, one nested, long names, one empty volume, one FAT16")
+    # The BFS volume: built into the image at its partition's offset, the
+    # same way mtools fills a FAT partition through `image@@offset`.
+    bfs_first = next(p[1] for p in PARTITIONS if p[0] == "BFS")
+    bfs_last = next(p[2] for p in PARTITIONS if p[0] == "BFS")
+    bfs_offset = bfs_first * SECTOR
+    bfs_size = (bfs_last - bfs_first + 1) * SECTOR
+    with args.image.open("r+b") as handle:
+        handle.seek(0)
+        image = bytearray(handle.read())
+        make_bfs(image, bfs_offset, bfs_size, "BFS", BFS_TREE)
+        handle.seek(0)
+        handle.write(image)
+
+    print(f"make_disk: {args.image}: GPT, four FAT partitions and one BFS, "
+          "two known files each, one nested, long names, one empty volume, "
+          "one FAT16")
     return 0
 
 

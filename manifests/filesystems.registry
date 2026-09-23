@@ -23,3 +23,7 @@ type=5cd58811-9bf5-4af3-8682-9b76edce3535 kind=fat binary=aegir-fs-fat
 # Microsoft basic data: the type a FAT partition on GPT carries, and what the
 # test disk's interchange volumes are (specs/fat.md).
 type=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 kind=fat binary=aegir-fs-fat
+
+# The Be File System (specs/bfs.md): Aegir's own filesystem, and the one the
+# system volume migrates to. The GUID is BFS's on GPT.
+type=42465331-3ba3-10f1-802a-4861696b7521 kind=bfs binary=aegir-fs-bfs

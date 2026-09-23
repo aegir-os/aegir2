@@ -75,6 +75,12 @@ void write(char const *text, uint32_t length)
  * not produce these. */
 constexpr char kAegirTxt[] = "aegir read this file off a disk it enumerated itself\n";
 constexpr char kSecondTxt[] = "a second volume, a second service, the same reader\n";
+/* The Be File System volume's files, put there by scripts/mkfs_bfs.py
+ * (specs/bfs.md). */
+constexpr char kBfsHello[] =
+    "a Be File System file, read off a disk Aegir built itself\n";
+constexpr char kBfsNested[] =
+    "two components deep, through a Be File System directory\n";
 
 uint32_t text_length(char const *text)
 {
@@ -684,6 +690,85 @@ int main(int argc, char *argv[])
         ++failed;
     } else {
         write("  test: SECOND:SECOND.TXT reads back what the disk holds\n");
+    }
+
+    /* The Be File System: Aegir's own, on a partition the disk build
+     * (scripts/mkfs_bfs.py) wrote (specs/bfs.md). The read side is proven the
+     * same way the FAT volumes' is -- byte-exact through resolve -- and the
+     * walk crosses a BFS directory. */
+    seL4_CPtr const bfs_volume =
+        resolve("BFS:HELLO.TXT", 13, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 40));
+    if (!read_and_check(bfs_volume, rest, rest_length, kBfsHello,
+                        text_length(kBfsHello))) {
+        write("  test: FAIL BFS:HELLO.TXT did not read back what the disk holds\n");
+        ++failed;
+    } else {
+        write("  test: BFS:HELLO.TXT reads back what the disk holds\n");
+    }
+    {
+        /* stat, while `rest` still names the file: the kind and the size. */
+        aegir::ipc::Consumer volume(bfs_volume);
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+        uint32_t const out_words = aegir::nmspace::pack_string(
+            out, rest, rest_length, aegir::nmspace::kPathMax);
+        uint64_t in[aegir::volume::kStatTailWords];
+        aegir::ipc::WordsReply const answer =
+            volume.call_words(aegir::volume::kMethodStat, out, out_words, in,
+                              aegir::volume::kStatTailWords);
+        if (answer.error != 0 || answer.count != aegir::volume::kStatTailWords ||
+            in[0] != aegir::volume::kKindFile || in[1] != text_length(kBfsHello)) {
+            write("  test: FAIL BFS:HELLO.TXT's stat is not a file of its size\n");
+            ++failed;
+        } else {
+            write("  test: BFS:HELLO.TXT stats as a file of its size\n");
+        }
+    }
+
+    static char const kBfsNestedPath[] = "BFS:SUBDIR/NESTED.TXT";
+    seL4_CPtr const bfs_nested_volume =
+        resolve(kBfsNestedPath, sizeof(kBfsNestedPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 41));
+    if (!read_and_check(bfs_nested_volume, rest, rest_length, kBfsNested,
+                        text_length(kBfsNested))) {
+        write("  test: FAIL BFS:SUBDIR/NESTED.TXT did not read back through the walk\n");
+        ++failed;
+    } else {
+        write("  test: BFS:SUBDIR/NESTED.TXT reads back, two components deep\n");
+    }
+
+    {
+        /* list: the root names the file and the directory. */
+        aegir::ipc::Consumer volume(bfs_volume);
+        bool hello = false;
+        bool subdir = false;
+        for (uint32_t i = 0;; ++i) {
+            uint64_t out[2] = {0, i}; /* the empty path, then the index */
+            uint64_t in[aegir::ipc::kMaxWords];
+            aegir::ipc::WordsReply const answer = volume.call_words(
+                aegir::volume::kMethodList, out, 2, in, aegir::ipc::kMaxWords);
+            if (answer.error != 0 || answer.count == 0) {
+                break;
+            }
+            char const *name = nullptr;
+            uint32_t name_length = 0;
+            if (!aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                               &name, &name_length)) {
+                continue;
+            }
+            if (name_length == 9 && same_bytes(name, "HELLO.TXT", 9)) {
+                hello = true;
+            }
+            if (name_length == 6 && same_bytes(name, "SUBDIR", 6)) {
+                subdir = true;
+            }
+        }
+        if (!hello || !subdir) {
+            write("  test: FAIL BFS: listing did not show the file and the directory\n");
+            ++failed;
+        } else {
+            write("  test: BFS: lists the file and the directory\n");
+        }
     }
 
     /* And the boot image itself, by its volume name. The manifest's first

@@ -59,6 +59,7 @@ set(aegir_initrd_binaries
     aegir-virtio-gpu
     aegir-partmgr
     aegir-fs-fat
+    aegir-fs-bfs
     aegir-vfs
     aegir-fs-initrd
     aegir-console
@@ -83,6 +84,7 @@ set(aegir_initrd_binary_names
     "aegir-virtio-gpu"
     "aegir-partmgr"
     "aegir-fs-fat"
+    "aegir-fs-bfs"
     "aegir-vfs"
     "aegir-fs-initrd"
     "aegir-console"
