@@ -265,6 +265,14 @@ char const *string(EntryKind kind, uint32_t *length) noexcept;
  *  that port. */
 bool capability(char const *name, uint32_t length, uint64_t *slot) noexcept;
 
+/** A named capability's size in bits, when it has one: an untyped a service
+ *  retypes objects out of is handed over with its size, because there is no
+ *  invocation that reads an untyped's size (specs/authority.md). False when
+ *  this process was not given that capability; `size_bits` is zero for a
+ *  capability that has no size (every port). */
+bool capability_size_bits(char const *name, uint32_t length,
+                          uint32_t *size_bits) noexcept;
+
 /** A blob the process was given, and where it is. False when there is none. */
 bool devices(uint64_t *address, uint32_t *length) noexcept;
 

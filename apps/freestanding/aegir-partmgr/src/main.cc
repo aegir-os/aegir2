@@ -313,6 +313,15 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     if (memory_untyped != 0) {
         memory_frame = g_objects.carve_page(memory_untyped, child_account, &memory_error);
     }
+    /* A small untyped the filesystem retypes its live queries' notification
+     * endpoints from (specs/bfs.md): the filesystem owns the endpoint it
+     * signals, so a client needs no capability-transfer right of its own. */
+    constexpr uint32_t kFsObjectBits = 12; /* one page of endpoints */
+    seL4_Error object_error = seL4_NoError;
+    uint64_t object_physical = 0;
+    seL4_CPtr const object_untyped =
+        g_objects.carve_untyped(kFsObjectBits, child_account, &object_error,
+                                &object_physical);
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
                                                    child_account, &fault_error);
@@ -327,14 +336,15 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
                         volume, aegir::bootstrap::kCNodeBits,
                         seL4_CapRights_new(1, 0, 0, 1), 0) == seL4_NoError;
-    if (window == 0 || fault == 0 || volume == 0 || !caller_minted || memory_frame == 0) {
+    if (window == 0 || fault == 0 || volume == 0 || !caller_minted ||
+        memory_frame == 0 || object_untyped == 0) {
         aegir::debug_write("      FAIL starting ");
         aegir::debug_write(name, name_length);
         aegir::debug_write(": no window set, fault endpoint, volume port, or memory\n");
         return;
     }
 
-    aegir::spawn::PortGrant ports[5] = {
+    aegir::spawn::PortGrant ports[6] = {
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, spawn_log, seL4_CapRights_new(1, 0, 0, 1),
          badge, 0},
@@ -343,10 +353,12 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
          * clamp by (specs/services.md). */
         {"blk", 3, aegir::bootstrap::kSlotFirstDeclared + 1, block_port,
          seL4_CapRights_new(1, 0, 0, 1), badge, 0},
-        /* Its volume port, receiving half only: a port you may not receive
-         * on is not yours, and this one is. */
-        {"vol", 3, aegir::bootstrap::kSlotFirstDeclared + 2, volume, seL4_CanRead,
-         0, 0},
+        /* Its volume port: it receives here, and a live query's answer carries
+         * a notification endpoint (specs/bfs.md), so the receiving half needs
+         * Grant -- the reply capability inherits it. Not GrantReply: the
+         * filesystem receives no capabilities of its own. */
+        {"vol", 3, aegir::bootstrap::kSlotFirstDeclared + 2, volume,
+         seL4_CapRights_new(0, 1, 1, 0), 0, 0},
         /* Our announce port, calling half: where it tells us the volume's
          * label. No badge and no mark -- we serve the one announce between
          * this spawn and the wait for its ready, so there is nothing to
@@ -354,14 +366,18 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
         {aegir::partman::kPortName, aegir::partman::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 3, announce,
          seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+        /* The untyped live queries' endpoints are retyped from. */
+        {aegir::partman::kCapabilityObjects, aegir::partman::kCapabilityObjectsLength,
+         aegir::bootstrap::kSlotFirstDeclared + 4, object_untyped, seL4_AllRights, 0,
+         kFsObjectBits},
     };
-    uint32_t port_count = 4;
+    uint32_t port_count = 5;
     if (spawn_clock != 0) {
         /* The clock, when the manifest declared one: the filesystem asks it
          * for the time it stamps entries with (specs/fat.md). A machine with
          * no clock simply has no timestamps. */
         ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
-                             aegir::bootstrap::kSlotFirstDeclared + 4, spawn_clock,
+                             aegir::bootstrap::kSlotFirstDeclared + 5, spawn_clock,
                              seL4_CapRights_new(1, 0, 0, 1), 0, 0};
         ++port_count;
     }

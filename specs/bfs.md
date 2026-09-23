@@ -581,21 +581,31 @@ a number, a bool as a bool; a literal and an attribute of different families
 do not match.
 
 A **live query** is a query that sees changes after it opens. Its open carries
-a **notification endpoint** the filesystem may signal, plus a token:
+a token; the filesystem answers with a **notification endpoint** of its own,
+which it signals. The filesystem owns the endpoint, so the client needs no
+capability-transfer right of its own:
 
-- **query open live** — in: the query string, flags, token; one cap: the
-  subscriber's notification endpoint. Answer: status, handle.
+- **query open live** — in: the query string, flags, token. Answer: status,
+  handle, and one cap: the notification endpoint the filesystem made for this
+  query (a read-only copy the client waits on).
 - When a change (create, remove, rename, attribute write) makes an inode enter
-  or leave a live query's set, the filesystem **signals** the subscriber's
-  endpoint with the handle. The signal is one-way (`seL4_Send`), so the
+  or leave a live query's set, the filesystem **signals** that endpoint. The
+  signal is one-way (`seL4_Send`, non-blocking on a notification), so the
   filesystem's serve loop never blocks on a subscriber and a subscriber
   blocked in a write cannot deadlock it. The subscriber re-reads with query
-  next, which reports changes since its last read.
+  next, which reports the current set.
 
-The signal carries no data beyond the handle: what changed is discovered by
-re-reading. This keeps the notification path off the critical section and is
-the shape Phase 6 refines. A live open is answered with `kUnsupported` until
-the notification endpoint step lands: a refusal, not a quiet ordinary query.
+The signal carries no data; the endpoint is the query's identity. The
+filesystem retypes a notification from the small untyped the partition manager
+gave it and mints the client a read-only copy; it signals its own on every
+change that could affect an inode -- a create, remove, rename, write, truncate
+or attribute write -- whether or not that inode ends up in or out of the
+query's set, and the client finds the change by re-reading and comparing. A
+live query whose read has not caught up with the latest change starts its next
+read from the beginning, so a read always shows the whole current set. When
+the last live query closes, the filesystem revokes the untyped, reclaiming the
+endpoints -- and a client's copy, should the client forget it. A live open the
+filesystem has no endpoint for is refused (`kNoSpace`).
 
 ## Sparseness
 
@@ -680,7 +690,10 @@ worth a second look before code exists.
    partition manager's fixed wire and every existing caller are untouched.
 5. **Live queries signal a one-way endpoint and re-read; they do not carry the
    change.** This keeps the single-threaded serve loop and makes deadlock
-   impossible; the cost is a re-read per notification.
+   impossible; the cost is a re-read per notification. The filesystem owns the
+   endpoint (its answer carries a read-only copy), so a client needs no
+   capability-transfer right and the signal can never block on a cap whose type
+   the filesystem cannot check.
 6. **The filesystem registry is data**, one row per GPT type GUID mapping to a
    kind prefix and an initrd binary, and the device manager hands the
    partition manager a named bundle of the helper images rather than one. This

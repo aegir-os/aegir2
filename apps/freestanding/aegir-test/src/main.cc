@@ -580,6 +580,34 @@ uint64_t query_open(seL4_CPtr port, char const *text, uint32_t length,
     return in[1];
 }
 
+/* query open live (specs/bfs.md): the string, the live flag and a token. The
+ * filesystem owns the endpoint it signals and answers with a read-only copy,
+ * which lands in `endpoint_slot` for the caller to wait on. The caller
+ * re-reads with query next. */
+uint64_t query_open_live(seL4_CPtr port, char const *text, uint32_t length,
+                         uint64_t token, seL4_CPtr endpoint_slot) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t const words = aegir::nmspace::pack_string(
+        out, text, length, aegir::metadata::kQueryTextMax);
+    if (words == 0) {
+        return 0;
+    }
+    out[words] = aegir::metadata::kQueryFlagLive;
+    out[words + 1] = token;
+    uint64_t in[aegir::metadata::kQueryOpenTailWords] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const answer = volume.call_transfer(
+        aegir::metadata::kMethodQueryOpenLive, out, words + 2, 0, in,
+        aegir::metadata::kQueryOpenTailWords, &cap_arrived);
+    if (answer.error != 0 || answer.count < 1 || in[0] != aegir::metadata::kOk ||
+        !cap_arrived || !aegir::ipc::take_received_cap(endpoint_slot)) {
+        return 0;
+    }
+    return in[1];
+}
+
 uint64_t query_next(seL4_CPtr port, uint64_t handle, char *name,
                     uint32_t *name_length, uint64_t *size, uint64_t *kind) noexcept
 {
@@ -1568,6 +1596,46 @@ int main(int argc, char *argv[])
         ok = ok && !saw_q1 && saw_q2 &&
              query_close(bfs_write_volume, by_size_after) == 1;
         ok = ok && vol_remove(bfs_write_volume, kQ2, sizeof(kQ2) - 1) == 1;
+
+        /* A live query (specs/bfs.md): the filesystem owns the endpoint, so
+         * the open's answer carries a read-only copy to wait on. A change
+         * signals it, and the client re-reads. */
+        {
+            static char const kLiveName[] = "LIVE.TXT";
+            static char const kLiveQuery[] = "name == \"LIVE.TXT\"";
+            seL4_CPtr const endpoint = static_cast<seL4_CPtr>(first_free + 50);
+            uint64_t const live =
+                query_open_live(bfs_write_volume, kLiveQuery,
+                                sizeof(kLiveQuery) - 1, 0x1234, endpoint);
+            bool live_ok = live != 0;
+            if (live_ok) {
+                uint64_t const made = vol_open(
+                    bfs_write_volume, kLiveName, sizeof(kLiveName) - 1,
+                    aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+                live_ok = made != 0 && vol_close(bfs_write_volume, made) == 1;
+            }
+            if (live_ok) {
+                seL4_Word live_badge = 0;
+                seL4_Recv(endpoint, &live_badge);
+            }
+            if (live_ok) {
+                live_ok = query_next(bfs_write_volume, live, name, &name_length,
+                                     &size, &kind) == aegir::metadata::kOk &&
+                          name_length == sizeof(kLiveName) - 1 &&
+                          same_bytes(name, kLiveName, name_length);
+            }
+            if (live != 0) {
+                (void)vol_remove(bfs_write_volume, kLiveName,
+                                 sizeof(kLiveName) - 1);
+                (void)query_close(bfs_write_volume, live);
+            }
+            if (!live_ok) {
+                write("  test: FAIL the live query did not signal and re-read\n");
+                ++failed;
+            } else {
+                write("  test: a live query signalled on a change and re-read\n");
+            }
+        }
 
         ok = ok && query_open(bfs_write_volume, "size >", 6, 0) == 0;
         ok = ok && query_open(bfs_write_volume, kByName, sizeof(kByName) - 1,

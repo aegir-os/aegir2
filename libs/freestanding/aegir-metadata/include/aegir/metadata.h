@@ -36,9 +36,8 @@ constexpr uint32_t kMethodAttrRemove = 15; /* in: path, name; answer: status */
 constexpr uint32_t kMethodAttrList = 16;   /* in: path, index; answer: status, name, type, size */
 
 /* Queries (specs/bfs.md): an expression over attributes, an open cursor, and
- * a notification endpoint for the live form. They arrive with a later phase
- * of the arc, but their numbers are fixed here so the ones above do not
- * move. */
+ * a notification endpoint for the live form. Their numbers are fixed here so
+ * the methods above do not move. */
 constexpr uint32_t kMethodQueryOpen = 17;
 constexpr uint32_t kMethodQueryNext = 18;
 constexpr uint32_t kMethodQueryClose = 19;
@@ -51,12 +50,17 @@ constexpr uint32_t kQueryTextMax = 128;
 /** query open's answer after the status: the handle. */
 constexpr uint32_t kQueryOpenTailWords = 2;
 
+/** A live open carries the string, the flags and a token. The filesystem owns
+ *  the endpoint it signals and returns a read-only copy as the answer's one
+ *  capability (specs/bfs.md); the call itself carries none. */
+constexpr uint32_t kQueryOpenLiveExtraWords = 2;
+
 /** query next's answer after the status and the name string: the size and the
  *  kind, as list's answer has them. */
 constexpr uint32_t kQueryTailWords = 2;
 
-/** query open's flags: open a live query (a later phase answers
- *  kUnsupported). */
+/** query open's flags: open a live query, whose endpoint is signalled when a
+ *  change could affect it (specs/bfs.md). */
 constexpr uint64_t kQueryFlagLive = 1;
 
 /** Every metadata answer's first word. */

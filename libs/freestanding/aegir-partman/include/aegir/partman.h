@@ -31,4 +31,10 @@ constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
 constexpr uint32_t kMethodAnnounce = 1; /* in: label words; answer: assigned name */
 
+/** The capability name of the untyped a filesystem retypes its live queries'
+ *  notification endpoints from (specs/bfs.md). The filesystem owns the
+ *  endpoint it signals, so a client needs no capability-transfer right. */
+constexpr char kCapabilityObjects[] = "objects";
+constexpr uint32_t kCapabilityObjectsLength = sizeof(kCapabilityObjects) - 1;
+
 }  // namespace aegir::partman

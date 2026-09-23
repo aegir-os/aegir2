@@ -53,6 +53,17 @@ uint8_t *g_memory = nullptr;
 uint32_t g_memory_bytes = 0;
 uint64_t g_handle_serial = 0;
 
+/* Live queries: a change bumps the generation and signals each live query's
+ * endpoint. The filesystem owns that endpoint -- it retypes a notification
+ * from the untyped the partition manager gave it and mints the client a
+ * waiting copy -- so a client needs no capability-transfer right. The cap
+ * slots live past everything the bootstrap block names. */
+uint64_t g_change_generation = 0;
+uint64_t g_live_slot_base = aegir::bootstrap::kSlotFirstDeclared;
+uint64_t g_live_mint_slot = 0; /* the scratch slot a reply's cap is minted into */
+uint64_t g_object_untyped = 0; /* the untyped live endpoints are retyped from */
+uint32_t g_live_count = 0;     /* live queries now open */
+
 aegir::ipc::Consumer g_clock;
 bool g_have_clock = false;
 
@@ -254,13 +265,20 @@ struct Handle {
     uint64_t badge;
     uint64_t inode_block;
     uint64_t cursor;
-    uint8_t kind; /* 0 file, 1 query */
+    uint8_t kind; /* 0 file, 1 query, 2 live query */
     uint32_t query_length;
     /* A query whose single term an index can answer walks the index rather
      * than the volume: `index_block` names the index, `index_position` is how
      * far the walk has got, and 0 means scan instead. */
     uint64_t index_block;
     uint32_t index_position;
+    /* A live query's endpoint is the filesystem's own: the notification it
+     * signals on a change, and the capability the client was given to wait on
+     * it. 0 for the other kinds. `live_generation` is the change generation
+     * whose re-read this handle has begun, so a change makes the next read
+     * start over. */
+    uint64_t live_notification;
+    uint64_t live_generation;
     char query[aegir::metadata::kQueryTextMax];
 };
 
@@ -296,6 +314,27 @@ Handle *handle_alloc(uint64_t badge) noexcept
     return nullptr;
 }
 
+/* A live query's endpoint is the filesystem's: delete the notification cap,
+ * and when the last live query is gone reset the untyped, which reclaims every
+ * endpoint retyped from it -- including a client's waiting copy, even one the
+ * client forgot. */
+void handle_release_cap(Handle *row) noexcept
+{
+    if (row->live_notification == 0) {
+        return;
+    }
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, row->live_notification,
+                      aegir::bootstrap::kCNodeBits);
+    row->live_notification = 0;
+    if (g_live_count != 0) {
+        --g_live_count;
+    }
+    if (g_live_count == 0 && g_object_untyped != 0) {
+        seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, g_object_untyped,
+                          aegir::bootstrap::kCNodeBits);
+    }
+}
+
 uint64_t handle_reap(uint64_t badge) noexcept
 {
     if (g_memory == nullptr) {
@@ -306,11 +345,66 @@ uint64_t handle_reap(uint64_t badge) noexcept
     uint64_t reaped = 0;
     for (uint32_t i = 0; i < capacity; ++i) {
         if (rows[i].serial != 0 && rows[i].badge == badge) {
+            handle_release_cap(rows + i);
             rows[i].serial = 0;
             ++reaped;
         }
     }
     return reaped;
+}
+
+bool live_slot_used(uint64_t slot) noexcept
+{
+    if (slot == g_live_mint_slot) {
+        return true;
+    }
+    if (g_memory == nullptr) {
+        return false;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial != 0 && rows[i].kind == 2 &&
+            rows[i].live_notification == slot) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The next free slot for a live query's endpoint: past the manifest's own and
+ * the reply's scratch slot, up to the CSpace's size. False when they are all
+ * held. */
+bool live_slot_alloc(uint64_t *out) noexcept
+{
+    uint64_t const limit = 1ULL << aegir::bootstrap::kCNodeBits;
+    for (uint64_t slot = g_live_slot_base + 1; slot < limit; ++slot) {
+        if (!live_slot_used(slot)) {
+            *out = slot;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* A change happened: bump the generation and signal every live query's
+ * endpoint. The signal carries no data -- the endpoint is the query's, the
+ * client re-reads with query next -- and it is one-way, so the serve loop
+ * never waits on a client. */
+void note_change() noexcept
+{
+    ++g_change_generation;
+    if (g_memory == nullptr) {
+        return;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial != 0 && rows[i].kind == 2 &&
+            rows[i].live_notification != 0) {
+            seL4_Signal(rows[i].live_notification);
+        }
+    }
 }
 
 void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
@@ -373,6 +467,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
             row->cursor = cursor;
             row->kind = 0;
             row->query_length = 0;
+            row->live_notification = 0;
             handle = row->serial;
         }
     }
@@ -410,6 +505,7 @@ void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     if (count >= 1) {
         Handle *handle = handle_lookup(words[0], badge);
         if (handle != nullptr) {
+            handle_release_cap(handle);
             handle->serial = 0;
             closed = 1;
         }
@@ -777,6 +873,7 @@ void answer_query_open(aegir::ipc::Owner &port, uint64_t const *words,
     row->cursor = 1; /* the scan starts at the first block */
     row->index_block = 0;
     row->index_position = 0;
+    row->live_notification = 0;
     /* A lone equality on an indexed attribute answers from that index; a
      * missing index falls back to the scan. */
     IndexTerm term;
@@ -794,6 +891,91 @@ void answer_query_open(aegir::ipc::Owner &port, uint64_t const *words,
     port.reply_words(answer, aegir::metadata::kQueryOpenTailWords);
 }
 
+/* query open live (specs/bfs.md): the string, the flags and a token. The
+ * filesystem owns the endpoint: it retypes a notification, mints the client a
+ * read-only copy to wait on, and signals its own on any change. The client
+ * re-reads with query next. */
+void answer_query_open_live(aegir::ipc::Owner &port, uint64_t const *words,
+                            uint32_t count, uint64_t badge) noexcept
+{
+    uint64_t answer[aegir::metadata::kQueryOpenTailWords] = {
+        aegir::metadata::kInvalidName, 0,
+    };
+    char const *text = nullptr;
+    uint32_t text_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::metadata::kQueryTextMax,
+                                       &text, &text_length)) {
+        port.reply_words(answer, 1);
+        return;
+    }
+    uint32_t const text_words = 1 + (text_length + 7) / 8;
+    if (count < text_words + aegir::metadata::kQueryOpenLiveExtraWords ||
+        text_length == 0) {
+        port.reply_words(answer, 1);
+        return;
+    }
+    if (!g_query.parse(text, text_length)) {
+        port.reply_words(answer, 1);
+        return;
+    }
+    uint64_t slot = 0;
+    if (g_object_untyped == 0 || g_live_mint_slot == 0 ||
+        !live_slot_alloc(&slot) ||
+        seL4_Untyped_Retype(g_object_untyped, seL4_NotificationObject,
+                            seL4_NotificationBits, aegir::bootstrap::kSlotOwnCNode,
+                            aegir::bootstrap::kSlotOwnCNode,
+                            aegir::bootstrap::kCNodeBits, slot, 1) != seL4_NoError) {
+        answer[0] = aegir::metadata::kNoSpace;
+        port.reply_words(answer, 1);
+        return;
+    }
+    /* The client's copy may wait but not signal, and may not be used to
+     * transfer anything: the filesystem owns the endpoint. */
+    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_live_mint_slot,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        slot, aegir::bootstrap::kCNodeBits,
+                        seL4_CapRights_new(0, 0, 1, 0), 0) != seL4_NoError) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                          aegir::bootstrap::kCNodeBits);
+        answer[0] = aegir::metadata::kNoSpace;
+        port.reply_words(answer, 1);
+        return;
+    }
+    Handle *row = handle_alloc(badge);
+    if (row == nullptr) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                          aegir::bootstrap::kCNodeBits);
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_live_mint_slot,
+                          aegir::bootstrap::kCNodeBits);
+        answer[0] = aegir::metadata::kNoSpace;
+        port.reply_words(answer, 1);
+        return;
+    }
+    row->kind = 2;
+    row->cursor = 1;
+    row->index_block = 0;
+    row->index_position = 0;
+    row->live_notification = slot;
+    row->live_generation = g_change_generation;
+    IndexTerm term;
+    uint64_t index_block = 0;
+    if (query_index_term(g_query, &term) &&
+        g_volume.index_inode(term.name, term.name_length, &index_block)) {
+        row->index_block = index_block;
+    }
+    row->query_length = text_length;
+    for (uint32_t i = 0; i < text_length; ++i) {
+        row->query[i] = text[i];
+    }
+    answer[0] = aegir::metadata::kOk;
+    answer[1] = row->serial;
+    port.reply_cap(answer, aegir::metadata::kQueryOpenTailWords, g_live_mint_slot);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_live_mint_slot,
+                      aegir::bootstrap::kCNodeBits);
+    ++g_live_count;
+}
+
 void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
                        uint32_t count, uint64_t badge) noexcept
 {
@@ -803,13 +985,20 @@ void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    if (handle == nullptr || handle->kind != 1) {
+    if (handle == nullptr || (handle->kind != 1 && handle->kind != 2)) {
         port.reply_words(&status, 1);
         return;
     }
     if (!g_query.parse(handle->query, handle->query_length)) {
         port.reply_words(&status, 1);
         return;
+    }
+    /* A live query has been signalled since its last read: the read starts
+     * over, so the whole current set is what the client sees. */
+    if (handle->kind == 2 && handle->live_generation != g_change_generation) {
+        handle->live_generation = g_change_generation;
+        handle->cursor = 1;
+        handle->index_position = 0;
     }
     /* An indexed term walks the index; each value is still read back and
      * re-checked, so a stale or shared key entry cannot lie. */
@@ -851,7 +1040,8 @@ void answer_query_close(aegir::ipc::Owner &port, uint64_t const *words,
     uint64_t closed = 0;
     if (count >= 1) {
         Handle *handle = handle_lookup(words[0], badge);
-        if (handle != nullptr && handle->kind == 1) {
+        if (handle != nullptr && (handle->kind == 1 || handle->kind == 2)) {
+            handle_release_cap(handle);
             handle->serial = 0;
             closed = 1;
         }
@@ -1294,6 +1484,36 @@ int main(int argc, char *argv[])
                                          aegir::clock::kPortNameLength);
     g_have_clock = g_clock.valid();
 
+    /* Live queries need CSpace slots for the endpoints the filesystem makes,
+     * and the untyped to retype them from. Take the slots past every
+     * capability the bootstrap block names, so a live open can never collide
+     * with a manifest port; a reply's minted cap uses the first of them. */
+    g_live_slot_base = aegir::bootstrap::kSlotFirstDeclared;
+    if (aegir::bootstrap::Block const *block = aegir::bootstrap::find();
+        block != nullptr) {
+        for (uint32_t e = 0; e < block->entry_count; ++e) {
+            aegir::bootstrap::Entry const &entry = block->entries[e];
+            if (entry.kind == aegir::bootstrap::EntryKind::Capability &&
+                entry.number + 1 > g_live_slot_base) {
+                g_live_slot_base = entry.number + 1;
+            }
+        }
+    }
+    g_live_mint_slot = g_live_slot_base;
+    {
+        uint64_t object_slot = 0;
+        uint32_t object_bits = 0;
+        if (aegir::bootstrap::capability(aegir::partman::kCapabilityObjects,
+                                         aegir::partman::kCapabilityObjectsLength,
+                                         &object_slot) &&
+            aegir::bootstrap::capability_size_bits(
+                aegir::partman::kCapabilityObjects,
+                aegir::partman::kCapabilityObjectsLength, &object_bits) &&
+            object_bits != 0) {
+            g_object_untyped = object_slot;
+        }
+    }
+
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
@@ -1301,6 +1521,19 @@ int main(int argc, char *argv[])
         seL4_Word badge = 0;
         uint32_t const method =
             vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+        /* The methods that can add, remove or change an inode: a live query
+         * hears about all of them, even when the operation turns out to be a
+         * no-op, because the signal carries no detail and the client
+         * re-reads. */
+        bool const mutating =
+            method == aegir::volume::kMethodOpen ||
+            method == aegir::volume::kMethodWrite ||
+            method == aegir::volume::kMethodMkdir ||
+            method == aegir::volume::kMethodRemove ||
+            method == aegir::volume::kMethodRename ||
+            method == aegir::volume::kMethodTruncate ||
+            method == aegir::metadata::kMethodAttrWrite ||
+            method == aegir::metadata::kMethodAttrRemove;
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count);
@@ -1359,16 +1592,17 @@ int main(int argc, char *argv[])
         case aegir::metadata::kMethodQueryClose:
             answer_query_close(vol, words, count, badge);
             break;
-        case aegir::metadata::kMethodQueryOpenLive: {
-            uint64_t const status = aegir::metadata::kUnsupported;
-            vol.reply_words(&status, 1);
+        case aegir::metadata::kMethodQueryOpenLive:
+            answer_query_open_live(vol, words, count, badge);
             break;
-        }
         default:
-            /* The metadata methods and queries: the next phases, refused
-             * rather than answered wrongly. */
+            /* A method this version does not know: refused rather than
+             * answered wrongly. */
             answer_refuse(vol);
             break;
+        }
+        if (mutating) {
+            note_change();
         }
     }
 }

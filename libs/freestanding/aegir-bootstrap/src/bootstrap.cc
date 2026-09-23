@@ -299,6 +299,36 @@ bool capability(char const *name, uint32_t length, uint64_t *slot) noexcept
     return false;
 }
 
+bool capability_size_bits(char const *name, uint32_t length,
+                          uint32_t *size_bits) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr || name == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind != EntryKind::Capability || entry.length != length) {
+            continue;
+        }
+        char const *entry_name = reinterpret_cast<char const *>(block) + entry.data_offset;
+        bool same = true;
+        for (uint32_t j = 0; j < length; ++j) {
+            if (entry_name[j] != name[j]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) {
+            if (size_bits != nullptr) {
+                *size_bits = entry.reserved;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 bool binaries(uint64_t *address, uint32_t *length) noexcept
 {
     Block const *block = find();

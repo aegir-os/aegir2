@@ -601,7 +601,7 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
                             aegir::bootstrap::kCNodeBits,
                             aegir::bootstrap::kSlotOwnCNode, port.capability(),
                             aegir::bootstrap::kCNodeBits,
-                            seL4_CapRights_new(1, 1, 0, 1),
+                            seL4_CapRights_new(1, 0, 0, 1),
                             aegir::nmspace::union_badge(resolved.binding->union_id)) !=
             seL4_NoError) {
             write("  vfs: a union's cap would not mint\n");
