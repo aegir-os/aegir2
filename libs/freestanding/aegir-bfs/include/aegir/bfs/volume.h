@@ -38,6 +38,7 @@ using WriteSector = bool (*)(void *context, uint64_t sector, uint8_t const *in);
  *  the tree, and its data stream (so a stream read needs no second visit). */
 struct Inode {
     uint32_t mode;
+    uint32_t type; /* an attribute inode's type_code; zero otherwise */
     int64_t size;
     int64_t mtime;
     Run run;
@@ -114,6 +115,30 @@ public:
     bool dir_entry(Inode const &dir, uint32_t index, char *name,
                    uint32_t *name_length, uint64_t *inode_block) const noexcept;
 
+    /** Read an attribute's type and size. An attribute lives in the inode's
+     *  small_data section or in an inode under the attribute directory; both
+     *  are searched. False when the inode has no such attribute. */
+    bool attr_stat(Inode const &inode, char const *name, uint32_t name_length,
+                   uint32_t *type, uint64_t *size) const noexcept;
+
+    /** Read the attribute's bytes at `offset`. `*length` is how many bytes the
+     *  caller wants and, on return, how many were read. False when the
+     *  attribute is not there. */
+    bool attr_read(Inode const &inode, char const *name, uint32_t name_length,
+                   uint64_t offset, uint8_t *out,
+                   uint32_t *length) const noexcept;
+
+    /** The `index`th attribute of `inode`: small data first, then the
+     *  attribute directory. False past the last. */
+    bool attr_entry(Inode const &inode, uint32_t index, char *name,
+                    uint32_t *name_length, uint32_t *type,
+                    uint64_t *size) const noexcept;
+
+    /** The attribute inode's block when `name` lives in the attribute
+     *  directory; false when it is small data or absent. */
+    bool attr_inode(Inode const &inode, char const *name, uint32_t name_length,
+                    uint64_t *attr_block) const noexcept;
+
 private:
     uint64_t run_bytes(Run const &run) const noexcept;
     bool read_part(Run const &run, uint64_t skip, uint8_t *out,
@@ -122,6 +147,8 @@ private:
                     uint32_t length) const noexcept;
     bool node_header(Inode const &dir, uint32_t *node_size, uint64_t *root,
                      uint64_t *maximum) const noexcept;
+    bool attr_dir_inode(Inode const &inode, Inode *dir) const noexcept;
+    bool inode_raw(Inode const &inode, uint32_t *inode_size) const noexcept;
     uint32_t node_key_lengths(uint8_t const *node, uint16_t count,
                               uint16_t *lengths) const noexcept;
     bool node_key(uint8_t const *node, uint16_t count, uint16_t index, char *out,

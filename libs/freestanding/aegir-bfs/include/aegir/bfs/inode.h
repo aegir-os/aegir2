@@ -54,6 +54,35 @@ inline int64_t inode_mtime(uint8_t const *block) noexcept
     return le64_signed(block + inode::kLastModified);
 }
 
+/** In an attribute inode, the type field is the attribute's type_code. */
+inline uint32_t inode_type(uint8_t const *block) noexcept
+{
+    return le32(block + inode::kType);
+}
+
+inline void inode_set_type(uint8_t *block, uint32_t type) noexcept
+{
+    put_le32(block + inode::kType, type);
+}
+
+inline uint32_t inode_flags(uint8_t const *block) noexcept
+{
+    return le32(block + inode::kFlags);
+}
+
+/** True when the mode is an attribute directory (S_ATTR_DIR), which is also a
+ *  directory (S_IFDIR). */
+inline bool mode_is_attr_dir(uint32_t mode) noexcept
+{
+    return (mode & kModeAttrDir) != 0;
+}
+
+/** True when the mode is an attribute (S_ATTR). */
+inline bool mode_is_attr(uint32_t mode) noexcept
+{
+    return (mode & kModeAttr) != 0;
+}
+
 /** True when the mode is a directory (S_IFDIR). */
 inline bool mode_is_directory(uint32_t mode) noexcept
 {

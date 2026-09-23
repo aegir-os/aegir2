@@ -7,7 +7,9 @@
 
 #include <aegir/bfs/volume.h>
 
+#include <aegir/bfs/attribute.h>
 #include <aegir/bfs/bplustree.h>
+#include <aegir/bfs/inode.h>
 
 namespace aegir::bfs {
 
@@ -153,6 +155,7 @@ bool Volume::read_inode(uint64_t block, Inode *out) const noexcept
         return false;
     }
     out->mode = le32(block_ + inode::kMode);
+    out->type = le32(block_ + inode::kType);
     out->mtime = le64_signed(block_ + inode::kLastModified);
     out->size = le64_signed(block_ + inode::kData + data::kSize);
     out->run = le_run(block_ + inode::kInodeNum);
@@ -572,6 +575,146 @@ bool Volume::dir_entry(Inode const &dir, uint32_t index, char *name,
         }
     }
     return false;
+}
+
+bool Volume::attr_dir_inode(Inode const &inode, Inode *dir) const noexcept
+{
+    if (run_is_zero(inode.attributes)) {
+        return false;
+    }
+    return read_inode(to_block(inode.attributes), dir);
+}
+
+bool Volume::inode_raw(Inode const &inode, uint32_t *inode_size) const noexcept
+{
+    if (!read_block(to_block(inode.run), block_)) {
+        return false;
+    }
+    *inode_size = le32(block_ + inode::kInodeSize);
+    return *inode_size <= kMaxBlockSize && *inode_size >= inode::kSmallData;
+}
+
+bool Volume::attr_inode(Inode const &inode, char const *name,
+                        uint32_t name_length, uint64_t *attr_block) const noexcept
+{
+    Inode dir;
+    if (!attr_dir_inode(inode, &dir) ||
+        !dir_find(dir, name, name_length, attr_block)) {
+        return false;
+    }
+    Inode attribute;
+    if (!read_inode(*attr_block, &attribute) || !mode_is_attr(attribute.mode)) {
+        return false;
+    }
+    return true;
+}
+
+bool Volume::attr_stat(Inode const &inode, char const *name,
+                       uint32_t name_length, uint32_t *type,
+                       uint64_t *size) const noexcept
+{
+    uint32_t inode_size = 0;
+    if (inode_raw(inode, &inode_size)) {
+        SmallAttribute entry{};
+        if (small_find(block_, inode_size, name, name_length, &entry)) {
+            *type = entry.type;
+            *size = entry.data_length;
+            return true;
+        }
+    }
+    uint64_t attribute_block = 0;
+    Inode attribute;
+    if (!attr_inode(inode, name, name_length, &attribute_block) ||
+        !read_inode(attribute_block, &attribute)) {
+        return false;
+    }
+    *type = attribute.type;
+    *size = static_cast<uint64_t>(attribute.size);
+    return true;
+}
+
+bool Volume::attr_read(Inode const &inode, char const *name,
+                       uint32_t name_length, uint64_t offset, uint8_t *out,
+                       uint32_t *length) const noexcept
+{
+    uint32_t inode_size = 0;
+    if (inode_raw(inode, &inode_size)) {
+        SmallAttribute entry{};
+        if (small_find(block_, inode_size, name, name_length, &entry)) {
+            if (offset >= entry.data_length) {
+                *length = 0;
+                return true;
+            }
+            uint32_t got = *length;
+            if (got > entry.data_length - static_cast<uint32_t>(offset)) {
+                got = entry.data_length - static_cast<uint32_t>(offset);
+            }
+            for (uint32_t i = 0; i < got; ++i) {
+                out[i] = entry.data[offset + i];
+            }
+            *length = got;
+            return true;
+        }
+    }
+    uint64_t attribute_block = 0;
+    Inode attribute;
+    if (!attr_inode(inode, name, name_length, &attribute_block) ||
+        !read_inode(attribute_block, &attribute)) {
+        return false;
+    }
+    if (offset > static_cast<uint64_t>(attribute.size)) {
+        *length = 0;
+        return true;
+    }
+    uint32_t got = *length;
+    uint64_t const available = static_cast<uint64_t>(attribute.size) - offset;
+    if (got > available) {
+        got = static_cast<uint32_t>(available);
+    }
+    if (!read_stream(attribute, offset, out, got)) {
+        return false;
+    }
+    *length = got;
+    return true;
+}
+
+bool Volume::attr_entry(Inode const &inode, uint32_t index, char *name,
+                        uint32_t *name_length, uint32_t *type,
+                        uint64_t *size) const noexcept
+{
+    uint32_t inode_size = 0;
+    uint32_t seen = 0;
+    if (inode_raw(inode, &inode_size)) {
+        uint32_t cursor = inode::kSmallData;
+        SmallAttribute entry{};
+        while (small_next(block_, inode_size, &cursor, &entry)) {
+            if (seen == index) {
+                for (uint32_t i = 0; i < entry.name_length; ++i) {
+                    name[i] = entry.name[i];
+                }
+                *name_length = entry.name_length;
+                *type = entry.type;
+                *size = entry.data_length;
+                return true;
+            }
+            ++seen;
+        }
+    }
+    Inode dir;
+    if (!attr_dir_inode(inode, &dir)) {
+        return false;
+    }
+    uint64_t attribute_block = 0;
+    if (!dir_entry(dir, index - seen, name, name_length, &attribute_block)) {
+        return false;
+    }
+    Inode attribute;
+    if (!read_inode(attribute_block, &attribute)) {
+        return false;
+    }
+    *type = attribute.type;
+    *size = static_cast<uint64_t>(attribute.size);
+    return true;
 }
 
 }  // namespace aegir::bfs

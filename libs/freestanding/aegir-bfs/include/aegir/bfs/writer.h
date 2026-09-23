@@ -65,6 +65,20 @@ public:
      *  The directory entry has to be gone already. */
     bool destroy(uint64_t block) noexcept;
 
+    /** Write `length` bytes of the attribute `name` at `offset`, making it
+     *  with `type` when it is not there. A value too large for the inode's
+     *  small_data section gets an attribute inode under the attribute
+     *  directory. Writing an existing attribute with a different type is
+     *  refused. `*written` is the count. */
+    bool attr_write(uint64_t inode_block, char const *name, uint32_t name_length,
+                    uint32_t type, uint64_t offset, uint8_t const *bytes,
+                    uint32_t length, uint32_t *written, int64_t time) noexcept;
+
+    /** Remove the attribute `name` -- from the inode or from the attribute
+     *  directory and its inode. False when it is not there. */
+    bool attr_remove(uint64_t inode_block, char const *name,
+                     uint32_t name_length) noexcept;
+
 private:
     /* Where a node split left things: the node at `offset` became `left`, a
      * fresh node `right` holds the greater half, and `separator` (the
@@ -116,6 +130,13 @@ private:
     bool free_double(uint8_t *stream) noexcept;
     bool trim_stream(uint8_t *stream, uint64_t new_blocks) noexcept;
 
+    /* Attributes: the inode's own small_data section, or an inode under its
+     * attribute directory (specs/bfs.md). */
+    bool attr_dir(uint64_t inode_block, int64_t time, uint64_t *dir_block) noexcept;
+    bool attr_inode_create(uint64_t dir_block, char const *name,
+                           uint32_t name_length, uint32_t type, int64_t time,
+                           uint64_t *attr_block) noexcept;
+
     Volume *volume_ = nullptr;
     Allocator allocator_;
     uint64_t edit_parent_ = 0; /* the directory inode a tree edit is growing */
@@ -129,6 +150,7 @@ private:
     mutable uint8_t work_[kMaxBlockSize] = {};
     uint8_t fresh_[kMaxBlockSize] = {};
     uint8_t zero_[kMaxBlockSize] = {};
+    uint8_t attr_[kMaxBlockSize] = {};
 
     /* A node holds far fewer than this many entries; the arrays are members,
      * not locals, because a split runs on a service stack. */

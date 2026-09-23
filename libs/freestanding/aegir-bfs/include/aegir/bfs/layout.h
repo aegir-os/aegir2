@@ -36,6 +36,7 @@ constexpr uint32_t kDirty = 0x44495254;                 /* 'DIRT' */
 /** The inode's magic, and the flags a live one carries. */
 constexpr uint32_t kInodeMagic1 = 0x3bbe0ad9;
 constexpr uint32_t kInodeInUse = 0x00000001;
+constexpr uint32_t kInodeAttrInode = 0x00000004;
 constexpr uint32_t kInodeDeleted = 0x00000010;
 
 /** The POSIX type bits (sys/stat.h), and BFS's extended type bits. */

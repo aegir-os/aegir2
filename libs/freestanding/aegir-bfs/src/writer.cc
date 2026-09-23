@@ -7,6 +7,7 @@
 
 #include <aegir/bfs/writer.h>
 
+#include <aegir/bfs/attribute.h>
 #include <aegir/bfs/bplustree.h>
 #include <aegir/bfs/inode.h>
 
@@ -64,6 +65,31 @@ void build_dir_tree(uint8_t *tree, uint64_t self_block,
     uint32_t const values = lengths + 2 * 2;
     put_le64(node + values, self_block);
     put_le64(node + values + 8, parent_block);
+}
+
+/* A directory's tree without dot and dotdot: an attribute directory's, which
+ * Haiku gives no entries (InodeAllocator::CreateTree only adds them to a
+ * regular node). */
+void build_empty_tree(uint8_t *tree) noexcept
+{
+    uint32_t const total = kTreeNodeSize * 2;
+    for (uint32_t i = 0; i < total; ++i) {
+        tree[i] = 0;
+    }
+    TreeHeader header{};
+    header.node_size = kTreeNodeSize;
+    header.max_levels = 1;
+    header.data_type = kTreeStringType;
+    header.root = kTreeNodeSize;
+    header.free_node = static_cast<uint64_t>(kNullLink);
+    header.maximum = total;
+    tree_header_build(tree, header);
+
+    uint8_t *node = tree + kTreeNodeSize;
+    put_le64(node + node::kLeftLink, static_cast<uint64_t>(kNullLink));
+    put_le64(node + node::kRightLink, static_cast<uint64_t>(kNullLink));
+    put_le64(node + node::kOverflowLink, static_cast<uint64_t>(kNullLink));
+    put_le16(node + node::kKeyCount, 0);
 }
 
 /* Build a B+tree node image in key order. A leaf has an overflow link of -1;
@@ -1384,6 +1410,245 @@ bool Writer::rename(uint64_t parent_block, char const *from, uint32_t from_lengt
         return false;
     }
     return true;
+}
+
+bool Writer::attr_dir(uint64_t inode_block, int64_t time,
+                      uint64_t *dir_block) noexcept
+{
+    if (!read_inode_block(inode_block, inode_)) {
+        return false;
+    }
+    Run const attributes = le_run(inode_ + inode::kAttributes);
+    if (!run_is_zero(attributes)) {
+        *dir_block = volume_->to_block(attributes);
+        return true;
+    }
+    Run const owner_run = le_run(inode_ + inode::kInodeNum);
+    Run inode_run{};
+    if (!allocator_.allocate(1, &inode_run)) {
+        return false;
+    }
+    uint64_t const block = volume_->to_block(inode_run);
+    uint32_t const tree_blocks =
+        blocks_for(kTreeNodeSize * 2, volume_->block_size());
+    Run tree_run{};
+    if (!allocator_.allocate(tree_blocks, &tree_run, tree_blocks) ||
+        tree_run.length < tree_blocks) {
+        if (tree_run.length != 0) {
+            (void)allocator_.free(tree_run);
+        }
+        (void)allocator_.free(inode_run);
+        return false;
+    }
+    uint32_t const mode = kModeAttrDir | kModeDirectory | kModeStrIndex | 0666;
+    inode_build(inode_, volume_->block_size(), inode_run, owner_run, mode, time,
+                nullptr, 0);
+    for (uint32_t i = 0; i < data::kBytes; ++i) {
+        stream_[i] = 0;
+    }
+    put_run(stream_ + data::kDirect, tree_run);
+    put_le64(stream_ + data::kMaxDirectRange, kTreeNodeSize * 2);
+    inode_set_stream(inode_, stream_, kTreeNodeSize * 2, time);
+    if (!volume_->write_block(block, inode_)) {
+        (void)allocator_.free(tree_run);
+        (void)allocator_.free(inode_run);
+        return false;
+    }
+    uint8_t tree[kTreeNodeSize * 2];
+    build_empty_tree(tree);
+    if (!volume_->write_stream_raw(stream_, data::kBytes, 0, tree,
+                                   sizeof(tree))) {
+        (void)allocator_.free(tree_run);
+        (void)allocator_.free(inode_run);
+        return false;
+    }
+    if (!read_inode_block(inode_block, inode_)) {
+        return false;
+    }
+    put_run(inode_ + inode::kAttributes, inode_run);
+    if (!volume_->write_block(inode_block, inode_)) {
+        (void)allocator_.free(tree_run);
+        (void)allocator_.free(inode_run);
+        return false;
+    }
+    *dir_block = block;
+    return true;
+}
+
+bool Writer::attr_inode_create(uint64_t dir_block, char const *name,
+                               uint32_t name_length, uint32_t type,
+                               int64_t time, uint64_t *attr_block) noexcept
+{
+    if (!read_inode_block(dir_block, inode_)) {
+        return false;
+    }
+    Run const dir_run = le_run(inode_ + inode::kInodeNum);
+    Run inode_run{};
+    if (!allocator_.allocate(1, &inode_run)) {
+        return false;
+    }
+    uint64_t const block = volume_->to_block(inode_run);
+    inode_build(inode_, volume_->block_size(), inode_run, dir_run,
+                kModeAttr | kModeRegular | 0666, time, nullptr, 0);
+    inode_set_type(inode_, type);
+    put_le32(inode_ + inode::kFlags, kInodeInUse | kInodeAttrInode);
+    if (!volume_->write_block(block, inode_)) {
+        (void)allocator_.free(inode_run);
+        return false;
+    }
+    bool existed = false;
+    if (!tree_edit(dir_block, name, name_length, block, true, &existed) ||
+        existed) {
+        (void)allocator_.free(inode_run);
+        return false;
+    }
+    *attr_block = block;
+    return true;
+}
+
+bool Writer::attr_write(uint64_t inode_block, char const *name,
+                        uint32_t name_length, uint32_t type, uint64_t offset,
+                        uint8_t const *bytes, uint32_t length,
+                        uint32_t *written, int64_t time) noexcept
+{
+    if (name_length == 0 || name_length > kMaxName ||
+        offset + length < offset) {
+        return false;
+    }
+    if (!read_inode_block(inode_block, inode_)) {
+        return false;
+    }
+    uint32_t const inode_size = le32(inode_ + inode::kInodeSize);
+    SmallAttribute entry{};
+    if (small_find(inode_, inode_size, name, name_length, &entry)) {
+        if (entry.type != type) {
+            return false;
+        }
+        /* Build the whole new value: the old bytes, the write over them, and
+         * a zero gap when the write starts past the old end. */
+        uint64_t const end = offset + length;
+        uint32_t const new_length = static_cast<uint32_t>(
+            end > entry.data_length ? end : entry.data_length);
+        if (new_length > kMaxBlockSize) {
+            return false;
+        }
+        for (uint32_t i = 0; i < entry.data_length; ++i) {
+            attr_[i] = entry.data[i];
+        }
+        for (uint32_t i = entry.data_length; i < new_length; ++i) {
+            attr_[i] = 0;
+        }
+        for (uint32_t i = 0; i < length; ++i) {
+            attr_[static_cast<uint32_t>(offset) + i] = bytes[i];
+        }
+        if (small_set(inode_, inode_size, type, name, name_length, attr_,
+                      new_length)) {
+            if (!volume_->write_block(inode_block, inode_)) {
+                return false;
+            }
+            *written = length;
+            return true;
+        }
+        /* It no longer fits: it moves to an attribute inode below. */
+        uint64_t dir_block = 0;
+        uint64_t attr_block = 0;
+        if (!attr_dir(inode_block, time, &dir_block) ||
+            !attr_inode_create(dir_block, name, name_length, type, time,
+                               &attr_block) ||
+            !write(attr_block, 0, attr_, new_length, time) ||
+            !read_inode_block(inode_block, inode_) ||
+            !small_remove(inode_, inode_size, name, name_length) ||
+            !volume_->write_block(inode_block, inode_)) {
+            return false;
+        }
+        *written = length;
+        return true;
+    }
+    /* Not in the inode: the attribute directory, when the inode has one. */
+    uint64_t dir_block = 0;
+    Run const attributes = le_run(inode_ + inode::kAttributes);
+    if (!run_is_zero(attributes)) {
+        dir_block = volume_->to_block(attributes);
+        Inode dir;
+        uint64_t attr_block = 0;
+        if (volume_->read_inode(dir_block, &dir) &&
+            volume_->dir_find(dir, name, name_length, &attr_block)) {
+            Inode attribute;
+            if (!volume_->read_inode(attr_block, &attribute) ||
+                attribute.type != type) {
+                return false;
+            }
+            if (!write(attr_block, offset, bytes, length, time)) {
+                return false;
+            }
+            *written = length;
+            return true;
+        }
+    }
+    /* Make the attribute: in the inode when it fits there, else an attribute
+     * directory when there is none, an attribute inode, then the value. */
+    uint64_t const end = offset + length;
+    if (end <= kMaxBlockSize) {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(end); ++i) {
+            attr_[i] = 0;
+        }
+        for (uint32_t i = 0; i < length; ++i) {
+            attr_[static_cast<uint32_t>(offset) + i] = bytes[i];
+        }
+        if (small_set(inode_, inode_size, type, name, name_length, attr_,
+                      static_cast<uint32_t>(end))) {
+            if (!volume_->write_block(inode_block, inode_)) {
+                return false;
+            }
+            *written = length;
+            return true;
+        }
+    }
+    uint64_t attr_block = 0;
+    if (!attr_dir(inode_block, time, &dir_block) ||
+        !attr_inode_create(dir_block, name, name_length, type, time,
+                           &attr_block) ||
+        !write(attr_block, offset, bytes, length, time)) {
+        return false;
+    }
+    *written = length;
+    return true;
+}
+
+bool Writer::attr_remove(uint64_t inode_block, char const *name,
+                         uint32_t name_length) noexcept
+{
+    if (name_length == 0 || name_length > kMaxName) {
+        return false;
+    }
+    if (!read_inode_block(inode_block, inode_)) {
+        return false;
+    }
+    uint32_t const inode_size = le32(inode_ + inode::kInodeSize);
+    SmallAttribute entry{};
+    if (small_find(inode_, inode_size, name, name_length, &entry)) {
+        if (!small_remove(inode_, inode_size, name, name_length)) {
+            return false;
+        }
+        return volume_->write_block(inode_block, inode_);
+    }
+    Run const attributes = le_run(inode_ + inode::kAttributes);
+    if (run_is_zero(attributes)) {
+        return false;
+    }
+    uint64_t const dir_block = volume_->to_block(attributes);
+    Inode dir;
+    uint64_t attr_block = 0;
+    if (!volume_->read_inode(dir_block, &dir) ||
+        !volume_->dir_find(dir, name, name_length, &attr_block)) {
+        return false;
+    }
+    bool existed = false;
+    if (!tree_edit(dir_block, name, name_length, 0, false, &existed) ||
+        !existed) {
+        return false;
+    }
+    return destroy(attr_block);
 }
 
 }  // namespace aegir::bfs
