@@ -39,6 +39,11 @@ namespace {
 
 constexpr uint32_t kSectorBytes = 512;
 
+/* The most 32-byte slots one entry takes: a long-name run's fragments plus
+ * its 8.3 slot. A run search and its writes are bounded by this, never by a
+ * number of clusters (specs/fat.md). */
+constexpr uint32_t kMaxEntrySlots = aegir::fat::kLfnSlotsMax + 1;
+
 uint32_t word32(uint8_t const *at) noexcept
 {
     uint32_t value = 0;
@@ -347,16 +352,19 @@ bool same_name(char const *a, uint32_t a_length, char const *b, uint32_t b_lengt
 }
 
 /* One slot as a scan sees it. A long-name fragment is kept in `run` for the
- * entry that follows; a short entry fills `out` -- with the long name when a
- * valid run precedes it, else its own 8.3 form -- and is the only kind that
- * answers true. The label and a deleted slot report nothing and cannot sit
- * inside a run, so they discard one. */
-bool scan_entry(aegir::fat::Lfn *run, uint8_t const *raw,
-                aegir::fat::Dirent *out) noexcept
+ * entry that follows, with the sector and index it lives at; a short entry
+ * fills `out` -- with the long name when a valid run precedes it, else its own
+ * 8.3 form -- and is the only kind that answers true. The label and a deleted
+ * slot report nothing and cannot sit inside a run, so they discard one. When
+ * `used` is given and the entry's name came from a run, the run is copied
+ * there before it is cleared -- a removal needs the fragments' places. */
+bool scan_entry(aegir::fat::Lfn *run, uint64_t sector, uint32_t index,
+                uint8_t const *raw, aegir::fat::Dirent *out,
+                aegir::fat::Lfn *used = nullptr) noexcept
 {
     switch (aegir::fat::slot_kind(raw)) {
     case aegir::fat::SlotKind::Lfn:
-        aegir::fat::lfn_feed(run, raw);
+        aegir::fat::lfn_feed(run, sector, index, raw);
         return false;
     case aegir::fat::SlotKind::Short:
         break;
@@ -366,6 +374,9 @@ bool scan_entry(aegir::fat::Lfn *run, uint8_t const *raw,
     }
     aegir::fat::short_dirent(raw, out);
     if (aegir::fat::lfn_matches(*run, raw)) {
+        if (used != nullptr) {
+            *used = *run;
+        }
         out->name_length = aegir::fat::lfn_decode(*run, out->name);
     }
     aegir::fat::lfn_reset(run);
@@ -394,14 +405,15 @@ bool find_in_dir(Dir dir, char const *name, uint32_t name_length, uint32_t index
     uint32_t seen = 0;
     bool found = false;
     aegir::fat::Lfn run{};
-    auto consider = [&](uint32_t entry_count) -> bool {
+    auto consider = [&](uint64_t first_sector, uint32_t entry_count) -> bool {
         for (uint32_t i = 0; i < entry_count; ++i) {
             uint8_t const *raw = g_window + i * 32;
             if (raw[0] == 0x00) {
                 return true;
             }
             aegir::fat::Dirent dirent;
-            if (!scan_entry(&run, raw, &dirent)) {
+            if (!scan_entry(&run, first_sector + (i * 32) / kSectorBytes,
+                            i % (kSectorBytes / 32), raw, &dirent)) {
                 continue;
             }
             if (name != nullptr) {
@@ -423,7 +435,7 @@ bool find_in_dir(Dir dir, char const *name, uint32_t name_length, uint32_t index
             if (!read(g_volume.root_start + s, 1)) {
                 return false;
             }
-            if (consider(kSectorBytes / 32)) {
+            if (consider(g_volume.root_start + s, kSectorBytes / 32)) {
                 break;
             }
         }
@@ -433,11 +445,11 @@ bool find_in_dir(Dir dir, char const *name, uint32_t name_length, uint32_t index
     uint32_t const eoc = g_volume.fat32 ? aegir::fat::kEoc32 : aegir::fat::kEoc16;
     uint32_t cluster = dir.cluster;
     while (!found && cluster >= 2 && cluster < eoc) {
-        if (!read(aegir::fat::cluster_sector(g_volume, cluster),
-                  g_volume.sectors_per_cluster)) {
+        uint64_t const first = aegir::fat::cluster_sector(g_volume, cluster);
+        if (!read(first, g_volume.sectors_per_cluster)) {
             return false;
         }
-        if (consider(g_volume.sectors_per_cluster * kSectorBytes / 32)) {
+        if (consider(first, g_volume.sectors_per_cluster * kSectorBytes / 32)) {
             break;
         }
         uint32_t const fat_offset = cluster * (g_volume.fat32 ? 4u : 2u);
@@ -520,12 +532,16 @@ enum class Slot : uint32_t {
  * a full one grows like any file's -- a fresh cluster linked on and
  * zeroed. */
 Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Dirent *out,
-              uint64_t *sector_out, uint32_t *index_out) noexcept
+              uint64_t *sector_out, uint32_t *index_out,
+              aegir::fat::Lfn *lfn_out) noexcept
 {
     bool have_free = false;
     uint64_t free_sector = 0;
     uint32_t free_index = 0;
     aegir::fat::Lfn run{};
+    if (lfn_out != nullptr) {
+        aegir::fat::lfn_reset(lfn_out);
+    }
     if (dir.root) {
         for (uint32_t s = 0; s < g_volume.root_sectors; ++s) {
             uint64_t const at = g_volume.root_start + s;
@@ -554,11 +570,15 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
                     continue;
                 }
                 aegir::fat::Dirent dirent;
-                if (scan_entry(&run, raw, &dirent) && name != nullptr &&
+                aegir::fat::Lfn matched{};
+                if (scan_entry(&run, at, i, raw, &dirent, &matched) && name != nullptr &&
                     same_name(dirent.name, dirent.name_length, name, name_length)) {
                     *out = dirent;
                     *sector_out = at;
                     *index_out = i;
+                    if (lfn_out != nullptr) {
+                        *lfn_out = matched;
+                    }
                     return Slot::Found;
                 }
             }
@@ -606,11 +626,15 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
                     continue;
                 }
                 aegir::fat::Dirent dirent;
-                if (scan_entry(&run, raw, &dirent) && name != nullptr &&
+                aegir::fat::Lfn matched{};
+                if (scan_entry(&run, at + s, i, raw, &dirent, &matched) && name != nullptr &&
                     same_name(dirent.name, dirent.name_length, name, name_length)) {
                     *out = dirent;
                     *sector_out = at + s;
                     *index_out = i;
+                    if (lfn_out != nullptr) {
+                        *lfn_out = matched;
+                    }
                     return Slot::Found;
                 }
             }
@@ -643,6 +667,278 @@ Slot dir_slot(Dir dir, char const *name, uint32_t name_length, aegir::fat::Diren
     return Slot::Free;
 }
 
+/* True when `name` is exactly the 8.3 name `name83` spells, case included --
+ * the one case in which no long-name run is needed. */
+bool equals_83(char const *name, uint32_t name_length, uint8_t const name83[11]) noexcept
+{
+    uint32_t at = 0;
+    for (uint32_t i = 0; i < 8 && name83[i] != ' '; ++i) {
+        if (at >= name_length || name[at++] != static_cast<char>(name83[i])) {
+            return false;
+        }
+    }
+    for (uint32_t i = 8; i < 11 && name83[i] != ' '; ++i) {
+        if (i == 8 && (at >= name_length || name[at++] != '.')) {
+            return false;
+        }
+        if (at >= name_length || name[at++] != static_cast<char>(name83[i])) {
+            return false;
+        }
+    }
+    return at == name_length;
+}
+
+/* Walk one directory's short slots for one raw 8.3 name: a generated alias
+ * must not collide with another entry's alias, and only the raw bytes can
+ * tell. A broken read answers "taken" -- a name is never adopted blind -- and
+ * sets `broken` so a caller probing aliases stops instead of grinding. */
+bool dir_short_taken(Dir dir, uint8_t const name83[11], bool *broken) noexcept
+{
+    auto matches = [&](uint8_t const *raw) -> bool {
+        if (aegir::fat::slot_kind(raw) != aegir::fat::SlotKind::Short) {
+            return false;
+        }
+        for (uint32_t i = 0; i < 11; ++i) {
+            if (raw[i] != name83[i]) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (dir.root) {
+        for (uint32_t s = 0; s < g_volume.root_sectors; ++s) {
+            if (!read(g_volume.root_start + s, 1)) {
+                *broken = true;
+                return true;
+            }
+            for (uint32_t i = 0; i < kSectorBytes / 32; ++i) {
+                if (g_window[i * 32] == 0x00) {
+                    return false;
+                }
+                if (matches(g_window + i * 32)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    uint32_t cluster = dir.cluster;
+    while (cluster >= 2 && cluster < chain_eoc()) {
+        uint64_t const base = aegir::fat::cluster_sector(g_volume, cluster);
+        if (!read(base, g_volume.sectors_per_cluster)) {
+            *broken = true;
+            return true;
+        }
+        for (uint32_t i = 0; i < g_volume.sectors_per_cluster * kSectorBytes / 32; ++i) {
+            if (g_window[i * 32] == 0x00) {
+                return false;
+            }
+            if (matches(g_window + i * 32)) {
+                return true;
+            }
+        }
+        uint64_t rel = 0;
+        if (!fat_load(cluster, &rel)) {
+            *broken = true;
+            return true;
+        }
+        cluster = window_next(cluster);
+    }
+    return false;
+}
+
+/* Write `count` prepared 32-byte slots into a contiguous run of free slots,
+ * growing a chain directory when its tail runs out. A FAT16 root that is full
+ * is Full, because it does not grow. The answer is Found with the last slot's
+ * locator -- the 8.3 slot a later update patches. */
+Slot dir_place(Dir dir, uint8_t const *slots, uint32_t count, uint64_t *sector_out,
+               uint32_t *index_out) noexcept
+{
+    uint64_t run_sector[kMaxEntrySlots];
+    uint32_t run_index[kMaxEntrySlots];
+    uint32_t run_len = 0;
+    bool ended = false;
+    bool placed = false;
+    auto scan = [&](uint64_t at) -> bool {
+        for (uint32_t i = 0; i < kSectorBytes / 32; ++i) {
+            uint8_t const *raw = g_window + i * 32;
+            bool const free = ended || raw[0] == 0x00 || raw[0] == 0xe5;
+            if (raw[0] == 0x00) {
+                ended = true; /* an End frees everything past it */
+            }
+            if (free) {
+                if (run_len < kMaxEntrySlots) {
+                    run_sector[run_len] = at;
+                    run_index[run_len] = i;
+                }
+                if (++run_len == count) {
+                    return true;
+                }
+            } else {
+                run_len = 0;
+            }
+        }
+        return false;
+    };
+
+    if (dir.root) {
+        for (uint32_t s = 0; s < g_volume.root_sectors && !placed; ++s) {
+            uint64_t const at = g_volume.root_start + s;
+            if (!read(at, 1)) {
+                return Slot::Broken;
+            }
+            placed = scan(at);
+        }
+        if (!placed) {
+            return Slot::Full;
+        }
+    } else {
+        uint32_t cluster = dir.cluster;
+        while (!placed && cluster >= 2 && cluster < chain_eoc()) {
+            uint64_t const base = aegir::fat::cluster_sector(g_volume, cluster);
+            for (uint32_t s = 0; s < g_volume.sectors_per_cluster && !placed; ++s) {
+                if (!read(base + s, 1)) {
+                    return Slot::Broken;
+                }
+                placed = scan(base + s);
+            }
+            if (placed) {
+                break;
+            }
+            uint64_t rel = 0;
+            if (!fat_load(cluster, &rel)) {
+                return Slot::Broken;
+            }
+            uint32_t next = window_next(cluster);
+            if (next >= chain_eoc()) {
+                next = alloc_cluster();
+                if (next == 0) {
+                    return Slot::Full;
+                }
+                if (!fat_store(cluster, next)) {
+                    return Slot::Broken;
+                }
+            }
+            cluster = next;
+        }
+        if (!placed) {
+            return Slot::Full;
+        }
+    }
+
+    /* The run is located; write it a sector at a time, so the slots it does
+     * not cover keep what they hold. */
+    for (uint32_t k = 0; k < count; ++k) {
+        if (!read(run_sector[k], 1)) {
+            return Slot::Broken;
+        }
+        uint8_t *slot = g_window + run_index[k] * 32;
+        for (uint32_t j = 0; j < 32; ++j) {
+            slot[j] = slots[k * 32 + j];
+        }
+        if (!write_back(run_sector[k], 1)) {
+            return Slot::Broken;
+        }
+    }
+    *sector_out = run_sector[count - 1];
+    *index_out = run_index[count - 1];
+    return Slot::Found;
+}
+
+/* Make a new entry for `name` in `dir`: its long-name run when the name needs
+ * one, then the 8.3 slot -- or just the 8.3 slot when the name already is its
+ * 8.3 form. `directory` says which kind; `cluster` is a new directory's first
+ * cluster. Found places the entry in `out` and reports the 8.3 slot's
+ * locator; Full is a full volume or a name no alias can spell, Broken a read
+ * or write underneath. */
+Slot dir_create(Dir dir, char const *name, uint32_t name_length, bool directory,
+                uint32_t cluster, aegir::fat::Dirent *out, uint64_t *sector_out,
+                uint32_t *index_out) noexcept
+{
+    uint8_t name83[11];
+    bool broken = false;
+    bool const canonical = aegir::fat::name_83(name, name_length, name83);
+    bool const fits = canonical && !dir_short_taken(dir, name83, &broken);
+    bool alias_used = false;
+    if (broken) {
+        return Slot::Broken;
+    }
+    if (!fits) {
+        uint32_t serial = 1;
+        bool chosen = false;
+        while (serial != 0 && !broken) {
+            if (!aegir::fat::short_alias(name, name_length, serial, name83)) {
+                return Slot::Broken; /* nothing left to name it with */
+            }
+            if (!dir_short_taken(dir, name83, &broken)) {
+                chosen = true;
+                break;
+            }
+            ++serial;
+        }
+        if (broken || !chosen) {
+            return Slot::Broken;
+        }
+        alias_used = true;
+    }
+
+    /* A run is written unless the name already is its 8.3 spelling, case
+     * included, with no alias standing in. */
+    bool const needs_lfn = alias_used || !equals_83(name, name_length, name83);
+    uint8_t slots[kMaxEntrySlots * 32];
+    uint32_t count = 0;
+    if (needs_lfn) {
+        uint16_t units[aegir::fat::kLongNameUnits];
+        uint32_t unit_count = 0;
+        if (!aegir::fat::name_units(name, name_length, units,
+                                    aegir::fat::kLongNameUnits, &unit_count)) {
+            return Slot::Broken; /* an invalid name is refused, not written */
+        }
+        count = aegir::fat::lfn_build(units, unit_count,
+                                      aegir::fat::name_checksum(name83), slots);
+    }
+    if (directory) {
+        aegir::fat::dirent_make_dir(slots + count * 32, name83, cluster);
+    } else {
+        aegir::fat::dirent_make(slots + count * 32, name83);
+    }
+    if (canonical && !alias_used) {
+        /* NT case flags: a reader that shows only the 8.3 name still shows
+         * the case the name was made with. */
+        uint32_t dot = name_length;
+        for (uint32_t i = 0; i < name_length; ++i) {
+            if (name[i] == '.') {
+                dot = i;
+            }
+        }
+        uint32_t const base_end = (dot > 0 && dot + 1 < name_length) ? dot : name_length;
+        uint32_t const ext_at = base_end < name_length ? base_end + 1 : name_length;
+        bool base_lower = false;
+        bool ext_lower = false;
+        for (uint32_t i = 0; i < base_end; ++i) {
+            base_lower = base_lower || (name[i] >= 'a' && name[i] <= 'z');
+        }
+        for (uint32_t i = ext_at; i < name_length; ++i) {
+            ext_lower = ext_lower || (name[i] >= 'a' && name[i] <= 'z');
+        }
+        aegir::fat::dirent_set_case(slots + count * 32, base_lower, ext_lower);
+    }
+    ++count;
+
+    Slot const placed = dir_place(dir, slots, count, sector_out, index_out);
+    if (placed != Slot::Found) {
+        return placed;
+    }
+    out->name_length = name_length;
+    for (uint32_t i = 0; i < name_length; ++i) {
+        out->name[i] = name[i];
+    }
+    out->first_cluster = directory ? cluster : 0;
+    out->bytes = 0;
+    out->directory = directory;
+    return Slot::Found;
+}
+
 void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                  uint64_t badge) noexcept
 {
@@ -661,10 +957,8 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     Dir dir;
     char const *last = nullptr;
     uint32_t last_length = 0;
-    uint8_t name83[11];
     if (count < path_words + 1 || !g_writable ||
-        !walk(path, path_length, false, &dir, &last, &last_length) ||
-        !aegir::fat::name_83(last, last_length, name83)) {
+        !walk(path, path_length, false, &dir, &last, &last_length)) {
         port.reply_words(&handle, 1);
         return;
     }
@@ -676,7 +970,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     uint32_t first_cluster = 0;
     uint64_t size = 0;
     Slot const slot = dir_slot(dir, last, last_length, &dirent, &dirent_sector,
-                               &dirent_index);
+                               &dirent_index, nullptr);
     bool ok = false;
     if (slot == Slot::Found && !dirent.directory) {
         /* An existing name without `create` is refused: opening for write is
@@ -697,10 +991,12 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
             }
         }
     } else if (slot == Slot::Free) {
-        /* The locator is the free slot: the new entry is written there. */
-        if ((flags & aegir::volume::kOpenCreate) != 0 && read(dirent_sector, 1)) {
-            aegir::fat::dirent_make(g_window + dirent_index * 32, name83);
-            ok = write_back(dirent_sector, 1);
+        /* The name is not there: creating it writes its long-name run (when
+         * the name needs one) and its 8.3 slot into a free run. */
+        if ((flags & aegir::volume::kOpenCreate) != 0) {
+            Slot const made = dir_create(dir, last, last_length, false, 0, &dirent,
+                                         &dirent_sector, &dirent_index);
+            ok = made == Slot::Found;
         }
     }
     if (ok) {
@@ -819,14 +1115,11 @@ bool make_dirs(char const *path, uint32_t path_length) noexcept
                 dir = stack[--depth];
             }
         } else {
-            uint8_t name83[11];
-            if (!aegir::fat::name_83(path + at, end - at, name83)) {
-                return false;
-            }
             aegir::fat::Dirent dirent;
             uint64_t sector = 0;
             uint32_t index = 0;
-            Slot const slot = dir_slot(dir, path + at, end - at, &dirent, &sector, &index);
+            Slot const slot =
+                dir_slot(dir, path + at, end - at, &dirent, &sector, &index, nullptr);
             uint32_t cluster = 0;
             if (slot == Slot::Found) {
                 if (!dirent.directory) {
@@ -854,13 +1147,13 @@ bool make_dirs(char const *path, uint32_t path_length) noexcept
                 aegir::fat::dirent_make_dir(g_window, dot, cluster);
                 aegir::fat::dirent_make_dir(g_window + 32, dotdot,
                                             dir.root ? 0 : dir.cluster);
-                if (!write_back(own, g_volume.sectors_per_cluster) ||
-                    !read(sector, 1)) {
+                if (!write_back(own, g_volume.sectors_per_cluster)) {
                     return false;
                 }
-                aegir::fat::dirent_make_dir(g_window + index * 32, name83, cluster);
-                if (!write_back(sector, 1)) {
-                    return false;
+                Slot const made = dir_create(dir, path + at, end - at, true, cluster,
+                                             &dirent, &sector, &index);
+                if (made != Slot::Found) {
+                    return false; /* full, or broken underneath */
                 }
             } else {
                 return false; /* full, or broken underneath */
@@ -901,8 +1194,8 @@ bool dir_is_empty(uint32_t cluster) noexcept
     uint32_t c = cluster;
     aegir::fat::Lfn run{};
     while (c >= 2 && c < chain_eoc()) {
-        if (!read(aegir::fat::cluster_sector(g_volume, c),
-                  g_volume.sectors_per_cluster)) {
+        uint64_t const first = aegir::fat::cluster_sector(g_volume, c);
+        if (!read(first, g_volume.sectors_per_cluster)) {
             return false;
         }
         for (uint32_t i = 0; i < g_volume.sectors_per_cluster * kSectorBytes / 32; ++i) {
@@ -911,7 +1204,8 @@ bool dir_is_empty(uint32_t cluster) noexcept
                 return true; /* End: nothing past here is used */
             }
             aegir::fat::Dirent dirent;
-            if (!scan_entry(&run, raw, &dirent)) {
+            if (!scan_entry(&run, first + (i * 32) / kSectorBytes, i % (kSectorBytes / 32),
+                            raw, &dirent)) {
                 continue;
             }
             if ((dirent.name_length == 1 && dirent.name[0] == '.') ||
@@ -968,22 +1262,35 @@ void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
     aegir::fat::Dirent dirent;
     uint64_t dirent_sector = 0;
     uint32_t dirent_index = 0;
+    aegir::fat::Lfn lfn{};
     if (!g_writable ||
         !walk(path, path_length, false, &dir, &last, &last_length) ||
-        dir_slot(dir, last, last_length, &dirent, &dirent_sector, &dirent_index) !=
-            Slot::Found ||
+        dir_slot(dir, last, last_length, &dirent, &dirent_sector, &dirent_index,
+                 &lfn) != Slot::Found ||
         (dirent.directory && !dir_is_empty(dirent.first_cluster)) ||
         handle_names(dirent_sector, dirent_index)) {
         port.reply_words(&removed, 1);
         return;
     }
-    /* The chain goes back to free, in every FAT copy, and the slot says
-     * deleted: 0xe5 in its first byte, the format's mark. */
-    if (chain_free(dirent.first_cluster) && read(dirent_sector, 1)) {
-        g_window[dirent_index * 32] = 0xe5;
-        if (write_back(dirent_sector, 1)) {
-            removed = 1;
+    /* The chain goes back to free, in every FAT copy, and every slot of the
+     * entry says deleted: 0xe5, the format's mark. A long name's fragments are
+     * deleted with it, so no stale run is left for a later name to adopt. */
+    bool ok = chain_free(dirent.first_cluster);
+    uint32_t const fragments = lfn.active ? lfn.count / 13 : 0;
+    for (uint32_t k = 0; ok && k < fragments; ++k) {
+        if (!read(lfn.fragments[k], 1)) {
+            ok = false;
+            break;
         }
+        g_window[lfn.fragment_index[k] * 32] = 0xe5;
+        ok = write_back(lfn.fragments[k], 1);
+    }
+    if (ok && read(dirent_sector, 1)) {
+        g_window[dirent_index * 32] = 0xe5;
+        ok = write_back(dirent_sector, 1);
+    }
+    if (ok) {
+        removed = 1;
     }
     port.reply_words(&removed, 1);
 }
@@ -1300,14 +1607,16 @@ int main(int argc, char *argv[])
     aegir::fat::Dirent target{};
     bool have_target = false;
     aegir::fat::Lfn run{};
-    auto list_entries = [&](uint32_t entry_count) {
+    auto list_entries = [&](uint64_t first_sector, uint32_t entry_count) {
         for (uint32_t i = 0; i < entry_count; ++i) {
             uint8_t const *raw = window + i * 32;
             if (raw[0] == 0x00) {
                 return true;
             }
             aegir::fat::Dirent dirent;
-            if (!scan_entry(&run, raw, &dirent) || dirent.directory) {
+            if (!scan_entry(&run, first_sector + (i * 32) / kSectorBytes,
+                            i % (kSectorBytes / 32), raw, &dirent) ||
+                dirent.directory) {
                 continue;
             }
             aegir::debug_write("      ");
@@ -1334,7 +1643,8 @@ int main(int argc, char *argv[])
                 walked = false;
                 break;
             }
-            if (list_entries(volume.sectors_per_cluster * kSectorBytes / 32)) {
+            if (list_entries(aegir::fat::cluster_sector(volume, cluster),
+                             volume.sectors_per_cluster * kSectorBytes / 32)) {
                 break;
             }
             uint32_t const fat_offset = cluster * 4;
@@ -1350,7 +1660,7 @@ int main(int argc, char *argv[])
                 walked = false;
                 break;
             }
-            if (list_entries(kSectorBytes / 32)) {
+            if (list_entries(volume.root_start + s, kSectorBytes / 32)) {
                 break;
             }
         }

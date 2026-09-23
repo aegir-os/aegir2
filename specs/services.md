@@ -1049,7 +1049,12 @@ What was decided, and what it took:
   format allows it, and the scan never trusted it). The flavors differ
   where they always differ: 4-byte entries and a growable root chain on
   FAT32, 2-byte entries and a fixed root region on FAT16 -- a full FAT16
-  root is full, and says so rather than growing. Writes are clamped by the same
+  root is full, and says so rather than growing. A long name is written as a
+  run of VFAT fragments before its 8.3 slot -- the slot given a generated
+  alias (`BASE~N.EXT`, probed for collisions) when the name has no 8.3 form,
+  and the NT case flags set when the 8.3 form is the name itself -- and a
+  removal deletes the whole run, not only the 8.3 slot (specs/fat.md).
+  Writes are clamped by the same
   badge ranges as reads, so a partition's range stays its boundary. The
   writability of a volume is
   the partition manager's statement, carried to the filesystem in its

@@ -883,6 +883,80 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Long names, the write side (specs/fat.md): a name the 8.3 form cannot
+     * spell is created with its long-name run, read back whole, matched
+     * case-insensitively, listed whole, and removed with its run. */
+    {
+        static char const kCreated[] = "Write A Long Name.txt";
+        static char const kCreatedLower[] = "write a long name.TXT";
+        static char const kCreatedBytes[] =
+            "a long name the write side made, spelled out in full\n";
+        uint64_t handle = vol_open(scratch_volume, kCreated, sizeof(kCreated) - 1,
+                                   aegir::volume::kOpenCreate |
+                                       aegir::volume::kOpenTruncate);
+        bool ok = handle != 0 &&
+                  vol_write(scratch_volume, handle,
+                            reinterpret_cast<uint8_t const *>(kCreatedBytes),
+                            sizeof(kCreatedBytes) - 1) == sizeof(kCreatedBytes) - 1 &&
+                  vol_close(scratch_volume, handle) == 1;
+        /* The same file by a differently-cased spelling: a long name folds the
+         * way an 8.3 one does. */
+        ok = ok && read_and_check(scratch_volume, kCreatedLower,
+                                  sizeof(kCreatedLower) - 1, kCreatedBytes,
+                                  sizeof(kCreatedBytes) - 1);
+        /* The listing shows the long name whole, not a generated alias. */
+        if (ok) {
+            aegir::ipc::Consumer volume(scratch_volume);
+            bool listed = false;
+            for (uint32_t i = 0;; ++i) {
+                uint64_t out[2] = {0, i};
+                uint64_t in[aegir::ipc::kMaxWords];
+                aegir::ipc::WordsReply const answer = volume.call_words(
+                    aegir::volume::kMethodList, out, 2, in, aegir::ipc::kMaxWords);
+                if (answer.error != 0 || answer.count == 0) {
+                    break;
+                }
+                char const *name = nullptr;
+                uint32_t name_length = 0;
+                if (aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                                  &name, &name_length) &&
+                    name_length == sizeof(kCreated) - 1 &&
+                    same_bytes(name, kCreated, name_length)) {
+                    listed = true;
+                }
+            }
+            ok = listed;
+        }
+        ok = ok && vol_remove(scratch_volume, kCreated, sizeof(kCreated) - 1) == 1 &&
+             read_refused(scratch_volume, kCreated, sizeof(kCreated) - 1);
+
+        /* A long name as a directory, and a long name inside it: the write
+         * side grows through a long component too. */
+        static char const kMadeDir[] = "A Made Up Folder";
+        static char const kMadeNested[] = "A Made Up Folder/Inside Made File.txt";
+        static char const kMadeBytes[] = "a made long folder, a made long file\n";
+        ok = ok && vol_mkdir(scratch_volume, kMadeDir, sizeof(kMadeDir) - 1) == 1;
+        handle = vol_open(scratch_volume, kMadeNested, sizeof(kMadeNested) - 1,
+                          aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+        ok = ok && handle != 0 &&
+             vol_write(scratch_volume, handle,
+                       reinterpret_cast<uint8_t const *>(kMadeBytes),
+                       sizeof(kMadeBytes) - 1) ==
+                 sizeof(kMadeBytes) - 1 &&
+             vol_close(scratch_volume, handle) == 1 &&
+             read_and_check(scratch_volume, kMadeNested, sizeof(kMadeNested) - 1,
+                            kMadeBytes, sizeof(kMadeBytes) - 1);
+        ok = ok && vol_remove(scratch_volume, kMadeNested, sizeof(kMadeNested) - 1) == 1 &&
+             vol_remove(scratch_volume, kMadeDir, sizeof(kMadeDir) - 1) == 1;
+
+        if (!ok) {
+            write("  test: FAIL a long name did not create, read, list and remove\n");
+            ++failed;
+        } else {
+            write("  test: a long name creates, reads, lists whole and removes\n");
+        }
+    }
+
     /* FAT16 writes: the other flavor's entries, the fixed root, and a
      * subdirectory's chain -- the whole write side again, on the volume the
      * disk build made FAT16 on purpose. */

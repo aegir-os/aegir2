@@ -18,8 +18,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <fcntl.h>
 #include <filesystem>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 namespace aegir::fs_smoke {
@@ -138,6 +140,38 @@ void check_std_filesystem()
         }
         report(!error && found,
                "std::filesystem::directory_iterator shows a long name whole");
+    }
+
+    {
+        /* A long name created through the runtime's own file calls (libc++ is
+         * built without the iostreams, so POSIX open/write/read is the way in):
+         * the runtime opens it, the FAT driver writes its run, and the bytes
+         * come back whole. */
+        static char const kText[] =
+            "written through the runtime, read back the same\n";
+        static char const kPath[] = "SCRATCH:Created With A Long Name.txt";
+        int const fd = ::open(kPath, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        bool ok = fd >= 0;
+        if (ok) {
+            ok = ::write(fd, kText, sizeof(kText) - 1) ==
+                 static_cast<ssize_t>(sizeof(kText) - 1);
+            ::close(fd);
+        }
+        char buffer[128] = {};
+        int const rd = ok ? ::open(kPath, O_RDONLY) : -1;
+        ok = ok && rd >= 0;
+        if (ok) {
+            ssize_t const got = ::read(rd, buffer, sizeof(buffer));
+            ok = got == static_cast<ssize_t>(sizeof(kText) - 1);
+            for (std::size_t i = 0; ok && i < sizeof(kText) - 1; ++i) {
+                ok = buffer[i] == kText[i];
+            }
+            ::close(rd);
+        }
+        std::error_code error;
+        bool const removed = fs::remove(kPath, error) && !error;
+        report(ok && removed,
+               "a long-named file created through the runtime reads back whole");
     }
 
     {

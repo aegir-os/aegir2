@@ -272,6 +272,10 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.binary_image_bytes = fs_image_bytes;
     request.account = "system";
     request.account_length = 6;
+    /* A filesystem's scans now carry a long-name run's buffers (a Dirent, the
+     * fragment locators, the 21 prepared slots), so it is given room past the
+     * service floor (specs/fat.md). */
+    request.stack_pages = 4;
     request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
     request.port_count = 4;

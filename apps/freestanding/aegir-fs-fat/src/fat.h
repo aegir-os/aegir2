@@ -84,13 +84,19 @@ SlotKind slot_kind(uint8_t const *raw) noexcept;
  *  substitutes a long name when a valid run precedes it (Lfn, below). */
 void short_dirent(uint8_t const *raw, Dirent *out) noexcept;
 
+/** The most fragments one long-name run can take. */
+constexpr uint32_t kLfnSlotsMax = (kLongNameUnits + 12) / 13;
+
 /** A long-name run under assembly. Its slots precede the 8.3 slot they belong
  *  to, stored tail first: reading forward, the slot with the highest sequence
  *  number (and `0x40` in its first byte) comes first, sequence one last. Feed
  *  each fragment as it is read, then ask whether the run belongs to the 8.3
- *  name that follows. */
+ *  name that follows. The fragment locators are kept so a removal can delete
+ *  the whole run, not leave a stale one behind. */
 struct Lfn {
     uint16_t units[kLongNameUnits];
+    uint64_t fragments[kLfnSlotsMax];      /* volume-relative sector */
+    uint32_t fragment_index[kLfnSlotsMax]; /* slot within that sector */
     uint32_t count;    /* how many units the run's slots claim */
     uint32_t expected; /* the sequence number the next slot must carry; 0 done */
     uint8_t checksum;  /* the 8.3 name's checksum, from every slot of the run */
@@ -100,9 +106,10 @@ struct Lfn {
 /** Start an empty run. */
 void lfn_reset(Lfn *run) noexcept;
 
-/** Feed one fragment (a slot `slot_kind` calls `Lfn`). A fragment with no head
- *  or out of order discards the run rather than adopting the wrong name. */
-void lfn_feed(Lfn *run, uint8_t const *slot) noexcept;
+/** Feed one fragment (a slot `slot_kind` calls `Lfn`) and where it lives. A
+ *  fragment with no head or out of order discards the run rather than adopting
+ *  the wrong name. */
+void lfn_feed(Lfn *run, uint64_t sector, uint32_t index, uint8_t const *slot) noexcept;
 
 /** True when the run is complete and is this 8.3 name's: the checksums agree. */
 bool lfn_matches(Lfn const &run, uint8_t const *short_name) noexcept;
@@ -110,6 +117,23 @@ bool lfn_matches(Lfn const &run, uint8_t const *short_name) noexcept;
 /** Decode a complete run to UTF-8, stopping at the name's terminator. The
  *  answer is the byte count; the buffer must hold `kLongNameBytes`. */
 uint32_t lfn_decode(Lfn const &run, char *out) noexcept;
+
+/** The VFAT checksum of an 8.3 name: what ties a run's fragments to the entry
+ *  they precede. */
+uint8_t name_checksum(uint8_t const short_name[11]) noexcept;
+
+/** Encode a UTF-8 name into the UTF-16 units a long-name run carries, checking
+ *  the format's rules: at most `units_max` units, none of the reserved
+ *  characters (`" * / : < > ? \ |`) and no control byte. False is a name this
+ *  filesystem refuses rather than mangles. */
+bool name_units(char const *name, uint32_t length, uint16_t *units,
+                uint32_t units_max, uint32_t *unit_count) noexcept;
+
+/** Build a long-name run's fragments, in directory order (the highest sequence
+ *  number, marked `0x40`, first), for the given units. `slots` must hold
+ *  `kLfnSlotsMax` 32-byte slots; the answer is how many the name takes. */
+uint32_t lfn_build(uint16_t const *units, uint32_t unit_count, uint8_t checksum,
+                   uint8_t *slots) noexcept;
 
 /** End of a cluster chain is a range of marks, not one sentinel. */
 constexpr uint32_t kEoc32 = 0x0ffffff8;
@@ -135,10 +159,17 @@ constexpr uint32_t kDirentSize = 28;
 constexpr uint8_t kAttrArchive = 0x20;
 constexpr uint8_t kAttrDirectory = 0x10;
 
-/** Validate a client's name and build its 8.3 form: uppercase, space-padded,
- *  one dot, letters and digits and '-' and '_' (the conservative end of the
- *  format's charset -- a name past it is refused, not mangled). */
+/** The name's 8.3 form when it has one: uppercase, space-padded, one dot,
+ *  base up to eight, extension up to three, letters and digits and '-' and
+ *  '_'. False is a name that needs a long-name run and a generated alias. */
 bool name_83(char const *name, uint32_t length, uint8_t out[11]) noexcept;
+
+/** A generated alias for a name with no 8.3 form: up to six characters of the
+ *  base with illegal bytes mapped to '_', '~', a decimal serial counting from
+ *  one, and the extension's first three legal characters. False when even one
+ *  base character will not fit before the serial. */
+bool short_alias(char const *name, uint32_t length, uint32_t serial,
+                 uint8_t out[11]) noexcept;
 
 /** Fill a 32-byte slot: a plain new file of this name. */
 void dirent_make(uint8_t slot[32], uint8_t const name83[11]) noexcept;
@@ -146,6 +177,11 @@ void dirent_make(uint8_t slot[32], uint8_t const name83[11]) noexcept;
 /** Fill a 32-byte slot: a new directory of this name, on this cluster. */
 void dirent_make_dir(uint8_t slot[32], uint8_t const name83[11],
                      uint32_t cluster) noexcept;
+
+/** Set the NT case flags in a slot's reserved byte: bit 3 when the base was
+ *  written lowercase, bit 4 when the extension was. A reader that shows only
+ *  the 8.3 name then shows the case the name was made with. */
+void dirent_set_case(uint8_t slot[32], bool base_lower, bool ext_lower) noexcept;
 
 /** Patch an existing slot after a write: the first cluster and the size. */
 void dirent_update(uint8_t slot[32], uint32_t first_cluster, uint32_t bytes) noexcept;
