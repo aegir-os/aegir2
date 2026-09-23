@@ -11,7 +11,7 @@ cmake_minimum_required(VERSION 3.16.0)
 project(aegir-bfs CXX)
 
 add_library(aegir-bfs STATIC src/volume.cc src/allocator.cc src/inode.cc
-                              src/bplustree.cc src/writer.cc)
+                              src/bplustree.cc src/writer.cc src/attribute.cc)
 
 target_include_directories(aegir-bfs PUBLIC include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers have

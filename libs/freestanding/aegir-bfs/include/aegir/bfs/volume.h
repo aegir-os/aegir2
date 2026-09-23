@@ -42,6 +42,7 @@ struct Inode {
     int64_t mtime;
     Run run;
     Run parent;
+    Run attributes; /* the attribute directory, or a zero run for none */
     uint8_t data[data::kBytes];
 };
 

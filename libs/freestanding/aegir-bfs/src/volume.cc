@@ -157,6 +157,7 @@ bool Volume::read_inode(uint64_t block, Inode *out) const noexcept
     out->size = le64_signed(block_ + inode::kData + data::kSize);
     out->run = le_run(block_ + inode::kInodeNum);
     out->parent = le_run(block_ + inode::kParent);
+    out->attributes = le_run(block_ + inode::kAttributes);
     for (uint32_t i = 0; i < data::kBytes; ++i) {
         out->data[i] = block_[inode::kData + i];
     }

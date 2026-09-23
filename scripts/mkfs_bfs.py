@@ -151,7 +151,7 @@ def _inode(*, run: bytes, mode: int, parent: bytes, attributes: bytes,
 
     if name is not None:
         entry = _small_data(type_code=FILE_NAME_TYPE, name=bytes([FILE_NAME_NAME]),
-                            data=name + b"\x00")
+                            data=name)
         inode[232 : 232 + len(entry)] = entry
     return bytes(inode)
 
