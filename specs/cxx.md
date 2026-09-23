@@ -221,9 +221,11 @@ The order:
      (what libraries link) is C++17 + warnings only; a library with sources
      sets the lean flags **privately** on itself; a freestanding target links
      `aegir-cxx-policy-freestanding`; a hosted one links
-     `aegir-cxx-policy-hosted` first. (A `libs/hosted` + `libs/freestanding`
-     directory split is the recorded follow-on that makes this a directory
-     rule rather than a per-library one.)
+     `aegir-cxx-policy-hosted` first. The split is now structural:
+     `libs/{freestanding,hosted}` and `apps/{freestanding,hosted}` each set
+     their policy at directory scope, so a target's policy is where it lives
+     rather than a per-target flag, and `aegir-cxx-policy-freestanding` is
+     gone.
    - **libunwind is not linked.** The riscv64 bare-metal toolchain ships no
      `libgcc_eh`, but its `libgcc.a` carries `_Unwind_*` and the frames are
      registered by the `crtbegin.o` the link already has; libunwind's baremetal
