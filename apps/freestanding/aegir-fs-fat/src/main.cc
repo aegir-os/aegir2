@@ -6,11 +6,12 @@
  *
  * One instance per FAT partition, started by the partition manager with the
  * block device's port and a range grant (offset and length) rather than the
- * whole device (specs/services.md). FAT16/32/ExFAT are the interchange
+ * whole device (specs/services.md). FAT16/32 are the interchange
  * filesystems -- how Aegir exchanges data with the rest of the world, not its
- * own filesystem. FAT32 writes when the descriptor row says the volume is
- * writable: open/write/close, the handle side of the volume protocol
- * (specs/vfs.md).
+ * own filesystem. FAT12 and ExFAT are recognized by their boot sectors and
+ * refused by name, never parsed as another flavor (specs/fat.md). FAT32 writes
+ * when the descriptor row says the volume is writable: open/write/close, the
+ * handle side of the volume protocol (specs/vfs.md).
  *
  * It proves the attachment out loud (parse the BPB, list the root directory,
  * read the file the disk was made with back), announces the volume's label
@@ -1198,8 +1199,24 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     aegir::fat::Volume volume;
-    if (!aegir::fat::bpb(window, &volume)) {
+    aegir::fat::Flavor const flavor = aegir::fat::bpb(window, &volume);
+    if (flavor == aegir::fat::Flavor::NotFat) {
         aegir::debug_write("      FAIL fs.fat: sector 0 is not a FAT BPB\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    /* A recognized format this service does not speak is refused by name: a
+     * FAT12 chain read as FAT16, or ExFAT's boot sector parsed as a BPB, would
+     * be silent corruption rather than a refusal (specs/fat.md). */
+    if (flavor == aegir::fat::Flavor::Exfat) {
+        aegir::debug_write("      FAIL fs.fat: ExFAT is not a format this service speaks\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    if (flavor == aegir::fat::Flavor::Fat12) {
+        aegir::debug_write(
+            "      FAIL fs.fat: a FAT12 volume is not one this service speaks (FAT16 and "
+            "FAT32 only)\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }

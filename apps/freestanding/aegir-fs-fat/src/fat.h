@@ -17,6 +17,17 @@
 
 namespace aegir::fat {
 
+/** Which layout a boot sector describes. The walk speaks FAT16 and FAT32;
+ *  FAT12 and ExFAT are recognized so the refusal can name them rather than
+ *  calling a real format "not a BPB". */
+enum class Flavor : uint32_t {
+    NotFat, /* no FAT boot sector here at all */
+    Fat12,  /* a FAT12 volume: recognized, not spoken */
+    Fat16,
+    Fat32,
+    Exfat, /* an ExFAT boot sector: recognized, not spoken */
+};
+
 /** What the BPB says, boiled down to what a reader needs. Sector numbers are
  *  relative to the volume. */
 struct Volume {
@@ -31,8 +42,10 @@ struct Volume {
     bool fat32;
 };
 
-/** Parse the BPB at the volume's sector 0. False when it is not one. */
-bool bpb(uint8_t const *sector, Volume *volume) noexcept;
+/** Parse the BPB at the volume's sector 0. `NotFat` when it is not one; the
+ *  other flavors fill `volume` (ExFAT alone leaves it unset, its fields
+ *  living elsewhere) so a caller can report which format it refused. */
+Flavor bpb(uint8_t const *sector, Volume *volume) noexcept;
 
 /** A cluster's first sector, volume-relative. */
 uint64_t cluster_sector(Volume const &volume, uint32_t cluster) noexcept;

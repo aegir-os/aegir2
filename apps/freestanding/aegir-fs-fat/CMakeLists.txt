@@ -1,8 +1,9 @@
 #
 # aegir-fs-fat: the FAT filesystem service -- one instance per FAT partition,
 # started by the partition manager with the block device's port and a range
-# grant rather than the whole device (specs/services.md). FAT16/32/ExFAT are
-# the interchange filesystems, not Aegir's own, and read-only to begin with.
+# grant rather than the whole device (specs/services.md). FAT16/32 are the
+# interchange filesystems, not Aegir's own; FAT12 and ExFAT are refused by
+# name (specs/fat.md).
 #
 # src/fat.* is the format (BPB, cluster chains, directory entries); src/main.cc
 # is the attachment to the block port.

@@ -40,10 +40,17 @@ void put32(uint8_t *at, uint32_t value) noexcept
 
 }  // namespace
 
-bool bpb(uint8_t const *sector, Volume *volume) noexcept
+Flavor bpb(uint8_t const *sector, Volume *volume) noexcept
 {
+    /* ExFAT is a different format wearing a FAT name: its boot sector says so
+     * at offset 3, and its fields live somewhere else entirely. Name it before
+     * the FAT layout is read, so the refusal can say which format it was. */
+    if (sector[3] == 'E' && sector[4] == 'X' && sector[5] == 'F' && sector[6] == 'A' &&
+        sector[7] == 'T' && sector[8] == ' ') {
+        return Flavor::Exfat;
+    }
     if (sector[510] != 0x55 || sector[511] != 0xaa) {
-        return false;
+        return Flavor::NotFat;
     }
     uint16_t const bytes_per_sector = word16(sector + 11);
     uint8_t const sectors_per_cluster = sector[13];
@@ -52,7 +59,7 @@ bool bpb(uint8_t const *sector, Volume *volume) noexcept
     uint16_t const root_entries = word16(sector + 17);
     if (bytes_per_sector != 512 || sectors_per_cluster == 0 || reserved == 0 ||
         fats == 0) {
-        return false;
+        return Flavor::NotFat;
     }
     /* Root entries is the field that tells the two layouts apart: FAT32 moved
      * the root into a cluster chain and zeroed it. */
@@ -60,7 +67,7 @@ bool bpb(uint8_t const *sector, Volume *volume) noexcept
     uint32_t const fat_sectors =
         volume->fat32 ? word32(sector + 36) : word16(sector + 22);
     if (fat_sectors == 0) {
-        return false;
+        return Flavor::NotFat;
     }
     volume->sectors_per_cluster = sectors_per_cluster;
     volume->fat_start = reserved;
@@ -72,7 +79,22 @@ bool bpb(uint8_t const *sector, Volume *volume) noexcept
                          static_cast<uint64_t>(fats) * fat_sectors;
     volume->data_start = volume->root_start + volume->root_sectors;
     volume->root_cluster = volume->fat32 ? word32(sector + 44) : 0;
-    return true;
+
+    /* Which FAT is here, by the format's own rule (Microsoft's FAT
+     * specification, "Determination of FAT Type"): under 4085 clusters is
+     * FAT12, under 65525 is FAT16, and the rest is FAT32. The root's shape
+     * wins when the two would disagree, because that is what the walk
+     * actually follows -- a small volume whose root is a chain is still
+     * FAT32's layout. */
+    if (volume->fat32) {
+        return Flavor::Fat32;
+    }
+    uint32_t const total_sectors =
+        word16(sector + 19) != 0 ? word16(sector + 19) : word32(sector + 32);
+    uint32_t const data_sectors =
+        total_sectors > volume->data_start ? total_sectors - volume->data_start : 0;
+    uint32_t const clusters = data_sectors / volume->sectors_per_cluster;
+    return clusters < 4085 ? Flavor::Fat12 : Flavor::Fat16;
 }
 
 uint64_t cluster_sector(Volume const &volume, uint32_t cluster) noexcept
