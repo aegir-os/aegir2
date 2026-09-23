@@ -48,6 +48,8 @@ long mkdirat(int dfd, char const *path, int mode) noexcept;
 long unlinkat(int dfd, char const *path, int flags) noexcept;
 long renameat2(int old_dfd, char const *old_path, int new_dfd, char const *new_path,
                unsigned flags) noexcept;
+long truncate(char const *path, long length) noexcept;
+long ftruncate(int fd, long length) noexcept;
 long chdir(char const *path) noexcept;
 long getcwd(char *buffer, size_t size) noexcept;
 long fcntl(int fd, int command, long argument) noexcept;

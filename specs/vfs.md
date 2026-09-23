@@ -190,6 +190,15 @@ write side has **handles** — the only per-client state a filesystem holds:
   or 0 — not found, a read-only volume, an open handle on the source, two
   directories, or a source and destination on different volumes (the runtime
   refuses that last one before the call: `EXDEV`).
+- **truncate** — words: a path and a size. The file's chain is cut to the
+  size (the tail clusters freed) or grown to it (fresh zeroed clusters), and
+  its slot's size is patched. Any handle already open on the file learns the
+  new size and has its cursor clamped, so a later write lands inside the file
+  the caller now has. Reply: 1, or 0 — not found, a directory, a read-only
+  volume, or a size past the format's 32-bit size field. This is what
+  `std::filesystem::resize_file` and `ftruncate` stand on (`specs/cxx.md`
+  step 5); the runtime answers `truncate` through it and `ftruncate` through
+  the fd's own path.
 - **reap** — words: a badge. Every handle the badge holds is dropped, as
   though closed. The reply is how many. auth calls it on every volume the
   namespace names when a session exits (`specs/auth.md`'s Session reclaim).

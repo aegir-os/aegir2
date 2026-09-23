@@ -210,6 +210,49 @@ void check_std_filesystem()
     }
 
     {
+        /* resize_file (musl's truncate) cuts a file and grows it with zeros;
+         * the ftruncate syscall resizes through an open fd. */
+        static char const kPath[] = "SCRATCH:Resized.bin";
+        char const pattern = 'x';
+        int fd = ::open(kPath, O_CREAT | O_TRUNC | O_RDWR, 0644);
+        bool ok = fd >= 0 && ::write(fd, &pattern, 1) == 1;
+        if (fd >= 0) {
+            ::close(fd);
+        }
+        std::error_code error;
+        if (ok) {
+            fs::resize_file(kPath, 5, error);
+            ok = !error;
+        }
+        char buffer[8] = {};
+        int const rd = ok ? ::open(kPath, O_RDONLY) : -1;
+        ok = ok && rd >= 0;
+        if (ok) {
+            ssize_t const got = ::read(rd, buffer, sizeof(buffer));
+            ok = got == 5 && buffer[0] == 'x';
+            for (int i = 1; ok && i < 5; ++i) {
+                ok = buffer[i] == 0; /* the grown tail is zeros */
+            }
+            ::close(rd);
+        }
+        int const rw = ok ? ::open(kPath, O_RDWR) : -1;
+        ok = ok && rw >= 0 && ::ftruncate(rw, 1) == 0;
+        if (rw >= 0) {
+            ::close(rw);
+        }
+        char one[2] = {};
+        int const again = ok ? ::open(kPath, O_RDONLY) : -1;
+        ok = ok && again >= 0 &&
+             ::read(again, one, sizeof(one)) == 1 && one[0] == 'x';
+        if (again >= 0) {
+            ::close(again);
+        }
+        bool const removed = fs::remove(kPath, error) && !error;
+        report(ok && removed,
+               "std::filesystem::resize_file truncates and grows, ftruncate cuts");
+    }
+
+    {
         std::error_code error;
         fs::path const cwd = fs::current_path(error);
         report(!error && !cwd.native().empty(),

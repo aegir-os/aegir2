@@ -368,6 +368,28 @@ uint64_t vol_rename(seL4_CPtr port, char const *src, uint32_t src_length,
     return in[0];
 }
 
+/* truncate: 1 resized, 0 refused -- not found, a directory, a read-only
+ * volume, or a size past the format's field. */
+uint64_t vol_truncate(seL4_CPtr port, char const *path, uint32_t path_length,
+                      uint64_t size) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 2];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    if (out_words == 0) {
+        return 0;
+    }
+    out[out_words] = size;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::volume::kMethodTruncate, out, out_words + 1, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return 0;
+    }
+    return in[0];
+}
+
 /* One read, asking for refusal: true when the volume says no. */
 bool read_refused(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
 {
@@ -1027,6 +1049,36 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: rename moves a file and a directory, data unmoved\n");
+        }
+    }
+
+    /* truncate (specs/fat.md): the chain is cut to a size and the slot's size
+     * patched, so the bytes past the cut stop resolving. */
+    {
+        static char const kTrunc[] = "Truncated.bin";
+        uint8_t bytes[600];
+        for (uint32_t i = 0; i < sizeof(bytes); ++i) {
+            bytes[i] = pattern_at(i);
+        }
+        uint64_t handle = vol_open(scratch_volume, kTrunc, sizeof(kTrunc) - 1,
+                                   aegir::volume::kOpenCreate |
+                                       aegir::volume::kOpenTruncate);
+        bool ok = handle != 0 &&
+                  vol_write(scratch_volume, handle, bytes, sizeof(bytes)) ==
+                      sizeof(bytes) &&
+                  vol_write(scratch_volume, handle, bytes, 300) == 300 &&
+                  vol_close(scratch_volume, handle) == 1;
+        ok = ok && vol_truncate(scratch_volume, kTrunc, sizeof(kTrunc) - 1, 300) == 1 &&
+             read_and_check_pattern(scratch_volume, kTrunc, sizeof(kTrunc) - 1, 300);
+        /* Truncating to zero frees the whole chain and the file reads empty. */
+        ok = ok && vol_truncate(scratch_volume, kTrunc, sizeof(kTrunc) - 1, 0) == 1 &&
+             read_and_check_pattern(scratch_volume, kTrunc, sizeof(kTrunc) - 1, 0);
+        ok = ok && vol_remove(scratch_volume, kTrunc, sizeof(kTrunc) - 1) == 1;
+        if (!ok) {
+            write("  test: FAIL truncate did not cut the chain to the size\n");
+            ++failed;
+        } else {
+            write("  test: truncate cuts a file's chain to the size\n");
         }
     }
 

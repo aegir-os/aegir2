@@ -502,10 +502,15 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
         return install(slot, target, 0, true, false, false);
     }
     if ((flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) != 0) {
-        uint64_t volume_flags = 0;
-        if ((flags & O_CREAT) != 0) {
-            volume_flags |= aegir::volume::kOpenCreate;
+        /* The volume's open takes its create flag as the intent to name a file
+         * for writing; an open without O_CREAT still only opens an existing
+         * one, so the missing case is refused here rather than letting the
+         * filesystem make a file the caller did not ask for. */
+        if (!exists && (flags & O_CREAT) == 0) {
+            give_slot(slot);
+            return -ENOENT;
         }
+        uint64_t volume_flags = aegir::volume::kOpenCreate;
         if ((flags & O_TRUNC) != 0) {
             volume_flags |= aegir::volume::kOpenTruncate;
         }
@@ -787,6 +792,59 @@ long renameat2(int old_dfd, char const *old_path, int new_dfd, char const *new_p
     give_slot(old_slot);
     give_slot(new_slot);
     return result;
+}
+
+long truncate(char const *path, long length) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr) {
+        return -EFAULT;
+    }
+    if (length < 0) {
+        return -EINVAL;
+    }
+    seL4_CPtr const slot = transient_slot();
+    if (slot == 0) {
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target target{};
+    if (resolve_target(path, text_length(path), slot, target) &&
+        aegir::vfs::Volume(target.volume)
+            .truncate(target.rest, target.rest_length, static_cast<uint64_t>(length))) {
+        result = 0;
+    }
+    empty_slot(slot);
+    return result;
+}
+
+long ftruncate(int fd, long length) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (length < 0) {
+        return -EINVAL;
+    }
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr) {
+        return -EBADF;
+    }
+    if (!entry->writable) {
+        return -EINVAL; /* an fd not open for writing cannot be resized */
+    }
+    if (!aegir::vfs::Volume(entry->volume)
+             .truncate(entry->path, entry->path_length,
+                       static_cast<uint64_t>(length))) {
+        return -ENOENT;
+    }
+    /* The fd's own read cursor must not point past the new end. */
+    if (entry->offset > static_cast<uint64_t>(length)) {
+        entry->offset = static_cast<uint64_t>(length);
+    }
+    return 0;
 }
 
 long chdir(char const *path) noexcept

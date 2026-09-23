@@ -1386,6 +1386,133 @@ void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
     port.reply_words(&renamed, 1);
 }
 
+/* Truncate a file's chain to `size` bytes: the clusters past the last byte
+ * are freed, or fresh zeroed clusters are linked on to reach it. `first`
+ * comes back as the (possibly new, possibly zero) first cluster, so the
+ * caller patches the slot and any handle. False on failure; the chain may be
+ * partly changed. */
+bool chain_truncate(uint32_t *first, uint64_t size) noexcept
+{
+    uint32_t const cluster_bytes = g_volume.sectors_per_cluster * kSectorBytes;
+    if (size == 0) {
+        bool const ok = chain_free(*first);
+        *first = 0;
+        return ok;
+    }
+    uint32_t const target = static_cast<uint32_t>((size - 1) / cluster_bytes);
+    uint32_t c = *first;
+    if (c < 2) {
+        c = alloc_cluster();
+        if (c == 0) {
+            return false;
+        }
+        *first = c;
+    }
+    for (uint32_t i = 0; i < target; ++i) {
+        uint64_t rel = 0;
+        if (!fat_load(c, &rel)) {
+            return false;
+        }
+        uint32_t next = window_next(c);
+        if (next >= chain_eoc()) {
+            next = alloc_cluster();
+            if (next == 0 || !fat_store(c, next)) {
+                return false;
+            }
+        }
+        c = next;
+    }
+    /* `c` is the last cluster to keep: free whatever follows it and end the
+     * chain there. */
+    uint64_t rel = 0;
+    if (!fat_load(c, &rel)) {
+        return false;
+    }
+    uint32_t const rest = window_next(c);
+    if (rest < chain_eoc() && !chain_free(rest)) {
+        return false;
+    }
+    return fat_store(c, chain_eoc_mark());
+}
+
+/* An open handle naming a slot the truncate changed learns the new size and
+ * first cluster, and its cursor is clamped -- a write must not land past the
+ * end the file now has. */
+void handles_resize(uint64_t sector, uint32_t index, uint32_t first,
+                    uint64_t size) noexcept
+{
+    if (g_memory == nullptr) {
+        return;
+    }
+    uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+    auto *rows = reinterpret_cast<Handle *>(g_memory);
+    for (uint32_t i = 0; i < capacity; ++i) {
+        if (rows[i].serial != 0 && rows[i].dirent_sector == sector &&
+            rows[i].dirent_index == index) {
+            rows[i].first_cluster = first;
+            rows[i].size = size;
+            if (rows[i].cursor > size) {
+                rows[i].cursor = size;
+            }
+        }
+    }
+}
+
+void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
+                     uint32_t count) noexcept
+{
+    uint64_t truncated = 0;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    uint64_t const size = words[path_words];
+    if (!g_writable || size > 0xffffffffull) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    Dir dir;
+    char const *last = nullptr;
+    uint32_t last_length = 0;
+    aegir::fat::Dirent dirent;
+    uint64_t dirent_sector = 0;
+    uint32_t dirent_index = 0;
+    if (!walk(path, path_length, false, &dir, &last, &last_length) ||
+        dir_slot(dir, last, last_length, &dirent, &dirent_sector, &dirent_index,
+                 nullptr) != Slot::Found ||
+        dirent.directory) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    uint32_t first = dirent.first_cluster;
+    if (!chain_truncate(&first, size)) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    if (!read(dirent_sector, 1)) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    aegir::fat::dirent_update(g_window + dirent_index * 32, first,
+                              static_cast<uint32_t>(size));
+    if (!write_back(dirent_sector, 1)) {
+        port.reply_words(&truncated, 1);
+        return;
+    }
+    handles_resize(dirent_sector, dirent_index, first, size);
+    truncated = 1;
+    port.reply_words(&truncated, 1);
+}
+
 void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     char const *path = nullptr;
@@ -1899,6 +2026,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodRename:
             answer_rename(vol, words, count);
+            break;
+        case aegir::volume::kMethodTruncate:
+            answer_truncate(vol, words, count);
             break;
         case aegir::volume::kMethodReap:
             answer_reap(vol, words, count);

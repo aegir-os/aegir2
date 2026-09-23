@@ -516,6 +516,12 @@ long vsyscall(long sysnum, ...) noexcept
                                va_arg(ap, int), va_arg(ap, char const *),
                                va_arg(ap, unsigned));
         break;
+    case 45: /* SYS_truncate: musl's std::filesystem::resize_file */
+        ret = files::truncate(va_arg(ap, char const *), va_arg(ap, long));
+        break;
+    case 46: /* SYS_ftruncate */
+        ret = files::ftruncate(va_arg(ap, int), va_arg(ap, long));
+        break;
     case 49: /* SYS_chdir */
         ret = files::chdir(va_arg(ap, char const *));
         break;

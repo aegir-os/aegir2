@@ -90,6 +90,14 @@ constexpr uint32_t kMethodStat = 9;   /* in: path words; answer: kind, size */
  * are refused. Answer: 1, or 0 (specs/vfs.md). */
 constexpr uint32_t kMethodRename = 10; /* in: src path words, dst path words; answer: 1, or 0 */
 
+/* truncate: a path and a size. The file's chain is cut to the size -- the
+ * tail clusters freed -- or grown to it with zeroed clusters, and its slot's
+ * size patched. A directory, a missing name, a read-only volume, and a size
+ * past the format's 32-bit field are refused. Any open handle on the file
+ * learns the new size, so a later write lands where the caller expects.
+ * Answer: 1, or 0 (specs/vfs.md). */
+constexpr uint32_t kMethodTruncate = 11; /* in: path words, size; answer: 1, or 0 */
+
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
 constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */

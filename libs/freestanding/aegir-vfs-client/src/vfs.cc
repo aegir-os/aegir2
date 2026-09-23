@@ -266,4 +266,19 @@ bool Volume::rename(char const *src, uint32_t src_length, char const *dst,
     return reply.error == 0 && reply.count == 1 && answer[0] == 1;
 }
 
+bool Volume::truncate(char const *path, uint32_t length, uint64_t size) noexcept
+{
+    uint64_t request[nmspace::kPathMax / 8 + 2];
+    uint32_t const path_words =
+        nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (path_words == 0 || path_words + 1 > aegir::ipc::kMaxWords) {
+        return false;
+    }
+    request[path_words] = size;
+    uint64_t answer[1];
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        volume::kMethodTruncate, request, path_words + 1, answer, 1);
+    return reply.error == 0 && reply.count == 1 && answer[0] == 1;
+}
+
 }  // namespace aegir::vfs

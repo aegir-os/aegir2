@@ -140,6 +140,11 @@ public:
     bool rename(char const *src, uint32_t src_length, char const *dst,
                 uint32_t dst_length) noexcept;
 
+    /** Cut or grow `path` to `size` bytes (volume::kMethodTruncate): the tail
+     *  is freed on a shrink, zeroed clusters are added on a grow. A directory,
+     *  a missing name, and a read-only volume are refused. False on refusal. */
+    bool truncate(char const *path, uint32_t length, uint64_t size) noexcept;
+
 private:
     aegir::ipc::Consumer port_;
     uint64_t reply_[aegir::ipc::kMaxWords];
