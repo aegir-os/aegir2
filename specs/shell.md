@@ -36,18 +36,22 @@ enough to state in one file.
   Amiga's, and it is deliberately not POSIX's "command not found, then
   give up".
 - **Built-in commands are the shell's, external ones are programs.** The
-  line editor, `CD`/`CurrentDir`, `Dir`/`List`, `Type`, `Echo`, `Set`/`Get`
-  (the `ENV:` toolset, `specs/environment.md`), and `Quit`/`EndCLI` are built
-  in: they are about the shell's own state or the namespace, and an external
-  binary for each would be ceremony. Everything else is a program.
-- **Commands come from the flat initrd first, and `C:` later.** Aegir has no
-  command path yet. The initrd is already a volume of flat names
-  (`specs/services.md`), so the first slice resolves a command name to
-  `Initrd:<name>`, reads those bytes, and hands them to the spawner. When
-  command volumes exist, `C:` arrives as a **union alias** — `Sys:C` and
-  `Home:C`, the `ENV:` pattern (`specs/namespace.md`) — searched in order,
-  and the initrd lookup is dropped. No `PATH` variable: the Amiga assigns a
-  directory to `C:`, and Aegir's aliases are the same mechanism, per badge.
+  line editor, `CD`/`CurrentDir`, `Echo`, `Set`/`Get` and the environment
+  family (the `ENV:` toolset, `specs/environment.md`), the alias commands, and
+  `Quit`/`EndCLI` are built in: they are about the shell's own state or its
+  line, and an external binary for each would be ceremony. Everything else is
+  a program — including `Dir`, `List` and `Type`, which begin as built-ins and
+  leave with the DOS toolset (`specs/dos.md`'s Phase 4).
+- **Commands come from `C:`, an alias of `Sys:C`.** A command name resolves
+  through the namespace to its binary, which the terminal reads and hands to
+  the spawner. `C:` is a **union alias** — `Sys:C` and `Home:C`, the `ENV:`
+  pattern (`specs/namespace.md`) — searched in order, bound per badge by auth.
+  No `PATH` variable: the Amiga assigns a directory to `C:`, and Aegir's
+  aliases are the same mechanism, per badge. The first two commands resolved
+  from the flat initrd (`Initrd:<name>`, Phases 3–6) while `C:` did not exist;
+  the DOS toolset drops that lookup for the real set (`specs/dos.md`). A
+  command's name is lowercased before it resolves, because a command is
+  `C:copy` and the filesystem is case-sensitive.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
   transfer, the protocol's stated property). So `printf` reaches the grid,
@@ -84,14 +88,16 @@ kept, so a login opens on `Home:>` and a directory under it is `Sys:Devs>`. It
 is drawn by the handler's line editor as the prompt it was
 opened with; after a directory change the shell updates it.
 
-### Resolution: `Libs:CommandName` and `Initrd:CommandName`
+### Resolution: `C:CommandName`
 
-A command name with no volume resolves in command order; a name with a
-volume (`Sys:Utilities/Hello`) resolves directly through the namespace and
-is run. This is the Amiga's `/`-path rule, applied to Aegir's `Volume:rest`
-grammar (`specs/vfs.md`). A name that resolves to a directory rather than a
-file is the implicit directory change; a name that resolves to nothing is
-"unknown command".
+A command name with no volume resolves through the `C:` alias — `Sys:C` then
+`Home:C` (`specs/dos.md`) — and its lowercased name is what is looked up. A
+name with a volume (`Sys:Utilities/Hello`) resolves directly through the
+namespace and is run. This is the Amiga's `/`-path rule, applied to Aegir's
+`Volume:rest` grammar (`specs/vfs.md`). A name that resolves to a directory
+rather than a file is the implicit directory change; a name that resolves to
+nothing is "unknown command". Phases 3–6 resolved the two first commands from
+the flat initrd (`Initrd:<name>`); Phase 7 replaces that lookup with `C:`.
 
 ### The command's exit
 
@@ -176,6 +182,16 @@ this arc's record of the order.
   and the grid stay the terminal's; only the words moved. Two interims from
   Phase 3 remain: the command badge is still a placeholder, and a command holds
   only the console stream and its runtime untyped.
+- **Phase 7 — the DOS toolset.** `specs/dos.md`: the CLI commands as hosted
+  programs in `Sys:C`, one binary each, with `ReadArgs` templates
+  (`aegir::args`), and the plumbing that lets a command touch files without
+  touching the kernel — the terminal mints it a `vfs.namespace` and a
+  `clock.main`, badged with the session, beside the console stream. `Dir`,
+  `List` and `Type` leave the built-ins; the commands arrive in slices. The
+  command-badge interim above is not this phase's: the namespace the command
+  is given carries the session's identity even while the process's own badge
+  is the placeholder, so `Home:`/`ENV:`/`C:` resolve and writes land owned by
+  the session.
 
 ## What this is not
 
@@ -189,8 +205,8 @@ this arc's record of the order.
   (`specs/userland.md`), and the Amiga's single command line is the model.
 - **Elevation.** A `Run`-as-root path through `auth` and director is
   `specs/authority.md`'s open list, not this spec.
-- **The command set itself.** Which programs ship in `C:`/`Initrd:` is the
-  storage and toolset arcs'; this spec says how one is named and run.
+- **The command set itself.** Which programs ship in `C:` is the DOS
+  toolset's (`specs/dos.md`); this spec says how one is named and run.
 
 ## Acceptance
 
@@ -224,3 +240,8 @@ Phase 6's is the same run: every line the runner types is read by `aegir-shell`
 in its own process and every command is one the terminal started on its
 request, so the whole command line -- `set`, `aegir-print`, `aegir-read`, and
 the history recall -- is the shell-as-a-process path.
+
+Phase 7's is `specs/dos.md`'s acceptance: the same run types a `makedir`, a
+`copy`, a `list` and a `type`, and each is a program read from `Sys:C` and
+resolving the session's namespace on the badge the terminal gave it -- while
+`set`/`type`/`echo` stay the shell's own words.

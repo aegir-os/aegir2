@@ -762,3 +762,10 @@ worth a second look before code exists.
    defines. Both halves land together, because the view alone leaves the home
    reachable through the public `Sys:` path and the ownership alone leaves the
    home root-owned.
+8. **The system volume carries the command set, and the partition is sized
+   from it.** `Sys:C` holds the DOS toolset's binaries (`specs/dos.md`), so
+   the tree `scripts/make_disk.py` builds into the AEGIR partition is large
+   and grows with the set. `mkfs_bfs` therefore sizes a volume from its tree
+   -- a dry run of the layout gives the block count, the geometry follows,
+   and the caller asks for that -- rather than from a fixed partition size.
+   The format does not change; the builder just stops guessing.

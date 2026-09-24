@@ -380,6 +380,13 @@ That map is the reason it exists, and everything else it does is in service of i
   service can read the boot image through the namespace. That is what lets
   `auth` start with an initial user database from the initrd and switch to
   the authoritative one on the root volume once it appears.
+- **The command set lives on `Sys:C`.** The DOS commands (`specs/dos.md`) are
+  ordinary files on the system volume, one hosted binary each, not initrd
+  entries: the boot image is the boot set, and a command changes without a
+  boot. `make_disk.py` builds `Sys:C` with them and sizes the AEGIR partition
+  and the image from what the tree weighs, rather than from a constant, since
+  the set grows. The `C:` alias auth binds per badge is what resolves them
+  (`specs/dos.md`, `specs/namespace.md`).
 
 Amiga ancestry, recorded as inspiration rather than mechanism: `expansion.library`
 and `BindDrivers` for a device manager that decides which driver binds to what,

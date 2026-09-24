@@ -121,10 +121,12 @@ nothing in the VFS can change it.
 
 The shell and the DOS toolset that manipulate the persistent environment
 (`SetVar`/`GetVar`, and the `CON:` handler they need); a startup sequence that
-reads `Env-Archive` into the first processes; a command-line parser
-(`ReadArgs`'s shape); file descriptors or a process's open files; `$HOME` or any
-other named variable the system sets for a program — the arc gives the
-mechanism, and a program or a spawner decides the names.
+reads `Env-Archive` into the first processes; file descriptors or a process's
+open files; `$HOME` or any other named variable the system sets for a program
+— the arc gives the mechanism, and a program or a spawner decides the names.
+The command-line parser (`ReadArgs`'s shape) is `specs/dos.md`'s `aegir::args`,
+which sits on this arc's `argc`/`argv`: this file says what a process was
+given, that one says how a command reads it.
 
 ## Acceptance
 
