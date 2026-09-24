@@ -580,6 +580,19 @@ decide how they compare: a string as bytes, an integer as a number, a real as
 a number, a bool as a bool; a literal and an attribute of different families
 do not match.
 
+Whose names a query answers is not the query's to decide: an inode whose name
+the caller could not read by path is not a result. Both the index walk and the
+scan check, before they name an inode, that the caller may read the directory
+holding it and execute through every directory above it to the volume root --
+the same traversal `walk` enforces (`specs/ownership.md`). A query of a public
+volume therefore reaches the public names and the caller's own, and a
+directory a caller may not enter keeps its contents out of the answer as it
+keeps them out of a listing. The scan reaches by block number what the walk
+reaches by path, and this is where the two are made to agree. The system class
+sees everything. An empty answer because everything matching was hidden reads
+the same as one that matched nothing, and that is deliberate: the names are
+what the guard is for.
+
 A **live query** is a query that sees changes after it opens. Its open carries
 a token; the filesystem answers with a **notification endpoint** of its own,
 which it signals. The filesystem owns the endpoint, so the client needs no

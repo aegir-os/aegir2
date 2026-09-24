@@ -211,6 +211,43 @@ bool owner_or_system(uint64_t badge, aegir::bfs::Inode const &inode) noexcept
     return inode.uid == index || inode.gid == index;
 }
 
+/* Whether a query may name an inode to this caller. A query is a listing, and
+ * a name lives in the inode's parent: the caller must be able to read that
+ * parent and to execute through every directory above it, up to the volume
+ * root. The walk finds a name the caller reached by path, but a query reaches
+ * by index and scan, so it owes the same check -- a directory a caller may not
+ * traverse keeps its names (specs/ownership.md, specs/bfs.md's queries). The
+ * system class sees everything. */
+bool may_see(uint64_t badge, aegir::bfs::Inode const &inode) noexcept
+{
+    if (!aegir::ipc::is_user_badge(badge)) {
+        return true;
+    }
+    uint64_t const root = g_volume.root_block();
+    aegir::bfs::Inode dir = inode;
+    bool first = true;
+    /* A parent chain cannot be longer than the volume has blocks; past that
+     * the volume is malformed and the answer is no. */
+    uint64_t const bound = g_volume.num_blocks();
+    for (uint64_t steps = 0; steps <= bound; ++steps) {
+        uint64_t const parent = g_volume.to_block(dir.parent);
+        if (!g_volume.read_inode(parent, &dir)) {
+            return false;
+        }
+        if (!permits(badge, dir, kPermExec)) {
+            return false;
+        }
+        if (first && !permits(badge, dir, kPermRead)) {
+            return false;
+        }
+        first = false;
+        if (parent == root) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Walk a component path from the root. The empty path is the root; an empty
  * component and ".." are the parent, "." the directory itself (specs/vfs.md's
  * Amiga convention). Every directory a step descends from must be executable
@@ -1132,7 +1169,7 @@ void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
                                        &value)) {
                 aegir::bfs::Inode inode;
                 if (!g_volume.read_inode(value, &inode) || !is_queryable(inode) ||
-                    !g_query.matches(g_volume, inode)) {
+                    !g_query.matches(g_volume, inode) || !may_see(badge, inode)) {
                     continue;
                 }
                 query_emit(port, inode);
@@ -1145,7 +1182,8 @@ void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
     uint64_t block = handle->cursor;
     aegir::bfs::Inode inode;
     while (g_volume.next_inode(&block, &inode)) {
-        if (is_queryable(inode) && g_query.matches(g_volume, inode)) {
+        if (is_queryable(inode) && g_query.matches(g_volume, inode) &&
+            may_see(badge, inode)) {
             handle->cursor = block;
             query_emit(port, inode);
             return;

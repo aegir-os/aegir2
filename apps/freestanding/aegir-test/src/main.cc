@@ -2410,6 +2410,23 @@ int main(int argc, char *argv[])
         write("  test: the system reads bar's record, which no user may\n");
     }
 
+    /* The second half of the same guard (specs/bfs.md's queries): the session
+     * asked a question a user may ask -- a query of the public Sys: -- and the
+     * answer must not name bar's record while it still names the session's own
+     * file. The marker is the session's, read here under the system badge. */
+    static char const kQueryPath[] = "Sys:Homes/rroland/QUERY.TXT";
+    static char const kQueryMark[] = "a query of Sys: hid bar and kept its own\n";
+    seL4_CPtr const query_volume =
+        resolve(kQueryPath, sizeof(kQueryPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 49));
+    if (!read_and_check(query_volume, rest, rest_length, kQueryMark,
+                        sizeof(kQueryMark) - 1)) {
+        write("  test: FAIL a query of Sys: did not hide bar's home\n");
+        ++failed;
+    } else {
+        write("  test: a query of Sys: hides bar's home and keeps its own\n");
+    }
+
     /* The session-reclaim arc (specs/auth.md): the leaked LEAK.TXT handle
      * is already gone -- auth reaped the badge's handles and unbound its
      * aliases itself when the session exited, and the refused logins above

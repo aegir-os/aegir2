@@ -31,6 +31,7 @@
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
@@ -98,6 +99,73 @@ uint64_t vol_close(seL4_CPtr port, uint64_t handle) noexcept
         return 0;
     }
     return in[0];
+}
+
+bool same_bytes(char const *a, char const *b, uint32_t length) noexcept
+{
+    for (uint32_t i = 0; i < length; ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The query protocol (specs/bfs.md): open, one named entry per next, close.
+ * Just enough of it to ask a question a user's listing is: whose names a
+ * query of a public volume will answer. */
+uint64_t query_open(seL4_CPtr port, char const *text, uint32_t length) noexcept
+{
+    aegir::ipc::Consumer const volume(port);
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t const words = aegir::nmspace::pack_string(
+        out, text, length, aegir::metadata::kQueryTextMax);
+    if (words == 0) {
+        return 0;
+    }
+    out[words] = 0; /* the flags: an ordinary query, not a live one */
+    uint64_t in[aegir::metadata::kQueryOpenTailWords] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodQueryOpen, out, words + 1, in,
+        aegir::metadata::kQueryOpenTailWords);
+    if (answer.error != 0 || answer.count < 1 || in[0] != aegir::metadata::kOk) {
+        return 0;
+    }
+    return in[1];
+}
+
+/* The name of the next matching entry, or false at the end (or on refusal). */
+bool query_next(seL4_CPtr port, uint64_t handle, char *name,
+                uint32_t *name_length) noexcept
+{
+    aegir::ipc::Consumer const volume(port);
+    uint64_t in[aegir::ipc::kMaxWords] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodQueryNext, &handle, 1, in, aegir::ipc::kMaxWords);
+    if (answer.error != 0 || answer.count < 1 || in[0] != aegir::metadata::kOk) {
+        return false;
+    }
+    char const *seen = nullptr;
+    uint32_t seen_length = 0;
+    if (!aegir::nmspace::unpack_string(in + 1, answer.count - 1,
+                                       aegir::metadata::kAttrNameMax, &seen,
+                                       &seen_length)) {
+        return false;
+    }
+    for (uint32_t i = 0; i < seen_length; ++i) {
+        name[i] = seen[i];
+    }
+    *name_length = seen_length;
+    return true;
+}
+
+uint64_t query_close(seL4_CPtr port, uint64_t handle) noexcept
+{
+    aegir::ipc::Consumer const volume(port);
+    uint64_t in[1] = {};
+    aegir::ipc::WordsReply const answer = volume.call_words(
+        aegir::metadata::kMethodQueryClose, &handle, 1, in, 1);
+    return answer.error != 0 || answer.count < 1 ? 0 : in[0];
 }
 
 }  // namespace
@@ -343,6 +411,101 @@ int main(int argc, char *argv[])
     /* No input path of its own: the devices are the console's, exclusively
      * (specs/console.md), and a session's events arrive as windows' events
      * when the bureau arc lands. */
+
+    /* A query is a listing, and a listing hides what the caller may not see
+     * (specs/bfs.md's queries, specs/ownership.md): Sys: is public, but this
+     * badge's query of it must not name RECORD.TXT inside bar's 0700 home,
+     * while WELCOME.TXT in this user's own home is its to find. Both are
+     * checked, so a filter that hid everything would fail too. The outcome is
+     * a marker the system reads back through Sys:. */
+    {
+        static char const kSys[] = "Sys:";
+        seL4_CPtr sys_volume = 0;
+        {
+            uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+            uint32_t const out_words = aegir::nmspace::pack_string(
+                out, kSys, sizeof(kSys) - 1, aegir::nmspace::kPathMax);
+            uint64_t in[aegir::nmspace::kResolveWords];
+            bool cap_arrived = false;
+            aegir::ipc::WordsReply const answer = nmspace.call_transfer(
+                aegir::nmspace::kMethodResolve, out, out_words, 0, in,
+                aegir::nmspace::kResolveWords, &cap_arrived);
+            char const *text = nullptr;
+            uint32_t length = 0;
+            if (answer.error == 0 && cap_arrived &&
+                aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                              &text, &length) &&
+                aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free + 4))) {
+                sys_volume = static_cast<seL4_CPtr>(first_free + 4);
+            }
+        }
+        bool hidden = false;
+        bool found = false;
+        if (sys_volume != 0) {
+            char name[aegir::metadata::kAttrNameMax];
+            uint32_t name_length = 0;
+            static char const kOther[] = "name == \"RECORD.TXT\"";
+            uint64_t const q = query_open(sys_volume, kOther, sizeof(kOther) - 1);
+            hidden = q != 0 && !query_next(sys_volume, q, name, &name_length);
+            if (q != 0) {
+                (void)query_close(sys_volume, q);
+            }
+            static char const kOwn[] = "name == \"WELCOME.TXT\"";
+            uint64_t const q2 = query_open(sys_volume, kOwn, sizeof(kOwn) - 1);
+            name_length = 0;
+            found = q2 != 0 && query_next(sys_volume, q2, name, &name_length) &&
+                    name_length == sizeof("WELCOME.TXT") - 1 &&
+                    same_bytes(name, "WELCOME.TXT", name_length);
+            if (q2 != 0) {
+                (void)query_close(sys_volume, q2);
+            }
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, sys_volume,
+                              aegir::bootstrap::kCNodeBits);
+        }
+        if (hidden && found) {
+            static char const kMarkPath[] = "Home:QUERY.TXT";
+            static char const kMark[] = "a query of Sys: hid bar and kept its own\n";
+            seL4_CPtr mark_volume = 0;
+            uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+            uint32_t const out_words = aegir::nmspace::pack_string(
+                out, kMarkPath, sizeof(kMarkPath) - 1, aegir::nmspace::kPathMax);
+            uint64_t in[aegir::nmspace::kResolveWords];
+            bool cap_arrived = false;
+            aegir::ipc::WordsReply const answer = nmspace.call_transfer(
+                aegir::nmspace::kMethodResolve, out, out_words, 0, in,
+                aegir::nmspace::kResolveWords, &cap_arrived);
+            char const *text = nullptr;
+            uint32_t length = 0;
+            if (answer.error == 0 && cap_arrived &&
+                aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                              &text, &length) &&
+                aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free + 5))) {
+                mark_volume = static_cast<seL4_CPtr>(first_free + 5);
+            }
+            bool wrote = false;
+            if (mark_volume != 0) {
+                uint64_t const handle =
+                    vol_open(mark_volume, text, length,
+                             aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+                wrote = handle != 0 &&
+                        vol_write(mark_volume, handle,
+                                  reinterpret_cast<uint8_t const *>(kMark),
+                                  sizeof(kMark) - 1) == sizeof(kMark) - 1 &&
+                        vol_close(mark_volume, handle) == 1;
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mark_volume,
+                                  aegir::bootstrap::kCNodeBits);
+            }
+            if (wrote) {
+                write("  session.smoke: a query of Sys: hid bar's home and found "
+                      "its own -- recorded\n");
+            } else {
+                write("  session.smoke: FAIL the query marker would not be written\n");
+            }
+        } else {
+            write("  session.smoke: FAIL a query of Sys: did not hide bar's home "
+                  "and find its own\n");
+        }
+    }
 
     if (log.valid()) {
         (void)log.call(aegir::log::kMethodEvent,
