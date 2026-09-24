@@ -9,9 +9,15 @@
 # embeds the exceptions choice (libcxx/include/__config), so the library and the
 # user-code policy have to agree -- both are built with them on. Threads stay on
 # so <thread>/<mutex> compile and link against musl's pthread; actually starting
-# a thread needs a working clone, which is a later milestone. Localization is
-# off until the arc that needs it; std::filesystem is on, because the runtime
-# answers its calls (specs/cxx.md step 5).
+# a thread needs a working clone, which is a later milestone. Localization is on
+# (specs/locale.md): std::locale's facets are compiled in, and they stand on
+# musl's locale, which the full musl builds; the runtime's C++ locale support is
+# proved by apps/hosted/aegir-cxx-smoke. The time zone database is off: it
+# wants an IANA zoneinfo tree Aegir does not ship, and libc++ would build its
+# parser anyway -- the cross build leaves CMAKE_SYSTEM_NAME as the host, so its
+# "Linux gets a database" default is wrong here and is overridden.
+# std::filesystem is on, because the runtime answers its calls (specs/cxx.md
+# step 5).
 #
 # Unwind tables are what make a throw walk frames: libc++'s CFLAGS do not carry
 # the environment's -fno-asynchronous-unwind-tables, so the library has
@@ -118,7 +124,8 @@ cmake "${LLVM_PROJECT}/runtimes" \
     -DLIBCXX_ENABLE_THREADS=ON \
     -DLIBCXX_HAS_PTHREAD_API=ON \
     -DLIBCXX_ENABLE_FILESYSTEM=ON \
-    -DLIBCXX_ENABLE_LOCALIZATION=OFF \
+    -DLIBCXX_ENABLE_LOCALIZATION=ON \
+    -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF \
     -DLIBCXX_HAS_MUSL_LIBC=ON \
     -DLIBCXX_CXX_ABI=libcxxabi \
     -DLIBCXX_USE_COMPILER_RT=OFF \

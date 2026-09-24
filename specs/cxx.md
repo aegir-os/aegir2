@@ -372,11 +372,13 @@ The order:
    (`aegir/block.h`; the partition manager carves one per filesystem).
 6. **Locale, iconv and BiDi/RTL** (`specs/locale.md`). The toolkit keeps
    `locale.cc` in its build — its C dependencies are musl's — while
-   `translation.cc` and `bidi.cc` are gated out because they are stubs, not
-   because they cannot compile. musl's own locale and iconv are already in
-   `musl_full`; the arc implements UAX #9 for real first, then turns libc++
-   localization on (`LIBCXX_ENABLE_LOCALIZATION`), then gives the toolkit's
-   `Locale` CLDR data and gettext a parser.
+   `translation.cc` is gated out because it is a stub, not because it cannot
+   compile. musl's own locale and iconv are already in `musl_full`. The arc's
+   first two pieces are landed: UAX #9 for real (`bidi.cc` and its Unicode
+   conformance run), then libc++ localization on
+   (`LIBCXX_ENABLE_LOCALIZATION`), proved by `std::locale` in
+   `apps/hosted/aegir-cxx-smoke`. Next the toolkit's `Locale` gets CLDR data
+   and gettext gets its parser.
 7. **The compiler choice.** GCC builds everything today. Clang 22
    cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
    112 at `-O2`) and would not need the `__chash` patch at all, because libc++

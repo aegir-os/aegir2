@@ -13,15 +13,16 @@ order, each its own checkpoint.
   `iconv` all link from `musl_full`. The seL4 fork was configured without them,
   which is why the hosted runtime vendors upstream musl in the first place
   (`specs/cxx.md`). So nothing in the C library needs turning on.
-- **libc++ is built with `LIBCXX_ENABLE_LOCALIZATION=OFF`**
-  (`scripts/build_libcxx.sh`), so `std::locale`'s facets are not in the library.
+- **libc++ is built with `LIBCXX_ENABLE_LOCALIZATION=ON`**
+  (`scripts/build_libcxx.sh`), so `std::locale`'s facets are in the library;
+  the time zone database is off, because it wants an IANA zoneinfo tree Aegir
+  does not ship. The runtime accepts it (`apps/hosted/aegir-cxx-smoke`).
 - **`aegir-trinket`'s `locale.cc` is in the build** but simplified: hardcoded
   English separators and a `n != 1` plural rule, not CLDR data
-  (`libs/hosted/aegir-trinket/src/locale.cc`). **`bidi.cc` is a broken stub** --
-  `analyze_paragraph` writes into a temporary `runs()` and the file would not
-  compile -- and **`translation.cc`** is a gettext `.mo` parser that is not in
-  the build. Both are gated out (`libs/hosted/aegir-trinket/CMakeLists.txt`),
-  and the only part of `bidi.h` anything uses is the `BidiDirection` enum.
+  (`libs/hosted/aegir-trinket/src/locale.cc`). **`bidi.cc` is now the real
+  algorithm** (piece 1) with conformance green; **`translation.cc`** is a gettext
+  `.mo` parser that is not yet in the build. `translation.cc` is gated out
+  (`libs/hosted/aegir-trinket/CMakeLists.txt`).
 
 ## The pieces, in order
 
@@ -32,8 +33,14 @@ order, each its own checkpoint.
    broken stub with something true, and RTL rendering needs it before any
    localized string is drawn.
 2. **libc++ localization on.** `LIBCXX_ENABLE_LOCALIZATION=ON`, and whatever
-   that pulls in, proven by `std::locale`/`std::stringstream`/`std::wstring_convert`
-   in `apps/hosted/aegir-cxx-smoke`. Depends on 1 only for the toolkit.
+   that pulls in, proven by `std::locale` and `std::stringstream` in
+   `apps/hosted/aegir-cxx-smoke`: the classic locale's facets are present, a
+   named locale is built through musl's `newlocale`, and a `C.UTF-8` locale's
+   `std::codecvt` facet converts UTF-8 through musl's tables. (The proof uses
+   that facet rather than `std::wstring_convert` and `std::codecvt_utf8`, which
+   C++17 deprecated and libc++ warns on unconditionally -- the same conversion,
+   and on the locale rather than a self-contained table.) Depends on 1 only for
+   the toolkit.
 3. **Trinket's `Locale`, against real CLDR data.** Number, date, currency,
    percent, plural and list formatting from a compiled CLDR subset, replacing
    the hardcoded fields. The `.locale` file format is decided here.

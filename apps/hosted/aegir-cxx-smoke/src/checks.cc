@@ -20,7 +20,10 @@
 #include <aegir/debug.h>
 
 #include <cstdlib>
+#include <codecvt>
+#include <locale>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <typeinfo>
@@ -159,6 +162,59 @@ void check_rtti()
            "RTTI identifies a dynamic type");
 }
 
+/* Localization (specs/locale.md): std::locale's facets are compiled into the
+ * archive now, and they stand on musl's locale. The proof is a facet doing real
+ * work at each layer: the classic locale's facet table is populated, locales
+ * built by name from musl are accepted, a stringstream imbued with a locale
+ * formats through num_put, and a C.UTF-8 locale's codecvt facet converts UTF-8
+ * to wide characters through musl's C.UTF-8 tables. Each is a path -- facet
+ * construction, musl's newlocale, the format routine, the conversion -- not
+ * merely a value that links. The conversion uses the locale's own codecvt facet
+ * rather than std::wstring_convert and std::codecvt_utf8, which C++17
+ * deprecated and libc++ warns on unconditionally. */
+void check_locale()
+{
+    bool const facets_present =
+        std::has_facet<std::numpunct<char>>(std::locale::classic()) &&
+        std::use_facet<std::numpunct<char>>(std::locale::classic()).decimal_point() == '.';
+
+    bool by_name = false;
+    try {
+        std::locale const named("C");
+        by_name = std::has_facet<std::ctype<char>>(named);
+    } catch (...) {
+        by_name = false;
+    }
+
+    std::stringstream out;
+    out.imbue(std::locale::classic());
+    out << 12345 << ' ' << 3.5;
+    bool const formatted = out.str() == "12345 3.5";
+
+    std::codecvt_base::result result = std::codecvt_base::error;
+    wchar_t wide[8] = {};
+    try {
+        std::locale const utf8("C.UTF-8");
+        auto const &converter =
+            std::use_facet<std::codecvt<wchar_t, char, std::mbstate_t>>(utf8);
+        char const text[] = "Aegir \u00e9\u4e2d";
+        char const *from = text;
+        char const *from_end = text + sizeof(text) - 1;
+        char const *from_next = text;
+        wchar_t *to = wide;
+        wchar_t *to_next = wide;
+        std::mbstate_t state{};
+        result = converter.in(state, from, from_end, from_next, to, to + 8, to_next);
+    } catch (...) {
+        result = std::codecvt_base::error;
+    }
+    bool const converted = result == std::codecvt_base::ok && wide[6] == U'\u00e9' &&
+                           wide[7] == U'\u4e2d';
+
+    report(facets_present && by_name && formatted && converted,
+           "std::locale's facets format and convert");
+}
+
 /* std::thread (specs/cxx.md's completion program, step 4): libc++'s thread is
  * musl's pthread_create, which is musl's clone, which is the hosted runtime's
  * __aegir_clone -- a real seL4 TCB in this address space. The thread joins,
@@ -195,6 +251,7 @@ int run()
     check_reuse();
     check_exceptions();
     check_rtti();
+    check_locale();
     return g_failed;
 }
 
