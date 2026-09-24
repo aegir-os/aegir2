@@ -10,14 +10,28 @@ cmake_minimum_required(VERSION 3.16.0)
 project(aegir-trinket CXX)
 
 # Core library. locale.cc is in: full musl provides the C locale surface it
-# uses. translation.cc (a fake binary format, and unused) and bidi.cc (a
-# simplified UAX#9 that returns nothing, and whose only consumer is the
-# BidiDirection enum in bidi.h) are the locale/BiDi arc's, not this runtime's;
-# they are gated out until that arc lands (specs/cxx.md).
+# uses. bidi.cc is the real UAX #9, with tables generated from the pinned
+# Unicode Character Database (specs/locale.md). translation.cc (gettext, a
+# format nothing uses yet) is still the locale arc's and is gated out until
+# that part of the arc lands.
 # The font is embedded: projects/terminus-font is a pinned vendored project
 # (manifests/aegir.xml) and the VFS's file syscalls are stubbed, so the BDF is
 # compiled into the library by scripts/embed_binary.py rather than read at
 # runtime (specs/trinket.md).
+set(AEGIR_UCD_DIR "${CMAKE_SOURCE_DIR}/projects/ucd/unicode-16.0.0")
+set(AEGIR_BIDI_TABLES "${CMAKE_CURRENT_BINARY_DIR}/bidi_tables.cc")
+add_custom_command(
+  OUTPUT "${AEGIR_BIDI_TABLES}"
+  COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/gen_bidi_tables.py"
+          "${AEGIR_UCD_DIR}" "${AEGIR_BIDI_TABLES}"
+  DEPENDS
+    "${AEGIR_UCD_DIR}/extracted/DerivedBidiClass.txt"
+    "${AEGIR_UCD_DIR}/BidiMirroring.txt"
+    "${AEGIR_UCD_DIR}/BidiBrackets.txt"
+    "${CMAKE_SOURCE_DIR}/scripts/gen_bidi_tables.py"
+  COMMENT "Generating the UAX #9 tables from the pinned UCD"
+  VERBATIM
+)
 set(AEGIR_TERMINUS_BDF "${CMAKE_SOURCE_DIR}/projects/terminus-font/ter-u12n.bdf")
 set(AEGIR_TERMINUS_EMBED "${CMAKE_CURRENT_BINARY_DIR}/terminus_12_bdf.cc")
 add_custom_command(
@@ -43,6 +57,8 @@ add_library(aegir-trinket STATIC
     src/font.cc
     src/unicode.cc
     src/locale.cc
+    src/bidi.cc
+    "${AEGIR_BIDI_TABLES}"
     src/theme.cc
     src/theme_xen.cc
     src/worker.cc
@@ -50,6 +66,9 @@ add_library(aegir-trinket STATIC
 )
 
 target_include_directories(aegir-trinket PUBLIC include)
+# bidi_tables.h is internal and reaches the generated bidi_tables.cc by this
+# path.
+target_include_directories(aegir-trinket PRIVATE src)
 
 # Dependencies: the hosted policy (which brings libc++ and full musl), the
 # console window protocol, input's event words, the log, and the memory the
