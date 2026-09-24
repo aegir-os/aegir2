@@ -7,6 +7,7 @@
 
 #include "shell.h"
 
+#include <aegir/environment.h>
 #include <aegir/trinket/unicode.h>
 
 #include <cstdio>
@@ -210,6 +211,34 @@ void Shell::command_type(std::string const& arg)
     std::fclose(file);
 }
 
+void Shell::command_set(std::string const& arg)
+{
+    std::size_t const space = arg.find_first_of(" \t");
+    std::string const name = space == std::string::npos ? arg : arg.substr(0, space);
+    std::string value;
+    if (space != std::string::npos) {
+        std::size_t const start = arg.find_first_not_of(" \t", space);
+        if (start != std::string::npos) {
+            value = arg.substr(start);
+        }
+    }
+    if (name.empty() || !aegir::environment::setenv(name.c_str(), value.c_str())) {
+        print("Set: a name and a value, please\n");
+    }
+}
+
+void Shell::command_get(std::string const& arg)
+{
+    std::size_t const space = arg.find_first_of(" \t");
+    std::string const name = space == std::string::npos ? arg : arg.substr(0, space);
+    if (name.empty()) {
+        print("Get: what variable?\n");
+        return;
+    }
+    char const* const value = aegir::environment::getenv(name.c_str());
+    print(name + "=" + (value != nullptr ? value : "(not set)") + "\n");
+}
+
 void Shell::run_line(std::u32string const& line)
 {
     std::vector<std::string> const words = split_words(line);
@@ -233,6 +262,10 @@ void Shell::run_line(std::u32string const& line)
         command_type(arg);
     } else if (command == "echo") {
         print(arg + "\n");
+    } else if (command == "set" || command == "setvar") {
+        command_set(arg);
+    } else if (command == "get" || command == "getvar") {
+        command_get(arg);
     } else if (command == "quit" || command == "endcli") {
         print("bye\n");
         if (quit_) {

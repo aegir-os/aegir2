@@ -46,7 +46,10 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   first processes' environments; the DOS toolset — `SetVar`/`GetVar`, once the
   shell and a `CON:` handler exist — is where the writes happen. This arc
   defines the per-process mechanism and the binding; the startup and the tools
-  are later arcs.
+  are later arcs. **Landed** (specs/shell.md's Phase 5): the in-memory half —
+  `Set`/`Get` over `aegir::environment`, and `environ()` so a command inherits
+  the shell's environment. The `ENV:` union binding and the archive files are
+  the next piece.
 - **The library is `aegir::environment`.** It parses the bootstrap block once
   and answers `argc`/`argv`, `getenv`/`setenv`, and
   `current_dir`/`set_current_dir`. A program includes it and never sees a slot
@@ -85,6 +88,10 @@ One header, no seL4 in a caller's translation unit:
         char const *const *argv() noexcept;
         char const *getenv(char const *name) noexcept;
         bool setenv(char const *name, char const *value) noexcept;
+        // The whole environment as NAME=VALUE strings, NUL-terminated, this
+        // process's own settings shadowing what it inherited: what a spawner
+        // passes on.
+        char const *const *environ() noexcept;
         // The current directory, or an empty string when the process has none.
         std::string_view current_dir() noexcept;
         bool set_current_dir(std::string_view path) noexcept;

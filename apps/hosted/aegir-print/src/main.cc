@@ -17,6 +17,7 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
+#include <aegir/environment.h>
 #include <aegir/heap.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
@@ -106,6 +107,15 @@ int main(int argc, char **argv)
 
     /* exit() flushes the stream and carries the status: the runtime's
      * SYS_exit_group reports it through the console stream (specs/shell.md's
-     * Phase 4). */
-    std::exit(static_cast<int>(argc > 1 ? status_from(argv[1]) : 0));
+     * Phase 4). A numeric argument is the status; without one, the inherited
+     * variable exitcode is, so a shell's `Set` is visible here -- the
+     * environment the shell passes on (specs/shell.md's Phase 5). */
+    uint64_t status = 0;
+    if (argc > 1) {
+        status = status_from(argv[1]);
+    } else if (char const *const from_environment =
+                   aegir::environment::getenv("exitcode")) {
+        status = status_from(from_environment);
+    }
+    std::exit(static_cast<int>(status));
 }

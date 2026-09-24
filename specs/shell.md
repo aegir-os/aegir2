@@ -142,8 +142,13 @@ this arc's record of the order.
   session's user badge needs the process's own badge in the bootstrap block),
   and a command holds the console stream and its runtime untyped, no namespace
   or log.
-- **Phase 5 — the DOS toolset.** `SetVar`/`GetVar`, the `ENV:` union and
-  the environment archive (`specs/environment.md`).
+- **Phase 5 — the DOS toolset.** `Set`/`SetVar` and `Get`/`GetVar` over
+  `aegir::environment` (`specs/environment.md`): the shell's own variables,
+  which a spawned command inherits because the shell passes its environment on
+  (`environ()`), so `Set exitcode 9` then `aegir-print` exits 9. Landed. The
+  persistent half -- the `ENV:` union and the `Sys:`/`Home:` `Prefs/Env-Archive`
+  files, so a variable survives a login -- is the next piece, with the union
+  binding `specs/namespace.md` defines.
 
 ## What this is not
 
@@ -162,12 +167,16 @@ this arc's record of the order.
 
 ## Acceptance
 
-Phase 4's, landed: the runner types `aegir-print 7` at the prompt; the shell
-resolves it to `Initrd:aegir-print`, the terminal reads its bytes from
-`Initrd:`, spawns it out of a reclaimable command pool with a caller copy of
-the console stream, and the hosted command's `printf` reaches the grid through
-the runtime's fd 1 route while its `exit` reports status 7. The runner reads
-the `terminal: line aegir-print 7` and `terminal: command exited 7` cues, and
-the shell's `return code 7` line is on the same grid. The terminal window's
-pixels are read back too. fd 0's queued input, and a command's own raw stream,
-are the next piece.
+Phase 4's, landed: `aegir-print` is a hosted command, so the runner running it
+proves the runtime: its `printf` reaches the grid through fd 1, and its `exit`
+reports the status through the stream, which the terminal's `command exited`
+cue carries and the shell's `return code N` line puts on the same grid. The
+terminal window's pixels are read back too. fd 0's queued input, and a
+command's own raw stream, are the next piece.
+
+Phase 5's, landed for the in-memory half: the runner types `set exitcode 9`,
+then `aegir-print` with no argument once the demo has closed (the runner fires
+steps by cue, so the demo's zoom would take the focus mid-typing); the command
+inherits `exitcode=9` from the shell and exits 9, which the terminal's
+`command exited 9` cue reports. `Get` prints the value to the grid; the
+`ENV:` union and the archive files are the next piece.

@@ -68,6 +68,10 @@ private:
     void print(std::string const& text);
     void command_dir(std::string const& arg);
     void command_type(std::string const& arg);
+    /* The DOS toolset (specs/environment.md): the process's own environment,
+     * which a spawned command inherits. */
+    void command_set(std::string const& arg);
+    void command_get(std::string const& arg);
 
     ConsoleStreamServer& server_;
     uint64_t stream_;

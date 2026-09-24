@@ -41,6 +41,10 @@ namespace {
  * the runtime's, not this state's. */
 struct State {
     std::vector<std::pair<std::string, std::string>> settings;
+    /* The merged view `environ()` hands out: the strings and the pointer array
+     * over them, rebuilt each call so the pointers stay valid. */
+    std::vector<std::string> merged;
+    std::vector<char const *> pointers;
 };
 
 State &state()
@@ -98,6 +102,42 @@ bool setenv(char const *name, char const *value) noexcept
     }
     state().settings.emplace_back(name, value);
     return true;
+}
+
+char const *const *environ() noexcept
+{
+    State &s = state();
+    s.merged.clear();
+    s.pointers.clear();
+    char const *const *envp = sel4runtime_envp();
+    if (envp != nullptr) {
+        for (uint32_t i = 0; envp[i] != nullptr; ++i) {
+            size_t name_length = 0;
+            while (envp[i][name_length] != '\0' && envp[i][name_length] != '=') {
+                ++name_length;
+            }
+            bool shadowed = false;
+            for (auto const &setting : s.settings) {
+                if (setting.first.size() == name_length &&
+                    std::memcmp(setting.first.c_str(), envp[i], name_length) == 0) {
+                    shadowed = true;
+                    break;
+                }
+            }
+            if (!shadowed) {
+                s.merged.emplace_back(envp[i]);
+            }
+        }
+    }
+    for (auto const &setting : s.settings) {
+        s.merged.push_back(setting.first + "=" + setting.second);
+    }
+    s.pointers.reserve(s.merged.size() + 1);
+    for (auto const &entry : s.merged) {
+        s.pointers.push_back(entry.c_str());
+    }
+    s.pointers.push_back(nullptr);
+    return s.pointers.data();
 }
 
 std::string_view current_dir() noexcept

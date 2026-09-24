@@ -32,6 +32,13 @@ char const *getenv(char const *name) noexcept;
  *  or the value is null, or the name is empty or contains '='. */
 bool setenv(char const *name, char const *value) noexcept;
 
+/** The whole environment as `NAME=VALUE` strings, NUL-terminated, the
+ *  process's own settings shadowing what it inherited -- what a spawner passes
+ *  on (inheritance is the default, specs/environment.md). The view is this
+ *  library's and is rebuilt on each call; it is valid until the next call to
+ *  setenv or environ. */
+char const *const *environ() noexcept;
+
 /** The current directory, or an empty view when the process has none. */
 std::string_view current_dir() noexcept;
 

@@ -23,7 +23,8 @@ if(AEGIR_HOSTED_CXX)
   # it.
   target_link_libraries(
     aegir-print PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-runtime
-                        aegir-bootstrap aegir-console-protocol aegir-mem sel4 sel4runtime
+                        aegir-bootstrap aegir-console-protocol aegir-environment aegir-mem sel4
+                        sel4runtime
   )
 else()
   add_executable(aegir-print src/placeholder.cc)

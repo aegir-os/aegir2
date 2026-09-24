@@ -24,6 +24,7 @@
 #include <aegir/console.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
+#include <aegir/environment.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/spawn/process.h>
@@ -197,6 +198,15 @@ int main(int argc, char *argv[])
         request.account_length = static_cast<uint32_t>(kAccountText.size());
         request.arguments = argument_pointers.data();
         request.argument_count = static_cast<uint32_t>(args.size());
+        /* Inheritance is the default (specs/environment.md): the command gets
+         * the shell's environment, so `Set` reaches it. */
+        char const *const *environment = aegir::environment::environ();
+        uint32_t environment_count = 0;
+        while (environment[environment_count] != nullptr) {
+            ++environment_count;
+        }
+        request.environment = environment;
+        request.environment_count = environment_count;
         request.cwd = cwd.c_str();
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.priority = seL4_MaxPrio - 2;

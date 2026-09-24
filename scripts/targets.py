@@ -404,12 +404,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The terminal (specs/terminal.md, specs/shell.md): auth starts it
             # beside the bureau at login, focused, with its window clear of the
             # test bed's red one, the demo's and the screen bar's samples. The
-            # typed line names a *hosted* command -- it uses libc's printf, and
-            # the runtime routes fd 1/2 to the console stream and reports the
-            # exit through it -- so the shell resolves it, the terminal spawns
-            # it, its output lands on the grid, and its status comes back. The
-            # typing is paced on the terminal's ready, before the bureau's cue
-            # lets the demo's click take the focus.
+            # first line sets an environment variable (the DOS toolset), typed
+            # before the demo's zoom takes the focus; the second runs a hosted
+            # command with no argument, and its exit status is the variable it
+            # inherited -- `command exited 9` proves the shell's Set and the
+            # inheritance together. The second line waits for the demo to close
+            # (the runner fires steps by cue, so the demo's zoom would otherwise
+            # take the focus), and clicks the terminal to focus it again.
             QmpStep(
                 r"terminal: ready",
                 dumps=("gpu0",),
@@ -418,16 +419,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 60, 200, 204, 204, 204),
                     ("gpu0", 500, 300, 204, 204, 204),
                 ),
-                press="aegir-print 7\n",
+                press="set exitcode 9\n",
             ),
             QmpStep(
-                r"terminal: line aegir-print 7",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                pixels=(("gpu0", 60, 200, 204, 204, 204),),
+                r"demo: closed",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 8192}},
+                    {"type": "abs", "data": {"axis": "y", "value": 12699}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                press="aegir-print\n",
             ),
             QmpStep(
-                r"terminal: command exited 7",
+                r"terminal: command exited 9",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 60, 200, 204, 204, 204),),
