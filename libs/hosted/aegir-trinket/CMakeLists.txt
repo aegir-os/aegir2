@@ -9,10 +9,11 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-trinket CXX)
 
-# Core library. locale.cc is in: full musl provides the C locale surface it
-# uses. bidi.cc is the real UAX #9, with tables generated from the pinned
-# Unicode Character Database (specs/locale.md). translation.cc (gettext, a
-# format nothing uses yet) is still the locale arc's and is gated out until
+# Core library. locale.cc reads the .locale blobs generated from the pinned
+# CLDR (scripts/gen_locale_data.py, below); full musl provides the C locale
+# surface it uses. bidi.cc is the real UAX #9, with tables generated from the
+# pinned Unicode Character Database (specs/locale.md). translation.cc (gettext,
+# a format nothing uses yet) is still the locale arc's and is gated out until
 # that part of the arc lands.
 # The font is embedded: projects/terminus-font is a pinned vendored project
 # (manifests/aegir.xml) and the VFS's file syscalls are stubbed, so the BDF is
@@ -30,6 +31,29 @@ add_custom_command(
     "${AEGIR_UCD_DIR}/BidiBrackets.txt"
     "${CMAKE_SOURCE_DIR}/scripts/gen_bidi_tables.py"
   COMMENT "Generating the UAX #9 tables from the pinned UCD"
+  VERBATIM
+)
+
+# The locale data: scripts/gen_locale_data.py compiles the pinned CLDR for the
+# locales manifests/locales.toml names into the .locale blobs the toolkit
+# embeds (locale_data.cc) and, beside them, a .locale file per locale for
+# Locale::load and a future volume (specs/locale.md). The generator reads the
+# fetched CLDR tree, so the glob below is what makes the build re-run when the
+# pin moves.
+file(GLOB_RECURSE AEGIR_CLDR_FILES "${CMAKE_SOURCE_DIR}/projects/cldr/46.0.0/*")
+set(AEGIR_LOCALES_TOML "${CMAKE_SOURCE_DIR}/manifests/locales.toml")
+set(AEGIR_LOCALE_DATA "${CMAKE_CURRENT_BINARY_DIR}/locale_data.cc")
+set(AEGIR_LOCALE_FILES "${CMAKE_CURRENT_BINARY_DIR}/locales")
+add_custom_command(
+  OUTPUT "${AEGIR_LOCALE_DATA}"
+  COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/gen_locale_data.py"
+          "${CMAKE_SOURCE_DIR}/projects/cldr/46.0.0" "${AEGIR_LOCALES_TOML}"
+          "${AEGIR_LOCALE_DATA}" "${AEGIR_LOCALE_FILES}"
+  DEPENDS
+    "${AEGIR_LOCALES_TOML}"
+    "${CMAKE_SOURCE_DIR}/scripts/gen_locale_data.py"
+    ${AEGIR_CLDR_FILES}
+  COMMENT "Compiling the CLDR data into .locale blobs"
   VERBATIM
 )
 set(AEGIR_TERMINUS_BDF "${CMAKE_SOURCE_DIR}/projects/terminus-font/ter-u12n.bdf")
@@ -57,6 +81,7 @@ add_library(aegir-trinket STATIC
     src/font.cc
     src/unicode.cc
     src/locale.cc
+    "${AEGIR_LOCALE_DATA}"
     src/bidi.cc
     "${AEGIR_BIDI_TABLES}"
     src/theme.cc

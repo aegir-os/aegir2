@@ -17,11 +17,13 @@ order, each its own checkpoint.
   (`scripts/build_libcxx.sh`), so `std::locale`'s facets are in the library;
   the time zone database is off, because it wants an IANA zoneinfo tree Aegir
   does not ship. The runtime accepts it (`apps/hosted/aegir-cxx-smoke`).
-- **`aegir-trinket`'s `locale.cc` is in the build** but simplified: hardcoded
-  English separators and a `n != 1` plural rule, not CLDR data
-  (`libs/hosted/aegir-trinket/src/locale.cc`). **`bidi.cc` is now the real
-  algorithm** (piece 1) with conformance green; **`translation.cc`** is a gettext
-  `.mo` parser that is not yet in the build. `translation.cc` is gated out
+- **`aegir-trinket`'s `locale.cc` reads real CLDR data** (piece 3, first part):
+  number, percent, currency, scientific and list formatting come from `.locale`
+  blobs compiled from the pinned CLDR, with the locale's direction. Date/time
+  formatting and CLDR plural rules are the remaining parts of piece 3.
+  **`bidi.cc` is the real algorithm** (piece 1) with conformance green;
+  **`translation.cc`** is a gettext `.mo` parser that is not yet in the build.
+  `translation.cc` is gated out
   (`libs/hosted/aegir-trinket/CMakeLists.txt`).
 
 ## The pieces, in order
@@ -43,7 +45,10 @@ order, each its own checkpoint.
    the toolkit.
 3. **Trinket's `Locale`, against real CLDR data.** Number, date, currency,
    percent, plural and list formatting from a compiled CLDR subset, replacing
-   the hardcoded fields. The `.locale` file format is decided here.
+   the hardcoded fields. The `.locale` file format is decided here. Number,
+   percent, currency, scientific and list formatting are landed, with the data
+   compiled from CLDR and the format below; date/time formatting and the CLDR
+   plural-rule grammar are the rest of the piece.
 4. **`translation.cc`, gettext for real.** The `.mo` parser reaches the build
    and a toolkit string is translated through it.
 
@@ -84,6 +89,54 @@ the stub had:
   `scripts/check_bidi.py` is the harness, and it fetches the two files by their
   pinned sha256.
 
+## The `.locale` format
+
+A locale's data is a `.locale` blob, compiled from CLDR. The format is a small
+header and then a flat table of key/value UTF-8 strings, deliberately
+extensible: a reader that does not know a key ignores it, so a later CLDR field
+is a new key and needs no format-version bump. The header is the 8-byte magic
+`AEGLOC1\n`, a `u16` flags word (bit 0 is right-to-left), a reserved `u16`, and
+a `u32` entry count; each entry is a `u16` key length, the key, a `u32` value
+length, and the value. List-valued properties join their elements with U+001F
+(unit separator). Keys this arc's reader uses are the identity
+(`name`/`language`/`territory`/`codeset`/`direction`), the number patterns
+(`numbers.decimal`, `numbers.percent`, `numbers.currency`,
+`numbers.scientific`), the number symbols (`numbers.symbol.*`, `numbers.digits`
+for the numbering system's digits), the per-code currency symbols
+(`currency.symbol.<CODE>`), and the list patterns (`list.start`, `list.middle`,
+`list.end`, `list.two`).
+
+`Locale(name)` embeds one blob per shipped locale and resolves a name by its
+language (so `en_GB` uses the `en` blob); a name that matches no shipped locale
+falls back to the default in `manifests/locales.toml`. `Locale::load(path)`
+parses the same bytes from a file, so the embedded data and a `.locale` file on
+a volume are one format; reading one from the system is deferred.
+
+## CLDR data, vendored
+
+The Common Locale Data Repository (`specs/third_party.md`) is pinned the same
+way as the UCD, through the file-source half of `manifests/sources.toml`:
+CLDR **46.0.0** (the release built on UCD 16.0.0) under
+`projects/cldr/46.0.0/`, nine languages -- `en`, `de`, `fr`, `es`, `ja`, `zh`,
+`ar`, `he`, `ru` -- with their numbers, currencies, gregorian dates, list
+patterns and layout files, plus the shared `plurals.json` and
+`numberingSystems.json`. `manifests/locales.toml` names the shipped locales and
+the default; adding one is a name there and its files in the pin, and the
+generated catalog grows with the list. `scripts/gen_locale_data.py` (an
+`add_custom_command`) compiles them into `locale_data.cc` and a `.locale` file
+per locale. CLDR publishes no `root` locale in the cldr-json tree, so a field a
+language file leaves out takes the documented default in the generator rather
+than inheriting from root; the nine are complete for the fields compiled.
+
+**Acceptance.** `scripts/check_locale.py` compiles `locale.cc` and the
+generated blobs with the host compiler and runs `scripts/locale_conformance.cc`,
+which asserts the exact string CLDR's data produces for the shipped locales --
+separators, groupings, currency position and symbols, the negative subpattern,
+scientific form, list joins, direction, fallback and `Locale::load`. It is
+whole-run and exact. The toolkit embeds the same bytes, so the build compiling
+and linking them is the target-side check; a runtime cue and toolkit use
+arrive with the toolkit's localization.
+
 ## Unicode data, vendored
 
 The Unicode Character Database is third-party and is not committed
@@ -112,6 +165,10 @@ is a pin change and a re-run of conformance, not a code change.
   question, not musl's.
 - **Locale data from the system.** `Locale` is built from a compiled subset, not
   read from a system locale database; a locale stored on a volume waits for the
-  file syscalls and a reason.
+  file syscalls and a reason. The delivery decision here is the blobs embedded
+  in the toolkit; the follow-up is `.locale` files staged into the initrd and
+  read at startup once the VFS serves them.
 - **CLDR's full data set.** Number/date/plural for the locales Aegir ships, not
-  all of CLDR.
+  all of CLDR. Dates, the plural-rule grammar, and calendars other than
+  gregorian are the remaining parts of piece 3; root inheritance is unneeded
+  because the shipped languages are complete.

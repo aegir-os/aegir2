@@ -377,8 +377,9 @@ The order:
    first two pieces are landed: UAX #9 for real (`bidi.cc` and its Unicode
    conformance run), then libc++ localization on
    (`LIBCXX_ENABLE_LOCALIZATION`), proved by `std::locale` in
-   `apps/hosted/aegir-cxx-smoke`. Next the toolkit's `Locale` gets CLDR data
-   and gettext gets its parser.
+   `apps/hosted/aegir-cxx-smoke`. The toolkit's `Locale` now formats numbers,
+   currency, percent, scientific and lists from compiled CLDR data
+   (`specs/locale.md`); dates, plural rules and gettext remain.
 7. **The compiler choice.** GCC builds everything today. Clang 22
    cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
    112 at `-O2`) and would not need the `__chash` patch at all, because libc++

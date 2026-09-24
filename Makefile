@@ -36,7 +36,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale build run run-ui envelope test clean distclean
 
 all: help
 
@@ -66,6 +66,12 @@ deps-force: ## re-fetch, discarding local changes in vendored trees
 
 deps-check: ## verify vendored trees match their pins, patches and licenses
 	$(PYTHON) scripts/check_pins.py
+
+check-bidi: ## run UAX #9 against Unicode's conformance suites (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_bidi.py
+
+check-locale: ## run Locale formatting against the generated CLDR data (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_locale.py
 
 build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only
