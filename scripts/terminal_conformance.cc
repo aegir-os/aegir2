@@ -440,6 +440,40 @@ void check_stream_doorbell()
     expect_int(wakes, 3, "doorbell: a command's exit wakes the client");
 }
 
+/* The shell's own calls: the prompt it redraws after a directory change, and
+ * the finished command's status it reads back (specs/shell.md's Phase 4). */
+void check_stream_command()
+{
+    TerminalBuffer b(20, 5);
+    ConsoleStreamServer server(b);
+    uint64_t reply[1] = {0};
+    uint64_t open_words[1 + aegir::nmspace::kPathMax / 8 + 1];
+    open_words[0] = aegir::console::kStreamModeCooked;
+    uint32_t const open_count =
+        1 + aegir::nmspace::pack_string(open_words + 1, "Home>", 5, aegir::nmspace::kPathMax);
+    static_cast<void>(server.handle(aegir::console::kStreamMethodOpen, open_words, open_count,
+                                    13, reply, 1));
+
+    uint64_t prompt_words[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const prompt_count =
+        aegir::nmspace::pack_string(prompt_words, "Sys:>", 5, aegir::nmspace::kPathMax);
+    static_cast<void>(server.handle(aegir::console::kStreamMethodSetPrompt, prompt_words,
+                                    prompt_count, 13, reply, 1));
+    expect_text(server.editor(13)->prompt(), U"Sys:>", "command: set_prompt redraws the prompt");
+
+    uint32_t answer =
+        server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
+    expect_int(static_cast<int>(answer), 0, "command: no status before one finishes");
+
+    uint64_t exit_words[1] = {7};
+    static_cast<void>(
+        server.handle(aegir::console::kStreamMethodExit, exit_words, 1, 13, reply, 1));
+    answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
+    expect_int(answer == 1 && reply[0] == 7 ? 1 : 0, 1, "command: the status is the command's");
+    answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
+    expect_int(static_cast<int>(answer), 0, "command: reading the status clears it");
+}
+
 } // namespace
 
 int main()
@@ -461,6 +495,7 @@ int main()
     check_stream_wire();
     check_stream_input();
     check_stream_doorbell();
+    check_stream_command();
 
     std::printf("terminal: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

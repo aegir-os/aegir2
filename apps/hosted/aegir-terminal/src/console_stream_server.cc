@@ -354,6 +354,29 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         }
         return 0;
     }
+    case console::kStreamMethodSetPrompt: {
+        char const* prompt = nullptr;
+        uint32_t length = 0;
+        if (!nmspace::unpack_string(words, count, console::kStreamBytesMax, &prompt,
+                                    &length)) {
+            return 0;
+        }
+        set_prompt(caller, std::string_view(prompt, length));
+        return 0;
+    }
+    case console::kStreamMethodCommandStatus: {
+        /* The shell reads a finished command's status; reading it clears the
+         * finished state and ends the command bracket (keys go back to the
+         * editor). An empty answer means no command has finished. */
+        Stream* s = find(caller);
+        if (s == nullptr || !s->finished || capacity < 1) {
+            return 0;
+        }
+        reply[0] = s->status;
+        s->finished = false;
+        s->command = false;
+        return 1;
+    }
     default:
         /* A method this version does not know is answered by saying nothing
          * (specs/services.md's versioning rule). */

@@ -129,6 +129,70 @@ inline bool stream_exit(aegir::ipc::Consumer const &port, uint64_t status) noexc
     return answer.error == 0;
 }
 
+/** Redraw a cooked stream's prompt. False when refused. */
+inline bool stream_set_prompt(aegir::ipc::Consumer const &port, char const *prompt,
+                              uint32_t length) noexcept
+{
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const words =
+        aegir::nmspace::pack_string(out, prompt, length, aegir::nmspace::kPathMax);
+    if (words == 0) {
+        return false;
+    }
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodSetPrompt, out, words, in, 1);
+    return answer.error == 0;
+}
+
+/** Ask the terminal to run `line` with `cwd` and the NUL-separated `environment`
+ *  (the shell's, sent so the command inherits it). True when it started. */
+inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
+                       uint32_t line_length, char const *cwd, uint32_t cwd_length,
+                       char const *environment, uint32_t environment_length) noexcept
+{
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words =
+        aegir::nmspace::pack_string(out, line, line_length, aegir::nmspace::kPathMax);
+    if (words == 0) {
+        return false;
+    }
+    uint32_t const cwd_words =
+        aegir::nmspace::pack_string(out + words, cwd, cwd_length, aegir::nmspace::kPathMax);
+    if (cwd_words == 0) {
+        return false;
+    }
+    words += cwd_words;
+    uint32_t const environment_words = aegir::nmspace::pack_string(
+        out + words, environment, environment_length, aegir::nmspace::kPathMax);
+    if (environment_words == 0) {
+        return false;
+    }
+    words += environment_words;
+    if (words > aegir::ipc::kMaxWords) {
+        return false;
+    }
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodRun, out, words, in, 1);
+    return answer.error == 0 && answer.count == 1 && in[0] == 1;
+}
+
+/** A finished command's status. True and fills `status` when one has finished
+ *  (and clears the finished state); false when none has. */
+inline bool stream_command_status(aegir::ipc::Consumer const &port,
+                                  uint64_t *status) noexcept
+{
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodCommandStatus, nullptr, 0, in, 1);
+    if (answer.error != 0 || answer.count != 1) {
+        return false;
+    }
+    *status = in[0];
+    return true;
+}
+
 }  // namespace aegir::console
 
 #endif  // AEGIR_CONSOLE_STREAM_CLIENT_H

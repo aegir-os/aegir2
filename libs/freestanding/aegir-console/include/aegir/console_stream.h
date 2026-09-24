@@ -74,6 +74,27 @@ constexpr uint32_t kStreamMethodClose = 5;
  *  number. Answer: nothing. */
 constexpr uint32_t kStreamMethodExit = 6;
 
+/** Change the prompt a cooked stream draws. In: the prompt as a string. A
+ *  shell that changed directory redraws its prompt through this, rather than
+ *  reopening the stream. Answer: nothing. */
+constexpr uint32_t kStreamMethodSetPrompt = 7;
+
+/** Run a command on the stream's behalf. In: the command line as a string, the
+ *  current directory as a string, and the environment as a string -- the
+ *  NUL-separated `NAME=VALUE` entries the spawner wants. Answer: one word, 1
+ *  started and 0 refused. The terminal owns the spawn authority and starts the
+ *  command with the caller's stream, so its output lands here and its exit is
+ *  read back with `command_status` (specs/shell.md's Phase 4). The environment
+ *  rides in the call because the shell's is the shell's: a command the terminal
+ *  starts inherits what the shell sent. */
+constexpr uint32_t kStreamMethodRun = 8;
+
+/** A finished command's status. Answer: one word, the status, when a command
+ *  has finished on the stream; an empty answer otherwise. Reading it is what
+ *  clears the finished state, so the shell prints one `return code` line and
+ *  then draws the next prompt. */
+constexpr uint32_t kStreamMethodCommandStatus = 9;
+
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws
  *  itself (specs/terminal.md). */
