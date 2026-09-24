@@ -12,9 +12,8 @@ project(aegir-trinket CXX)
 # Core library. locale.cc reads the .locale blobs generated from the pinned
 # CLDR (scripts/gen_locale_data.py, below); full musl provides the C locale
 # surface it uses. bidi.cc is the real UAX #9, with tables generated from the
-# pinned Unicode Character Database (specs/locale.md). translation.cc (gettext,
-# a format nothing uses yet) is still the locale arc's and is gated out until
-# that part of the arc lands.
+# pinned Unicode Character Database. translation.cc is the gettext .mo parser
+# (specs/locale.md).
 # The font is embedded: projects/terminus-font is a pinned vendored project
 # (manifests/aegir.xml) and the VFS's file syscalls are stubbed, so the BDF is
 # compiled into the library by scripts/embed_binary.py rather than read at
@@ -84,6 +83,7 @@ add_library(aegir-trinket STATIC
     "${AEGIR_LOCALE_DATA}"
     src/bidi.cc
     "${AEGIR_BIDI_TABLES}"
+    src/translation.cc
     src/theme.cc
     src/theme_xen.cc
     src/worker.cc
