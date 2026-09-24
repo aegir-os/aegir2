@@ -166,7 +166,10 @@ border.
   right amount of the line and renders blank until a fallback font lands.
 - **BiDi.** Each visual line is one paragraph: `bidi.cc`'s
   `analyze_paragraph` gives the runs, the runs are reordered for display,
-  and mirrored brackets are drawn from `mirror_char`. The cursor is mapped
+  and mirrored brackets are drawn from `mirror_char`. Mirroring follows rule
+  L4 — only a character whose *resolved* direction is RTL (an odd embedding
+  level) is mirrored — so an LTR prompt's `>` stays `>`; mirroring every cell
+  turned `Home:>` into `Home:<`. The cursor is mapped
   through the same runs, so an arrow key moves visually. This is the first
   consumer of the UAX #9 work (`specs/locale.md`), which until now had none.
 - **Scrollback.** Lines scrolled off the top of the grid go to a ring the

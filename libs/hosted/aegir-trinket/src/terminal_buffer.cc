@@ -232,7 +232,12 @@ std::vector<TerminalCell> TerminalBuffer::visual_cells(int index) const
     result.reserve(logical.size());
     for (int const logical_index : paragraph.order) {
         TerminalCell cell = logical[static_cast<std::size_t>(logical_index)];
-        cell.cp = mirror_char(cell.cp);
+        /* L4: a character is drawn mirrored only when its *resolved* direction
+         * is RTL -- an odd embedding level -- and the character is one that has
+         * a mirror. Mirroring every cell turned an LTR prompt's `>` into `<`. */
+        if ((paragraph.levels[static_cast<std::size_t>(logical_index)] & 1u) != 0) {
+            cell.cp = mirror_char(cell.cp);
+        }
         result.push_back(cell);
     }
     return result;

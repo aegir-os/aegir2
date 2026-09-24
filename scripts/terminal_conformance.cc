@@ -193,6 +193,15 @@ void check_bidi()
      * at visual 4. */
     expect_int(b.visual_column(0, 4), 6, "bidi: the cursor maps alef to its display column");
     expect_int(b.visual_column(0, 6), 4, "bidi: the cursor maps gimel to its display column");
+
+    /* L4: a mirror is applied only at an odd (RTL) resolved level. An LTR
+     * line's '>' stays '>', and an RTL paragraph's becomes '<'. */
+    TerminalBuffer ltr(20, 5);
+    ltr.write("Home:>");
+    expect_text(ltr.visual_line(0), U"Home:>", "bidi: an LTR '>' is not mirrored");
+    TerminalBuffer rtl(20, 5);
+    rtl.write("\u05D0>");
+    expect_text(rtl.visual_line(0), U"<\u05D0", "bidi: an RTL '>' is mirrored");
 }
 
 KeyEvent char_key(char32_t text)
