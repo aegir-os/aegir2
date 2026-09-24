@@ -328,6 +328,78 @@ void check_stream_wire()
                "wire: a write to a closed stream writes nothing");
 }
 
+/* Raw input: keys queue as bytes for a command bracket or a raw stream, and
+ * the wire's `read` drains them (specs/terminal.md, specs/shell.md's Phase 4). */
+void check_stream_input()
+{
+    TerminalBuffer b(20, 5);
+    ConsoleStreamServer server(b);
+    uint64_t reply[1] = {0};
+    uint64_t wire[aegir::console::kStreamBytesMax / 8 + 2];
+
+    /* The shell's stream, cooked and begun: an idle key belongs to its editor. */
+    uint64_t open_words[1 + aegir::nmspace::kPathMax / 8 + 1];
+    open_words[0] = aegir::console::kStreamModeCooked;
+    uint32_t const open_count =
+        1 + aegir::nmspace::pack_string(open_words + 1, "Home>", 5, aegir::nmspace::kPathMax);
+    static_cast<void>(server.handle(aegir::console::kStreamMethodOpen, open_words, open_count,
+                                    5, reply, 1));
+    server.begin(5);
+
+    /* Nothing queued: the poll is an empty answer. */
+    uint32_t answer = server.handle(aegir::console::kStreamMethodRead, nullptr, 0, 5, wire,
+                                    aegir::console::kStreamBytesMax / 8 + 2);
+    expect_int(static_cast<int>(answer), 0, "input: nothing queued is an empty read");
+
+    /* A command bracket: keys queue as bytes, never into the editor. */
+    server.begin_command(5);
+    expect_int(server.in_command(5) ? 1 : 0, 1, "input: the command bracket is open");
+    server.on_key(5, char_key(U'h'));
+    server.on_key(5, char_key(U'i'));
+    server.on_key(5, code_key(KeyCode::ENTER));
+    expect_int(server.has_input(5) ? 1 : 0, 1, "input: the keys are queued");
+    char const* text = nullptr;
+    uint32_t length = 0;
+    answer = server.handle(aegir::console::kStreamMethodRead, nullptr, 0, 5, wire,
+                           aegir::console::kStreamBytesMax / 8 + 2);
+    expect_int(answer > 0 && aegir::nmspace::unpack_string(wire, answer,
+                                                           aegir::console::kStreamBytesMax,
+                                                           &text, &length)
+                    ? 1
+                    : 0,
+               1, "input: read answers a string");
+    expect_text(aegir::trinket::utf8_to_utf32(std::string_view(text, length)), U"hi\r",
+                "input: the queued keys, Enter as CR");
+    answer = server.handle(aegir::console::kStreamMethodRead, nullptr, 0, 5, wire,
+                           aegir::console::kStreamBytesMax / 8 + 2);
+    expect_int(static_cast<int>(answer), 0, "input: the queue is drained");
+    expect_text(server.editor(5)->line(), U"", "input: a command's keys never reached the editor");
+
+    /* The bracket closes: an idle cooked key reaches the editor again. */
+    server.clear_command(5);
+    expect_int(server.in_command(5) ? 1 : 0, 0, "input: the bracket closes");
+    server.on_key(5, char_key(U'x'));
+    expect_text(server.editor(5)->line(), U"x", "input: an idle cooked key reaches the editor");
+
+    /* A raw stream queues keys with no bracket, and has no editor. */
+    uint64_t raw_words[2] = {aegir::console::kStreamModeRaw, 0};
+    static_cast<void>(server.handle(aegir::console::kStreamMethodOpen, raw_words, 2, 6, reply, 1));
+    expect_int(server.editor(6) == nullptr ? 0 : 1, 0, "input: a raw stream has no editor");
+    server.on_key(6, code_key(KeyCode::BACKSPACE));
+    server.on_key(6, char_key(U'\u00E9')); /* U+00E9, two UTF-8 bytes */
+    expect_int(server.has_input(6) ? 1 : 0, 1, "input: a raw key is queued");
+    answer = server.handle(aegir::console::kStreamMethodRead, nullptr, 0, 6, wire,
+                           aegir::console::kStreamBytesMax / 8 + 2);
+    expect_int(answer > 0 && aegir::nmspace::unpack_string(wire, answer,
+                                                           aegir::console::kStreamBytesMax,
+                                                           &text, &length)
+                    ? 1
+                    : 0,
+               1, "input: the raw read answers a string");
+    expect_text(aegir::trinket::utf8_to_utf32(std::string_view(text, length)), U"\u0008\u00E9",
+                "input: Backspace as BS, then the two-byte character");
+}
+
 } // namespace
 
 int main()
@@ -347,6 +419,7 @@ int main()
     check_bidi();
     check_line_editor();
     check_stream_wire();
+    check_stream_input();
 
     std::printf("terminal: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

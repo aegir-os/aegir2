@@ -119,12 +119,11 @@ int main(int argc, char *argv[])
     auto shell = std::make_unique<aegir::terminal::Shell>(
         server, kShellStream, [&app]() { app.quit(0); });
 
-    /* The terminal's own editor for the shell's stream: the server made it, and
-     * the view feeds it keys. A key while a command runs finds no editor (the
-     * line was finished) and is ignored. */
+    /* The terminal's keys, routed by the handler: the shell's editor while it
+     * is idle, the stream's input queue while a command runs (specs/shell.md's
+     * Phase 4). A key while a command runs is the command's stdin. */
     terminal->on_key = [&server](KeyEvent const &event) {
-        LineEditor *const editor = server.editor(kShellStream);
-        return editor != nullptr && editor->on_key(event);
+        return server.on_key(kShellStream, event);
     };
 
     uint64_t command_serial = 0;
@@ -229,6 +228,13 @@ int main(int argc, char *argv[])
             return false;
         }
         command_running = true;
+        /* The command inherits the shell's stream, and from here until it
+         * exits the terminal routes the keyboard to that stream's input queue
+         * rather than the idle editor -- the command's stdin. */
+        server.begin_command(kShellStream);
+        write("  terminal: command started ");
+        write(name.c_str());
+        write("\n");
         return true;
     };
     shell->set_spawn(spawn_command);

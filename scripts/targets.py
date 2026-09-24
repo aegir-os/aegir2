@@ -444,6 +444,26 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # The banner and the command's output are on the grid: a window
                 # that painted none of its text would hold no dark pixels here.
                 dark=(("gpu0", 50, 145, 500, 60, 100),),
+                # Then the command that reads the console: aegir-read waits on
+                # fd 0, and the step below answers it while it runs.
+                press="aegir-read\n",
+            ),
+            # fd 0's queued input (specs/shell.md's Phase 4, specs/terminal.md):
+            # while a command runs the terminal routes the keyboard to the
+            # stream's input queue rather than the idle editor, and the
+            # command's `read` drains it. The cue names the command, so it waits
+            # for this one and not aegir-print's start.
+            QmpStep(
+                r"terminal: command started aegir-read",
+                press="hello\n",
+            ),
+            # The command echoed what it read and exited 0: the input reached
+            # fd 0, and the output landed on the same grid the shell writes to.
+            QmpStep(
+                r"terminal: command exited 0",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 50, 145, 500, 60, 100),),
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across

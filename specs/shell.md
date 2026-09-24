@@ -50,9 +50,12 @@ enough to state in one file.
   directory to `C:`, and Aegir's aliases are the same mechanism, per badge.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
-  transfer, the protocol's stated property). So `printf` reaches the grid
-  and a raw reader sees keys. How a hosted program's fd 0/1/2 map onto that
-  stream is the runtime's, and is Phase 4 below.
+  transfer, the protocol's stated property). So `printf` reaches the grid,
+  and while the command runs the terminal routes the keyboard to that
+  stream's input queue -- the command reads it raw, so `read` sees keys
+  (`specs/terminal.md`'s `read`; this is design A, the raw *view* of the
+  shell's stream, rather than a stream per command). How a hosted program's
+  fd 0/1/2 map onto that stream is the runtime's, and is Phase 4 below.
 - **The shell waits, and reports the status.** A spawned command's exit is
   observed, and a non-zero status prints the Amiga-style line (`return code
   10`). Waiting is the shell's loop, not the console's.
@@ -130,15 +133,19 @@ this arc's record of the order.
   interims are recorded: the command's badge is a placeholder, not yet the
   session's user badge (which needs the process's own badge in the bootstrap
   block), and it holds only the console stream, no namespace or log.
-- **Phase 4 — standard input and output.** Landed for output and exit: the
+- **Phase 4 — standard input and output.** Landed. The
   hosted runtime routes fd 1/2 to the console stream when the process has one
   (the debug serial otherwise, so every boot service is unchanged), so a
   command's `printf` reaches the grid; and `exit(status)` reports the status
   through the stream, so the shell's return-code line comes from the command's
   own exit rather than from Aegir's API. `aegir-print` is the first command
-  that uses libc and nothing else. fd 0 is routed to the stream's poll but the
-  handler queues no input yet, and a command that wants the keyboard wants a
-  raw stream of its own -- the next piece, with per-client streams. Two
+  that uses libc and nothing else. fd 0 is the stream's queued input: while a
+  command runs the terminal routes the keyboard to the stream rather than the
+  idle editor (design A), and the command's `read` -- and `readv`, for
+  buffered `fread` -- drains it. `aegir-read` is the command that proves it,
+  reading fd 0 and echoing to fd 1. The read is a *poll*: a command that asks
+  in a loop lets the terminal run between asks, and a read that waits for
+  input is the later method (`specs/terminal.md`). Two
   interims remain from Phase 3: a command's badge is still a placeholder (the
   session's user badge needs the process's own badge in the bootstrap block),
   and a command holds the console stream and its runtime untyped, no namespace
@@ -172,8 +179,10 @@ Phase 4's, landed: `aegir-print` is a hosted command, so the runner running it
 proves the runtime: its `printf` reaches the grid through fd 1, and its `exit`
 reports the status through the stream, which the terminal's `command exited`
 cue carries and the shell's `return code N` line puts on the same grid. The
-terminal window's pixels are read back too. fd 0's queued input, and a
-command's own raw stream, are the next piece.
+terminal window's pixels are read back too. `aegir-read` proves fd 0: while it
+runs the runner types a line at the console, the keys queue on the stream, and
+its `read` drains them and exits 0 -- the terminal's `command exited 0` cue is
+the proof.
 
 Phase 5's, landed for the in-memory half: the runner types `set exitcode 9`,
 then `aegir-print` with no argument once the demo has closed (the runner fires

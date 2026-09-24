@@ -6,8 +6,11 @@ reordering), the terminal process with the line editor and the command line,
 the `con.stream` port the terminal serves, the session's spawn kit auth
 delegates, and a command resolved to `Initrd:`, spawned out of a reclaimable
 pool, printed to the grid, and reported through the runtime that routes its
-fd 1/2 and its exit to the stream. What remains is the shell as a separate
-process, fd 0's queued input, and a command's own raw stream. This is the spec
+fd 1/2 and its exit to the stream. fd 0 is the stream's queued input: while a
+command runs the terminal routes the keyboard to the stream rather than the
+idle editor, and the command's `read` drains it (`aegir-read`). What remains
+is the shell as a separate process, and a read that waits rather than polls.
+This is the spec
 the terminal arc lands under —the Amiga `CON:` handler and the text surface
 the shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
 `CON:` handler" as future work and left them there; this is that work's first
@@ -105,12 +108,16 @@ port does not know is answered by saying nothing.
   from the same badge is refused.
 - `write`. In: the bytes. They land at the stream's cursor. Reply: the count
   written, less than asked the refusal.
-- `read`. Out: bytes, or an error when nothing is available. Ok, blocking
-  read is a later method: a single-threaded client that calls `read` blocks
-  its own event loop, and the console's own shape — a notification and a
-  ring — is what the stream grows into. Tier 1 is a *poll*: the handler
-  answers with whatever input is queued, and the client drains on the
-  notification it already waits on (below).
+- `read`. Out: bytes, or an empty answer when nothing is queued. Tier 1 is a
+  *poll*: the handler answers with whatever input the stream holds and the
+  client asks again. The bytes are queued by the handler as keys arrive --
+  while a *command* runs on the stream, every key is a byte on its input queue
+  rather than a keystroke for the idle editor (`specs/shell.md`'s Phase 4,
+  design A: the command inherits the shell's stream and reads it raw). A
+  client that asks in a loop lets the terminal run between asks, because each
+  ask is a call the terminal answers; a *blocking* read, which parks the client
+  until input arrives, is the later method, and the console's own shape -- a
+  notification and a ring -- is what the stream grows into.
 - `read_line`. In: nothing. Out: one line, when the line editor has one; an
   empty reply otherwise. This is the cooked call; the shell loops on it. A
   cooked read begins the line editor if it is idle.
@@ -236,6 +243,8 @@ reads the command's exit cue (`specs/shell.md`'s acceptance) -- the whole
 Phase 3 and 4 path, the output on the same grid the shell writes to. The
 runner checks the window holds *ink* -- dark pixels in the text area, not only
 solid background -- so a grid that draws nothing, or wraps every character
-into one column, fails where the background samples cannot see it. The
-arrow-key and history check, and a command's own raw stream, wait for the next
-arc.
+into one column, fails where the background samples cannot see it. fd 0 is on
+the same run: after the hosted command, the runner types a line at the
+console while `aegir-read` runs, and the command's exit 0 proves the keys
+reached its `read` through the stream's queue. The arrow-key and history
+check waits for the next arc.

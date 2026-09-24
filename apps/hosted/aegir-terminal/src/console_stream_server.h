@@ -16,6 +16,7 @@
 
 #include <aegir/trinket/line_editor.h>
 #include <aegir/trinket/terminal_buffer.h>
+#include <aegir/trinket/widget.h>
 
 #include <cstdint>
 #include <functional>
@@ -50,6 +51,25 @@ public:
     void begin(uint64_t caller);
     aegir::trinket::LineEditor* editor(uint64_t caller);
 
+    /* Raw input (specs/terminal.md): a key that reaches a raw stream -- or a
+     * cooked stream while a command runs -- is a byte on the stream's input
+     * queue, and the client drains it with `read`. The queue grows on demand;
+     * tier 1 is a poll and the handler signals no doorbell yet. */
+    void queue_input(uint64_t caller, std::string_view bytes);
+    uint32_t read_input(uint64_t caller, char* out, uint32_t capacity);
+    bool has_input(uint64_t caller) const;
+
+    /* The bracket a command runs in (specs/shell.md's Phase 4, design A): the
+     * command inherits the shell's stream, and while it runs the terminal
+     * routes keys to the input queue rather than the idle editor. */
+    void begin_command(uint64_t caller);
+    bool in_command(uint64_t caller) const;
+
+    /* One key, routed by the stream's discipline: a command bracket or a raw
+     * stream queues it as bytes; an idle cooked stream feeds the editor. True
+     * when the key was consumed. */
+    bool on_key(uint64_t caller, aegir::trinket::KeyEvent const& event);
+
     /* A command's end-of-run report (`kStreamMethodExit`): the shell's stream
      * carries a status and a flag once a command has said it is done, which is
      * what the terminal finalizes on. */
@@ -63,7 +83,9 @@ private:
         std::unique_ptr<aegir::trinket::LineEditor> editor;
         std::u32string prompt;
         std::u32string pending;
+        std::string input;
         bool ready = false;
+        bool command = false;
         bool finished = false;
         uint64_t status = 0;
     };
@@ -72,6 +94,7 @@ private:
     Stream const* find(uint64_t caller) const;
     bool open_stream(uint64_t caller, uint32_t mode, std::u32string prompt);
     uint32_t write_stream(uint64_t caller, std::string_view text);
+    bool queue_key(uint64_t caller, aegir::trinket::KeyEvent const& event);
 
     aegir::trinket::TerminalBuffer& buffer_;
     std::unordered_map<uint64_t, Stream> streams_;

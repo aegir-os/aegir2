@@ -542,6 +542,23 @@ long sys_writev(int fd, void const *iov, int count) noexcept
 long sys_readv(int fd, void const *iov, int count) noexcept
 {
     auto const *vectors = static_cast<struct iovec const *>(iov);
+    if (fd == 0) {
+        /* Standard input: the console stream's poll, the same as `read`.
+         * musl's buffered input reaches here, so a `fread` on stdin is the
+         * stream's bytes and not a file's (specs/cxx.md, specs/shell.md). */
+        long total = 0;
+        for (int i = 0; i < count; ++i) {
+            long const got = sys_read(0, vectors[i].iov_base, vectors[i].iov_len);
+            if (got < 0) {
+                return total > 0 ? total : got;
+            }
+            total += got;
+            if (static_cast<size_t>(got) < vectors[i].iov_len) {
+                break;
+            }
+        }
+        return total;
+    }
     long total = 0;
     for (int i = 0; i < count; ++i) {
         long const got = files::read(fd, vectors[i].iov_base, vectors[i].iov_len);

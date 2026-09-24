@@ -122,9 +122,11 @@ without the `libsel4utils` dependency:
   session's command is handed a caller copy of the terminal's `con.stream`
   (specs/shell.md), and fd 1/2 route there — `printf` reaches the grid — while
   `exit(status)` reports through it. A process with no stream keeps the debug
-  serial, so every boot service is unchanged. fd 0 is the stream's poll; the
-  handler queues no input yet, so a command that wants the keyboard wants a
-  raw stream of its own.
+  serial, so every boot service is unchanged. fd 0 is the stream's queued
+  input: `read` polls it, and `readv` routes fd 0 there too, so a buffered
+  `fread` on stdin is the stream's bytes and not a file's. While a command
+  runs the terminal queues the keyboard on that stream, so a command's `read`
+  sees keys (specs/shell.md's Phase 4, specs/terminal.md).
 - **`munmap` is a no-op and `mremap` refuses.** The pages stay mapped — the
   address space is committed to the heap — and mallocng's groups reuse the small
   pieces. Returning frames to the kernel is a later refinement, not a

@@ -146,8 +146,89 @@ void ConsoleStreamServer::clear_command(uint64_t caller)
     Stream* s = find(caller);
     if (s != nullptr) {
         s->finished = false;
+        s->command = false;
         s->status = 0;
     }
+}
+
+void ConsoleStreamServer::queue_input(uint64_t caller, std::string_view bytes)
+{
+    Stream* s = find(caller);
+    if (s != nullptr) {
+        s->input.append(bytes);
+    }
+}
+
+uint32_t ConsoleStreamServer::read_input(uint64_t caller, char* out, uint32_t capacity)
+{
+    Stream* s = find(caller);
+    if (s == nullptr) {
+        return 0;
+    }
+    uint32_t const count =
+        s->input.size() < capacity ? static_cast<uint32_t>(s->input.size()) : capacity;
+    for (uint32_t i = 0; i < count; ++i) {
+        out[i] = s->input[i];
+    }
+    s->input.erase(0, count);
+    return count;
+}
+
+bool ConsoleStreamServer::has_input(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s != nullptr && !s->input.empty();
+}
+
+void ConsoleStreamServer::begin_command(uint64_t caller)
+{
+    Stream* s = find(caller);
+    if (s != nullptr) {
+        s->command = true;
+    }
+}
+
+bool ConsoleStreamServer::in_command(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s != nullptr && s->command;
+}
+
+bool ConsoleStreamServer::on_key(uint64_t caller, aegir::trinket::KeyEvent const& event)
+{
+    Stream* s = find(caller);
+    if (s == nullptr) {
+        return false;
+    }
+    if (s->command || s->mode == aegir::console::kStreamModeRaw) {
+        return queue_key(caller, event);
+    }
+    return s->editor != nullptr && s->editor->on_key(event);
+}
+
+bool ConsoleStreamServer::queue_key(uint64_t caller, aegir::trinket::KeyEvent const& event)
+{
+    if (!event.pressed) {
+        return false;
+    }
+    switch (event.code) {
+    case aegir::trinket::KeyCode::ENTER:
+        queue_input(caller, "\r");
+        return true;
+    case aegir::trinket::KeyCode::BACKSPACE:
+        queue_input(caller, "\b");
+        return true;
+    case aegir::trinket::KeyCode::TAB:
+        queue_input(caller, "\t");
+        return true;
+    default:
+        break;
+    }
+    if (event.text >= 32 && event.text != 0x7F) {
+        queue_input(caller, utf32_to_utf8(std::u32string(1, event.text)));
+        return true;
+    }
+    return false;
 }
 
 uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
@@ -211,9 +292,23 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         return nmspace::pack_string(reply, line.data(), static_cast<uint32_t>(line.size()),
                                     console::kStreamBytesMax);
     }
-    case console::kStreamMethodRead:
-        /* Tier 1 is a poll and raw input is not queued yet: an empty answer. */
-        return 0;
+    case console::kStreamMethodRead: {
+        /* Tier 1 is a poll: answer with whatever input is queued, or an empty
+         * answer. The reply's own room bounds the bytes, so a client with more
+         * than that to drain reads in pieces. */
+        if (find(caller) == nullptr || capacity < 1) {
+            return 0;
+        }
+        uint32_t const room = (capacity - 1) * 8;
+        uint32_t const bound =
+            room < console::kStreamBytesMax ? room : console::kStreamBytesMax;
+        char buffer[console::kStreamBytesMax];
+        uint32_t const got = read_input(caller, buffer, bound);
+        if (got == 0) {
+            return 0;
+        }
+        return aegir::nmspace::pack_string(reply, buffer, got, console::kStreamBytesMax);
+    }
     case console::kStreamMethodClose: {
         Stream* s = find(caller);
         if (s != nullptr) {
