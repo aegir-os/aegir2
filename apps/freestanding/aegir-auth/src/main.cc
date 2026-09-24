@@ -545,6 +545,12 @@ void start_session(uint32_t user, bool bureau) noexcept
     if (!spawner.spawn(request, session_account, process)) {
         write("      auth: FAIL spawning the session: ");
         write(spawner.problem());
+        char const *const detail = spawner.detail();
+        if (detail != nullptr && detail[0] != '\0') {
+            write(" (");
+            write(detail);
+            write(")");
+        }
         write("\n");
         reclaim_session(badge, mark, scratch_mark, session_account);
         return;
