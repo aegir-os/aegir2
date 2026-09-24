@@ -35,12 +35,19 @@ public:
     bool open(Volume *volume) noexcept;
 
     /** Make a file (`mode` a regular file's) or a directory under the
-     *  directory inode at `parent_block`, named `name`, stamped `time`. A
-     *  directory is born with its dot and dotdot. The new inode's block is
-     *  `*out_block`. False on a full volume, a bad name, or a parent whose
-     *  tree is full. */
+     *  directory inode at `parent_block`, named `name`, owned by `uid`/`gid`,
+     *  stamped `time`. A directory is born with its dot and dotdot. The new
+     *  inode's block is `*out_block`. False on a full volume, a bad name, or a
+     *  parent whose tree is full. */
     bool create(uint64_t parent_block, char const *name, uint32_t name_length,
-                uint32_t mode, int64_t time, uint64_t *out_block) noexcept;
+                uint32_t mode, uint32_t uid, uint32_t gid, int64_t time,
+                uint64_t *out_block) noexcept;
+
+    /** Patch an inode's owner (uid/gid) and mode in one journaled metadata
+     *  transaction -- the AmigaDOS `Owner` and `Protect` (specs/bfs.md
+     *  decision 7). The caller keeps the fields it is not changing. */
+    bool set_owner_mode(uint64_t inode_block, uint32_t uid, uint32_t gid,
+                        uint32_t mode) noexcept;
 
     /** Remove the entry `name` from the directory at `parent_block` and free
      *  what it named -- its data runs and its inode. A directory that is not
@@ -103,8 +110,10 @@ private:
      * a removal's destroy). */
     bool finish(bool ok) noexcept;
     bool create_blocks(uint64_t parent_block, char const *name,
-                       uint32_t name_length, uint32_t mode, int64_t time,
-                       uint64_t *out_block) noexcept;
+                       uint32_t name_length, uint32_t mode, uint32_t uid,
+                       uint32_t gid, int64_t time, uint64_t *out_block) noexcept;
+    bool set_owner_mode_blocks(uint64_t inode_block, uint32_t uid, uint32_t gid,
+                               uint32_t mode) noexcept;
     bool remove_blocks(uint64_t parent_block, char const *name,
                        uint32_t name_length) noexcept;
     bool rename_blocks(uint64_t parent_block, char const *from,

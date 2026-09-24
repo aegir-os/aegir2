@@ -38,6 +38,8 @@ using WriteSector = bool (*)(void *context, uint64_t sector, uint8_t const *in);
  *  the tree, and its data stream (so a stream read needs no second visit). */
 struct Inode {
     uint32_t mode;
+    uint32_t uid; /* the Aegir user index of the owner (specs/ownership.md) */
+    uint32_t gid; /* the same, a user is its own group */
     uint32_t type; /* an attribute inode's type_code; zero otherwise */
     int64_t size;
     int64_t mtime;

@@ -20,11 +20,19 @@
 namespace aegir::bfs {
 
 /** Fill `block` with a fresh, empty inode: in use, one block, its own run as
- *  its inode number, `parent`, `mode`, `time` for both stamps, an empty data
- *  stream, and the reserved file-name small data carrying `name`. */
+ *  its inode number, `parent`, `mode`, `uid`/`gid`, `time` for both stamps, an
+ *  empty data stream, and the reserved file-name small data carrying `name`. */
 void inode_build(uint8_t *block, uint32_t block_size, Run const &run,
-                 Run const &parent, uint32_t mode, int64_t time, char const *name,
-                 uint32_t name_length) noexcept;
+                 Run const &parent, uint32_t mode, uint32_t uid, uint32_t gid,
+                 int64_t time, char const *name, uint32_t name_length) noexcept;
+
+/** Patch the owner (uid and gid) into an inode block, leaving the rest
+ *  alone (specs/bfs.md decision 7: the AmigaDOS `Owner`). */
+void inode_set_owner(uint8_t *block, uint32_t uid, uint32_t gid) noexcept;
+
+/** Patch the mode into an inode block, leaving the rest alone (the AmigaDOS
+ *  `Protect`). */
+void inode_set_mode(uint8_t *block, uint32_t mode) noexcept;
 
 /** Copy the data stream (direct, indirect, double, max ranges, size) out of an
  *  inode block. */

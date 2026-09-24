@@ -240,6 +240,8 @@ bool Volume::read_inode(uint64_t block, Inode *out) const noexcept
         return false;
     }
     out->mode = le32(block_ + inode::kMode);
+    out->uid = le32(block_ + inode::kUid);
+    out->gid = le32(block_ + inode::kGid);
     out->type = le32(block_ + inode::kType);
     out->mtime = le64_signed(block_ + inode::kLastModified);
     out->size = le64_signed(block_ + inode::kData + data::kSize);

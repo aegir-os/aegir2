@@ -47,14 +47,14 @@ void write_small_name(uint8_t *block, uint32_t block_size, char const *name,
 }  // namespace
 
 void inode_build(uint8_t *block, uint32_t block_size, Run const &run,
-                 Run const &parent, uint32_t mode, int64_t time, char const *name,
-                 uint32_t name_length) noexcept
+                 Run const &parent, uint32_t mode, uint32_t uid, uint32_t gid,
+                 int64_t time, char const *name, uint32_t name_length) noexcept
 {
     zero(block, block_size);
     put_le32(block + inode::kMagic1, kInodeMagic1);
     put_run(block + inode::kInodeNum, run);
-    put_le32(block + inode::kUid, 0);
-    put_le32(block + inode::kGid, 0);
+    put_le32(block + inode::kUid, uid);
+    put_le32(block + inode::kGid, gid);
     put_le32(block + inode::kMode, mode);
     put_le32(block + inode::kFlags, kInodeInUse);
     put_le64(block + inode::kCreateTime, static_cast<uint64_t>(time));
@@ -68,6 +68,17 @@ void inode_build(uint8_t *block, uint32_t block_size, Run const &run,
     put_le64(block + inode::kData + data::kSize, 0);
     put_le64(block + inode::kData + data::kBytes, static_cast<uint64_t>(time));
     write_small_name(block, block_size, name, name_length);
+}
+
+void inode_set_owner(uint8_t *block, uint32_t uid, uint32_t gid) noexcept
+{
+    put_le32(block + inode::kUid, uid);
+    put_le32(block + inode::kGid, gid);
+}
+
+void inode_set_mode(uint8_t *block, uint32_t mode) noexcept
+{
+    put_le32(block + inode::kMode, mode);
 }
 
 void inode_get_stream(uint8_t const *block, uint8_t *stream) noexcept

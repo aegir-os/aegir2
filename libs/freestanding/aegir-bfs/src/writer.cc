@@ -630,20 +630,20 @@ bool Writer::tree_edit(uint64_t parent_block, char const *name,
 }
 
 bool Writer::create(uint64_t parent_block, char const *name,
-                    uint32_t name_length, uint32_t mode, int64_t time,
-                    uint64_t *out_block) noexcept
+                    uint32_t name_length, uint32_t mode, uint32_t uid, uint32_t gid,
+                    int64_t time, uint64_t *out_block) noexcept
 {
     if (journal_.active()) {
         return false;
     }
     journal_.begin();
-    return finish(create_blocks(parent_block, name, name_length, mode, time,
+    return finish(create_blocks(parent_block, name, name_length, mode, uid, gid, time,
                                 out_block));
 }
 
 bool Writer::create_blocks(uint64_t parent_block, char const *name,
-                           uint32_t name_length, uint32_t mode, int64_t time,
-                           uint64_t *out_block) noexcept
+                           uint32_t name_length, uint32_t mode, uint32_t uid,
+                           uint32_t gid, int64_t time, uint64_t *out_block) noexcept
 {
     if (name_length == 0 || name_length > kMaxName) {
         return false;
@@ -679,8 +679,8 @@ bool Writer::create_blocks(uint64_t parent_block, char const *name,
         have_tree = true;
     }
 
-    inode_build(inode_, volume_->block_size(), inode_run, parent_run, mode, time,
-                name, name_length);
+    inode_build(inode_, volume_->block_size(), inode_run, parent_run, mode, uid, gid,
+                time, name, name_length);
     if (directory) {
         for (uint32_t i = 0; i < data::kBytes; ++i) {
             stream_[i] = 0;
@@ -718,6 +718,27 @@ bool Writer::create_blocks(uint64_t parent_block, char const *name,
     }
     *out_block = block;
     return index_on_create(block, name, name_length, mode, 0, time);
+}
+
+bool Writer::set_owner_mode(uint64_t inode_block, uint32_t uid, uint32_t gid,
+                            uint32_t mode) noexcept
+{
+    if (journal_.active()) {
+        return false;
+    }
+    journal_.begin();
+    return finish(set_owner_mode_blocks(inode_block, uid, gid, mode));
+}
+
+bool Writer::set_owner_mode_blocks(uint64_t inode_block, uint32_t uid, uint32_t gid,
+                                   uint32_t mode) noexcept
+{
+    if (!read_inode_block(inode_block, inode_)) {
+        return false;
+    }
+    inode_set_owner(inode_, uid, gid);
+    inode_set_mode(inode_, mode);
+    return volume_->write_block(inode_block, inode_);
 }
 
 bool Writer::dir_is_empty(uint64_t dir_block) noexcept
@@ -1565,7 +1586,7 @@ bool Writer::attr_dir(uint64_t inode_block, int64_t time,
         return false;
     }
     uint32_t const mode = kModeAttrDir | kModeDirectory | kModeStrIndex | 0666;
-    inode_build(inode_, volume_->block_size(), inode_run, owner_run, mode, time,
+    inode_build(inode_, volume_->block_size(), inode_run, owner_run, mode, 0, 0, time,
                 nullptr, 0);
     for (uint32_t i = 0; i < data::kBytes; ++i) {
         stream_[i] = 0;
@@ -1613,7 +1634,7 @@ bool Writer::attr_inode_create(uint64_t dir_block, char const *name,
     }
     uint64_t const block = volume_->to_block(inode_run);
     inode_build(inode_, volume_->block_size(), inode_run, dir_run,
-                kModeAttr | kModeRegular | 0666, time, nullptr, 0);
+                kModeAttr | kModeRegular | 0666, 0, 0, time, nullptr, 0);
     inode_set_type(inode_, type);
     put_le32(inode_ + inode::kFlags, kInodeInUse | kInodeAttrInode);
     if (!volume_->write_block(block, inode_)) {
