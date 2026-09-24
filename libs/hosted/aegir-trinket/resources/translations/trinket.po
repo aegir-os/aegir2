@@ -1,0 +1,22 @@
+# German catalogue for the toolkit's built-in string, compiled to a .mo by
+# scripts/compile_po.py and embedded in the toolkit (specs/locale.md). It is a
+# demonstration of the pipeline -- xgettext extracts, this compiles, gettext
+# loads -- not a shipped translation of the whole toolkit.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: aegir-trinket\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Hello, world"
+msgstr "Hallo, Welt"
+
+msgctxt "menu"
+msgid "File"
+msgstr "Datei"
+
+msgid "%d file"
+msgid_plural "%d files"
+msgstr[0] "%d Datei"
+msgstr[1] "%d Dateien"

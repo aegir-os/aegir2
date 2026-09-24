@@ -21,9 +21,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+import compile_po
 import pins
 
 TRINKET = pins.ROOT / "libs" / "hosted" / "aegir-trinket"
+CATALOGUE = TRINKET / "resources" / "translations" / "trinket.po"
 DRIVER = pins.ROOT / "scripts" / "translation_conformance.cc"
 
 
@@ -34,6 +36,8 @@ def main() -> int:
         return 1
 
     with tempfile.TemporaryDirectory(prefix="aegir-translation-") as scratch:
+        data = Path(scratch) / "translation_data.cc"
+        compile_po.emit(CATALOGUE, data)
         binary = Path(scratch) / "translation_conformance"
         compile_command = [
             compiler,
@@ -44,8 +48,11 @@ def main() -> int:
             "-Werror",
             "-I",
             str(TRINKET / "include"),
+            "-I",
+            str(TRINKET / "src"),
             str(DRIVER),
             str(TRINKET / "src" / "translation.cc"),
+            str(data),
             "-o",
             str(binary),
         ]

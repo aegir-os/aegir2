@@ -25,6 +25,8 @@
 
 #include <aegir/trinket/translation.h>
 
+#include "translation_data.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -401,6 +403,11 @@ std::unique_ptr<Translation> Translation::parse(std::string_view data)
     }
 
     return translation;
+}
+
+std::unique_ptr<Translation> Translation::embedded()
+{
+    return parse(detail::translation_blob());
 }
 
 std::unique_ptr<Translation> Translation::load(std::string_view domain, std::string_view locale_dir)

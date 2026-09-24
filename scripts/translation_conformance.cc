@@ -206,6 +206,19 @@ int main()
     expect(Translation::parse("") == nullptr, "an empty image is rejected");
     expect(Translation::parse("not a mo file at all") == nullptr, "a bad magic is rejected");
 
+    /* The built-in catalogue: the committed .po compiled by scripts/compile_po.py
+     * and embedded, which is what the demo translates through on target. */
+    std::unique_ptr<Translation> const builtin = Translation::embedded();
+    expect(builtin != nullptr, "the embedded catalogue parses");
+    if (builtin != nullptr) {
+        expect_string(builtin->translate("Hello, world"), "Hallo, Welt",
+                      "the embedded catalogue translates");
+        expect_string(builtin->translate("File", "menu"), "Datei",
+                      "the embedded catalogue carries a context");
+        expect_string(builtin->ntranslate("%d file", "%d files", 3), "%d Dateien",
+                      "the embedded catalogue carries a plural");
+    }
+
     const Translation *const none = Translation::global();
     expect(none == nullptr, "no global translation is set");
     expect_string(Translation::tr("Hello"), "Hello", "tr falls back without a global");

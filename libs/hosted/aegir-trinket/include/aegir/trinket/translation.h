@@ -30,6 +30,11 @@ public:
     // embedded catalogue both come through here.
     static std::unique_ptr<Translation> parse(std::string_view data);
 
+    // Parse the catalogue the toolkit embeds (resources/translations/trinket.po,
+    // compiled by scripts/compile_po.py). Reading a catalogue from the system
+    // is deferred, so this is the built-in one.
+    static std::unique_ptr<Translation> embedded();
+
     // Load a .mo file. `locale_dir` is the LC_MESSAGES directory holding
     // `<domain>.mo` (the system case is deferred; the toolkit embeds).
     static std::unique_ptr<Translation> load(std::string_view domain,

@@ -55,6 +55,20 @@ add_custom_command(
   COMMENT "Compiling the CLDR data into .locale blobs"
   VERBATIM
 )
+
+# The built-in gettext catalogue: scripts/compile_po.py turns the committed .po
+# into the embedded .mo image Translation::embedded parses. Reading a catalogue
+# from the system is deferred, so the toolkit carries one (specs/locale.md).
+set(AEGIR_TRANSLATION_PO "${CMAKE_CURRENT_SOURCE_DIR}/resources/translations/trinket.po")
+set(AEGIR_TRANSLATION_DATA "${CMAKE_CURRENT_BINARY_DIR}/translation_data.cc")
+add_custom_command(
+  OUTPUT "${AEGIR_TRANSLATION_DATA}"
+  COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/compile_po.py"
+          "${AEGIR_TRANSLATION_PO}" "${AEGIR_TRANSLATION_DATA}"
+  DEPENDS "${AEGIR_TRANSLATION_PO}" "${CMAKE_SOURCE_DIR}/scripts/compile_po.py"
+  COMMENT "Compiling the gettext catalogue into an embedded .mo"
+  VERBATIM
+)
 set(AEGIR_TERMINUS_BDF "${CMAKE_SOURCE_DIR}/projects/terminus-font/ter-u12n.bdf")
 set(AEGIR_TERMINUS_EMBED "${CMAKE_CURRENT_BINARY_DIR}/terminus_12_bdf.cc")
 add_custom_command(
@@ -84,6 +98,7 @@ add_library(aegir-trinket STATIC
     src/bidi.cc
     "${AEGIR_BIDI_TABLES}"
     src/translation.cc
+    "${AEGIR_TRANSLATION_DATA}"
     src/theme.cc
     src/theme_xen.cc
     src/worker.cc

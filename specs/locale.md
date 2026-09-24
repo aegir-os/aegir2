@@ -3,7 +3,8 @@
 Status: decided (2026-09). This is `specs/cxx.md`'s completion-program step 6,
 "Locale, iconv and BiDi/RTL": the toolkit's internationalization and the C++
 standard library's localization. The two are different things and land in this
-order, each its own checkpoint.
+order, each its own checkpoint. All four pieces are landed; the Deferred list
+at the end is the accepted remainder.
 
 ## What is already there
 
@@ -22,9 +23,9 @@ order, each its own checkpoint.
   formatting come from `.locale` blobs compiled from the pinned CLDR, with the
   locale's direction; the toolkit demo formats with one on target.
   **`bidi.cc` is the real algorithm**
-  (piece 1) with conformance green; **`translation.cc`** is a gettext `.mo`
-  parser that is not yet in the build. `translation.cc` is gated out
-  (`libs/hosted/aegir-trinket/CMakeLists.txt`).
+  (piece 1) with conformance green; **`translation.cc` is a gettext `.mo`
+  parser in the build** (piece 4, landed), with a committed `.po` compiled to
+  an embedded catalogue and a toolkit string translated through it on target.
 
 ## The pieces, in order
 
@@ -55,7 +56,10 @@ order, each its own checkpoint.
    arithmetic, not musl's C-locale `strftime`, and a pattern's zone field
    becomes `UTC`; non-gregorian calendars and time zones are deferred below.
 4. **`translation.cc`, gettext for real.** The `.mo` parser reaches the build
-   and a toolkit string is translated through it.
+   and a toolkit string is translated through it. Landed: the parser reads the
+   format from a buffer (both byte orders, contexts, plurals), a committed
+   `.po` is compiled to a `.mo` and embedded, and the demo translates a string
+   and a plural through the embedded catalogue on target.
 
 The order is a dependency order, not a preference: 3 and 4 want the toolkit's
 strings and formatting to have a stable direction, which 1 gives them.
@@ -148,6 +152,35 @@ links them, and `apps/hosted/aegir-gui-demo` parses the embedded German blob at
 startup and prints `demo: locale de says 1.234,50 € on 01.01.70`, which the
 boot's run reads.
 
+## gettext and the embedded catalogue
+
+`translation.cc` reads the GNU gettext `.mo` format from a buffer, so a file
+and an embedded catalogue share one path. The format is a seven-word header and
+two parallel tables of (length, offset) descriptors; the words are in the
+image's own byte order, which the magic names, so both are read. Three kinds of
+entry share the table: the empty msgid is the header (whose msgstr carries
+`Plural-Forms`), a `msgctxt` entry separates context and msgid with EOT
+(U+0004), and a plural entry separates singular and plural with NUL and holds
+one msgstr form per NUL. `ntranslate` evaluates the header's own Plural-Forms C
+expression -- parsed here, not the toolkit's CLDR rules, because the catalogue
+is the authority for its forms -- to choose the form, and falls back to
+`n != 1` when there is no header. The `TR_`/`TR_N`/`TR_C` macros call null-safe
+static helpers, so a string is never lost to a missing catalogue; reading one
+from the system is deferred, so `Translation::embedded()` is the built-in one.
+
+`resources/translations/trinket.po` is the committed source (xgettext extracts
+the template; this is the compiler half). `scripts/compile_po.py`, a small
+msgfmt, compiles it to the `.mo` image `scripts/compile_po.py` embeds through
+`translation_data.cc`, and `Translation::embedded()` parses it. Adding a
+catalogue means a `.po` and a call, not C++.
+
+**Acceptance.** `scripts/check_translation.py` compiles `translation.cc` and
+the generated catalogue host-side and runs `scripts/translation_conformance.cc`,
+which builds `.mo` images in memory -- both byte orders, a header, a context
+and a three-form catalogue -- and asserts 38 checks, including the embedded
+catalogue's string, context and plural. On target, the demo parses the embedded
+catalogue and prints `demo: translation says Hallo, Welt and %d Dateien`.
+
 ## Unicode data, vendored
 
 The Unicode Character Database is third-party and is not committed
@@ -179,6 +212,10 @@ is a pin change and a re-run of conformance, not a code change.
   file syscalls and a reason. The delivery decision here is the blobs embedded
   in the toolkit; the follow-up is `.locale` files staged into the initrd and
   read at startup once the VFS serves them.
+- **Translation catalogues from the system.** `Translation::load` reads a `.mo`
+  from a file, but what the toolkit runs with is the embedded catalogue.
+  Per-domain catalogues on a volume, chosen by the locale, wait for the same
+  file syscalls; the `.po` compiler here produces the `.mo` they would be.
 - **Calendars other than gregorian.** CLDR's preferred calendar is gregorian
   for every region the shipped locales name (the alternates -- japanese,
   islamic, hebrew -- are listed after it, not instead of it), and the public

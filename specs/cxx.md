@@ -383,10 +383,11 @@ The order:
    first two pieces are landed: UAX #9 for real (`bidi.cc` and its Unicode
    conformance run), then libc++ localization on
    (`LIBCXX_ENABLE_LOCALIZATION`), proved by `std::locale` in
-   `apps/hosted/aegir-cxx-smoke`. The toolkit's `Locale` now formats numbers,
+   `apps/hosted/aegir-cxx-smoke`. The toolkit's `Locale` formats numbers,
    currency, percent, scientific, lists, gregorian dates and CLDR plurals from
-   compiled data, proved on target by `aegir-gui-demo` (`specs/locale.md`); the
-   remaining piece is gettext (`translation.cc` into the build).
+   compiled data, and a gettext `.mo` parser reads a compiled catalogue, each
+   proved on target by `aegir-gui-demo`; `specs/locale.md` lists what is
+   deferred (non-gregorian calendars, time zones, system catalogues).
 7. **The compiler choice.** GCC builds everything today. Clang 22
    cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
    112 at `-O2`) and would not need the `__chash` patch at all, because libc++

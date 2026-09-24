@@ -23,6 +23,7 @@
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/translation.h>
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
 #include <memory>
@@ -87,6 +88,20 @@ int main(int argc, char *argv[])
         write(" on ");
         write(locale.format_date(0).c_str());
         write("\n");
+    }
+
+    /* The toolkit's gettext catalogue on this target (specs/locale.md): the
+     * embedded .mo is parsed here and a string and a plural are translated
+     * through it, so the cue proves the parser and the compiled catalogue. */
+    {
+        std::unique_ptr<Translation> const translation = Translation::embedded();
+        if (translation != nullptr) {
+            write("  demo: translation says ");
+            write(translation->translate("Hello, world").c_str());
+            write(" and ");
+            write(translation->ntranslate("%d file", "%d files", 3).c_str());
+            write("\n");
+        }
     }
 
     aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
