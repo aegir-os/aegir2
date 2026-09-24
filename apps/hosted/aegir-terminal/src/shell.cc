@@ -107,9 +107,8 @@ std::string Shell::current_directory() const
 
 std::string Shell::prompt_for(std::string directory) const
 {
-    if (!directory.empty() && directory.back() == ':') {
-        directory.pop_back();
-    }
+    /* The Amiga prompt is the current directory and `>`: the volume-and-path
+     * form, colon kept, so a login opens on `Home:>`. */
     return directory + ">";
 }
 

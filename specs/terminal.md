@@ -151,7 +151,10 @@ The terminal is a trinket client (`specs/trinket.md`): `Application`, one
 decorated `Window`, the XEN theme, the embedded Terminus font. Its content
 is a `TerminalView`, a cell grid whose cell is the font's advance by its
 height (Terminus 12 is 6×12, strictly monospace). A cell holds a codepoint
-and its attributes; the grid is rows×cols derived from the window's size.
+and its attributes; the grid is rows×cols derived from the window's size, less
+a **text margin**: the theme draws the frame over the content's edge, so the
+first cell sits a few pixels in — a glyph at cell 0 would be cut by the
+border.
 
 - **Unicode.** Writes arrive UTF-8 and are decoded a codepoint at a time.
   A codepoint's width is Unicode's: East Asian wide and fullwidth occupy two

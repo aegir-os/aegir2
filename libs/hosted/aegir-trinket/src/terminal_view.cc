@@ -15,6 +15,13 @@
 
 namespace aegir::trinket {
 
+namespace {
+/* The margin between the window's frame and the first cell: the frame is drawn
+ * over the content's edge, so glyphs at cell 0 would be cut by it. Four pixels
+ * clears the frame and reads as a terminal's border. */
+constexpr int kTextPadding = 4;
+}  // namespace
+
 TerminalView::TerminalView() = default;
 TerminalView::TerminalView(int columns, int rows) : buffer_(columns, rows) {}
 TerminalView::~TerminalView() = default;
@@ -47,7 +54,8 @@ int TerminalView::cell_height() const {
 Size TerminalView::preferred_size() const {
     int const advance = cell_advance();
     int const height = cell_height();
-    return {buffer_.columns() * advance, buffer_.rows() * height};
+    return {buffer_.columns() * advance + 2 * kTextPadding,
+            buffer_.rows() * height + 2 * kTextPadding};
 }
 
 void TerminalView::on_layout() {
@@ -59,8 +67,8 @@ void TerminalView::on_layout() {
     int const advance = cell_advance();
     int const height = cell_height();
     if (advance <= 0 || height <= 0) return;
-    int const columns = std::max(1, rect_.width / advance);
-    int const rows = std::max(1, rect_.height / height);
+    int const columns = std::max(1, (rect_.width - 2 * kTextPadding) / advance);
+    int const rows = std::max(1, (rect_.height - 2 * kTextPadding) / height);
     if (columns != buffer_.columns() || rows != buffer_.rows()) {
         buffer_.resize(columns, rows);
     }
@@ -80,8 +88,8 @@ void TerminalView::on_paint(Canvas& canvas, const PaintEvent& event) {
     for (int row = 0; row < buffer_.rows(); ++row) {
         int const index = first + row;
         if (index >= buffer_.line_count()) break;
-        int x = rect_.x;
-        int const y = rect_.y + row * height;
+        int x = rect_.x + kTextPadding;
+        int const y = rect_.y + kTextPadding + row * height;
         for (TerminalCell const& cell : buffer_.visual_cells(index)) {
             /* A blank cell is the background already filled; a combining mark
              * (width 0) draws at the running x and does not advance; a wide
@@ -98,8 +106,8 @@ void TerminalView::on_paint(Canvas& canvas, const PaintEvent& event) {
         int const line = buffer_.cursor_line();
         if (line >= first && line < first + buffer_.rows()) {
             int const column = buffer_.visual_column(line, buffer_.cursor_cell());
-            int const x = rect_.x + column * advance;
-            int const y = rect_.y + (line - first) * height;
+            int const x = rect_.x + kTextPadding + column * advance;
+            int const y = rect_.y + kTextPadding + (line - first) * height;
             canvas.fill_rect({x, y, advance, height}, text_color_);
         }
     }

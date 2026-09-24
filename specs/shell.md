@@ -76,8 +76,9 @@ namespace, and the spawn.
         else: unknown command
 
 The prompt is the current directory plus `>` — the Amiga's prompt is the
-current directory, and Aegir shows the volume-and-path form `Home>`,
-`Sys:Devs>`. It is drawn by the handler's line editor as the prompt it was
+current directory, and Aegir shows the volume-and-path form with the colon
+kept, so a login opens on `Home:>` and a directory under it is `Sys:Devs>`. It
+is drawn by the handler's line editor as the prompt it was
 opened with; after a directory change the shell updates it.
 
 ### Resolution: `Libs:CommandName` and `Initrd:CommandName`
