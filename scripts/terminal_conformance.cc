@@ -11,8 +11,14 @@
  * BiDi reordering and cursor mapping are asserted exactly (specs/terminal.md).
  */
 
+#include <aegir/console_stream.h>
+#include <aegir/nmspace.h>
+#include <aegir/trinket/line_editor.h>
 #include <aegir/trinket/terminal_buffer.h>
 #include <aegir/trinket/unicode.h>
+#include <aegir/trinket/widget.h>
+
+#include "console_stream_server.h"
 
 #include <cstdio>
 #include <string>
@@ -20,6 +26,10 @@
 
 namespace {
 
+using aegir::trinket::KeyCode;
+using aegir::trinket::KeyEvent;
+using aegir::trinket::LineEditor;
+using aegir::terminal::ConsoleStreamServer;
 using aegir::trinket::TerminalBuffer;
 using aegir::trinket::TerminalCell;
 using aegir::trinket::utf32_to_utf8;
@@ -185,6 +195,120 @@ void check_bidi()
     expect_int(b.visual_column(0, 6), 4, "bidi: the cursor maps gimel to its display column");
 }
 
+KeyEvent char_key(char32_t text)
+{
+    KeyEvent event;
+    event.text = text;
+    event.pressed = true;
+    return event;
+}
+
+KeyEvent code_key(KeyCode code, uint32_t modifiers = 0)
+{
+    KeyEvent event;
+    event.code = code;
+    event.modifiers = modifiers;
+    event.pressed = true;
+    return event;
+}
+
+/* A cooked line: keys type it, Enter ends it, and the server hands the client
+ * the finished line and lets it begin the next prompt (specs/terminal.md). */
+void check_line_editor()
+{
+    TerminalBuffer b(20, 5);
+    ConsoleStreamServer server(b);
+    expect_int(server.open_local(1, "Home>") ? 1 : 0, 1, "editor: the stream opens");
+    expect_int(server.open_local(1, "again") ? 1 : 0, 0, "editor: a second open is refused");
+    server.begin(1);
+
+    LineEditor* const editor = server.editor(1);
+    expect_int(editor == nullptr ? 0 : 1, 1, "editor: the cooked stream has a line editor");
+    for (char32_t const cp : std::u32string(U"abc")) {
+        expect_int(editor->on_key(char_key(cp)) ? 1 : 0, 1, "editor: a printable is consumed");
+    }
+    expect_text(editor->line(), U"abc", "editor: the line holds the typed keys");
+    /* Enter ends the line and the server holds it, not the editor. */
+    expect_int(editor->on_key(code_key(KeyCode::ENTER)) ? 1 : 0, 1, "editor: Enter is consumed");
+    expect_int(server.line_ready(1) ? 1 : 0, 1, "editor: the finished line is ready");
+    expect_text(server.take_line(1), U"abc", "editor: take_line returns it");
+    expect_int(server.line_ready(1) ? 1 : 0, 0, "editor: it is ready only once");
+
+    /* History: the taken line is recalled by the up arrow. */
+    server.begin(1);
+    editor->on_key(code_key(KeyCode::UP));
+    expect_text(editor->line(), U"abc", "editor: the up arrow recalls the last line");
+
+    /* Shift-Backspace clears the line without editing it. */
+    editor->on_key(code_key(KeyCode::BACKSPACE, 1));
+    expect_text(editor->line(), U"", "editor: Shift-Backspace clears the line");
+}
+
+/* The wire path, since a host test cannot call an endpoint: the same handler
+ * the on_call in the terminal will reach. */
+void check_stream_wire()
+{
+    TerminalBuffer b(20, 5);
+    ConsoleStreamServer server(b);
+    uint64_t reply[1] = {0};
+
+    /* open: mode, then the prompt string. */
+    uint64_t open_words[1 + aegir::nmspace::kPathMax / 8 + 1];
+    open_words[0] = aegir::console::kStreamModeCooked;
+    uint32_t const open_count =
+        1 + aegir::nmspace::pack_string(open_words + 1, "Home>", 5,
+                                        aegir::nmspace::kPathMax);
+    uint32_t answer = server.handle(aegir::console::kStreamMethodOpen, open_words,
+                                    open_count, 7, reply, 1);
+    expect_int(answer == 1 && reply[0] == 1 ? 1 : 0, 1, "wire: open answers ok");
+
+    /* write: the bytes as a string; the answer is the count. */
+    uint64_t write_words[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const write_count =
+        aegir::nmspace::pack_string(write_words, "hi\n", 3, aegir::nmspace::kPathMax);
+    answer = server.handle(aegir::console::kStreamMethodWrite, write_words, write_count,
+                           7, reply, 1);
+    expect_int(answer == 1 && reply[0] == 3 ? 1 : 0, 1, "wire: write answers the count");
+    expect_text(b.line(0), U"hi", "wire: the bytes reached the grid");
+
+    /* Type a line into the editor, then read it back through the wire. The
+     * client's loop calls read_line first, which begins the editor; keys then
+     * go to it, and the next read_line answers the line. */
+    LineEditor* const editor = server.editor(7);
+    uint64_t in[aegir::console::kStreamBytesMax / 8 + 2];
+    answer = server.handle(aegir::console::kStreamMethodReadLine, nullptr, 0, 7, in,
+                           aegir::console::kStreamBytesMax / 8 + 2);
+    expect_int(answer, 0, "wire: read_line with no line is empty");
+    for (char32_t const cp : std::u32string(U"ls")) {
+        editor->on_key(char_key(cp));
+    }
+    editor->on_key(code_key(KeyCode::ENTER));
+    answer = server.handle(aegir::console::kStreamMethodReadLine, nullptr, 0, 7, in,
+                           aegir::console::kStreamBytesMax / 8 + 2);
+    char const* text = nullptr;
+    uint32_t length = 0;
+    expect_int(answer > 0 && aegir::nmspace::unpack_string(in, answer,
+                                                            aegir::console::kStreamBytesMax,
+                                                            &text, &length)
+                    ? 1
+                    : 0,
+               1, "wire: read_line answers a string");
+    expect_text(aegir::trinket::utf8_to_utf32(std::string_view(text, length)), U"ls",
+                "wire: read_line is the typed line");
+    answer = server.handle(aegir::console::kStreamMethodReadLine, nullptr, 0, 7, in,
+                           aegir::console::kStreamBytesMax / 8 + 2);
+    expect_int(answer, 0, "wire: read_line is empty with no line ready");
+
+    /* close: the stream is dropped. */
+    uint64_t close_words[1] = {0};
+    server.handle(aegir::console::kStreamMethodClose, close_words, 1, 7, reply, 1);
+    expect_int(server.editor(7) == nullptr ? 0 : 1, 0, "wire: close drops the stream");
+    answer = server.handle(aegir::console::kStreamMethodWrite, write_words, write_count,
+                           7, reply, 1);
+    expect_int(answer == 1 && reply[0] == 0 ? 1 : 0, 1,
+               "wire: a write to a closed stream writes nothing");
+}
+
 } // namespace
 
 int main()
@@ -202,6 +326,8 @@ int main()
     check_scrollback();
     check_budget();
     check_bidi();
+    check_line_editor();
+    check_stream_wire();
 
     std::printf("terminal: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

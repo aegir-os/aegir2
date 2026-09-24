@@ -117,7 +117,14 @@ this arc's record of the order.
   with the console stream, wait, report the status. This needs the spawn
   authority a session is meant to have and does not yet hold
   (`specs/authority.md`: a session spawns user processes "as ordinary use").
-  That authority is the phase's real work.
+  That authority is the phase's real work. Landed so far: the `con.stream`
+  protocol and its handler-side server (`specs/terminal.md`), host-tested, and
+  the decision that the terminal itself is the session's spawner -- the
+  request carries the shell's own current directory and parsed arguments, so
+  it must come from the terminal, not from auth. Next: auth delegates the
+  terminal its spawn kit (a spawn untyped, an ASID-pool copy, the initrd and
+  the unbadged `spawn:` ports), the toolkit exposes the one address window it
+  already adopted, and the terminal spawns a command.
 - **Phase 4 — standard input and output.** The runtime routes fd 0/1/2 to
   the console stream instead of the debug serial and `-EBADF`, so `printf`
   and `read` reach the grid and the keys. Until this lands, a command talks

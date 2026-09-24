@@ -3,10 +3,12 @@
 Status: decided (2026-09), and its first two phases landed: the text surface
 (`TerminalBuffer`, `TerminalView`, the generated Unicode widths, BiDi
 reordering) and the terminal process with the line editor and the command
-line. The `con.stream` port and the shell as a separate process are Phase 3,
-with the spawn authority they need. This is the spec the terminal arc lands
-under —the Amiga `CON:` handler and the text surface the shell (a later arc,
-`specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
+line. Phase 3 is under way: the `con.stream` protocol and its handler-side
+server now stand and are host-tested; the port itself, the spawn authority
+the shell's external commands need, and the shell as a separate process are
+what remain. This is the spec the terminal arc lands under —the Amiga `CON:`
+handler and the text surface the shell (a later arc, `specs/shell.md`) runs
+in. `specs/environment.md` named "the shell and a
 `CON:` handler" as future work and left them there; this is that work's first
 half.
 
@@ -95,10 +97,11 @@ Owned by the terminal. Strings travel in the namespace protocol's shape
 (`aegir/nmspace.h`); method numbers are the version rule, and a method the
 port does not know is answered by saying nothing.
 
-- `open`. In: the mode (cooked or raw) and, in cooked mode, a prompt. Out:
-  nothing (the stream is the caller's, keyed by its badge) — a per-caller
-  stream, so a badge holds one console. A second `open` from the same badge
-  is refused, as `listen` is.
+- `open`. In: the mode (cooked or raw) and, in cooked mode, a prompt. Answer:
+  one word, `1` opened and `0` refused -- a client has to be able to tell, and
+  `listen`'s empty refusal did not leave room for it. The stream is the
+  caller's, keyed by its badge, so a badge holds one console; a second `open`
+  from the same badge is refused.
 - `write`. In: the bytes. They land at the stream's cursor. Reply: the count
   written, less than asked the refusal.
 - `read`. Out: bytes, or an error when nothing is available. Ok, blocking
@@ -108,9 +111,11 @@ port does not know is answered by saying nothing.
   answers with whatever input is queued, and the client drains on the
   notification it already waits on (below).
 - `read_line`. In: nothing. Out: one line, when the line editor has one; an
-  empty reply otherwise. This is the cooked call; the shell loops on it.
-- `close`. In: nothing. The stream is dropped and the handler forgets the
-  line it was holding.
+  empty reply otherwise. This is the cooked call; the shell loops on it. A
+  cooked read begins the line editor if it is idle.
+- `close`. In: the status the client finished with, which the shell reports
+  (specs/shell.md's `return code`). The stream is dropped and the handler
+  forgets the line it was holding.
 - `get`/`set` attributes (`title`, `size`, later color). `size` answers the
   grid in columns and rows from the font metrics, which is what a program
   laying out columns needs.
@@ -123,6 +128,16 @@ second one — the toolkit's `on_poll` hook is where a terminal client checks
 its console stream after a drain (`specs/workbench.md`'s `Application`
 shape). A freestanding client that waits on the notification directly does
 the same after each wake.
+
+**Where the protocol lives.** The wire vocabulary -- the port name, the
+method numbers, the modes, the byte bound and the namespace's string shape --
+is `aegir/console_stream.h`, and it deliberately pulls no kernel header,
+because the handler is a value the host build tests. The client's call
+helpers are `aegir/console_stream_client.h`; the handler's side,
+`ConsoleStreamServer`, owns the streams and their line editors in the
+terminal. One handler serves both: the wire and the terminal's own shell,
+which shares the process for now and so reaches the same stream directly,
+because a process cannot call its own endpoint.
 
 ### The terminal's window and render
 
@@ -187,8 +202,11 @@ Host-side, the grid is a pure value and is tested like the locale and bidi
 work: `scripts/terminal_conformance.cc` compiled and run by
 `scripts/check_terminal.py` (`make check-terminal`) asserts cell placement,
 wrapping and scrolling, `\r`/`\b` overwrite, wide-character occupancy,
-combining zero-width, BiDi reordering and cursor mapping, and scrollback
-retrieval — whole-run and exact.
+combining zero-width, BiDi reordering and cursor mapping, scrollback
+retrieval, and the `con.stream` handler — a line typed into the editor and
+read back through the server, a second `open` refused, history and
+Shift-Backspace, and the wire path's `open`/`write`/`read_line`/`close` —
+whole-run and exact.
 
 On target, the terminal process (`apps/hosted/aegir-terminal`) renders the
 grid and the prompt and the runner reads its window back; the runner then

@@ -30,6 +30,9 @@ import pins
 
 UCD = pins.ROOT / "projects" / "ucd" / "unicode-16.0.0"
 TRINKET = pins.ROOT / "libs" / "hosted" / "aegir-trinket"
+TERMINAL = pins.ROOT / "apps" / "hosted" / "aegir-terminal"
+CONSOLE = pins.ROOT / "libs" / "freestanding" / "aegir-console"
+NAMESPACE = pins.ROOT / "libs" / "freestanding" / "aegir-namespace"
 DRIVER = pins.ROOT / "scripts" / "terminal_conformance.cc"
 
 
@@ -59,12 +62,20 @@ def main() -> int:
             str(TRINKET / "include"),
             "-I",
             str(TRINKET / "src"),
+            "-I",
+            str(TERMINAL / "src"),
+            "-I",
+            str(CONSOLE / "include"),
+            "-I",
+            str(NAMESPACE / "include"),
             str(DRIVER),
             str(bidi_tables),
             str(width_tables),
             str(TRINKET / "src" / "terminal_buffer.cc"),
             str(TRINKET / "src" / "bidi.cc"),
             str(TRINKET / "src" / "unicode.cc"),
+            str(TRINKET / "src" / "line_editor.cc"),
+            str(TERMINAL / "src" / "console_stream_server.cc"),
             "-o",
             str(binary),
         ]

@@ -15,7 +15,9 @@ add_library(aegir-console-protocol INTERFACE)
 
 target_include_directories(aegir-console-protocol INTERFACE include)
 # <stdint.h> comes from muslc: user code is compiled -nostdinc, so C headers
-# have to come from a link (specs/build.md). aegir-ipc is the envelope, and
-# aegir-input the event word's packing.
+# have to come from a link (specs/build.md). aegir-ipc is the envelope,
+# aegir-input the event word's packing, and aegir-namespace the string shape
+# con.stream shares with the namespace protocol (specs/terminal.md).
 target_link_libraries(aegir-console-protocol INTERFACE aegir-cxx-policy aegir-ipc
-                                                       aegir-input aegir-c-headers)
+                                                       aegir-input aegir-namespace
+                                                       aegir-c-headers)
