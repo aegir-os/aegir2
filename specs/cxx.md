@@ -118,6 +118,13 @@ without the `libsel4utils` dependency:
   through it, so without it the runtime's `read` is right while every
   `std::fread` returns zero bytes — an empty file rather than a missing
   syscall. The shell's `Type` and its command loading are what found it.
+- **The standard streams are the console's when the process has one.** A
+  session's command is handed a caller copy of the terminal's `con.stream`
+  (specs/shell.md), and fd 1/2 route there — `printf` reaches the grid — while
+  `exit(status)` reports through it. A process with no stream keeps the debug
+  serial, so every boot service is unchanged. fd 0 is the stream's poll; the
+  handler queues no input yet, so a command that wants the keyboard wants a
+  raw stream of its own.
 - **`munmap` is a no-op and `mremap` refuses.** The pages stay mapped — the
   address space is committed to the heap — and mallocng's groups reuse the small
   pieces. Returning frames to the kernel is a later refinement, not a

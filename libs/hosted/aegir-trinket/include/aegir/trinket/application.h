@@ -140,6 +140,14 @@ public:
     aegir::mem::Allocator& allocator();
     aegir::mem::Scratch& scratch();
 
+    // The CSpace slots the toolkit reserves for a process that spawns. A
+    // long-lived spawner needs its own sub-range so it can reclaim a command's
+    // capabilities whole -- revoke the command pool, release the slots -- where
+    // the toolkit's own allocator, which owns everything below, could not
+    // (specs/shell.md's Phase 4). Zero count means no reserve.
+    uint64_t spawn_slot_base() const;
+    uint32_t spawn_slot_count() const;
+
     // Font loading from resources
     std::unique_ptr<Font> load_font(std::string_view family, int size_pts);
     std::unique_ptr<Font> load_builtin_font(std::string_view name, int size_pts);

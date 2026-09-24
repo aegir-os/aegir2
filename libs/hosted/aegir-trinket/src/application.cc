@@ -38,6 +38,15 @@ aegir::mem::Scratch g_scratch(nullptr);
  * kit grants is 1 GiB (aegir/spawn's process.cc), so the two do not meet. */
 constexpr uint64_t kHeapBytes = 8ull << 20;
 
+/* The CSpace tail a process that spawns keeps for its commands: the toolkit's
+ * allocator owns the rest, and a command allocator owns this range so a
+ * command's capabilities can be revoked and the slots released whole
+ * (specs/shell.md's Phase 4). The toolkit uses a few dozen slots; the console
+ * slice's frames are the biggest run. A thousand is beyond any of that. */
+constexpr uint32_t kSpawnSlotCount = 1024;
+constexpr uint64_t kSpawnSlotBase =
+    (1u << aegir::bootstrap::kCNodeBits) - kSpawnSlotCount;
+
 /* The mapping authority the spawn kit installs: the delegated untyped (page
  * tables and frames are retyped from it), the VSpace root, and the window of
  * free addresses (the give_vspace grant). The pattern is the greeter's and the
@@ -71,7 +80,7 @@ bool adopt_memory() {
               g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
                                       untyped_bits, untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0);
+        g_objects.adopt_slots(first_free, kSpawnSlotBase - first_free, 0);
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),
                              static_cast<uintptr_t>(window_base + window_bytes),
@@ -351,6 +360,14 @@ aegir::mem::Allocator& Application::allocator() {
 
 aegir::mem::Scratch& Application::scratch() {
     return g_scratch;
+}
+
+uint64_t Application::spawn_slot_base() const {
+    return kSpawnSlotBase;
+}
+
+uint32_t Application::spawn_slot_count() const {
+    return kSpawnSlotCount;
 }
 
 uint64_t Application::claim_backing(uint64_t bytes) {    if (slice_ == nullptr || bytes == 0) return ~0ull;

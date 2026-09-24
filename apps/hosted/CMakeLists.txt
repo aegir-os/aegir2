@@ -10,6 +10,7 @@
 add_subdirectory(aegir-cxx-smoke)
 add_subdirectory(aegir-env-smoke)
 add_subdirectory(aegir-fs-smoke)
+add_subdirectory(aegir-print)
 add_subdirectory(aegir-greeter)
 add_subdirectory(aegir-bureau)
 add_subdirectory(aegir-terminal)

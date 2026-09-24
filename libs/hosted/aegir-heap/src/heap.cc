@@ -40,6 +40,8 @@
 #include "time.h"
 
 #include <aegir/debug.h>
+#include <aegir/console_stream.h>
+#include <aegir/console_stream_client.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/thread.h>
@@ -426,20 +428,80 @@ long sys_madvise(void *addr, size_t length, int advice) noexcept
     return 0;
 }
 
-/* SYS_write: the serial console for the standard streams, a file for an fd
- * the runtime opened. musl's stdio and the standard library's diagnostics both
- * reach here; the console is what the smokes speak on, the files are what the
- * filesystem arc adds (specs/cxx.md step 5). */
+/* The session's console stream, when this process was given one: the terminal
+ * hands a command a caller copy of its stream (specs/shell.md), and fd 0/1/2
+ * route there instead of the debug serial. A process without one -- every
+ * boot service -- keeps the serial. Found once, on first use. */
+aegir::ipc::Consumer &console_stream() noexcept
+{
+    static aegir::ipc::Consumer const stream = aegir::ipc::Consumer::find(
+        aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength);
+    return const_cast<aegir::ipc::Consumer &>(stream);
+}
+
+/* SYS_write: a standard stream goes to the console stream when the process has
+ * one, the debug serial otherwise; any other fd is a file the filesystem arc
+ * opened. musl's stdio and the standard library's diagnostics both reach here
+ * (specs/cxx.md step 5, specs/shell.md's Phase 4). */
 long sys_write(int fd, void const *buffer, size_t length) noexcept
 {
-    if (fd != 1 && fd != 2) {
-        return files::write(fd, buffer, length);
+    if (fd == 1 || fd == 2) {
+        aegir::ipc::Consumer &stream = console_stream();
+        if (stream.valid()) {
+            auto const *bytes = static_cast<char const *>(buffer);
+            uint64_t total = 0;
+            while (total < length) {
+                uint32_t const chunk = static_cast<uint32_t>(
+                    length - total < aegir::console::kStreamBytesMax
+                        ? length - total
+                        : aegir::console::kStreamBytesMax);
+                uint32_t const wrote =
+                    aegir::console::stream_write(stream, bytes + total, chunk);
+                if (wrote == 0) {
+                    break;
+                }
+                total += wrote;
+            }
+            return static_cast<long>(total);
+        }
+        auto const *bytes = static_cast<uint8_t const *>(buffer);
+        for (size_t i = 0; i < length; ++i) {
+            seL4_DebugPutChar(static_cast<char>(bytes[i]));
+        }
+        return static_cast<long>(length);
     }
-    auto const *bytes = static_cast<uint8_t const *>(buffer);
-    for (size_t i = 0; i < length; ++i) {
-        seL4_DebugPutChar(static_cast<char>(bytes[i]));
+    return files::write(fd, buffer, length);
+}
+
+/* SYS_read: fd 0 is the console stream's queued input -- tier 1 is a poll, so
+ * nothing queued answers zero (specs/terminal.md). A process with no stream
+ * has no stdin. Any other fd is a file. */
+long sys_read(int fd, void *buffer, size_t length) noexcept
+{
+    if (fd == 0) {
+        aegir::ipc::Consumer &stream = console_stream();
+        if (!stream.valid()) {
+            return -EBADF;
+        }
+        uint32_t const want = length < aegir::console::kStreamBytesMax
+                                  ? static_cast<uint32_t>(length)
+                                  : aegir::console::kStreamBytesMax;
+        return static_cast<long>(aegir::console::stream_read(
+            stream, static_cast<char *>(buffer), want));
     }
-    return static_cast<long>(length);
+    return files::read(fd, buffer, length);
+}
+
+/* The process is ending: report the status through the console stream, so the
+ * shell's return-code line has its number (the interim until a status travels
+ * another way), then halt. A process with no stream just halts. */
+void report_exit(int status) noexcept
+{
+    aegir::ipc::Consumer &stream = console_stream();
+    if (stream.valid()) {
+        (void)aegir::console::stream_exit(stream, static_cast<uint64_t>(status));
+    }
+    aegir::halt();
 }
 
 /* SYS_writev: what musl's stdio actually uses. Without it, vfprintf's output
@@ -633,7 +695,7 @@ long vsyscall(long sysnum, ...) noexcept
         ret = files::lseek(va_arg(ap, int), va_arg(ap, long), va_arg(ap, int));
         break;
     case 63: /* SYS_read */
-        ret = files::read(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t));
+        ret = sys_read(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t));
         break;
     case 79: /* SYS_newfstatat: the stat family on riscv64 (musl's kstat path) */
         ret = files::newfstatat(va_arg(ap, int), va_arg(ap, char const *),
@@ -644,7 +706,8 @@ long vsyscall(long sysnum, ...) noexcept
         break;
     case 93: /* SYS_exit: end the calling thread, not the process. A thread
               * that musl's __pthread_exit has finished with suspends here; the
-              * process's boot thread (no TCB of its own) halts the process. */
+              * process's boot thread (no TCB of its own) reports the status and
+              * ends the process. */
         if (g_self_tcb != 0) {
             /* The kernel's CLONE_CHILD_CLEARTID: a thread's exit clears the
              * address musl gave clone. The clear alone releases musl's
@@ -654,11 +717,13 @@ long vsyscall(long sysnum, ...) noexcept
                 *g_clear_tid = 0;
             }
             seL4_TCB_Suspend(g_self_tcb);
+            aegir::halt();
+        } else {
+            report_exit(static_cast<int>(va_arg(ap, long)));
         }
-        aegir::halt();
         break;
     case 94: /* SYS_exit_group: end the process */
-        aegir::halt();
+        report_exit(static_cast<int>(va_arg(ap, long)));
         break;
     default:
         break;

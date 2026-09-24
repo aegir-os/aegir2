@@ -37,8 +37,10 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <fcntl.h>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -122,6 +124,8 @@ int main(int argc, char *argv[])
     };
 
     uint64_t command_serial = 0;
+    aegir::spawn::Process command_process{};
+    bool command_running = false;
     auto spawn_command = [&](std::string const &name,
                              std::vector<std::string> const &args) -> bool {
         if (!spawn_kit.ready()) {
@@ -131,20 +135,39 @@ int main(int argc, char *argv[])
          * mapped initrd: it is 5.7 MiB and does not fit a child
          * (specs/shell.md, specs/authority.md). */
         std::string const path = "Initrd:" + name;
-        std::FILE *const file = std::fopen(path.c_str(), "rb");
-        if (file == nullptr) {
+        int const fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) {
             write("  terminal: no image for the command\n");
             return false;
         }
         std::vector<char> image;
         char chunk[512];
-        std::size_t have = 0;
-        while ((have = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
+        ssize_t have = 0;
+        while ((have = ::read(fd, chunk, sizeof(chunk))) > 0) {
             image.insert(image.end(), chunk, chunk + have);
         }
-        std::fclose(file);
+        ::close(fd);
         if (image.empty()) {
             write("  terminal: the command image is empty\n");
+            return false;
+        }
+
+        /* The command pool: a fresh bracket, so this command's objects and the
+         * untyped its runtime gets are reclaimed whole when it exits
+         * (specs/shell.md's Phase 4). */
+        if (!spawn_kit.begin()) {
+            write("  terminal: FAIL the command pool would not adopt\n");
+            return false;
+        }
+        aegir::mem::Account account{"command", 0, 0, 0};
+        seL4_Error untyped_error = seL4_NoError;
+        uint64_t command_untyped_physical = 0;
+        seL4_CPtr const command_untyped = spawn_kit.memory().carve_untyped(
+            aegir::terminal::SpawnKit::kCommandUntypedBits, account, &untyped_error,
+            &command_untyped_physical);
+        if (command_untyped == 0) {
+            write("  terminal: FAIL no untyped for the command's runtime\n");
+            spawn_kit.abort();
             return false;
         }
 
@@ -156,11 +179,14 @@ int main(int argc, char *argv[])
         }
         static std::string const kAccountText = "command";
         std::string const cwd = shell->current_directory();
-        aegir::mem::Account account{"command", 0, 0, 0};
         aegir::spawn::PortGrant const ports[] = {
             {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, spawn_kit.stream_endpoint(),
              seL4_CapRights_new(1, 1, 0, 1), kShellStream, 0},
+            /* The command's own runtime kit: the untyped its heap and page
+             * tables come from, and (below) its own VSpace root and window. */
+            {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 1, command_untyped,
+             seL4_AllRights, 0, aegir::terminal::SpawnKit::kCommandUntypedBits},
         };
         aegir::spawn::Request request{};
         request.name = name.c_str();
@@ -175,18 +201,21 @@ int main(int argc, char *argv[])
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.priority = seL4_MaxPrio - 2;
         request.ports = ports;
-        request.port_count = 1;
+        request.port_count = 2;
         request.fault_endpoint = spawn_kit.fault_endpoint();
         request.badge = 0x1000 + command_serial++;
-        request.give_vspace = false;
+        request.give_vspace = true;
+        request.untyped_physical = command_untyped_physical;
+        request.untyped_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;
 
-        aegir::spawn::Process process{};
-        if (!spawn_kit.spawner().spawn(request, account, process)) {
+        if (!spawn_kit.spawner().spawn(request, account, command_process)) {
             write("  terminal: FAIL spawning a command: ");
             write(spawn_kit.spawner().problem());
             write("\n");
+            spawn_kit.abort();
             return false;
         }
+        command_running = true;
         return true;
     };
     shell->set_spawn(spawn_command);
@@ -223,6 +252,12 @@ int main(int argc, char *argv[])
         if (shell->busy() && server.command_finished(kShellStream)) {
             uint64_t const status = server.exit_status(kShellStream);
             server.clear_command(kShellStream);
+            if (command_running) {
+                /* Stop and reclaim the command: its pool goes back whole, so
+                 * the next command starts from the same memory. */
+                spawn_kit.finish(command_process.tcb);
+                command_running = false;
+            }
             write("  terminal: command exited ");
             write_unsigned(status);
             write("\n");

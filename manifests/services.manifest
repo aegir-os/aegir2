@@ -223,7 +223,7 @@ needs     = log.main, vfs.namespace, console.gui
 spawns    = session.*, greeter
 # Auth's delegation holds the greeter's kit, the session pool the bureau and
 # the terminal come out of, and auth's own objects. A session's pool holds
-# both toolkit children, the terminal's spawn untyped, and both images -- so
+# both toolkit children, the terminal's command pool, and both images -- so
 # the pool is 16 MiB and auth's delegation 32.
 delegate_mib = 32
 # Its stack: the default 8 KiB was already close, and the session start --

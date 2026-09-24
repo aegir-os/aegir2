@@ -78,6 +78,30 @@ inline uint32_t stream_read_line(aegir::ipc::Consumer const &port, char *out,
     return length;
 }
 
+/** Read queued bytes into `out`. Answers the byte count, 0 when nothing is
+ *  queued. Tier 1 is a poll (specs/terminal.md). */
+inline uint32_t stream_read(aegir::ipc::Consumer const &port, char *out,
+                            uint32_t capacity) noexcept
+{
+    uint64_t in[aegir::ipc::kMaxWords];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodRead, nullptr, 0, in, aegir::ipc::kMaxWords);
+    if (answer.error != 0) {
+        return 0;
+    }
+    char const *text = nullptr;
+    uint32_t length = 0;
+    if (!aegir::nmspace::unpack_string(in, answer.count, kStreamBytesMax, &text,
+                                       &length) ||
+        length > capacity) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        out[i] = text[i];
+    }
+    return length;
+}
+
 /** Close the stream, reporting the status it finished with. False when the
  *  call itself was refused (closing a stream the handler did not have is
  *  still a close: the empty answer is the success). */

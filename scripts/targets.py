@@ -404,11 +404,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The terminal (specs/terminal.md, specs/shell.md): auth starts it
             # beside the bureau at login, focused, with its window clear of the
             # test bed's red one, the demo's and the screen bar's samples. The
-            # typed line names an external program, so the shell resolves it to
-            # Initrd:, the terminal spawns it with a caller copy of the console
-            # stream, and its status comes back -- the Phase 3 path end to end.
-            # The typing is paced on the terminal's ready, before the bureau's
-            # cue lets the demo's click take the focus.
+            # typed line names a *hosted* command -- it uses libc's printf, and
+            # the runtime routes fd 1/2 to the console stream and reports the
+            # exit through it -- so the shell resolves it, the terminal spawns
+            # it, its output lands on the grid, and its status comes back. The
+            # typing is paced on the terminal's ready, before the bureau's cue
+            # lets the demo's click take the focus.
             QmpStep(
                 r"terminal: ready",
                 dumps=("gpu0",),
@@ -417,10 +418,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 60, 200, 204, 204, 204),
                     ("gpu0", 500, 300, 204, 204, 204),
                 ),
-                press="aegir-echo 7\n",
+                press="aegir-print 7\n",
             ),
             QmpStep(
-                r"terminal: line aegir-echo 7",
+                r"terminal: line aegir-print 7",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 60, 200, 204, 204, 204),),

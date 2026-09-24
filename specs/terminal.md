@@ -1,14 +1,15 @@
 # terminal: the CON: handler, its window, and its line
 
-Status: decided (2026-09), and all three phases landed: the text surface
-(`TerminalBuffer`, `TerminalView`, the generated Unicode widths, BiDi
+Status: decided (2026-09), and it has landed through Phase 4: the text
+surface (`TerminalBuffer`, `TerminalView`, the generated Unicode widths, BiDi
 reordering), the terminal process with the line editor and the command line,
-and Phase 3 -- the `con.stream` port the terminal serves, the session's spawn
-kit auth delegates, and a command resolved to `Initrd:`, spawned, printed to
-the grid and reported. What remains is the shell as a separate process and
-`exit()` carrying its own status (`specs/shell.md`). This is the spec the
-terminal arc lands under —the Amiga `CON:` handler and the text surface the
-shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
+the `con.stream` port the terminal serves, the session's spawn kit auth
+delegates, and a command resolved to `Initrd:`, spawned out of a reclaimable
+pool, printed to the grid, and reported through the runtime that routes its
+fd 1/2 and its exit to the stream. What remains is the shell as a separate
+process, fd 0's queued input, and a command's own raw stream. This is the spec
+the terminal arc lands under —the Amiga `CON:` handler and the text surface
+the shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
 `CON:` handler" as future work and left them there; this is that work's first
 half.
 
@@ -218,6 +219,6 @@ grid and the prompt and the runner reads its window back; the runner then
 types a line at it through QMP, the shell resolves it to a command and the
 terminal spawns it with a caller copy of the console stream, and the runner
 reads the command's exit cue (`specs/shell.md`'s acceptance) -- the whole
-Phase 3 path, the output on the same grid the shell writes to. The arrow-key
-and history check, and the `exit()` that carries a status, wait for the next
+Phase 3 and 4 path, the output on the same grid the shell writes to. The
+arrow-key and history check, and a command's own raw stream, wait for the next
 arc.

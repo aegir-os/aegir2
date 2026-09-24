@@ -15,7 +15,8 @@
 # filesystem syscalls musl and std::filesystem make (specs/cxx.md step 5)
 # through aegir-vfs-client, so that library comes too. sel4runtime and the
 # policy ride along through aegir-mem, as they do for every library that
-# allocates.
+# allocates. aegir-console-protocol is the con.stream fd 0/1/2 route to
+# (specs/shell.md's Phase 4).
 #
 
 cmake_minimum_required(VERSION 3.16.0)
@@ -25,4 +26,4 @@ project(aegir-heap CXX)
 add_library(aegir-heap STATIC src/heap.cc src/files.cc src/time.cc)
 
 target_include_directories(aegir-heap PUBLIC include)
-target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client aegir-clock musl_full)
+target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client aegir-clock aegir-console-protocol musl_full)

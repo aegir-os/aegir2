@@ -129,10 +129,19 @@ this arc's record of the order.
   interims are recorded: the command's badge is a placeholder, not yet the
   session's user badge (which needs the process's own badge in the bootstrap
   block), and it holds only the console stream, no namespace or log.
-- **Phase 4 — standard input and output.** The runtime routes fd 0/1/2 to
-  the console stream instead of the debug serial and `-EBADF`, so `printf`
-  and `read` reach the grid and the keys. Until this lands, a command talks
-  to the console through Aegir's own API, not through libc.
+- **Phase 4 — standard input and output.** Landed for output and exit: the
+  hosted runtime routes fd 1/2 to the console stream when the process has one
+  (the debug serial otherwise, so every boot service is unchanged), so a
+  command's `printf` reaches the grid; and `exit(status)` reports the status
+  through the stream, so the shell's return-code line comes from the command's
+  own exit rather than from Aegir's API. `aegir-print` is the first command
+  that uses libc and nothing else. fd 0 is routed to the stream's poll but the
+  handler queues no input yet, and a command that wants the keyboard wants a
+  raw stream of its own -- the next piece, with per-client streams. Two
+  interims remain from Phase 3: a command's badge is still a placeholder (the
+  session's user badge needs the process's own badge in the bootstrap block),
+  and a command holds the console stream and its runtime untyped, no namespace
+  or log.
 - **Phase 5 — the DOS toolset.** `SetVar`/`GetVar`, the `ENV:` union and
   the environment archive (`specs/environment.md`).
 
@@ -153,13 +162,12 @@ this arc's record of the order.
 
 ## Acceptance
 
-Phase 3's, landed: the runner types `aegir-echo 7` at the prompt; the shell
-resolves it to `Initrd:aegir-echo`, the terminal reads its bytes, spawns it
-with a caller copy of the console stream, and the command prints its
-arguments to the grid and reports status 7. The runner reads the terminal's
-`terminal: line aegir-echo 7` and `terminal: command exited 7` cues, and the
-shell's `return code 7` line is on the same grid. The terminal window's pixels
-are read back too.
-
-Phase 4's is next: `exit()` carries the status itself and a command's fd 0/1/2
-reach the stream, so a program prints with libc rather than Aegir's own API.
+Phase 4's, landed: the runner types `aegir-print 7` at the prompt; the shell
+resolves it to `Initrd:aegir-print`, the terminal reads its bytes from
+`Initrd:`, spawns it out of a reclaimable command pool with a caller copy of
+the console stream, and the hosted command's `printf` reaches the grid through
+the runtime's fd 1 route while its `exit` reports status 7. The runner reads
+the `terminal: line aegir-print 7` and `terminal: command exited 7` cues, and
+the shell's `return code 7` line is on the same grid. The terminal window's
+pixels are read back too. fd 0's queued input, and a command's own raw stream,
+are the next piece.
