@@ -88,8 +88,9 @@ under `projects/ucd/unicode-16.0.0/`. The three table files
 come from there; a build-time generator
 (`scripts/gen_bidi_tables.py`, an `add_custom_command` like the Terminus font
 embed) emits the compact range tables. The two conformance files are pinned in
-the same place and the harness fetches them, so the version the algorithm is
-tested against is the version the tables were built from.
+the same place; `scripts/check_bidi.py` reads them from the fetched tree, so
+the version the algorithm is tested against is the version the tables were
+built from.
 
 The version is **16.0.0**, the one the UCD files above are pinned at; moving it
 is a pin change and a re-run of conformance, not a code change.
