@@ -299,6 +299,16 @@ void check_stream_wire()
                            aegir::console::kStreamBytesMax / 8 + 2);
     expect_int(answer, 0, "wire: read_line is empty with no line ready");
 
+    /* exit: a command reports its status and the stream stays open -- it is
+     * the shell's, and the command only inherited a copy. */
+    uint64_t exit_words[1] = {7};
+    server.handle(aegir::console::kStreamMethodExit, exit_words, 1, 7, reply, 1);
+    expect_int(server.command_finished(7) ? 1 : 0, 1, "wire: exit marks the command done");
+    expect_int(static_cast<int>(server.exit_status(7)), 7, "wire: exit records the status");
+    server.clear_command(7);
+    expect_int(server.command_finished(7) ? 1 : 0, 0, "wire: clear_command resets it");
+    expect_int(server.editor(7) == nullptr ? 0 : 1, 1, "wire: exit leaves the stream open");
+
     /* close: the stream is dropped. */
     uint64_t close_words[1] = {0};
     server.handle(aegir::console::kStreamMethodClose, close_words, 1, 7, reply, 1);

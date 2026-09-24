@@ -110,10 +110,14 @@ without the `libsel4utils` dependency:
   from the process's delegated untyped and mapped into its own VSpace
   (`Scratch::map_at`).
 - **The dispatcher answers** `SYS_brk`, `SYS_mmap`, `SYS_munmap`, `SYS_mremap`,
-  `SYS_madvise`, `SYS_write`, `SYS_writev` and `SYS_exit`/`exit_group`;
-  everything else is `-ENOSYS`, which musl reads as errno. `SYS_writev` matters
-  more than it looks: musl's `vfprintf` uses it, and without it libc++'s
-  verbose-abort message is lost and an abort looks silent.
+  `SYS_madvise`, `SYS_write`, `SYS_writev`, `SYS_readv` and
+  `SYS_exit`/`exit_group`; everything else is `-ENOSYS`, which musl reads as
+  errno. `SYS_writev` matters more than it looks: musl's `vfprintf` uses it, and
+  without it libc++'s verbose-abort message is lost and an abort looks silent.
+  `SYS_readv` matters the same way for input: musl's *buffered* `fread` reads
+  through it, so without it the runtime's `read` is right while every
+  `std::fread` returns zero bytes — an empty file rather than a missing
+  syscall. The shell's `Type` and its command loading are what found it.
 - **`munmap` is a no-op and `mremap` refuses.** The pages stay mapped — the
   address space is committed to the heap — and mallocng's groups reuse the small
   pieces. Returning frames to the kernel is a later refinement, not a

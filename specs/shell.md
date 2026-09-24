@@ -113,23 +113,22 @@ this arc's record of the order.
   in-process client for now; the `con.stream` port and the shell as a
   separate process need the spawn authority, so they land with Phase 3. This
   is the first slice a person can use, and it needs no spawn at all.
-- **Phase 3 — external commands.** Resolve a name to `Initrd:`, spawn it
-  with the console stream, wait, report the status. This needs the spawn
-  authority a session is meant to have and does not yet hold
-  (`specs/authority.md`: a session spawns user processes "as ordinary use").
-  That authority is the phase's real work. Landed so far: the `con.stream`
-  protocol and its handler-side server (`specs/terminal.md`), host-tested;
-  the decision that the terminal itself is the session's spawner -- the
-  request carries the shell's own current directory and parsed arguments, so
-  it must come from the terminal, not from auth; and the delegated kit auth
-  now gives the terminal (a spawn untyped, a copy of its ASID pool, and the
-  unbadged `spawn:` ports), which the terminal adopts into the toolkit's one
-  allocator and window -- a process has one VSpace root, so the toolkit owns
-  it and its hosted children build on it. The whole initrd is not mapped in:
-  it is 5.7 MiB and does not fit a child, so the shell reads the one
-  command's bytes from `Initrd:` and hands the spawner `binary_image`
-  (specs/authority.md's sizes). Next: a tiny command binary, then name
-  resolution and the status line.
+- **Phase 3 — external commands.** Landed. Resolve a name to `Initrd:`, spawn
+  it with the console stream, wait, report the status. The spawn authority a
+  session is meant to have (`specs/authority.md`: a session spawns user
+  processes "as ordinary use") is the terminal's, delegated by auth: a spawn
+  untyped, a copy of auth's ASID pool, and the unbadged `spawn:` ports, which
+  the terminal adopts into the toolkit's one allocator and window (a process
+  has one VSpace root). The name is read out of `Initrd:` through the
+  namespace as bytes and handed to the spawner as `binary_image` -- the whole
+  initrd is 5.7 MiB and does not fit a child. The command inherits a caller
+  copy of the shell's console stream, so its output lands on the same grid,
+  and reports its status through the stream's `exit` method (the interim
+  until `exit()` carries one, Phase 4); the shell prints the Amiga `return
+  code N` for a non-zero status. The first command is `aegir-echo`. Two
+  interims are recorded: the command's badge is a placeholder, not yet the
+  session's user badge (which needs the process's own badge in the bootstrap
+  block), and it holds only the console stream, no namespace or log.
 - **Phase 4 — standard input and output.** The runtime routes fd 0/1/2 to
   the console stream instead of the debug serial and `-EBADF`, so `printf`
   and `read` reach the grid and the keys. Until this lands, a command talks
@@ -154,14 +153,13 @@ this arc's record of the order.
 
 ## Acceptance
 
-Phase 2's, landed: auth starts the terminal beside the bureau at login, the
-runner types `echo hello` at the prompt through QMP (characters asserted
-through the console keymap, `specs/console.md`), and reads the shell's
-`terminal: line echo hello` cue — proof the keys crossed the console's keymap
-to the line editor and the shell parsed the line. The terminal window's
-pixels are read back too. `Dir` and `CD` are the same call path; a directory
-name typed as a command changes the current directory.
+Phase 3's, landed: the runner types `aegir-echo 7` at the prompt; the shell
+resolves it to `Initrd:aegir-echo`, the terminal reads its bytes, spawns it
+with a caller copy of the console stream, and the command prints its
+arguments to the grid and reports status 7. The runner reads the terminal's
+`terminal: line aegir-echo 7` and `terminal: command exited 7` cues, and the
+shell's `return code 7` line is on the same grid. The terminal window's pixels
+are read back too.
 
-Phase 3's adds one command: a name that resolves to an `Initrd:` binary is
-spawned, its output reaches the grid, and its non-zero exit prints the
-status line. Both are read from the same window the terminal owns.
+Phase 4's is next: `exit()` carries the status itself and a command's fd 0/1/2
+reach the stream, so a program prints with libc rather than Aegir's own API.

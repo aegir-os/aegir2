@@ -444,16 +444,52 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
 
 /* SYS_writev: what musl's stdio actually uses. Without it, vfprintf's output
  * (libc++'s verbose-abort message among it) is lost and the abort looks
- * silent. */
+ * silent. A standard stream goes to the debug console; any other fd is a file
+ * the filesystem arc opened (specs/cxx.md step 5). */
 long sys_writev(int fd, void const *iov, int count) noexcept
 {
-    if (fd != 1 && fd != 2) {
-        return -EBADF;
-    }
     auto const *vectors = static_cast<struct iovec const *>(iov);
+    if (fd != 1 && fd != 2) {
+        long total = 0;
+        for (int i = 0; i < count; ++i) {
+            long const wrote = files::write(fd, vectors[i].iov_base,
+                                            vectors[i].iov_len);
+            if (wrote < 0) {
+                return total > 0 ? total : wrote;
+            }
+            total += wrote;
+            if (static_cast<size_t>(wrote) < vectors[i].iov_len) {
+                break;
+            }
+        }
+        return total;
+    }
     long total = 0;
     for (int i = 0; i < count; ++i) {
         total += sys_write(fd, vectors[i].iov_base, vectors[i].iov_len);
+    }
+    return total;
+}
+
+/* SYS_readv: what musl's *buffered* input uses -- `fread`, and so every
+ * `std::fread` the toolkit's file code and the shell's Type and command
+ * loading make. Without it, the runtime's `read` is right and the stdio on
+ * top of it returns zero bytes, which reads as an empty file rather than as
+ * a missing syscall. One vector is the FILE's own buffer and the next the
+ * caller's; both are filled from the same fd, in order. */
+long sys_readv(int fd, void const *iov, int count) noexcept
+{
+    auto const *vectors = static_cast<struct iovec const *>(iov);
+    long total = 0;
+    for (int i = 0; i < count; ++i) {
+        long const got = files::read(fd, vectors[i].iov_base, vectors[i].iov_len);
+        if (got < 0) {
+            return total > 0 ? total : got;
+        }
+        total += got;
+        if (static_cast<size_t>(got) < vectors[i].iov_len) {
+            break;
+        }
     }
     return total;
 }
@@ -493,6 +529,10 @@ long vsyscall(long sysnum, ...) noexcept
     case 66: /* SYS_writev */
         ret = sys_writev(va_arg(ap, int), va_arg(ap, void const *),
                          va_arg(ap, int));
+        break;
+    case 65: /* SYS_readv */
+        ret = sys_readv(va_arg(ap, int), va_arg(ap, void const *),
+                        va_arg(ap, int));
         break;
     /* ---- the file calls (specs/cxx.md step 5): answered from aegir::vfs,
      * one function per syscall. The numbers are musl's riscv64 table

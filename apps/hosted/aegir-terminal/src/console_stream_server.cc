@@ -123,6 +123,27 @@ LineEditor* ConsoleStreamServer::editor(uint64_t caller)
     return s == nullptr ? nullptr : s->editor.get();
 }
 
+bool ConsoleStreamServer::command_finished(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s != nullptr && s->finished;
+}
+
+uint64_t ConsoleStreamServer::exit_status(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s == nullptr ? 0 : s->status;
+}
+
+void ConsoleStreamServer::clear_command(uint64_t caller)
+{
+    Stream* s = find(caller);
+    if (s != nullptr) {
+        s->finished = false;
+        s->status = 0;
+    }
+}
+
 uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
                                      uint32_t count, uint64_t caller, uint64_t* reply,
                                      uint32_t capacity)
@@ -194,6 +215,18 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
                 s->status = words[0];
             }
             streams_.erase(caller);
+        }
+        return 0;
+    }
+    case console::kStreamMethodExit: {
+        /* A command said it is done. The stream stays open -- it is the
+         * shell's -- and the status waits for the terminal to finalize. */
+        Stream* s = find(caller);
+        if (s != nullptr) {
+            if (count >= 1) {
+                s->status = words[0];
+            }
+            s->finished = true;
         }
         return 0;
     }

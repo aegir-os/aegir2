@@ -1,14 +1,14 @@
 # terminal: the CON: handler, its window, and its line
 
-Status: decided (2026-09), and its first two phases landed: the text surface
+Status: decided (2026-09), and all three phases landed: the text surface
 (`TerminalBuffer`, `TerminalView`, the generated Unicode widths, BiDi
-reordering) and the terminal process with the line editor and the command
-line. Phase 3 is under way: the `con.stream` protocol and its handler-side
-server now stand and are host-tested; the port itself, the spawn authority
-the shell's external commands need, and the shell as a separate process are
-what remain. This is the spec the terminal arc lands under —the Amiga `CON:`
-handler and the text surface the shell (a later arc, `specs/shell.md`) runs
-in. `specs/environment.md` named "the shell and a
+reordering), the terminal process with the line editor and the command line,
+and Phase 3 -- the `con.stream` port the terminal serves, the session's spawn
+kit auth delegates, and a command resolved to `Initrd:`, spawned, printed to
+the grid and reported. What remains is the shell as a separate process and
+`exit()` carrying its own status (`specs/shell.md`). This is the spec the
+terminal arc lands under —the Amiga `CON:` handler and the text surface the
+shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
 `CON:` handler" as future work and left them there; this is that work's first
 half.
 
@@ -116,6 +116,11 @@ port does not know is answered by saying nothing.
 - `close`. In: the status the client finished with, which the shell reports
   (specs/shell.md's `return code`). The stream is dropped and the handler
   forgets the line it was holding.
+- `exit`. In: the status a *command* finished with. The stream stays open --
+  it is the shell's, and a command inherited a copy -- so this is distinct
+  from `close`, and it is what the terminal finalizes on: the shell's status
+  line and its next prompt. This is the interim until `exit()` carries a
+  status itself (Phase 4); the command talks through Aegir's own API.
 - `get`/`set` attributes (`title`, `size`, later color). `size` answers the
   grid in columns and rows from the font metrics, which is what a program
   laying out columns needs.
@@ -210,7 +215,9 @@ whole-run and exact.
 
 On target, the terminal process (`apps/hosted/aegir-terminal`) renders the
 grid and the prompt and the runner reads its window back; the runner then
-types a line at it through QMP and reads the shell's cue for the parsed line
-(`specs/shell.md`'s acceptance). The `con.stream` port, the shell as a
-separate process, and the arrow/history check wait for the spawn arc, because
-until then the handler and the shell share one process.
+types a line at it through QMP, the shell resolves it to a command and the
+terminal spawns it with a caller copy of the console stream, and the runner
+reads the command's exit cue (`specs/shell.md`'s acceptance) -- the whole
+Phase 3 path, the output on the same grid the shell writes to. The arrow-key
+and history check, and the `exit()` that carries a status, wait for the next
+arc.

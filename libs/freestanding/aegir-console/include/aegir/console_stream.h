@@ -62,6 +62,14 @@ constexpr uint32_t kStreamMethodReadLine = 4;
  *  handler forgets the line it was holding. Answer: nothing. */
 constexpr uint32_t kStreamMethodClose = 5;
 
+/** A command's end-of-run report. In: the status it finished with. The stream
+ *  stays open -- it is the shell's, and a command inherits a copy -- so this
+ *  is distinct from `close`. It is the interim the spec records: a command
+ *  talks through Aegir's own API until `exit()` carries the status itself
+ *  (Phase 4), and this is where the shell's `return code` line gets its
+ *  number. Answer: nothing. */
+constexpr uint32_t kStreamMethodExit = 6;
+
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws
  *  itself (specs/terminal.md). */

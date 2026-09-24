@@ -89,14 +89,12 @@ std::string append_component(std::string const& base, std::string const& compone
 
 }  // namespace
 
-Shell::Shell(aegir::trinket::LineEditor& editor, aegir::trinket::TerminalBuffer& buffer,
-             std::function<void()> quit)
-    : editor_(editor), buffer_(buffer), quit_(std::move(quit)) {}
+Shell::Shell(ConsoleStreamServer& server, uint64_t stream, std::function<void()> quit)
+    : server_(server), stream_(stream), quit_(std::move(quit)) {}
 
 void Shell::print(std::string const& text)
 {
-    buffer_.write(text);
-    buffer_.scroll_to_bottom();
+    server_.write_local(stream_, text);
 }
 
 std::string Shell::current_directory() const
@@ -116,14 +114,14 @@ std::string Shell::prompt_for(std::string directory) const
 
 void Shell::refresh_prompt()
 {
-    editor_.set_prompt(prompt_for(current_directory()));
+    server_.set_prompt(stream_, prompt_for(current_directory()));
 }
 
 void Shell::start()
 {
+    server_.open_local(stream_, prompt_for(current_directory()));
     print("Aegir shell -- CD, Dir, Type, Echo, Quit\n");
-    refresh_prompt();
-    editor_.begin();
+    server_.begin(stream_);
 }
 
 std::string Shell::resolve(std::string const& arg) const
@@ -207,17 +205,16 @@ void Shell::command_type(std::string const& arg)
     char chunk[512];
     std::size_t const have = std::fread(chunk, 1, sizeof(chunk), file);
     if (have > 0) {
-        buffer_.write(std::string_view(chunk, have));
+        server_.write_local(stream_, std::string_view(chunk, have));
     }
     std::fclose(file);
-    buffer_.scroll_to_bottom();
 }
 
 void Shell::run_line(std::u32string const& line)
 {
     std::vector<std::string> const words = split_words(line);
     if (words.empty()) {
-        editor_.begin();
+        server_.begin(stream_);
         return;
     }
     std::string const command = to_lower(words[0]);
@@ -247,10 +244,27 @@ void Shell::run_line(std::u32string const& line)
          * directory becomes the current directory. */
         (void)change_directory(words[0]);
     } else {
+        /* Not a built-in and not a directory: a program, looked up by name
+         * (specs/shell.md). A started command leaves the shell busy; its exit
+         * draws the next prompt (command_finished). */
+        std::vector<std::string> const args(words.begin() + 1, words.end());
+        if (spawn_ && spawn_(words[0], args)) {
+            busy_ = true;
+            return;
+        }
         print("Unknown command: " + words[0] + "\n");
     }
 
-    editor_.begin();
+    server_.begin(stream_);
+}
+
+void Shell::command_finished(uint64_t status)
+{
+    busy_ = false;
+    if (status != 0) {
+        print("return code " + std::to_string(status) + "\n");
+    }
+    server_.begin(stream_);
 }
 
 } // namespace aegir::terminal

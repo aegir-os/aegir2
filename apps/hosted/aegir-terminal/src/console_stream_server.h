@@ -44,6 +44,13 @@ public:
     void begin(uint64_t caller);
     aegir::trinket::LineEditor* editor(uint64_t caller);
 
+    /* A command's end-of-run report (`kStreamMethodExit`): the shell's stream
+     * carries a status and a flag once a command has said it is done, which is
+     * what the terminal finalizes on. */
+    bool command_finished(uint64_t caller) const;
+    uint64_t exit_status(uint64_t caller) const;
+    void clear_command(uint64_t caller);
+
 private:
     struct Stream {
         uint32_t mode = 0;
@@ -51,6 +58,7 @@ private:
         std::u32string prompt;
         std::u32string pending;
         bool ready = false;
+        bool finished = false;
         uint64_t status = 0;
     };
 

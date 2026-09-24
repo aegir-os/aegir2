@@ -90,6 +90,17 @@ inline bool stream_close(aegir::ipc::Consumer const &port, uint64_t status) noex
     return answer.error == 0;
 }
 
+/** A command's end-of-run report: the status it finished with, without
+ *  closing the stream it shares with its shell. False when refused. */
+inline bool stream_exit(aegir::ipc::Consumer const &port, uint64_t status) noexcept
+{
+    uint64_t out[1] = {status};
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodExit, out, 1, in, 1);
+    return answer.error == 0;
+}
+
 }  // namespace aegir::console
 
 #endif  // AEGIR_CONSOLE_STREAM_CLIENT_H
