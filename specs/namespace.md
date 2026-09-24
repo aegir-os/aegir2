@@ -52,7 +52,9 @@ member's entries and neither reconstructs the merge.
   differently, so it is not foreclosed.
 - **The ownership model decides who may bind what.** While the namespace is
   open (`specs/vfs.md`), nothing checks the badge a binder binds; the check
-  lands with the ownership model. A union whose create target is a system
+  lands with the ownership model (`specs/ownership.md`), which gates `bind`
+  through the owner-aware resolve it already performs. A union whose create
+  target is a system
   archive is not a privilege escalation by itself: the binding says only where
   a write is attempted, and the archive's own authority decides whether it may
   land.

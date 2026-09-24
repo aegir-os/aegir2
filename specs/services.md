@@ -1108,8 +1108,8 @@ What was decided, and what it took:
   clamp.
 
 Still open, in the order they arrive: a shell on the input path, and
-resolve checks once volumes have an ownership model to check
-against. Session reclaim landed (`specs/auth.md`): auth observes the exit
+resolve checks once the ownership model lands (`specs/ownership.md`).
+Session reclaim landed (`specs/auth.md`): auth observes the exit
 where it already waited for the ready, reaps the badge's handles on every
 volume the namespace names, unbinds its aliases, and revokes the pool the
 session's objects were retyped from -- sixteen logins run and reclaim in

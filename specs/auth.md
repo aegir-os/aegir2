@@ -240,12 +240,15 @@ A login gives the session somewhere to be. The decisions:
   the session's `Home:` stands for, `Sys:Homes/<name>` by default. The
   database is the record of who the users are; where they live is part of
   who they are.
-- **auth ensures the home exists, then binds, then spawns.** On a
-  successful login: one `mkdir` of the row's home path through the
+- **auth ensures the home, makes it the user's, then binds, then spawns.**
+  On a successful login: one `mkdir` of the row's home path through the
   namespace (the volume protocol's `mmd` shape makes the whole chain one
-  call), one `bind` of the session's badge to `Home` → that path
-  (`specs/vfs.md`'s aliases), then the spawn as before. The order is the
-  point: the session never sees a `Home:` that does not resolve.
+  call); `Owner` and `Protect` on it so the directory is the user's and
+  owner-only; one `mount` of a view over it owned by the session's badge;
+  one `bind` of the session's badge to `Home` → that view
+  (`specs/vfs.md`'s aliases, `specs/ownership.md`); then the spawn as
+  before. The order is the point: the session never sees a `Home:` that does
+  not resolve, and never one that is not its own.
 - **A home that will not create does not stop the login.** The mkdir's
   failure is logged, the bind is made anyway, and the failure surfaces
   where it belongs: the session's first write into it is refused by the
