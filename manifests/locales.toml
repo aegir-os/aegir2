@@ -1,0 +1,16 @@
+# The locales Aegir ships, and the locale data compiled from CLDR.
+#
+# scripts/gen_locale_data.py reads this list and compiles one .locale blob per
+# locale (specs/locale.md). Adding a locale means adding a name here and the
+# CLDR files it needs to manifests/sources.toml; the generated catalog and the
+# toolkit's lookup grow with the list, so nothing in C++ enumerates locales.
+#
+# `default` is the blob a request that names no shipped locale resolves to.
+# CLDR 46.0.0 publishes no root locale in the cldr-json tree (only language
+# directories under main/), so for a field a language file leaves out the
+# generator uses the documented default rather than inheriting from root; the
+# nine languages here are complete for the fields compiled.
+
+default = "en"
+
+locales = ["en", "de", "fr", "es", "ja", "zh", "ar", "he", "ru"]

@@ -13,6 +13,8 @@
 /projects/noto-fonts/
 # The Unicode Character Database, a pinned file source (manifests/sources.toml).
 /projects/ucd/
+# The Common Locale Data Repository, also a pinned file source.
+/projects/cldr/
 /tools/seL4/
 /tools/opensbi/
 /tools/nanopb/

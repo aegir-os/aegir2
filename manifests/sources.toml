@@ -46,3 +46,71 @@ files = [
   { name = "BidiTest.txt", sha256 = "93e5eb9d88ca89dcf895f5576486a3363762ad2aa8f2db2fa56fe60cb82b9520" },
   { name = "BidiCharacterTest.txt", sha256 = "d04a51a90052dcd71c4e91ee5b3a9d973ee35c12406b5a99875ac8163c8f2804" },
 ]
+
+# The Common Locale Data Repository (CLDR), fetched as individually pinned
+# files under the cldr-json tree, the same shape as the UCD above. CLDR 46.0.0
+# is the release built on UCD 16.0.0. Nine languages carry number, currency,
+# date, list and layout data (scripts/gen_locale_data.py compiles them into the
+# toolkit's .locale blobs); plurals.json and numberingSystems.json are shared.
+# CLDR publishes no release signature for these files, so the sha256 is the
+# pin. CLDR data is redistributed under the Unicode License v3.
+#
+# CLDR's root locale is not published in cldr-json (only language directories
+# under main/), so the nine are pinned whole; the generator applies documented
+# defaults for any field a language file leaves out, which is what root would
+# have supplied.
+[[source]]
+name = "cldr"
+version = "46.0.0"
+path = "projects/cldr/46.0.0"
+base_url = "https://raw.githubusercontent.com/unicode-org/cldr-json/46.0.0/cldr-json/"
+license = "Unicode-3.0"
+files = [
+  { name = "cldr-numbers-full/main/en/numbers.json", sha256 = "0fb0816663dd8be96ab2ddf9a6733a6fb0d6e3cc2562fdd2d6ecd623c655920f" },
+  { name = "cldr-numbers-full/main/en/currencies.json", sha256 = "9029e17aa8f4f33a9358d00cb24b315f1046e4be92c9c0ac22a3a4155e05b023" },
+  { name = "cldr-dates-full/main/en/ca-gregorian.json", sha256 = "0d0eaf3fa57a60e247de08636fae9071349415b16bd910e18cabaa081d96ab12" },
+  { name = "cldr-misc-full/main/en/listPatterns.json", sha256 = "e68b0612a0c0f129836460c150bf58045a60a7516c9705e147f2192fce0449e8" },
+  { name = "cldr-misc-full/main/en/layout.json", sha256 = "fea6cfecc76dd8ef1ae9aa78bbf97c40ec29554476ae304f97c36554afb0b66c" },
+  { name = "cldr-numbers-full/main/de/numbers.json", sha256 = "fd50f9f270062cdf0be6cfa8326ac0abe67904e39c4d97bb03939d29ff5d9ac0" },
+  { name = "cldr-numbers-full/main/de/currencies.json", sha256 = "9765520521fbfe95b6d4c58adb2e5430e36f8d06d1d33e52586ef7c64f1f1744" },
+  { name = "cldr-dates-full/main/de/ca-gregorian.json", sha256 = "bad700a4ba2886856c89a2354c8a8845e43e0a0c9bb6537cb77986d6921d17c8" },
+  { name = "cldr-misc-full/main/de/listPatterns.json", sha256 = "d010586775f0e6db1f8c3e8dc76c3a34476c0623332a1f4076a9f490557e2e26" },
+  { name = "cldr-misc-full/main/de/layout.json", sha256 = "8c0431c66db0c3d410d13b581263eaa63b1d29bc773343db4a0c4ee6a55c91de" },
+  { name = "cldr-numbers-full/main/fr/numbers.json", sha256 = "42aad5bd2e23e74bd839bab9196b28b1de57a8bc11d900d7e466436eccd3da5a" },
+  { name = "cldr-numbers-full/main/fr/currencies.json", sha256 = "d868f2fe4be7f501e6a59587601ded13929370a6ecf8d719f58182d1bf62a600" },
+  { name = "cldr-dates-full/main/fr/ca-gregorian.json", sha256 = "ff2f88f3ed7c06cca43845e170776d22a2cc1fb952cdd236a07da5250d47260b" },
+  { name = "cldr-misc-full/main/fr/listPatterns.json", sha256 = "835c2f5f70461e277f95312105eafb4866c3973240aaf27160e7cfd42545286d" },
+  { name = "cldr-misc-full/main/fr/layout.json", sha256 = "67932d9be1ae4c720bbc2c57050671b77a4961931b9dff992cf0e79d33396a3b" },
+  { name = "cldr-numbers-full/main/es/numbers.json", sha256 = "68fd693fd8a9725324a9a15af9e6110d96c93a79bc0587cfb1fff97a5a839c2a" },
+  { name = "cldr-numbers-full/main/es/currencies.json", sha256 = "ee22f8f547963f0bf692597cf2466d7254defb3d91e7942bc1902698e1b7b35f" },
+  { name = "cldr-dates-full/main/es/ca-gregorian.json", sha256 = "4eb64321d36bf93c10cda50504bf691cf48156f7c6de0c0f3cee616b25fb34cc" },
+  { name = "cldr-misc-full/main/es/listPatterns.json", sha256 = "5cacc4173563fbf44da2db2192041683ca5f69b2a84258d423e7de6afe27660b" },
+  { name = "cldr-misc-full/main/es/layout.json", sha256 = "38ec6049f5fc9ea0929efc527f0e86d6f7e4b0854d3ee60ed2382500de97d070" },
+  { name = "cldr-numbers-full/main/ja/numbers.json", sha256 = "b9edb33efaa56087f5bd4a10e7adc0eeac80fa6027e6d58f84ecf4a6c3357f8b" },
+  { name = "cldr-numbers-full/main/ja/currencies.json", sha256 = "29f2052ae8637d08d9007bb3aa646fd9b660e93263966427514f478185604491" },
+  { name = "cldr-dates-full/main/ja/ca-gregorian.json", sha256 = "e9eb61b137a8c3b83a1ba6e390766fef01ab8b020e339167b63147341f483f98" },
+  { name = "cldr-misc-full/main/ja/listPatterns.json", sha256 = "0d7400d21f355b553abbe93a1777cc1925c108dcace2e3c22ab25b165d138cf7" },
+  { name = "cldr-misc-full/main/ja/layout.json", sha256 = "46289a3617adf8e9ebd2b8fb3e375751ad1ae52177151baf6df7e43c913c38cc" },
+  { name = "cldr-numbers-full/main/zh/numbers.json", sha256 = "2a9a10ec6cf340410101bafaf230b1fc2948900c49ba8e7d5f3e60aa12c96932" },
+  { name = "cldr-numbers-full/main/zh/currencies.json", sha256 = "823add93ff5a77a740fc81e821dd4c18e111aedf9e96101bb1a42f414ac7bf8b" },
+  { name = "cldr-dates-full/main/zh/ca-gregorian.json", sha256 = "bcee6fd7c0510832f1e7baae0e95522e411716a6aadfe73c76efbdd145750688" },
+  { name = "cldr-misc-full/main/zh/listPatterns.json", sha256 = "adb6da8f43fd929f9473d1bf23440698f06b111dc1030f13b83ced4f041cf1af" },
+  { name = "cldr-misc-full/main/zh/layout.json", sha256 = "b97ace6641113345f2d5248d295e83e510d26e5d760ac8c2d21aea75faa937ee" },
+  { name = "cldr-numbers-full/main/ar/numbers.json", sha256 = "ba4507645e466a7ca688144c2c636f7b37cce5cb1d6f25e355c71ef0c957fe53" },
+  { name = "cldr-numbers-full/main/ar/currencies.json", sha256 = "57206f77914092d942f9197f1869b3c02c450a3dd987fee419a8154c1607f721" },
+  { name = "cldr-dates-full/main/ar/ca-gregorian.json", sha256 = "a1e9ffd66698e9a9eba972dd6c9917d685cb784bf8bc494a38e4d3ad88096e94" },
+  { name = "cldr-misc-full/main/ar/listPatterns.json", sha256 = "5608752d565d9f84422309488fa9f386425e88408f8b9d9b324930114c690674" },
+  { name = "cldr-misc-full/main/ar/layout.json", sha256 = "598160a70f370a50c534a1575777c5b7c381c2fd1e9f9c64057cf651db1ef271" },
+  { name = "cldr-numbers-full/main/he/numbers.json", sha256 = "61c48e7ede0712acb5e495d4915b39f4d294b5c5c5e59efb826f2ea50803aec8" },
+  { name = "cldr-numbers-full/main/he/currencies.json", sha256 = "1bffdd5fddeae7438409f8cc84b39a7be3dddca898ac3a935d41135d2cb0f21f" },
+  { name = "cldr-dates-full/main/he/ca-gregorian.json", sha256 = "93665464ac012d610cc9352787421b5b5fb4b874191b25616d281eb859e02f46" },
+  { name = "cldr-misc-full/main/he/listPatterns.json", sha256 = "f8624fc81c4b54f46c6ea9e7172b6cd8c8741a62a87dc1c48557c3743c99bd1b" },
+  { name = "cldr-misc-full/main/he/layout.json", sha256 = "8566b28706d3cb2459ce1644e13b6e80a7b0759765d56da1271b43b91d948630" },
+  { name = "cldr-numbers-full/main/ru/numbers.json", sha256 = "a0b97a6e54244181caca639c5f254bf2f75e163f2cca80d592f9b282caeaf083" },
+  { name = "cldr-numbers-full/main/ru/currencies.json", sha256 = "1c526037ad55aa3364572902b819b615a54198aca776c8aabb12acc4ffafebbe" },
+  { name = "cldr-dates-full/main/ru/ca-gregorian.json", sha256 = "c2735c56482c92ca7a6bcb2c08e66421e405d02abe0074ca52a3b5ccd10fc916" },
+  { name = "cldr-misc-full/main/ru/listPatterns.json", sha256 = "defb1a77756d628416c94309b7b9e02bedca012a75cb4283d02881bb0c4fff35" },
+  { name = "cldr-misc-full/main/ru/layout.json", sha256 = "868c9d08bb855a7a979df8f46e2cf54b85731bb82314dadd4ecaf7a948ed02c6" },
+  { name = "cldr-core/supplemental/plurals.json", sha256 = "ce19668400e9f7904e8b3939d1f0a2872fe8da7bdea9f45f5d50b3a2bac3b382" },
+  { name = "cldr-core/supplemental/numberingSystems.json", sha256 = "213dab3fa71e00b52bd5ad091cf79f12602968d1482f1a15889a29984ea5c4ac" },
+]
