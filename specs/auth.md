@@ -196,10 +196,23 @@ A successful login starts a session. The decisions, taken 2026-09:
   the terminal's serial is the bureau's plus one. The terminal is spawned
   second, so its window is created over the backdrop; it gets the namespace
   and the user's Home, as the bureau does. The session pool grew from 2 to
-  8 MiB -- the two hosted images are near a megabyte each -- and the
+  16 MiB -- the two hosted images are near a megabyte each -- and the
   console's memory grant from 16 to 64 MiB, because the console retypes each
   client's slice from it, and a slice is the screen-bounded maximum the
   window may resize to.
+- **Auth delegates the terminal's spawn kit; the terminal runs the
+  commands.** A session runs user processes as ordinary use
+  (`specs/authority.md`), and the terminal is the process that does: it
+  holds the current directory and parses the line, so only it can build the
+  request. Auth hands it a 2 MiB spawn untyped -- the commands are retyped
+  from it -- a copy of auth's ASID pool, and the unbadged `spawn:log.main`
+  and `spawn:vfs.namespace` copies its commands' own caps are minted from
+  (an unbadged copy, because a badged endpoint cap cannot be minted again).
+  It does not hand over the initrd: it is 5.7 MiB and does not fit a child,
+  so the shell reads a command's bytes from `Initrd:` through the namespace
+  and passes `Request.binary_image`. Auth's own stack grew to 32 KiB: the
+  session start is stack-hungry (the home arc's path buffers, the spawn's
+  frames), and the terminal's kit tipped an already-tight 8 KiB over.
 
 ## Session reclaim
 

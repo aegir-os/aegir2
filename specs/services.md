@@ -108,6 +108,7 @@ restart   = always
 | `args` | no | the arguments after `argv[0]` (which is the service's name); a list, never a shell |
 | `environment` | no | the `NAME=VALUE` items it starts with, comma separated (specs/environment.md) |
 | `cwd` | no | its current directory, a VFS path; absent means none (specs/environment.md) |
+| `stack_kib` | no | the stack the process is given, in KiB, rounded up to whole pages; absent means the floor (8 KiB, `aegir-spawn`'s `kDefaultStackPages`) — a C++ program asks for more (specs/cxx.md, specs/auth.md) |
 
 ### Validation, and failing loudly
 

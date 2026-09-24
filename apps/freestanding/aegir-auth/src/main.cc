@@ -88,13 +88,14 @@ seL4_CPtr g_home_slot = 0;
  * charged, and the grant grows when that says so. It holds the bureau's own
  * untyped besides the spawn's objects, and the bureau is a toolkit app now
  * (its heap and its font), so it is 2 MiB of the delegation. */
-constexpr uint32_t kSessionPoolBits = 23; /* 8 MiB of the delegation: the
-                                           * bureau and the terminal each
-                                           * carve a 1 MiB untyped, and their
-                                           * two images are mapped from the
-                                           * rest -- a hosted terminal is
-                                           * near a megabyte with libc++ and
-                                           * the filesystem. */
+constexpr uint32_t kSessionPoolBits = 24; /* 16 MiB of the delegation: two
+                                           * toolkit children (each with its
+                                           * own 1 MiB untyped and a near-
+                                           * megabyte image) and the terminal's
+                                           * 2 MiB spawn untyped -- a
+                                           * service-sized 8 MiB pool left too
+                                           * little for the terminal's own
+                                           * objects. */
 seL4_CPtr g_session_pool = 0;
 uint64_t g_session_pool_physical = 0;
 
@@ -592,6 +593,16 @@ void start_session(uint32_t user, bool bureau) noexcept
             g_session_mem.carve_untyped(kBureauUntypedBits, session_account,
                                         &terminal_untyped_error,
                                         &terminal_untyped_physical);
+        /* The spawn untyped: the session's commands are retyped from it by the
+         * terminal itself (specs/shell.md, specs/authority.md). 2 MiB because
+         * the whole initrd is copied into the terminal -- it resolves commands
+         * by any name, so it needs every image, not one helper's bytes. */
+        constexpr uint32_t kTerminalSpawnUntypedBits = 21;
+        seL4_Error terminal_spawn_error = seL4_NoError;
+        uint64_t terminal_spawn_physical = 0;
+        seL4_CPtr const terminal_spawn_untyped =
+            g_session_mem.carve_untyped(kTerminalSpawnUntypedBits, session_account,
+                                        &terminal_spawn_error, &terminal_spawn_physical);
         aegir::spawn::PortGrant const terminal_ports[] = {
             {aegir::log::kPortName, aegir::log::kPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, g_spawn_log,
@@ -606,6 +617,19 @@ void start_session(uint32_t user, bool bureau) noexcept
              * does: the capability entry is what adopt_memory looks up. */
             {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3,
              terminal_untyped, seL4_AllRights, 0, kBureauUntypedBits},
+            /* The spawn kit (specs/shell.md): the memory the session's commands
+             * come out of, the ASID pool their address spaces come from, and
+             * the unbadged copies their own log and namespace caps are minted
+             * from. An unbadged copy is what a spawning parent needs, because a
+             * badged endpoint cap cannot be minted again (specs/authority.md). */
+            {"spawn-untyped", 13, aegir::bootstrap::kSlotFirstDeclared + 4,
+             terminal_spawn_untyped, seL4_AllRights, 0, kTerminalSpawnUntypedBits},
+            {"asid-pool", 9, aegir::bootstrap::kSlotFirstDeclared + 5, g_asid_pool,
+             seL4_AllRights, 0, 0},
+            {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
+             seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+            {"spawn:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
+             g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
         };
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
@@ -621,7 +645,10 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_request.cwd_length = sizeof(kHomeCwd) - 1;
         terminal_request.priority = seL4_MaxPrio - 2;
         terminal_request.ports = terminal_ports;
-        terminal_request.port_count = 4;
+        /* The spawn kit's four entries are dead when the carve failed: the
+         * count keeps them out, the terminal runs without a spawner, and it
+         * says so rather than failing to start. */
+        terminal_request.port_count = terminal_spawn_untyped != 0 ? 8 : 4;
         terminal_request.fault_endpoint = terminal_fault;
         terminal_request.badge = terminal_badge;
         terminal_request.give_vspace = true;
@@ -632,6 +659,12 @@ void start_session(uint32_t user, bool bureau) noexcept
             !spawner.spawn(terminal_request, session_account, terminal_process)) {
             write("      auth: FAIL spawning the terminal: ");
             write(spawner.problem());
+            char const *const detail = spawner.detail();
+            if (detail != nullptr && detail[0] != '\0') {
+                write(" (");
+                write(detail);
+                write(")");
+            }
             write("\n");
         } else {
             write("      auth: the terminal is up\n");

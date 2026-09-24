@@ -468,11 +468,19 @@ portable one, and a driver that finds no pair polls.
 - The partition manager's own untyped is **1 MiB**: each filesystem child costs
   its image copy (~180 KiB), its objects, and a 64 KiB window set of its own, so
   two partitions already ask for most of a megabyte.
-- The whole initrd is **not** delegated: 1.2 MiB does not fit a service-sized
-  delegation, so a service that starts one known helper is handed that helper's image
-  as a blob, and `spawn::Request.binary_image` reads bytes instead of an archive. The
+- The whole initrd is **not** delegated: at 5.7 MiB it does not fit a
+  service-sized delegation (it was 1.2 MiB when that was measured), so a
+  service that starts one known helper is handed that helper's image as a
+  blob, and `spawn::Request.binary_image` reads bytes instead of an archive. The
   day a service starts helpers it cannot name in advance, the answer is a narrower
-  initrd, not a bigger delegation.
+  initrd, not a bigger delegation. The session's terminal is that day's first
+  case -- it starts commands it cannot name in advance -- and it still is not
+  handed the initrd: the shell reads the one command's bytes from `Initrd:`
+  through the namespace and passes `binary_image` (specs/shell.md).
+- A session's terminal is delegated a **2 MiB spawn untyped** and a copy of
+  auth's ASID pool, and auth's delegation is **32 MiB** with a **16 MiB**
+  session pool (specs/auth.md); the terminal adopts the untyped into the
+  toolkit's allocator, because a process has one VSpace root and one window.
 - Badges for a service's spawned children count from **256** for the device manager's
   (the low badges are director's boot set), from **512** for the partition
   manager's, and from **768** for auth's -- the greeter is auth's system child

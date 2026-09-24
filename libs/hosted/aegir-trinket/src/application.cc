@@ -345,8 +345,15 @@ void Application::set_gui_port(aegir::ipc::Consumer port) {
     gui_port_ = port;
 }
 
-uint64_t Application::claim_backing(uint64_t bytes) {
-    if (slice_ == nullptr || bytes == 0) return ~0ull;
+aegir::mem::Allocator& Application::allocator() {
+    return g_objects;
+}
+
+aegir::mem::Scratch& Application::scratch() {
+    return g_scratch;
+}
+
+uint64_t Application::claim_backing(uint64_t bytes) {    if (slice_ == nullptr || bytes == 0) return ~0ull;
     /* The ring is the slice's last page and belongs to the console. */
     uint64_t const limit = slice_bytes_ - aegir::console::kEventRingBytes;
     if (backing_next_ + bytes > limit) return ~0ull;

@@ -17,6 +17,7 @@
  */
 
 #include "shell.h"
+#include "spawn_kit.h"
 
 #include <aegir/bootstrap.h>
 #include <aegir/console.h>
@@ -61,6 +62,17 @@ int main(int argc, char *argv[])
     }
 
     Application& app = Application::create(argc, argv);
+
+    /* The authority to start the session's commands (specs/authority.md,
+     * specs/shell.md): auth delegates it, the terminal adopts it into the
+     * toolkit's one allocator. A failure here turns external commands off and
+     * leaves the built-in command line working. */
+    aegir::terminal::SpawnKit spawn_kit;
+    if (spawn_kit.adopt(app)) {
+        write("  terminal: spawn kit ready\n");
+    } else {
+        write("  terminal: no spawn kit -- external commands are off\n");
+    }
 
     aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
         aegir::console::kPortName, aegir::console::kPortNameLength);

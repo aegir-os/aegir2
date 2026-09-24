@@ -118,13 +118,18 @@ this arc's record of the order.
   authority a session is meant to have and does not yet hold
   (`specs/authority.md`: a session spawns user processes "as ordinary use").
   That authority is the phase's real work. Landed so far: the `con.stream`
-  protocol and its handler-side server (`specs/terminal.md`), host-tested, and
+  protocol and its handler-side server (`specs/terminal.md`), host-tested;
   the decision that the terminal itself is the session's spawner -- the
   request carries the shell's own current directory and parsed arguments, so
-  it must come from the terminal, not from auth. Next: auth delegates the
-  terminal its spawn kit (a spawn untyped, an ASID-pool copy, the initrd and
-  the unbadged `spawn:` ports), the toolkit exposes the one address window it
-  already adopted, and the terminal spawns a command.
+  it must come from the terminal, not from auth; and the delegated kit auth
+  now gives the terminal (a spawn untyped, a copy of its ASID pool, and the
+  unbadged `spawn:` ports), which the terminal adopts into the toolkit's one
+  allocator and window -- a process has one VSpace root, so the toolkit owns
+  it and its hosted children build on it. The whole initrd is not mapped in:
+  it is 5.7 MiB and does not fit a child, so the shell reads the one
+  command's bytes from `Initrd:` and hands the spawner `binary_image`
+  (specs/authority.md's sizes). Next: a tiny command binary, then name
+  resolution and the status line.
 - **Phase 4 — standard input and output.** The runtime routes fd 0/1/2 to
   the console stream instead of the debug serial and `-EBADF`, so `printf`
   and `read` reach the grid and the keys. Until this lands, a command talks

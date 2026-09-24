@@ -16,18 +16,19 @@ project(aegir-terminal CXX)
 
 if(AEGIR_TOOLKIT)
   add_executable(aegir-terminal-app src/main.cc src/shell.cc
-                                     src/console_stream_server.cc)
+                                     src/console_stream_server.cc src/spawn_kit.cc)
 
   target_compile_options(aegir-terminal-app PRIVATE -Wall -Wextra -Werror)
 
   # The bureau's link shape: the hosted policy (libc++), the toolkit, the
   # runtime, and the console window protocol it speaks. aegir-heap is the
   # hosted runtime's file layer, which std::filesystem and the shell's Dir and
-  # Type calls reach the VFS through (specs/cxx.md step 5).
+  # Type calls reach the VFS through (specs/cxx.md step 5). aegir-spawn is the
+  # terminal's own: it starts the session's commands (specs/shell.md).
   target_link_libraries(
     aegir-terminal-app PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-trinket aegir-runtime
                               aegir-bootstrap aegir-ipc aegir-log aegir-console-protocol aegir-mem
-                              aegir-heap sel4 sel4runtime
+                              aegir-spawn aegir-heap sel4 sel4runtime
   )
 else()
   # No toolkit yet: a placeholder keeps director's manifest validation

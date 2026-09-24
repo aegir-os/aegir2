@@ -18,6 +18,11 @@
 #include <memory>
 #include <vector>
 
+namespace aegir::mem {
+class Allocator;
+class Scratch;
+}
+
 namespace aegir::trinket {
 
 class Window;
@@ -125,6 +130,15 @@ public:
     uint8_t* slice() const { return slice_; }
     uint64_t slice_bytes() const { return slice_bytes_; }
     uint64_t claim_backing(uint64_t bytes);
+
+    // The memory kit the process adopted at create(): the allocator its
+    // objects come from and the scratch window over the one address window it
+    // has. A hosted process that spawns (specs/authority.md) builds on these,
+    // because a process has one VSpace root and the toolkit already owns the
+    // window; the caller brings its own delegated untyped and uses the same
+    // allocator and slot range.
+    aegir::mem::Allocator& allocator();
+    aegir::mem::Scratch& scratch();
 
     // Font loading from resources
     std::unique_ptr<Font> load_font(std::string_view family, int size_pts);
