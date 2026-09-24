@@ -154,10 +154,14 @@ this arc's record of the order.
 - **Phase 5 — the DOS toolset.** `Set`/`SetVar` and `Get`/`GetVar` over
   `aegir::environment` (`specs/environment.md`): the shell's own variables,
   which a spawned command inherits because the shell passes its environment on
-  (`environ()`), so `Set exitcode 9` then `aegir-print` exits 9. Landed. The
-  persistent half -- the `ENV:` union and the `Sys:`/`Home:` `Prefs/Env-Archive`
-  files, so a variable survives a login -- is the next piece, with the union
-  binding `specs/namespace.md` defines.
+  (`environ()`), so `Set exitcode 9` then `aegir-print` exits 9. Landed, with
+  the persistent half: `auth` binds `ENV:` -- the union of the user's
+  `Prefs/Env-Archive` (first, the create target) and the system's -- and the
+  shell reads the merged view once at startup (`load_environment`) into
+  `aegir::environment`. `Set` writes the variable to `ENV:<name>`, so a create
+  lands in the user's archive; `Type ENV:exitcode` reads it back through the
+  union. The system archive ships in the image, so a session's first command
+  already knows `exitcode`.
 - **Phase 6 — the shell as its own process.** Landed. `aegir-shell` opens a
   cooked stream on the terminal's `con.stream`, passes its own doorbell on
   `open`, and loops: `read_line`, run the built-ins, and for a command ask the
@@ -203,8 +207,18 @@ Phase 5's, landed for the in-memory half: the runner types `set exitcode 9`,
 then `aegir-print` with no argument once the demo has closed (the runner fires
 steps by cue, so the demo's zoom would take the focus mid-typing); the command
 inherits `exitcode=9` from the shell and exits 9, which the terminal's
-`command exited 9` cue reports. `Get` prints the value to the grid; the
-`ENV:` union and the archive files are the next piece.
+`command exited 9` cue reports. `Get` prints the value to the grid.
+
+The persistent half is the same run's first and third commands. The system
+archive ships with `exitcode` 11, so the shell's startup read loads it through
+the union and the very first command -- `aegir-print`, before any `Set` --
+exits 11; the 11 can only have come from `Sys:Prefs/Env-Archive`. The runner
+then types `set exitcode 9`, `type ENV:exitcode` and `aegir-print`: the Set
+writes the variable to the user's archive (the create target) and the Type
+reads it back through the union, and the command inherits the override and
+exits 9. That the shell resolves `ENV:` at all proves its namespace carries the
+session's badge: `auth` grants the terminal a `shell:vfs.namespace` copy badged
+with the session, and the terminal moves it to the shell.
 
 Phase 6's is the same run: every line the runner types is read by `aegir-shell`
 in its own process and every command is one the terminal started on its

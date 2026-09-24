@@ -198,8 +198,13 @@ def qmp_command(socket_path: Path, command: dict) -> dict:
 
 # The characters the acceptance script types, as QEMU's qcodes: a lowercase
 # letter or a digit is its own name, and the three whitespaces are QEMU's.
-# Anything else would need a shift chord, and no step types one yet.
-_PRESS_QCODES = {"\t": "tab", "\n": "ret", " ": "spc", "-": "minus"}
+# A shifted character is a chord (_PRESS_CHORDS) or a shift plus its base key.
+_PRESS_QCODES = {"\t": "tab", "\n": "ret", " ": "spc", "-": "minus",
+                 "/": "slash", ".": "dot", ",": "comma"}
+
+# A character that needs a shift chord: QEMU's send-key holds the whole list
+# down together, so a chord is one call. Only what a step types is here.
+_PRESS_CHORDS = {":": ("shift", "semicolon")}
 
 # The keys that are not characters, spelled between angle brackets in a step's
 # `press` -- the editor's arrows and editing keys (specs/terminal.md). A token
@@ -228,7 +233,7 @@ def send_key(socket_path: Path, keys: str) -> bool:
     with no character -- an arrow, Backspace -- is `<name>` (_PRESS_KEYS).
     False -- and nothing sent -- when a key has no qcode, because half a typed
     password is worse than none."""
-    qcodes: list[str] = []
+    qcodes: list[tuple[str, ...]] = []
     index = 0
     while index < len(keys):
         if keys[index] == "<":
@@ -238,20 +243,31 @@ def send_key(socket_path: Path, keys: str) -> bool:
             name = keys[index + 1 : end]
             if name not in _PRESS_KEYS:
                 return False
-            qcodes.append(_PRESS_KEYS[name])
+            qcodes.append((_PRESS_KEYS[name],))
             index = end + 1
             continue
         char = keys[index]
+        if char in _PRESS_CHORDS:
+            qcodes.append(_PRESS_CHORDS[char])
+            index += 1
+            continue
+        if char.isupper():
+            qcodes.append(("shift", char.lower()))
+            index += 1
+            continue
         qcode = _PRESS_QCODES.get(char, char)
         if not ((len(qcode) == 1 and (qcode.islower() or qcode.isdigit())) or
                 qcode in _PRESS_QCODES.values()):
             return False
-        qcodes.append(qcode)
+        qcodes.append((qcode,))
         index += 1
     for qcode in qcodes:
         qmp_command(
             socket_path,
-            {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": qcode}]}},
+            {
+                "execute": "send-key",
+                "arguments": {"keys": [{"type": "qcode", "data": q} for q in qcode]},
+            },
         )
         # The guest's input queue is eight descriptors deep
         # (libs/aegir-virtio's kQueueSize) and QEMU drops what does not fit:

@@ -196,6 +196,41 @@ uint32_t field_length(char const *field, uint32_t field_bytes) noexcept
     return held;
 }
 
+/* A directory the user owns (specs/ownership.md): mkdir, which makes every
+ * missing component on the way (the mmd shape), then Owner and Protect 0700,
+ * so the directory is the user's and only the user may write in it. The home
+ * and the home's environment archive are both made this way. */
+bool make_owned_dir(aegir::ipc::Consumer const &volume, char const *path,
+                    uint32_t path_length, uint32_t user) noexcept
+{
+    uint64_t mout[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const mout_words = aegir::nmspace::pack_string(
+        mout, path, path_length, aegir::nmspace::kPathMax);
+    uint64_t min[1];
+    aegir::ipc::WordsReply const made = volume.call_words(
+        aegir::volume::kMethodMkdir, mout, mout_words, min, 1);
+    if (made.error != 0 || made.count != 1 || min[0] != 1) {
+        return false;
+    }
+    uint64_t owords[aegir::nmspace::kPathMax / 8 + 3];
+    uint32_t ow = aegir::nmspace::pack_string(
+        owords, path, path_length, aegir::nmspace::kPathMax);
+    owords[ow++] = user;
+    owords[ow++] = user;
+    uint64_t oin[1];
+    aegir::ipc::WordsReply const owned = volume.call_words(
+        aegir::metadata::kMethodOwner, owords, ow, oin, 1);
+    uint64_t pwords[aegir::nmspace::kPathMax / 8 + 2];
+    uint32_t pw = aegir::nmspace::pack_string(
+        pwords, path, path_length, aegir::nmspace::kPathMax);
+    pwords[pw++] = 0700;
+    uint64_t pin[1];
+    aegir::ipc::WordsReply const protected_ = volume.call_words(
+        aegir::metadata::kMethodProtect, pwords, pw, pin, 1);
+    return owned.error == 0 && oin[0] == aegir::metadata::kOk &&
+           protected_.error == 0 && pin[0] == aegir::metadata::kOk;
+}
+
 /* The home arc (specs/auth.md's Homes), run after the answer and before
  * the spawn: the row's home path is ensured -- one mkdir, the mmd shape --
  * and the session's badge is bound to Home:. The order is the point: the
@@ -228,36 +263,30 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
                                           &rest, &rest_length) &&
             aegir::ipc::take_received_cap(g_home_slot)) {
             aegir::ipc::Consumer const volume(g_home_slot);
-            uint64_t mout[aegir::nmspace::kPathMax / 8 + 1];
-            uint32_t const mout_words = aegir::nmspace::pack_string(
-                mout, rest, rest_length, aegir::nmspace::kPathMax);
-            uint64_t min[1];
-            aegir::ipc::WordsReply const answered = volume.call_words(
-                aegir::volume::kMethodMkdir, mout, mout_words, min, 1);
-            made = answered.error == 0 && answered.count == 1 && min[0] == 1;
             /* The directory belongs to the user and to no one else
-             * (specs/ownership.md): Owner makes it theirs, Protect 0700. The
-             * view is the namespace's half; without these it stays the
-             * system's and a second user reaching it through Sys: would
-             * enter. */
-            uint64_t owords[aegir::nmspace::kPathMax / 8 + 3];
-            uint32_t ow = aegir::nmspace::pack_string(
-                owords, rest, rest_length, aegir::nmspace::kPathMax);
-            owords[ow++] = user;
-            owords[ow++] = user;
-            uint64_t oin[1];
-            aegir::ipc::WordsReply const owned = volume.call_words(
-                aegir::metadata::kMethodOwner, owords, ow, oin, 1);
-            uint64_t pwords[aegir::nmspace::kPathMax / 8 + 2];
-            uint32_t pw = aegir::nmspace::pack_string(
-                pwords, rest, rest_length, aegir::nmspace::kPathMax);
-            pwords[pw++] = 0700;
-            uint64_t pin[1];
-            aegir::ipc::WordsReply const protected_ = volume.call_words(
-                aegir::metadata::kMethodProtect, pwords, pw, pin, 1);
-            if (owned.error != 0 || oin[0] != aegir::metadata::kOk ||
-                protected_.error != 0 || pin[0] != aegir::metadata::kOk) {
+             * (specs/ownership.md). The view is the namespace's half; without
+             * the ownership it stays the system's and a second user reaching
+             * it through Sys: would enter. */
+            made = make_owned_dir(volume, rest, rest_length, user);
+            if (!made) {
                 write("      auth: FAIL the home would not be owned\n");
+            }
+            /* The home's environment archive (specs/environment.md): the
+             * directory ENV: unions and a Set lands in. The same ownership,
+             * so only the user may write in it. */
+            if (made) {
+                char archive[aegir::nmspace::kPathMax];
+                uint32_t archive_length = rest_length;
+                for (uint32_t i = 0; i < rest_length; ++i) {
+                    archive[i] = rest[i];
+                }
+                static char const kArchiveTail[] = "/Prefs/Env-Archive";
+                for (uint32_t i = 0; i < sizeof(kArchiveTail) - 1; ++i) {
+                    archive[archive_length++] = kArchiveTail[i];
+                }
+                if (!make_owned_dir(volume, archive, archive_length, user)) {
+                    write("      auth: FAIL the environment archive would not be made\n");
+                }
             }
             seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
                               aegir::bootstrap::kCNodeBits);
@@ -321,6 +350,37 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
         g_nmspace.call_words(aegir::nmspace::kMethodBind, out, out_words, in, 1);
     if (bound.error != 0 || bound.count != 1 || in[0] != 1) {
         write("      auth: FAIL the Home: bind was refused\n");
+    }
+
+    /* ENV: (specs/environment.md): the union of the user's archive -- first,
+     * so its settings override, and the create target -- and the system's
+     * base. Bound after Home:, because its first member is a Home: path. */
+    static char const kEnvHome[] = "Home:Prefs/Env-Archive";
+    static char const kEnvSys[] = "Sys:Prefs/Env-Archive";
+    uint64_t env_out[2 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
+    uint64_t env_in[1];
+    env_out[0] = badge;
+    env_out[1] = aegir::nmspace::kBindCreate;
+    uint32_t env_words = 2;
+    env_words += aegir::nmspace::pack_string(env_out + env_words, "ENV", 3,
+                                             aegir::nmspace::kNameMax);
+    env_words += aegir::nmspace::pack_string(env_out + env_words, kEnvHome,
+                                             sizeof(kEnvHome) - 1,
+                                             aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const env_first = g_nmspace.call_words(
+        aegir::nmspace::kMethodBind, env_out, env_words, env_in, 1);
+    env_out[1] = aegir::nmspace::kBindAppend;
+    env_words = 2;
+    env_words += aegir::nmspace::pack_string(env_out + env_words, "ENV", 3,
+                                             aegir::nmspace::kNameMax);
+    env_words += aegir::nmspace::pack_string(env_out + env_words, kEnvSys,
+                                             sizeof(kEnvSys) - 1,
+                                             aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const env_second = g_nmspace.call_words(
+        aegir::nmspace::kMethodBind, env_out, env_words, env_in, 1);
+    if (env_first.error != 0 || env_first.count != 1 || env_in[0] != 1 ||
+        env_second.error != 0 || env_second.count != 1 || env_in[0] != 1) {
+        write("      auth: FAIL the ENV: bind was refused\n");
     }
 }
 
@@ -642,8 +702,12 @@ void start_session(uint32_t user, bool bureau) noexcept
              seL4_AllRights, 0, 0},
             {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
              seL4_CapRights_new(1, 0, 0, 1), 0, 0},
-            {"spawn:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
-             g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
+            /* The shell's namespace: badged with the terminal's own badge, so
+             * the shell resolves the session's Home: and ENV: -- the aliases
+             * auth bound for that badge. The terminal moves it to the shell,
+             * which inherits the session's namespace identity (specs/shell.md). */
+            {"shell:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
+             g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
             {"shell-pool", 10, aegir::bootstrap::kSlotFirstDeclared + 8,
              terminal_shell_pool, seL4_AllRights, 0, kTerminalShellPoolBits},
         };

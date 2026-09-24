@@ -79,6 +79,8 @@ uses:
 - **list** — every member's `list` for the path, in order, merged; a name an
   earlier member returned is not returned again.
 - **read** — the first member that has the path.
+- **stat** — the first member that has the path, so the union is a directory a
+  client can see.
 - **open** with `create`, and **mkdir** — the create target.
 - **remove** — the first member that has the path.
 
@@ -107,10 +109,12 @@ cannot land half-way (all six are landed):
    prepends or replaces; `unbind` drops the list. `find_binding` and the
    single-member case are unchanged.
 3. **The union volume** -- the substantial piece. The VFS creates a port and
-   **serves the volume protocol on it** (`aegir/volume.h`: read, list, open,
-   write, close, mkdir, remove), forwarding to the members: list merges (a name
-   an earlier member has wins), read and remove take the first member that has
-   the path, open-with-create and mkdir go to the create target.
+   **serves the volume protocol on it** (`aegir/volume.h`: read, list, stat,
+   open, write, close, mkdir, remove), forwarding to the members: list merges (a
+   name an earlier member has wins), read, stat and remove take the first member
+   that has the path, open-with-create and mkdir go to the create target. `stat`
+   is what lets a client's `is_directory` and `exists` see the union, so a
+   `directory_iterator` works.
 
    The port is the **namespace endpoint itself**, not a new one: a single
    thread cannot `seL4_Recv` on two endpoints, and polling a second one is a

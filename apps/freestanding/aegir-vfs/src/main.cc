@@ -1276,6 +1276,32 @@ void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
     port.reply_words(nullptr, 0);
 }
 
+/* stat, forwarded: the first member that has the path, so a client's
+ * is_directory and exists see the union (specs/namespace.md's read rule). */
+void union_stat(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count < 1 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t answer[aegir::ipc::kMaxWords];
+    for (Member const *m = binding->members; m != nullptr; m = m->next) {
+        uint32_t const reply_count =
+            member_path_call(m, badge, aegir::volume::kMethodStat, path, path_length,
+                             nullptr, 0, answer, aegir::ipc::kMaxWords);
+        if (reply_count > 0) {
+            port.reply_words(answer, reply_count);
+            return;
+        }
+    }
+    port.reply_words(nullptr, 0);
+}
+
 /* One handle the union holds on a member (specs/namespace.md's write side):
  * the client names the union's own serial, and the row says which member and
  * which of that member's handles it stands for. The serial is the union's and
@@ -1524,6 +1550,9 @@ void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
         break;
     case aegir::volume::kMethodList:
         union_list(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodStat:
+        union_stat(port, binding, caller, words, count);
         break;
     case aegir::volume::kMethodOpen:
         union_open(port, binding, caller, words, count);

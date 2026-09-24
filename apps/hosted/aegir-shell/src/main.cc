@@ -181,6 +181,40 @@ public:
         print("Aegir shell -- CD, Dir, Type, Echo, Quit\n");
     }
 
+    /* The persistent environment (specs/environment.md): the merged ENV: view
+     * -- the user's archive first, the system's base under it -- read once at
+     * startup, each file a NAME=VALUE this process then carries. A write makes
+     * a new name in the create target, the user's archive. */
+    void load_environment()
+    {
+        std::error_code error;
+        std::filesystem::directory_iterator it("ENV:", error);
+        if (error) {
+            return;
+        }
+        std::filesystem::directory_iterator const end;
+        for (; !error && it != end; it.increment(error)) {
+            std::error_code kind_error;
+            if (it->is_directory(kind_error)) {
+                continue;
+            }
+            std::string const name = it->path().filename().string();
+            std::string const path = "ENV:" + name;
+            std::FILE *const file = std::fopen(path.c_str(), "rb");
+            if (file == nullptr) {
+                continue;
+            }
+            std::string value;
+            char chunk[256];
+            std::size_t have = 0;
+            while ((have = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
+                value.append(chunk, have);
+            }
+            std::fclose(file);
+            (void)aegir::environment::setenv(name.c_str(), value.c_str());
+        }
+    }
+
     void loop()
     {
         for (;;) {
@@ -328,7 +362,20 @@ private:
         }
         if (name.empty() || !aegir::environment::setenv(name.c_str(), value.c_str())) {
             print("Set: a name and a value, please\n");
+            return;
         }
+        /* Persist it (specs/environment.md): the archive is a directory of
+         * files, one per variable, and a create lands in the create target --
+         * the user's archive. A file that will not open leaves the variable
+         * set for this process only, which the message says. */
+        std::string const path = "ENV:" + name;
+        std::FILE *const file = std::fopen(path.c_str(), "wb");
+        if (file == nullptr) {
+            print("Set: " + name + " set, but not saved\n");
+            return;
+        }
+        (void)std::fwrite(value.data(), 1, value.size(), file);
+        std::fclose(file);
     }
 
     void command_get(std::string const &arg)
@@ -434,6 +481,7 @@ int main(int argc, char **argv)
 
     Shell shell(port);
     shell.set_doorbell(doorbell);
+    shell.load_environment();
     shell.start();
     shell.loop();
     return 0;

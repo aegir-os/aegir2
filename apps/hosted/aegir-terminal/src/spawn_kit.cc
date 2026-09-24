@@ -65,12 +65,13 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     }
     asid_pool_ = static_cast<seL4_CPtr>(asid_pool);
 
-    /* The unbadged copies a command's own caps are minted from. A badged
-     * endpoint cap cannot be minted again (specs/authority.md). */
+    /* The unbadged log copy a command's own cap is minted from, and the
+     * shell's namespace, badged with the terminal's own badge so the shell
+     * resolves the session's aliases (specs/shell.md). */
     uint64_t log_slot = 0;
     uint64_t nmspace_slot = 0;
     if (!aegir::bootstrap::capability("spawn:log.main", 14, &log_slot) ||
-        !aegir::bootstrap::capability("spawn:vfs.namespace", 19, &nmspace_slot)) {
+        !aegir::bootstrap::capability("shell:vfs.namespace", 19, &nmspace_slot)) {
         return false;
     }
     log_port_ = static_cast<seL4_CPtr>(log_slot);
@@ -127,9 +128,12 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 1, log_port_,
          seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+        /* The shell's namespace is moved, not minted: it already carries the
+         * terminal's badge, and a badged cap cannot be minted again. The shell
+         * is spawned once, so the one move is the one use (specs/shell.md). */
         {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 2, nmspace_port_,
-         seL4_CapRights_new(1, 1, 0, 1), 0, 0},
+         seL4_CapRights_new(1, 1, 0, 1), 0, 0, true},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
          seL4_AllRights, 0, shell_pool_bits_},
     };

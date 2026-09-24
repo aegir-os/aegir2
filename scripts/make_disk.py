@@ -85,6 +85,14 @@ AEGIR_BFS_TREE = [
         ("file", "Inside Long Name.txt",
          b"a long directory, a long file, and the walk still ends at it\n"),
     ]),
+    # The system's environment archive (specs/environment.md): the base member
+    # of the ENV: union. A session's startup reads it into its environment, so
+    # the shell knows exitcode before anything sets it.
+    ("dir", "Prefs", [
+        ("dir", "Env-Archive", [
+            ("file", "exitcode", b"11"),
+        ]),
+    ]),
 ]
 
 # The BFS volume's tree: a known file and a directory with a nested file, so

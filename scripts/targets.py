@@ -421,13 +421,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The terminal (specs/terminal.md, specs/shell.md): auth starts it
             # beside the bureau at login, focused, with its window clear of the
             # test bed's red one, the demo's and the screen bar's samples. The
-            # first line sets an environment variable (the DOS toolset), typed
-            # before the demo's zoom takes the focus; the second runs a hosted
-            # command with no argument, and its exit status is the variable it
-            # inherited -- `command exited 9` proves the shell's Set and the
-            # inheritance together. The second line waits for the demo to close
-            # (the runner fires steps by cue, so the demo's zoom would otherwise
-            # take the focus), and clicks the terminal to focus it again.
+            # shell's startup read loads the persistent environment
+            # (specs/environment.md): the system archive's `exitcode` is 11, so
+            # the first command -- run before any Set -- reports it, and the
+            # 11 can only have come from the union. The next step Sets 9 (in
+            # memory and to the user's archive, the create target), reads it
+            # back through the union, and runs a command that inherits it. Each
+            # step waits for the demo to close and clicks the terminal to focus
+            # it again (the runner fires steps by cue, so the demo's zoom would
+            # otherwise take the focus).
             QmpStep(
                 r"terminal: ready",
                 dumps=("gpu0",),
@@ -436,7 +438,6 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 60, 200, 204, 204, 204),
                     ("gpu0", 500, 300, 204, 204, 204),
                 ),
-                press="set exitcode 9\n",
             ),
             QmpStep(
                 r"demo: closed",
@@ -444,12 +445,24 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="aegir-print\n",
             ),
             QmpStep(
-                r"terminal: command exited 9",
+                r"terminal: command exited 11",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 60, 200, 204, 204, 204),),
                 # The banner and the command's output are on the grid: a window
                 # that painted none of its text would hold no dark pixels here.
+                dark=(("gpu0", 50, 145, 500, 60, 100),),
+                # Set the variable, read it back through the union -- the write
+                # shadows the base, so Type prints 9 -- and run a command that
+                # inherits it: exit 9 is the proof of the override and the write.
+                events=TERMINAL_CLICK,
+                press="set exitcode 9\ntype ENV:exitcode\naegir-print\n",
+            ),
+            QmpStep(
+                r"terminal: command exited 9",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 60, 200, 204, 204, 204),),
                 dark=(("gpu0", 50, 145, 500, 60, 100),),
                 # Then the command that reads the console: aegir-read waits on
                 # fd 0, and the step below answers it while it runs.

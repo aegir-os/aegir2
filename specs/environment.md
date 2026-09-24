@@ -48,8 +48,15 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   defines the per-process mechanism and the binding; the startup and the tools
   are later arcs. **Landed** (specs/shell.md's Phase 5): the in-memory half —
   `Set`/`Get` over `aegir::environment`, and `environ()` so a command inherits
-  the shell's environment. The `ENV:` union binding and the archive files are
-  the next piece.
+  the shell's environment — and the persistent half. `auth` makes the home's
+  `Prefs/Env-Archive` (owned by the user, so a write lands there) and binds
+  `ENV:` for the session and terminal badges: the user's archive first (the
+  create target), the system's base appended. The system archive ships in the
+  image (`Sys:Prefs/Env-Archive`, `exitcode` 11). The shell reads the merged
+  view once at startup (`load_environment`) into `aegir::environment`, and
+  `Set` writes the variable to `ENV:<name>`, which lands in the create target.
+  The startup and the tools are landed; a re-login that re-reads a changed
+  archive is the shell's to prove when re-login exists.
 - **The library is `aegir::environment`.** It parses the bootstrap block once
   and answers `argc`/`argv`, `getenv`/`setenv`, and
   `current_dir`/`set_current_dir`. A program includes it and never sees a slot
