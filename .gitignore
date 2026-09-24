@@ -11,6 +11,8 @@
 /projects/llvm-project/
 /projects/terminus-font/
 /projects/noto-fonts/
+# The Unicode Character Database, a pinned file source (manifests/sources.toml).
+/projects/ucd/
 /tools/seL4/
 /tools/opensbi/
 /tools/nanopb/

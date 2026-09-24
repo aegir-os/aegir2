@@ -93,7 +93,7 @@ def check_local_changes(failures: list[str]) -> None:
 
 
 def check_sources(failures: list[str]) -> None:
-    """Tarball sources are verified by content hash and signature, not by git."""
+    """Sources are verified by content hash, and a tarball also by signature."""
     for source in pins.load_sources():
         path = source["path"]
         target = pins.ROOT / path
@@ -102,6 +102,31 @@ def check_sources(failures: list[str]) -> None:
             failures.append(path)
             continue
         stamp = pins.read_stamp(f"source-{source['name']}")
+
+        if "files" in source:
+            # A file source pins its files by sha256; there is no tarball or
+            # release signature to check.
+            if not stamp or stamp.get("version") != source["version"]:
+                pins.report(False, f"{path} was not fetched from its pinned files", "run: make deps")
+                failures.append(path)
+                continue
+            changed = [
+                entry["name"]
+                for entry in source["files"]
+                if not (target / entry["name"]).is_file()
+                or pins.sha256_file(target / entry["name"]) != entry["sha256"]
+            ]
+            if changed:
+                pins.report(False, f"{source['name']} files are missing or changed", ", ".join(changed))
+                failures.append(path)
+                continue
+            pins.report(
+                True,
+                f"{path} from {source['name']} {source['version']}",
+                f"license: {source.get('license', 'none')}",
+            )
+            continue
+
         if not stamp or stamp.get("sha256") != source["sha256"]:
             pins.report(False, f"{path} was not fetched from its pinned tarball", "run: make deps")
             failures.append(path)

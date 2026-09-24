@@ -25,3 +25,24 @@ signing_key = "manifests/musl-signing-key.asc"
 signing_fingerprint = "836489290BB6B70F99FFDA0556BCDB593020450F"
 # The single top-level directory the tarball extracts, moved to `path`.
 extract_dir = "musl-1.2.6"
+
+# The Unicode Character Database (UCD), fetched as individually pinned files
+# rather than a tarball. The three table files generate the toolkit's UAX #9
+# tables at build time (scripts/gen_bidi_tables.py); the two conformance files
+# are what the algorithm is tested against (scripts/check_bidi.py). Unicode
+# publishes no release signature for these files, so the sha256 is the pin.
+# The files are redistributed under the Unicode Terms of Use (Unicode-DFS-2016
+# for the data, the UCD's own terms for the conformance files).
+[[source]]
+name = "ucd"
+version = "16.0.0"
+path = "projects/ucd/unicode-16.0.0"
+base_url = "https://www.unicode.org/Public/16.0.0/ucd/"
+license = "Unicode-DFS-2016"
+files = [
+  { name = "extracted/DerivedBidiClass.txt", sha256 = "71ed943a49c58568d8d92e80ecc2ba2f06e62aee9c8ebb0e6e8bd2c3ed8b180e" },
+  { name = "BidiMirroring.txt", sha256 = "d7afdadd1bbd66f5a663ac0e8f7958f18fd9491fc0bc59ec5877cb82db71db7d" },
+  { name = "BidiBrackets.txt", sha256 = "b8f32554c6f658821fb0ee742d21c5b1f2086b9bf13071fed04894b022f93d67" },
+  { name = "BidiTest.txt", sha256 = "93e5eb9d88ca89dcf895f5576486a3363762ad2aa8f2db2fa56fe60cb82b9520" },
+  { name = "BidiCharacterTest.txt", sha256 = "d04a51a90052dcd71c4e91ee5b3a9d973ee35c12406b5a99875ac8163c8f2804" },
+]
