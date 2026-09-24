@@ -445,9 +445,9 @@ zero-fills the gap. Every operation leaves the volume `'CLEN'` with
 
 The Aegir additions are **runtime features** wherever possible, because the
 format need not change for them: TRIM is a discard on a freed run, permission
-enforcement is a check against Aegir's accounts, and the clean fast mount is a
-decision not to replay. Only sparseness changes what a read returns, so only
-sparseness takes a gate bit.
+enforcement is a check of the caller's badge against the inode's stored `uid`,
+`gid` and `mode`, and the clean fast mount is a decision not to replay. Only
+sparseness changes what a read returns, so only sparseness takes a gate bit.
 
 ## Metadata over the volume protocol
 
@@ -632,7 +632,7 @@ list simply ends. Phase 3 implements this; `AEGIR_BFS_SPARSE` is not used.
 | TRIM on free | none | a device that answers `discard` (below) |
 | Sub-second times | none (Haiku's own encoding) | a clock finer than a second |
 | Clean no-replay fast mount | none | `flags == 'CLEN'` and `log_start == log_end` |
-| Permission enforcement | none (uid/gid/mode are already stored) | Aegir accounts (`specs/auth.md`) |
+| Permission enforcement | none (uid/gid/mode are already stored) | Aegir badges (`specs/authority.md`); held until home volumes |
 | Tail sparseness | none (a size past the runs) | none |
 | Full data journaling | none | `AEGIR_BFS_JOURNAL_FULL` |
 
@@ -665,6 +665,12 @@ Written down so the omissions are decisions:
 - **fsck and repair.** Beyond journal replay, there is no checker; a corrupt
   volume is mounted read-only or refused.
 - **ACLs.** Mode, uid and gid, not POSIX ACLs.
+- **Permission enforcement, until home volumes.** The check and its identity
+  are settled (decision 7), but a session's home must be owned by its user for
+  the smoke to keep working, and the calls that set an inode's owner and mode
+  are the AmigaDOS pair `Protect` and `Owner`. They land with the home-volume
+  path (`specs/auth.md`'s Homes), so the mode bits Aegir stores are enforced
+  the day there is a home to enforce them on.
 - **An on-system `mkfs`.** Volumes are built host-side by `scripts/mkfs_bfs.py`
   in this arc; a formatting service comes later.
 - **Preallocation and defragmentation.**
@@ -698,3 +704,12 @@ worth a second look before code exists.
    kind prefix and an initrd binary, and the device manager hands the
    partition manager a named bundle of the helper images rather than one. This
    is `specs/services.md`'s business and lands with Phase 1.
+7. **Permission enforcement is a badge check against the inode, and it waits
+   for home volumes.** A user badge (`specs/authority.md`: bit 62 set) carries
+   its user row index in bits 24..61; that index is the inode's `uid` and `gid`
+   alike -- a user is its own group -- so the owner and group triads of `mode`
+   both key off it, and the other triad applies to every caller it does not
+   match. A system badge (bit 62 clear) is the superuser and passes every
+   check. The calls that change a mode or an owner are the AmigaDOS pair
+   **`Protect`** and **`Owner`**, not `chmod`/`chown`; they land with the
+   enforcement, which lands with the home-volume path.
