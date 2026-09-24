@@ -20,11 +20,13 @@
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/label.h>
+#include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -71,6 +73,21 @@ int main(int argc, char *argv[])
     }
 
     Application &app = Application::create(argc, argv);
+
+    /* The toolkit's Locale on this target (specs/locale.md): the embedded
+     * .locale blob is parsed here and formats a currency and a date, so the
+     * cue proves the compiled CLDR data, not just the host-side conformance.
+     * German exercises the swapped separators and the suffix currency. */
+    {
+        Locale const locale("de");
+        write("  demo: locale ");
+        write(locale.name().c_str());
+        write(" says ");
+        write(locale.format_currency(1234.5, "EUR").c_str());
+        write(" on ");
+        write(locale.format_date(0).c_str());
+        write("\n");
+    }
 
     aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
         aegir::console::kPortName, aegir::console::kPortNameLength);

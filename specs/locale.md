@@ -17,11 +17,11 @@ order, each its own checkpoint.
   (`scripts/build_libcxx.sh`), so `std::locale`'s facets are in the library;
   the time zone database is off, because it wants an IANA zoneinfo tree Aegir
   does not ship. The runtime accepts it (`apps/hosted/aegir-cxx-smoke`).
-- **`aegir-trinket`'s `locale.cc` reads real CLDR data** (piece 3, most of it):
+- **`aegir-trinket`'s `locale.cc` reads real CLDR data** (piece 3, landed):
   number, percent, currency, scientific, list, gregorian date/time and plural
   formatting come from `.locale` blobs compiled from the pinned CLDR, with the
-  locale's direction. Calendars other than gregorian are what remain of piece
-  3. **`bidi.cc` is the real algorithm**
+  locale's direction; the toolkit demo formats with one on target.
+  **`bidi.cc` is the real algorithm**
   (piece 1) with conformance green; **`translation.cc`** is a gettext `.mo`
   parser that is not yet in the build. `translation.cc` is gated out
   (`libs/hosted/aegir-trinket/CMakeLists.txt`).
@@ -45,14 +45,15 @@ order, each its own checkpoint.
    the toolkit.
 3. **Trinket's `Locale`, against real CLDR data.** Number, date, currency,
    percent, plural and list formatting from a compiled CLDR subset, replacing
-   the hardcoded fields. The `.locale` file format is decided here. All of it
-   is landed except calendars other than gregorian, with the data compiled from
-   CLDR and the format below. Plural is the CLDR rule grammar: the rule string
-   per category is in the blob and evaluated against a number's operands, and
-   `plural_form` returns the `PluralCategory` (the C locale, which has no
-   rules, answers `other`). Dates are formatted in UTC through the toolkit's
-   own civil-date arithmetic, not musl's C-locale `strftime`, and a pattern's
-   zone field becomes `UTC` because time zones are deferred.
+   the hardcoded fields. The `.locale` file format is decided here. It is
+   landed, with the data compiled from CLDR and the format below, and
+   `apps/hosted/aegir-gui-demo` parses an embedded blob on target and formats
+   with it. Plural is the CLDR rule grammar: the rule string per category is in
+   the blob and evaluated against a number's operands, and `plural_form`
+   returns the `PluralCategory` (the C locale, which has no rules, answers
+   `other`). Dates are formatted in UTC through the toolkit's own civil-date
+   arithmetic, not musl's C-locale `strftime`, and a pattern's zone field
+   becomes `UTC`; non-gregorian calendars and time zones are deferred below.
 4. **`translation.cc`, gettext for real.** The `.mo` parser reaches the build
    and a toolkit string is translated through it.
 
@@ -142,9 +143,10 @@ separators, groupings, currency position and symbols, the negative subpattern,
 scientific form, list joins, date and time patterns with their names, quoting
 and day periods, the plural category for numbers across the rule families,
 direction, fallback and `Locale::load`. It is
-whole-run and exact. The toolkit embeds the same bytes, so the build compiling
-and linking them is the target-side check; a runtime cue and toolkit use
-arrive with the toolkit's localization.
+whole-run and exact. The target side is the same bytes: the build compiles and
+links them, and `apps/hosted/aegir-gui-demo` parses the embedded German blob at
+startup and prints `demo: locale de says 1.234,50 € on 01.01.70`, which the
+boot's run reads.
 
 ## Unicode data, vendored
 
@@ -177,7 +179,14 @@ is a pin change and a re-run of conformance, not a code change.
   file syscalls and a reason. The delivery decision here is the blobs embedded
   in the toolkit; the follow-up is `.locale` files staged into the initrd and
   read at startup once the VFS serves them.
+- **Calendars other than gregorian.** CLDR's preferred calendar is gregorian
+  for every region the shipped locales name (the alternates -- japanese,
+  islamic, hebrew -- are listed after it, not instead of it), and the public
+  API has no way to select a calendar for a format call, so no alternate
+  calendar's data is compiled and `calendar()` is gregorian. Adding one means
+  its data, its arithmetic and a selecting API together.
+- **Time zones.** Dates are UTC; a pattern's zone field reads `UTC`. A real
+  zone database is the IANA one libc++ deliberately does not build here.
 - **CLDR's full data set.** Number/date/plural for the locales Aegir ships, not
-  all of CLDR. Calendars other than gregorian and time zones (dates are UTC)
-  are the remaining parts of piece 3; root inheritance is unneeded because the
-  shipped languages are complete.
+  all of CLDR; root inheritance is unneeded because the shipped languages are
+  complete.

@@ -379,8 +379,8 @@ The order:
    (`LIBCXX_ENABLE_LOCALIZATION`), proved by `std::locale` in
    `apps/hosted/aegir-cxx-smoke`. The toolkit's `Locale` now formats numbers,
    currency, percent, scientific, lists, gregorian dates and CLDR plurals from
-   compiled data (`specs/locale.md`); non-gregorian calendars and gettext
-   remain.
+   compiled data, proved on target by `aegir-gui-demo` (`specs/locale.md`); the
+   remaining piece is gettext (`translation.cc` into the build).
 7. **The compiler choice.** GCC builds everything today. Clang 22
    cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
    112 at `-O2`) and would not need the `__chash` patch at all, because libc++
