@@ -56,9 +56,13 @@ aegir::mem::Account g_test_account{"aegir-test", 0, 0, 0};
  * process's CSpace (the thread addresses it the same way, because it shares
  * the CSpace) and a flag the thread sets. Both are globals on purpose -- the
  * thread reaching them is what proves its global pointer, and making a syscall
- * on the notification is what proves its thread pointer. */
+ * on the notification is what proves its thread pointer. `park` is a second
+ * notification the thread waits on after it signals `slot`: were it to wait on
+ * `slot` itself it could consume its own handoff, since a notification's bit
+ * goes to whichever waiter gets it. */
 struct ThreadNotice {
     seL4_CPtr slot;
+    seL4_CPtr park;
     volatile uint64_t ran;
 };
 ThreadNotice g_thread_notice;
@@ -785,8 +789,8 @@ uint64_t login(aegir::ipc::Consumer const &port, char const *name,
  * return address was set for it. It reaches a global (g_thread_notice) and
  * makes syscalls (the console write and the signal), which is exactly what a
  * wrong stack, thread pointer or global pointer would break. It then blocks on
- * the notification, which is how a thread ends here without suspending the
- * process's own thread: seL4_CapInitThreadTCB is slot 1, and that is *this*
+ * its own park notification, which is how a thread ends here without suspending
+ * the process's own thread: seL4_CapInitThreadTCB is slot 1, and that is *this*
  * process's boot thread, not this one. */
 void thread_entry(void *)
 {
@@ -795,7 +799,7 @@ void thread_entry(void *)
     seL4_Signal(g_thread_notice.slot);
     for (;;) {
         seL4_Word badge = 0;
-        seL4_Wait(g_thread_notice.slot, &badge);
+        seL4_Wait(g_thread_notice.park, &badge);
     }
 }
 
@@ -2859,8 +2863,8 @@ int main(int argc, char *argv[])
      * runtime's std::thread will stand on (specs/cxx.md step 4), and the check
      * is that it makes syscalls at all -- a thread whose thread pointer or
      * global pointer is wrong faults on its first one and never signals. The
-     * starter blocks on the notification first: on one CPU the thread cannot
-     * run until the starter yields. */
+     * starter blocks on the handoff notification; the thread parks on a second
+     * one, so it cannot consume the handoff it just sent. */
     {
         uint64_t vspace_slot = 0;
         bool const have_vspace = aegir::bootstrap::capability("vspace", 6, &vspace_slot);
@@ -2868,8 +2872,12 @@ int main(int argc, char *argv[])
         seL4_CPtr const notice =
             g_test_objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
                                         g_test_account, &thread_error);
+        seL4_CPtr const park =
+            g_test_objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
+                                        g_test_account, &thread_error);
         g_thread_notice.ran = 0;
         g_thread_notice.slot = notice;
+        g_thread_notice.park = park;
         aegir::thread::Thread thread{};
         aegir::thread::Builder builder(g_test_objects, g_test_scratch, g_test_account);
         aegir::thread::Placement const where{
@@ -2879,7 +2887,7 @@ int main(int argc, char *argv[])
             seL4_MaxPrio - 1,
             4,
         };
-        bool const started = notice != 0 && have_vspace &&
+        bool const started = notice != 0 && park != 0 && have_vspace &&
                              builder.start(where, thread_entry, nullptr, thread);
         bool ok = started;
         if (started) {
@@ -2891,8 +2899,8 @@ int main(int argc, char *argv[])
             char const *why = started ? "the thread did not signal" : builder.problem();
             if (!have_vspace) {
                 why = "this process was given no vspace";
-            } else if (notice == 0) {
-                why = "no memory for the notification";
+            } else if (notice == 0 || park == 0) {
+                why = "no memory for the notifications";
             }
             write("  test: FAIL a thread could not be started in this process (");
             write(why);

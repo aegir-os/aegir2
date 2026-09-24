@@ -267,7 +267,13 @@ The order:
       primitive on the runtime this process actually uses. A second seL4 TCB
       with its own stack, TLS block and IPC buffer shares the address space,
       and the worker runs musl's `malloc` (whose syscalls reach the dispatcher
-      from the new thread too) and reaches the console.
+      from the new thread too) and reaches the console. The handoff is two
+      notifications, not one: the worker signals one and parks on a second,
+      because a notification's bit goes to whichever waiter receives it, so a
+      worker parked on the one it signals can take its own handoff and leave
+      the starter waiting -- an intermittent hang that a same-priority worker
+      (the normal case, and one the scheduler may run before the starter
+      blocks) makes real. `aegir-test`'s thread does the same.
    3. **musl's TLS at hosted startup** (landed): `aegir-heap`'s `init` calls
       musl's `__init_tls` with the auxv flattened the way `__init_libc`
       flattens it, so `libc.tls_*` and `can_do_threads` are set and the

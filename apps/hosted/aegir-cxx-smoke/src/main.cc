@@ -51,10 +51,15 @@ aegir::mem::Scratch g_scratch(nullptr);
 aegir::mem::Account g_account{"cxx-smoke", 0, 0, 0};
 
 /* The notice between this thread and the one it starts: a notification in this
- * process's CSpace and the worker's report. Globals on purpose -- the worker
- * reaching them is what proves its global pointer. */
+ * process's CSpace and the worker's report. A second notification parks the
+ * worker after it reports, so it never waits on the one it signals -- a
+ * notification's bit is consumed by whichever waiter gets it, and a worker
+ * that parks on the same one can take its own handoff before the starter
+ * receives it. Globals on purpose -- the worker reaching them is what proves
+ * its global pointer. */
 struct WorkerReport {
     seL4_CPtr notice;
+    seL4_CPtr park;
     volatile uint64_t ran;
     volatile uint64_t allocated;
 };
@@ -64,7 +69,8 @@ WorkerReport g_worker;
  * it must not return. It reaches a global, allocates through musl (whose
  * syscalls land in the dispatcher), writes to the console, and signals the
  * starter -- each of which depends on a different thing the thread was given:
- * the global pointer, the thread pointer, and the IPC buffer. */
+ * the global pointer, the thread pointer, and the IPC buffer. It then parks on
+ * its own notification, which nobody signals. */
 void worker_entry(void *)
 {
     void *const block = malloc(4096);
@@ -77,7 +83,7 @@ void worker_entry(void *)
     seL4_Signal(g_worker.notice);
     for (;;) {
         seL4_Word badge = 0;
-        seL4_Wait(g_worker.notice, &badge);
+        seL4_Wait(g_worker.park, &badge);
     }
 }
 
@@ -152,9 +158,9 @@ int main(int argc, char *argv[])
      * std::thread will stand on (specs/cxx.md step 4): a second seL4 TCB with
      * its own stack, TLS block and IPC buffer, sharing this address space --
      * and running musl's allocator, whose syscalls reach the dispatcher from
-     * the new thread too. The starter blocks on the notification first, so on
-     * one CPU the worker cannot run until then, and the heap's own state is
-     * never touched by two threads at once. */
+     * the new thread too. The starter blocks on the handoff notification; the
+     * worker signals it and parks on a second one, so it cannot consume the
+     * handoff itself. */
     {
         uint64_t vspace_slot = 0;
         bool const have_vspace = aegir::bootstrap::capability("vspace", 6, &vspace_slot);
@@ -162,7 +168,11 @@ int main(int argc, char *argv[])
         seL4_CPtr const notice =
             g_objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
                                    g_account, &thread_error);
+        seL4_CPtr const park =
+            g_objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
+                                   g_account, &thread_error);
         g_worker.notice = notice;
+        g_worker.park = park;
         g_worker.ran = 0;
         g_worker.allocated = 0;
         aegir::thread::Thread worker{};
@@ -174,7 +184,7 @@ int main(int argc, char *argv[])
             seL4_MaxPrio - 1,
             4,
         };
-        bool const started = notice != 0 && have_vspace &&
+        bool const started = notice != 0 && park != 0 && have_vspace &&
                              builder.start(where, worker_entry, nullptr, worker);
         bool ok = started;
         if (started) {
