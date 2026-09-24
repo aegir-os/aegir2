@@ -298,7 +298,9 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
             return 0;
         }
         if (!s->ready && !s->editor->editing()) {
-            s->editor->begin();
+            /* begin, not editor->begin(): the public one damages the view, so
+             * the prompt is painted the moment it is written. */
+            begin(caller);
         }
         if (!s->ready) {
             return 0;

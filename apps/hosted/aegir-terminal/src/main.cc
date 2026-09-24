@@ -149,10 +149,14 @@ int main(int argc, char *argv[])
     std::vector<KeyEvent> pending_keys;
     terminal->on_key = [&server, &pending_keys](KeyEvent const &event) {
         LineEditor *const editor = server.editor(kShellStream);
-        if (editor == nullptr || (!editor->editing() && !server.in_command(kShellStream))) {
-            /* The shell has not begun its prompt yet (or is between commands):
-             * hold the key and ring its doorbell, so it wakes and begins the
-             * editor; on_poll replays the held keys then. */
+        bool const ready =
+            editor != nullptr && (editor->editing() || server.in_command(kShellStream));
+        /* Hold the key when the shell has not begun its prompt yet (or is
+         * between commands), and also when earlier keys are still held: a key
+         * fed straight to the editor would otherwise overtake one on_poll has
+         * not replayed, and the line would read out of order. on_poll replays
+         * the held keys, in order, once the editor is ready. */
+        if (!ready || !pending_keys.empty()) {
             pending_keys.push_back(event);
             if (server.on_wake) {
                 server.on_wake(kShellStream);
