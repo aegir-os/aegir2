@@ -650,6 +650,205 @@ std::string_view value_or(std::string_view value, std::string_view fallback)
     return value.empty() ? fallback : value;
 }
 
+/* A number's CLDR plural operands. `plural_form` takes an integer, so the
+ * fraction operands and the compact exponent are zero and n and i are it. */
+struct PluralOperands {
+    long double n;
+    long double i;
+    long double v;
+    long double w;
+    long double f;
+    long double t;
+    long double c;
+    long double e;
+};
+
+/* A CLDR plural rule: the boolean expression from UTS #35, evaluated against
+ * one number's operands. and binds tighter than or; a relation is an operand
+ * (optionally mod a value) compared against a comma-separated range list. `=` and
+ * `in` are membership; `!=`, `not in`, `not within` negate it. All values are
+ * long double, which holds a 64-bit integer exactly on both hosts. */
+class PluralRule {
+public:
+    PluralRule(std::string_view rule, PluralOperands const &operands)
+        : text_(rule), position_(0), operands_(operands) {}
+
+    bool matches() { return condition(); }
+
+private:
+    std::string_view text_;
+    std::size_t position_;
+    PluralOperands const &operands_;
+
+    void skip()
+    {
+        while (position_ < text_.size() && (text_[position_] == ' ' || text_[position_] == '\t')) {
+            position_ += 1;
+        }
+    }
+
+    bool at_letter(std::size_t position) const
+    {
+        char const c = text_[position];
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
+    bool word(std::string_view wanted)
+    {
+        skip();
+        if (text_.compare(position_, wanted.size(), wanted) != 0) {
+            return false;
+        }
+        std::size_t const end = position_ + wanted.size();
+        if (end < text_.size() && at_letter(end)) {
+            return false;
+        }
+        position_ = end;
+        return true;
+    }
+
+    bool punctuation(char c)
+    {
+        skip();
+        if (position_ < text_.size() && text_[position_] == c) {
+            position_ += 1;
+            return true;
+        }
+        return false;
+    }
+
+    long double number()
+    {
+        skip();
+        long double value = 0.0L;
+        while (position_ < text_.size() && text_[position_] >= '0' && text_[position_] <= '9') {
+            value = value * 10.0L + static_cast<long double>(text_[position_] - '0');
+            position_ += 1;
+        }
+        /* A fraction only if a digit follows the point, so 3..10 does not eat
+         * the first dot of the range. */
+        if (position_ + 1 < text_.size() && text_[position_] == '.' &&
+            text_[position_ + 1] >= '0' && text_[position_ + 1] <= '9') {
+            position_ += 1;
+            long double scale = 0.1L;
+            while (position_ < text_.size() && text_[position_] >= '0' && text_[position_] <= '9') {
+                value += static_cast<long double>(text_[position_] - '0') * scale;
+                scale /= 10.0L;
+                position_ += 1;
+            }
+        }
+        /* A compact exponent: 1c6 is 1000000. */
+        if (position_ + 1 < text_.size() &&
+            (text_[position_] == 'c' || text_[position_] == 'e') && text_[position_ + 1] >= '0' &&
+            text_[position_ + 1] <= '9') {
+            position_ += 1;
+            int exponent = 0;
+            while (position_ < text_.size() && text_[position_] >= '0' && text_[position_] <= '9') {
+                exponent = exponent * 10 + (text_[position_] - '0');
+                position_ += 1;
+            }
+            for (int i = 0; i < exponent; ++i) {
+                value *= 10.0L;
+            }
+        }
+        return value;
+    }
+
+    long double operand()
+    {
+        skip();
+        if (position_ >= text_.size()) {
+            return 0.0L;
+        }
+        long double value = 0.0L;
+        switch (text_[position_]) {
+        case 'n': value = operands_.n; break;
+        case 'i': value = operands_.i; break;
+        case 'v': value = operands_.v; break;
+        case 'w': value = operands_.w; break;
+        case 'f': value = operands_.f; break;
+        case 't': value = operands_.t; break;
+        case 'c': value = operands_.c; break;
+        case 'e': value = operands_.e; break;
+        default: return 0.0L;
+        }
+        position_ += 1;
+        skip();
+        if (word("mod") || punctuation('%')) {
+            long double const modulus = number();
+            if (modulus != 0.0L) {
+                value = std::fmod(value, modulus);
+            }
+        }
+        return value;
+    }
+
+    bool range_list(long double value)
+    {
+        bool found = false;
+        do {
+            long double const low = number();
+            long double high = low;
+            skip();
+            if (text_.compare(position_, 2, "..") == 0) {
+                position_ += 2;
+                high = number();
+            }
+            if (value >= low && value <= high) {
+                found = true;
+            }
+            skip();
+        } while (punctuation(','));
+        return found;
+    }
+
+    bool relation()
+    {
+        long double const value = operand();
+        skip();
+        bool negate = false;
+        if (punctuation('=')) {
+            /* is */
+        } else if (punctuation('!')) {
+            if (!punctuation('=')) {
+                return false;
+            }
+            negate = true;
+        } else if (word("in") || word("within")) {
+            /* membership */
+        } else if (word("not")) {
+            negate = true;
+            if (!word("in") && !word("within")) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        bool const member = range_list(value);
+        return negate ? !member : member;
+    }
+
+    bool and_condition()
+    {
+        bool result = relation();
+        while (word("and")) {
+            bool const right = relation();
+            result = result && right;
+        }
+        return result;
+    }
+
+    bool condition()
+    {
+        bool result = and_condition();
+        while (word("or")) {
+            bool const right = and_condition();
+            result = result || right;
+        }
+        return result;
+    }
+};
+
 }  // namespace
 
 struct Locale::Impl {
@@ -912,19 +1111,23 @@ std::string Locale::format_datetime(int64_t timestamp) const
     return substitute_list(combine, time, date);
 }
 
-int Locale::plural_form(uint64_t n) const
+Locale::PluralCategory Locale::plural_form(uint64_t n) const
 {
-    /* CLDR's plural-rule grammar is the next piece of the arc; until then the
-     * English-like rule, with Arabic's six forms, is what the toolkit uses. */
-    if (impl_ && impl_->language_ == "ar") {
-        if (n == 0) return 0;
-        if (n == 1) return 1;
-        if (n == 2) return 2;
-        if (n % 100 >= 3 && n % 100 <= 10) return 3;
-        if (n % 100 >= 11) return 4;
-        return 5;
+    long double const value = static_cast<long double>(n);
+    PluralOperands const operands{value, value, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
+    if (impl_ != nullptr) {
+        static constexpr char const *const kCategories[] = {"zero", "one", "two", "few", "many"};
+        static constexpr PluralCategory kResults[] = {PluralCategory::ZERO, PluralCategory::ONE,
+                                                      PluralCategory::TWO, PluralCategory::FEW,
+                                                      PluralCategory::MANY};
+        for (std::size_t i = 0; i < 5; ++i) {
+            std::string_view const rule = impl_->get(std::string("plural.") + kCategories[i]);
+            if (!rule.empty() && PluralRule(rule, operands).matches()) {
+                return kResults[i];
+            }
+        }
     }
-    return n == 1 ? 0 : 1;
+    return PluralCategory::OTHER; /* the catch-all, and all the C locale answers */
 }
 
 std::string Locale::format_list(std::vector<std::string> const &items) const

@@ -60,9 +60,10 @@ public:
     std::string format_time(int64_t timestamp, TimeFormat fmt = TimeFormat::SHORT) const;
     std::string format_datetime(int64_t timestamp) const;
 
-    // Plural forms (CLDR)
-    // Returns: 0 = singular, 1 = plural, 2+ = other categories
-    int plural_form(uint64_t n) const;
+    // Plural forms (CLDR). `other` is the catch-all and the answer of a locale
+    // with no rule for the number (the C locale has none).
+    enum class PluralCategory { ZERO, ONE, TWO, FEW, MANY, OTHER };
+    PluralCategory plural_form(uint64_t n) const;
 
     // List formatting
     std::string format_list(const std::vector<std::string>& items) const;

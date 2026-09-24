@@ -126,6 +126,36 @@ int main(int argc, char **argv)
     Locale const unknown("xx");
     expect_string(unknown.format_number(1234.5), "1,234.5", "an unshipped locale falls back to the default");
 
+    /* The CLDR plural rules, evaluated against an integer. */
+    using PluralCategory = Locale::PluralCategory;
+    Locale const es("es");
+    expect(en.plural_form(1) == PluralCategory::ONE, "en plural: one");
+    expect(en.plural_form(2) == PluralCategory::OTHER, "en plural: other");
+    expect(de.plural_form(1) == PluralCategory::ONE, "de plural: one");
+    expect(es.plural_form(1000000) == PluralCategory::MANY, "es plural: many from a million");
+    expect(ja.plural_form(1) == PluralCategory::OTHER, "ja has only other");
+    expect(zh.plural_form(1) == PluralCategory::OTHER, "zh has only other");
+    expect(ar.plural_form(0) == PluralCategory::ZERO, "ar plural: zero");
+    expect(ar.plural_form(1) == PluralCategory::ONE, "ar plural: one");
+    expect(ar.plural_form(2) == PluralCategory::TWO, "ar plural: two");
+    expect(ar.plural_form(3) == PluralCategory::FEW, "ar plural: few");
+    expect(ar.plural_form(11) == PluralCategory::MANY, "ar plural: many");
+    expect(ar.plural_form(100) == PluralCategory::OTHER, "ar plural: other");
+    expect(ru.plural_form(1) == PluralCategory::ONE, "ru plural: one");
+    expect(ru.plural_form(2) == PluralCategory::FEW, "ru plural: few");
+    expect(ru.plural_form(5) == PluralCategory::MANY, "ru plural: many");
+    expect(ru.plural_form(21) == PluralCategory::ONE, "ru plural: one past twenty");
+    expect(ru.plural_form(22) == PluralCategory::FEW, "ru plural: few past twenty");
+    expect(ru.plural_form(12) == PluralCategory::MANY, "ru plural: the teen exception");
+    expect(fr.plural_form(0) == PluralCategory::ONE, "fr plural: zero is one");
+    expect(fr.plural_form(1) == PluralCategory::ONE, "fr plural: one");
+    expect(fr.plural_form(2) == PluralCategory::OTHER, "fr plural: other");
+    expect(fr.plural_form(1000000) == PluralCategory::MANY, "fr plural: many from a million");
+    expect(he.plural_form(1) == PluralCategory::ONE, "he plural: one");
+    expect(he.plural_form(2) == PluralCategory::TWO, "he plural: two");
+    expect(he.plural_form(3) == PluralCategory::OTHER, "he plural: other");
+    expect(Locale().plural_form(1) == PluralCategory::OTHER, "the C locale has no plural rules");
+
     Locale const c_locale;
     expect_string(c_locale.name(), "C", "the default locale is the C locale");
     expect_string(c_locale.format_number(1234.5), "1,234.5", "the C locale formats");

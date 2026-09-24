@@ -145,6 +145,23 @@ def direction_of(cluster: Path, loc: str) -> str:
     return "rtl" if orientation == "right-to-left" else "ltr"
 
 
+def plural_properties(cluster: Path, loc: str) -> dict[str, str]:
+    """The locale's cardinal plural rules, one per category.
+
+    CLDR's rule string is the condition before the at-sign; the rest is
+    examples (`@integer 1`). A locale with no entry (a language whose only
+    category is other) emits none, and the reader defaults to other.
+    """
+    table = load(cluster / "cldr-core" / "supplemental" / "plurals.json")["supplemental"][
+        "plurals-type-cardinal"
+    ]
+    properties: dict[str, str] = {}
+    for key, rule in table.get(loc, {}).items():
+        category = key[len("pluralRule-count-") :]
+        properties[f"plural.{category}"] = rule.split("@", 1)[0].strip()
+    return properties
+
+
 def locale_properties(cluster: Path, loc: str) -> dict[str, str]:
     properties = {
         "name": loc,
@@ -156,6 +173,7 @@ def locale_properties(cluster: Path, loc: str) -> dict[str, str]:
     properties.update(number_properties(cluster, loc))
     properties.update(list_properties(cluster, loc))
     properties.update(date_properties(cluster, loc))
+    properties.update(plural_properties(cluster, loc))
     return properties
 
 
