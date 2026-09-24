@@ -95,8 +95,8 @@ binding, and the archives are ordinary directories.
 
 ## Implementation
 
-Five slices, each its own commit, because the wire changes and the serving
-cannot land half-way:
+Six slices, each its own commit, because the wire changes and the serving
+cannot land half-way (all six are landed):
 
 1. **The `bind` wire** (`libs/aegir-namespace`). `bind` grows a flags word --
    append, prepend, or replace (the default), and create-target -- so its words
@@ -128,10 +128,18 @@ cannot land half-way:
    each path into the volume it names and the volume-relative rest, and the
    binding keeps those (the section above), so a member can be a per-badge
    alias (`ENV:`'s `Home:Prefs/Env-Archive`) without a later call knowing the
-   badge. What the write side still needs -- the caller's identity, so a member
-   filesystem scopes a handle to the true caller -- is not in the union cap's
-   badge (the union id is), and is the write side's own piece: a client cannot
-   learn its badge today, so the identity's source is settled there, not here.
+   badge. The write side is landed on the **binder's badge** -- the same badge
+   read and list already forward on, and the system's when the binding is
+   global, because the everyone-badge is a sentinel and a member would read it
+   as a user (`aegir-vfs`'s `member_badge`). A member therefore scopes a handle
+   to the binder, not the union cap's caller; the caller's own identity is
+   still not in the union cap's badge (the union id is), and a client cannot
+   learn its badge today, so the true-caller identity remains the write side's
+   own piece. A union handle is the union's own serial over the member's, so
+   write and close reach the member the open did; `open` with `create` and
+   `mkdir` go to the create target (the member marked `kBindCreate`, else the
+   first -- the Amiga's first-writable), and `open` of an existing name and
+   `remove` go to the first member that has the path.
 
    It also widens a right: minting the union cap is a mint *of the namespace
    endpoint*, and a mint keeps only what the source holds, so the VFS's owner
@@ -167,9 +175,10 @@ on `bind` (the ownership model's arc); a filesystem that unions across *types*
 
 ## Acceptance
 
-The test bed binds two directories on two volumes — `AEGIR:` and `SCRATCH:` —
-into one name: a read of a file both hold returns the first member's bytes; a
-listing returns both members' entries with the shared name once; a `mkdir` and a
-create land in the create target and not the other member; a remove takes the
-member that holds the name. `ENV:` is read and listed once the storage arc has
-the archives, and is not this arc's test.
+Landed in the test bed (`apps/freestanding/aegir-test`). It binds two
+directories on two volumes — `AEGIR:` and `SCRATCH:` — into one name: a read of
+a file both hold returns the first member's bytes; a listing returns both
+members' entries with the shared name once; a `mkdir` and a create land in the
+create target (`SCRATCH:`, the member marked `kBindCreate`) and not the first
+member; a remove takes the first member that holds the name. `ENV:` is read and
+listed once the storage arc has the archives, and is not this arc's test.

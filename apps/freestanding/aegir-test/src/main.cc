@@ -335,6 +335,35 @@ uint64_t vol_mkdir(seL4_CPtr port, char const *path, uint32_t path_length) noexc
     return in[0];
 }
 
+/* Whether a volume's listing of `path` holds `name`: the list method, one
+ * entry per index, until the end of the directory. */
+bool list_has(seL4_CPtr port, char const *path, uint32_t path_length, char const *name,
+              uint32_t name_length) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    for (uint32_t i = 0;; ++i) {
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+        uint32_t out_words = aegir::nmspace::pack_string(out, path, path_length,
+                                                         aegir::nmspace::kPathMax);
+        out[out_words++] = i;
+        uint64_t in[aegir::ipc::kMaxWords];
+        aegir::ipc::WordsReply const answer = volume.call_words(
+            aegir::volume::kMethodList, out, out_words, in, aegir::ipc::kMaxWords);
+        if (answer.error != 0 || answer.count == 0) {
+            return false;
+        }
+        char const *entry = nullptr;
+        uint32_t entry_length = 0;
+        if (!aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kNameMax,
+                                           &entry, &entry_length)) {
+            return false;
+        }
+        if (entry_length == name_length && same_bytes(entry, name, name_length)) {
+            return true;
+        }
+    }
+}
+
 /* owner: set an inode's uid and gid (the AmigaDOS Owner) -- 1 done, 0 refused
  * (specs/ownership.md). */
 uint64_t vol_owner(seL4_CPtr port, char const *path, uint32_t path_length,
@@ -2307,6 +2336,69 @@ int main(int argc, char *argv[])
             } else {
                 write("  test: UNION: enumerates as a union of AEGIR: and SCRATCH:\n");
             }
+
+            /* The write side (specs/namespace.md): mkdir and a create land in
+             * the create target -- SCRATCH:, the member the append marked --
+             * and not the first member. The union forwards on the binder's
+             * badge, and a global binding's binder is the system (the VFS's
+             * member_badge), so the members permit the write. */
+            bool made = vol_mkdir(union_volume, "UNIONDIR", 8) == 1;
+            if (!made || list_has(aegir_volume, "", 0, "UNIONDIR", 8) ||
+                !list_has(scratch_volume, "", 0, "UNIONDIR", 8)) {
+                write("  test: FAIL UNION: mkdir did not land in the create target\n");
+                ++failed;
+            } else {
+                write("  test: UNION: mkdir lands in the create target\n");
+            }
+            uint8_t const union_byte = 'u';
+            uint64_t const created = vol_open(
+                union_volume, "UNION.TXT", 9,
+                aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            bool create_ok = created != 0 &&
+                             vol_write(union_volume, created, &union_byte, 1) == 1 &&
+                             vol_close(union_volume, created) == 1;
+            if (!create_ok || list_has(aegir_volume, "", 0, "UNION.TXT", 9) ||
+                !list_has(scratch_volume, "", 0, "UNION.TXT", 9) ||
+                !read_and_check(union_volume, "UNION.TXT", 9,
+                                reinterpret_cast<char const *>(&union_byte), 1)) {
+                write("  test: FAIL UNION: create did not land in the create target\n");
+                ++failed;
+            } else {
+                write("  test: UNION: create lands in the create target\n");
+            }
+
+            /* A name held by both members: remove through the union takes the
+             * first (AEGIR:), so the union then reads the second's byte --
+             * the same rule read uses, and not the create target. */
+            uint8_t const rm_first = 'a';
+            uint8_t const rm_second = 's';
+            bool both = [&] {
+                uint64_t const first =
+                    vol_open(aegir_volume, "UNIONRM.TXT", 11,
+                             aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+                uint64_t const second =
+                    vol_open(scratch_volume, "UNIONRM.TXT", 11,
+                             aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+                return first != 0 && vol_write(aegir_volume, first, &rm_first, 1) == 1 &&
+                       vol_close(aegir_volume, first) == 1 && second != 0 &&
+                       vol_write(scratch_volume, second, &rm_second, 1) == 1 &&
+                       vol_close(scratch_volume, second) == 1;
+            }();
+            bool remove_ok =
+                both && read_and_check(union_volume, "UNIONRM.TXT", 11,
+                                       reinterpret_cast<char const *>(&rm_first), 1) &&
+                vol_remove(union_volume, "UNIONRM.TXT", 11) == 1 &&
+                !list_has(aegir_volume, "", 0, "UNIONRM.TXT", 11) &&
+                list_has(scratch_volume, "", 0, "UNIONRM.TXT", 11) &&
+                read_and_check(union_volume, "UNIONRM.TXT", 11,
+                               reinterpret_cast<char const *>(&rm_second), 1);
+            if (!remove_ok) {
+                write("  test: FAIL UNION: remove did not take the first member\n");
+                ++failed;
+            } else {
+                write("  test: UNION: remove takes the first member that holds it\n");
+            }
+            (void)vol_remove(scratch_volume, "UNIONRM.TXT", 11);
         }
     }
 

@@ -1034,13 +1034,80 @@ void drop_member() noexcept
                       aegir::bootstrap::kCNodeBits);
 }
 
-/* One member's list entry: compose the volume-relative path and ask the
- * member's volume for entry `index`. The answer's words land in `out`; the
- * return is their count, zero when the member has no such entry or the nested
- * call failed. The serve loop is one thread, so the working buffers are
- * static. */
-uint32_t member_list_entry(Member const *member, uint64_t badge, char const *path,
-                           uint32_t path_length, uint64_t index, uint64_t *out) noexcept
+/* The badge a union's member calls carry (specs/namespace.md): the binding's
+ * own, or the system's when the binding is global. The everyone-badge is the
+ * namespace's sentinel for a global alias, not a caller -- a member would read
+ * it as a user with the all-ones index (specs/ownership.md) -- so a global
+ * union's member calls are the system's act. This is the interim identity: the
+ * member sees the binder, not the union cap's caller, until a client can
+ * present its own badge (the write side's own piece, below). */
+uint64_t member_badge(Binding const *binding) noexcept
+{
+    return binding->badge == kAliasEveryone ? 0 : binding->badge;
+}
+
+/* The member a create lands in (specs/namespace.md): the one marked
+ * kBindCreate, or the first -- the Amiga's first-writable, which is what a
+ * plain one-member alias is. A create the target refuses is refused; there is
+ * no fall-through to another member. */
+Member const *create_target(Binding const *binding) noexcept
+{
+    for (Member const *m = binding->members; m != nullptr; m = m->next) {
+        if ((m->flags & aegir::nmspace::kBindCreate) != 0) {
+            return m;
+        }
+    }
+    return binding->members;
+}
+
+/* A member's place in the ordered list, and back: a union handle names the
+ * member by index, so a member a later bind replaced cannot leave a dangling
+ * pointer behind. */
+uint32_t member_index(Binding const *binding, Member const *member) noexcept
+{
+    uint32_t index = 0;
+    for (Member const *m = binding->members; m != nullptr; m = m->next, ++index) {
+        if (m == member) {
+            return index;
+        }
+    }
+    return ~0u;
+}
+
+Member const *member_at(Binding const *binding, uint32_t index) noexcept
+{
+    Member const *m = binding->members;
+    for (uint32_t i = 0; m != nullptr && i < index; ++i) {
+        m = m->next;
+    }
+    return m;
+}
+
+/* One nested call on a member's volume, with the words the union forwards.
+ * The member's cap is minted with `badge` for the one call and dropped after;
+ * the return is the answer's word count, zero when the call failed. */
+uint32_t member_words_call(Member const *member, uint64_t badge, uint32_t method,
+                           uint64_t const *payload, uint32_t count, uint64_t *out,
+                           uint32_t out_capacity) noexcept
+{
+    seL4_CPtr const cap = mint_member(member->volume, badge);
+    if (cap == 0) {
+        return 0;
+    }
+    aegir::ipc::Consumer const consumer(cap);
+    aegir::ipc::WordsReply const reply =
+        consumer.call_words(method, payload, count, out, out_capacity);
+    drop_member();
+    return reply.error == 0 ? reply.count : 0;
+}
+
+/* A member call whose path is the member's rest composed with the union's:
+ * `extra_count` words follow the packed path. The answer lands in `out`. The
+ * serve loop is one thread, so the working buffers are static. */
+uint32_t member_path_call(Member const *member, uint64_t badge, uint32_t method,
+                          char const *path, uint32_t path_length,
+                          uint64_t const *extra, uint32_t extra_count, uint64_t *out,
+                          uint32_t out_capacity) noexcept
 {
     static char member_path[aegir::nmspace::kPathMax];
     static uint64_t payload[aegir::ipc::kMaxWords];
@@ -1052,22 +1119,41 @@ uint32_t member_list_entry(Member const *member, uint64_t badge, char const *pat
     }
     uint32_t const member_words = aegir::nmspace::pack_string(
         payload, member_path, member_path_length, aegir::nmspace::kPathMax);
-    if (member_words == 0 || member_words + 1 > aegir::ipc::kMaxWords) {
+    if (member_words == 0 || member_words + extra_count > aegir::ipc::kMaxWords) {
         return 0;
     }
-    payload[member_words] = index;
-    seL4_CPtr const cap = mint_member(member->volume, badge);
-    if (cap == 0) {
-        return 0;
+    for (uint32_t i = 0; i < extra_count; ++i) {
+        payload[member_words + i] = extra[i];
     }
-    aegir::ipc::Consumer const consumer(cap);
-    aegir::ipc::WordsReply const reply = consumer.call_words(
-        aegir::volume::kMethodList, payload, member_words + 1, out, aegir::ipc::kMaxWords);
-    drop_member();
-    if (reply.error != 0) {
-        return 0;
+    return member_words_call(member, badge, method, payload, member_words + extra_count,
+                             out, out_capacity);
+}
+
+/* The first member that has the path (specs/namespace.md's read and remove
+ * rule): a stat on each in order, the first that answers. */
+Member const *first_member_with(Binding const *binding, uint64_t badge, char const *path,
+                                uint32_t path_length) noexcept
+{
+    uint64_t answer[aegir::ipc::kMaxWords];
+    for (Member const *m = binding->members; m != nullptr; m = m->next) {
+        if (member_path_call(m, badge, aegir::volume::kMethodStat, path, path_length,
+                             nullptr, 0, answer, aegir::ipc::kMaxWords) > 0) {
+            return m;
+        }
     }
-    return reply.count;
+    return nullptr;
+}
+
+/* One member's list entry: compose the volume-relative path and ask the
+ * member's volume for entry `index`. The answer's words land in `out`; the
+ * return is their count, zero when the member has no such entry or the nested
+ * call failed. */
+uint32_t member_list_entry(Member const *member, uint64_t badge, char const *path,
+                           uint32_t path_length, uint64_t index, uint64_t *out) noexcept
+{
+    uint64_t const extra[1] = {index};
+    return member_path_call(member, badge, aegir::volume::kMethodList, path, path_length,
+                            extra, 1, out, aegir::ipc::kMaxWords);
 }
 
 /* Whether a list answer's leading name is `name`. */
@@ -1107,34 +1193,14 @@ void union_read(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
     uint64_t const offset = words[path_words];
     uint64_t const max = words[path_words + 1];
 
-    static char member_path[aegir::nmspace::kPathMax];
-    static uint64_t payload[aegir::ipc::kMaxWords];
-    static uint64_t answer[aegir::ipc::kMaxWords];
-
+    uint64_t answer[aegir::ipc::kMaxWords];
     for (Member const *m = binding->members; m != nullptr; m = m->next) {
-        uint32_t member_path_length = 0;
-        if (!compose_path(m->rest, m->rest_length, path, path_length, member_path,
-                          &member_path_length)) {
-            continue;
-        }
-        uint32_t const member_words = aegir::nmspace::pack_string(
-            payload, member_path, member_path_length, aegir::nmspace::kPathMax);
-        if (member_words == 0 || member_words + 2 > aegir::ipc::kMaxWords) {
-            continue;
-        }
-        payload[member_words] = offset;
-        payload[member_words + 1] = max;
-        seL4_CPtr const cap = mint_member(m->volume, badge);
-        if (cap == 0) {
-            continue;
-        }
-        aegir::ipc::Consumer const consumer(cap);
-        aegir::ipc::WordsReply const reply = consumer.call_words(
-            aegir::volume::kMethodRead, payload, member_words + 2, answer,
-            aegir::ipc::kMaxWords);
-        drop_member();
-        if (reply.error == 0 && reply.count > 0) {
-            port.reply_words(answer, reply.count);
+        uint64_t const extra[2] = {offset, max};
+        uint32_t const reply_count =
+            member_path_call(m, badge, aegir::volume::kMethodRead, path, path_length,
+                             extra, 2, answer, aegir::ipc::kMaxWords);
+        if (reply_count > 0) {
+            port.reply_words(answer, reply_count);
             return;
         }
     }
@@ -1210,13 +1276,239 @@ void union_list(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
     port.reply_words(nullptr, 0);
 }
 
+/* One handle the union holds on a member (specs/namespace.md's write side):
+ * the client names the union's own serial, and the row says which member and
+ * which of that member's handles it stands for. The serial is the union's and
+ * is never reused, as a volume's is; the member's serial is hidden behind it,
+ * so write and close reach the member the open did. The member scopes its
+ * handle to the binder (member_badge above), the interim identity, not the
+ * union cap's caller. */
+struct UnionHandle {
+    uint64_t serial;
+    uint32_t member;
+    uint64_t member_handle;
+    UnionHandle *next;
+};
+UnionHandle *g_union_handles = nullptr;
+UnionHandle *g_union_handle_free = nullptr;
+uint64_t g_union_handle_next = 1;
+
+UnionHandle *union_handle_take() noexcept
+{
+    UnionHandle *row = g_union_handle_free;
+    if (row != nullptr) {
+        g_union_handle_free = row->next;
+        return row;
+    }
+    return static_cast<UnionHandle *>(arena_take(sizeof(UnionHandle)));
+}
+
+void union_handle_give(UnionHandle *row) noexcept
+{
+    row->next = g_union_handle_free;
+    g_union_handle_free = row;
+}
+
+UnionHandle *union_handle_find(uint64_t serial) noexcept
+{
+    for (UnionHandle *row = g_union_handles; row != nullptr; row = row->next) {
+        if (row->serial == serial) {
+            return row;
+        }
+    }
+    return nullptr;
+}
+
+void union_handle_drop(UnionHandle *row) noexcept
+{
+    UnionHandle **at = &g_union_handles;
+    while (*at != nullptr && *at != row) {
+        at = &(*at)->next;
+    }
+    if (*at != nullptr) {
+        *at = row->next;
+    }
+    union_handle_give(row);
+}
+
+/* open, forwarded (specs/namespace.md): with create it is the create target,
+ * without it the first member that has the path -- a create must not fall
+ * through, and an open of an existing name finds the member that holds it. The
+ * member's handle is wrapped in a union handle so write and close reach the
+ * same member. */
+void union_open(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count < 1 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const flags = words[path_words];
+
+    Member const *member = (flags & aegir::volume::kOpenCreate) != 0
+                               ? create_target(binding)
+                               : first_member_with(binding, badge, path, path_length);
+    if (member == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const extra[1] = {flags};
+    uint64_t answer[aegir::ipc::kMaxWords];
+    uint32_t const reply_count =
+        member_path_call(member, badge, aegir::volume::kMethodOpen, path, path_length,
+                         extra, 1, answer, aegir::ipc::kMaxWords);
+    if (reply_count < 1 || answer[0] == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    UnionHandle *row = union_handle_take();
+    if (row == nullptr) {
+        /* No room to remember the handle: close it on the member and refuse. */
+        uint64_t const close_payload[1] = {answer[0]};
+        uint64_t closed[1];
+        member_words_call(member, badge, aegir::volume::kMethodClose, close_payload, 1,
+                          closed, 1);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    row->serial = g_union_handle_next++;
+    row->member = member_index(binding, member);
+    row->member_handle = answer[0];
+    row->next = g_union_handles;
+    g_union_handles = row;
+    uint64_t const handle = row->serial;
+    port.reply_words(&handle, 1);
+}
+
+/* write, forwarded: the union handle names the member, whose own handle the
+ * union substitutes before the call; the client's count and bytes are
+ * unchanged. */
+void union_write(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                 uint64_t const *words, uint32_t count) noexcept
+{
+    if (count < 2) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    UnionHandle *row = union_handle_find(words[0]);
+    Member const *member = row != nullptr ? member_at(binding, row->member) : nullptr;
+    if (member == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    static uint64_t payload[aegir::ipc::kMaxWords];
+    for (uint32_t i = 0; i < count; ++i) {
+        payload[i] = words[i];
+    }
+    payload[0] = row->member_handle;
+    uint64_t answer[aegir::ipc::kMaxWords];
+    uint32_t const reply_count =
+        member_words_call(member, badge, aegir::volume::kMethodWrite, payload, count,
+                          answer, aegir::ipc::kMaxWords);
+    if (reply_count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, reply_count);
+}
+
+/* close, forwarded: the member's handle is closed and the union's row let go,
+ * whether or not the member still knows it. */
+void union_close(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                 uint64_t const *words, uint32_t count) noexcept
+{
+    if (count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    UnionHandle *row = union_handle_find(words[0]);
+    if (row == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Member const *member = member_at(binding, row->member);
+    uint64_t answer[1] = {0};
+    uint32_t const reply_count =
+        member != nullptr
+            ? member_words_call(member, badge, aegir::volume::kMethodClose,
+                                &row->member_handle, 1, answer, 1)
+            : 0;
+    union_handle_drop(row);
+    if (reply_count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, 1);
+}
+
+/* mkdir, forwarded: the create target, always (specs/namespace.md). */
+void union_mkdir(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                 uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count < 1 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Member const *member = create_target(binding);
+    uint64_t answer[1] = {0};
+    uint32_t const reply_count =
+        member != nullptr
+            ? member_path_call(member, badge, aegir::volume::kMethodMkdir, path,
+                               path_length, nullptr, 0, answer, 1)
+            : 0;
+    if (reply_count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, 1);
+}
+
+/* remove, forwarded: the first member that has the path (specs/namespace.md),
+ * the same rule read uses; the member's own authority decides whether it may,
+ * and there is no fall-through. */
+void union_remove(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                  uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count < 1 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Member const *member = first_member_with(binding, badge, path, path_length);
+    uint64_t answer[1] = {0};
+    uint32_t const reply_count =
+        member != nullptr
+            ? member_path_call(member, badge, aegir::volume::kMethodRemove, path,
+                               path_length, nullptr, 0, answer, 1)
+            : 0;
+    if (reply_count < 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, 1);
+}
+
 /* A union's volume call (specs/namespace.md): the badge names the union, and
  * the call is the volume protocol's -- read and list carry the merge, so a
- * client that resolved a name calls them exactly as it calls a volume's. The
- * members are asked on the binder's badge; the write side (open, write,
- * close, mkdir, remove), where a handle is scoped to the caller, is the next
- * piece, and a method this version does not know is answered by saying
- * nothing. */
+ * client that resolved a name calls them exactly as it calls a volume's, and
+ * the write side forwards to the member the path or handle names. A method
+ * this version does not know is answered by saying nothing. */
 void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
                   uint64_t const *words, uint32_t count) noexcept
 {
@@ -1225,12 +1517,28 @@ void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
         port.reply_words(nullptr, 0);
         return;
     }
+    uint64_t const caller = member_badge(binding);
     switch (method) {
     case aegir::volume::kMethodRead:
-        union_read(port, binding, binding->badge, words, count);
+        union_read(port, binding, caller, words, count);
         break;
     case aegir::volume::kMethodList:
-        union_list(port, binding, binding->badge, words, count);
+        union_list(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodOpen:
+        union_open(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodWrite:
+        union_write(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodClose:
+        union_close(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodMkdir:
+        union_mkdir(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodRemove:
+        union_remove(port, binding, caller, words, count);
         break;
     default:
         port.reply_words(nullptr, 0);
