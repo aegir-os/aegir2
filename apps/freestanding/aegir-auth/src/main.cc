@@ -236,13 +236,53 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
               "without one\n");
     }
 
+    /* The view over the home: named for the user, owned by the session's
+     * badge, so Home: resolves to a private volume the session owns
+     * (specs/ownership.md). A view that will not mount is logged and the raw
+     * path is bound instead -- a home that is not its own is still a home. */
+    char view_path[aegir::authdb::kHomeBytes + 1];
+    uint32_t view_path_length = 0;
+    {
+        uint32_t const user_name_length =
+            field_length(g_rows[user].name, aegir::authdb::kNameBytes);
+        uint64_t mwords[2 * (aegir::authdb::kHomeBytes / 8 + 1) + 4];
+        uint32_t w = 0;
+        w += aegir::nmspace::pack_string(mwords + w, home, home_length,
+                                         aegir::authdb::kHomeBytes);
+        w += aegir::nmspace::pack_string(mwords + w, g_rows[user].name, user_name_length,
+                                         aegir::nmspace::kNameMax);
+        mwords[w++] = badge; /* the owner */
+        mwords[w++] = 0;     /* flags */
+        uint64_t mout[aegir::nmspace::kNameMax / 8 + 1];
+        aegir::ipc::WordsReply const mounted = g_nmspace.call_words(
+            aegir::nmspace::kMethodMount, mwords, w, mout,
+            aegir::nmspace::kNameMax / 8 + 1);
+        char const *got = nullptr;
+        if (mounted.error == 0 && mounted.count > 0 &&
+            aegir::nmspace::unpack_string(mout, mounted.count, aegir::nmspace::kNameMax,
+                                          &got, &view_path_length)) {
+            for (uint32_t i = 0; i < view_path_length; ++i) {
+                view_path[i] = got[i];
+            }
+            view_path[view_path_length++] = ':';
+        } else {
+            write("      auth: FAIL the home view would not mount\n");
+        }
+    }
+    if (view_path_length == 0) {
+        for (uint32_t i = 0; i < home_length; ++i) {
+            view_path[i] = home[i];
+        }
+        view_path_length = home_length;
+    }
+
     uint64_t out[2 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
     out[0] = badge;
     out[1] = 0; /* replace: a session's Home: is its own single-member alias */
     uint32_t out_words = 2;
     out_words += aegir::nmspace::pack_string(out + out_words, "Home", 4,
                                              aegir::nmspace::kNameMax);
-    out_words += aegir::nmspace::pack_string(out + out_words, home, home_length,
+    out_words += aegir::nmspace::pack_string(out + out_words, view_path, view_path_length,
                                              aegir::nmspace::kPathMax);
     uint64_t in[1];
     aegir::ipc::WordsReply const bound =

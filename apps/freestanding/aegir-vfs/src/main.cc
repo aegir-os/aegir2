@@ -50,6 +50,10 @@ struct Volume {
     uint32_t name_length;
     uint64_t flags;
     seL4_CPtr port; /* the caller half, unbadged; each resolve mints from it */
+    uint64_t owner; /* the owner badge; zero for the system's (specs/ownership.md) */
+    char const *base;     /* a view's base path within its source, in the arena;
+                           * null for an ordinary volume */
+    uint32_t base_length;
     Volume *next;
 };
 
@@ -154,6 +158,20 @@ bool same_volume(char const *a, uint32_t a_length, char const *b, uint32_t b_len
     return true;
 }
 
+/* Exact bytes, for a view's base path (a path is not a name: it is not folded). */
+bool same_bytes(char const *a, char const *b, uint32_t length) noexcept
+{
+    if (a == nullptr) {
+        return length == 0;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 Volume *find_volume(char const *name, uint32_t length) noexcept
 {
     for (Volume *v = g_volumes; v != nullptr; v = v->next) {
@@ -162,6 +180,25 @@ Volume *find_volume(char const *name, uint32_t length) noexcept
         }
     }
     return nullptr;
+}
+
+/* Whether a caller may resolve a volume (specs/ownership.md). The system
+ * class resolves anything; a user resolves a public volume, or one whose
+ * owner carries the same user index. Everything else is refused before the
+ * mint, so a caller never holds a capability to a volume it may not see. */
+bool may_resolve(uint64_t badge, Volume const *volume) noexcept
+{
+    /* The everyone-badge is the namespace's own sentinel for a global alias,
+     * not a caller: resolving a global member is the system's act. */
+    if (badge == kAliasEveryone || !aegir::ipc::is_user_badge(badge)) {
+        return true;
+    }
+    if ((volume->flags &
+         (aegir::nmspace::kFlagPublic | aegir::nmspace::kFlagBoot)) != 0) {
+        return true;
+    }
+    return aegir::ipc::is_user_badge(volume->owner) &&
+           aegir::ipc::user_index(volume->owner) == aegir::ipc::user_index(badge);
 }
 
 /* The binding that answers a name for a caller: the caller's own first, the
@@ -224,6 +261,25 @@ bool assign_name(char *out, uint32_t *out_length, char const *wanted, uint32_t w
     }
 }
 
+/* The outcome of resolving a path's leading `Name:`: a volume, a union, or
+ * nothing. `rest_length` counts the bytes after the colon that landed in the
+ * caller's buffer -- what the name truly resolves to. */
+enum class Resolved { None, Volume, Union };
+
+struct Resolution {
+    Resolved kind;
+    Volume const *volume;   /* when kind == Volume */
+    Binding const *binding; /* when kind == Union */
+    uint32_t rest_length;
+};
+
+/* Defined below, beside the walk it shares with resolve: the two callers that
+ * need a path turned into a volume -- `mount` and `bind` (specs/ownership.md,
+ * specs/namespace.md) -- resolve a member when it is made, so a view or a
+ * member pins a volume rather than a name. */
+Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
+                        char *rest, uint32_t rest_capacity) noexcept;
+
 void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                      bool cap_arrived) noexcept
 {
@@ -254,6 +310,9 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     }
     volume->flags = flags;
     volume->port = stored;
+    volume->owner = 0; /* a registered volume is the system's (specs/ownership.md) */
+    volume->base = nullptr;
+    volume->base_length = 0;
     volume->next = g_volumes;
     g_volumes = volume;
     ++g_volume_count;
@@ -302,23 +361,103 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     port.reply_words(answer, answer_words);
 }
 
-/* The outcome of resolving a path's leading `Name:`: a volume, a union, or
- * nothing. `rest_length` counts the bytes after the colon that landed in the
- * caller's buffer -- what the name truly resolves to. */
-enum class Resolved { None, Volume, Union };
+/* mount: make a view -- a volume standing for a sub-path of another, with its
+ * own name and owner (specs/ownership.md). Only the system class mounts (auth
+ * is the one caller); the view shares the source's capability, so no new cap
+ * arrives or leaves, and the base path is copied into the arena because it
+ * outlives the call. The source is a **path**, resolved for the caller, so an
+ * alias works: auth mounts over `Sys:Homes/<name>`, and `Sys:` is the system
+ * volume's alias. A second mount of the same name and owner index returns the
+ * first, so a login that repeats does not spend another view. */
+void answer_mount(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  seL4_Word badge) noexcept
+{
+    if (aegir::ipc::is_user_badge(badge)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    char const *source = nullptr;
+    uint32_t source_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &source,
+                                       &source_length) ||
+        source_length == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const source_words = 1 + (source_length + 7) / 8;
+    char const *view = nullptr;
+    uint32_t view_length = 0;
+    if (count < source_words ||
+        !aegir::nmspace::unpack_string(words + source_words, count - source_words,
+                                       aegir::nmspace::kNameMax, &view, &view_length) ||
+        view_length == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const view_words = 1 + (view_length + 7) / 8;
+    uint32_t const rest_at = source_words + view_words;
+    if (count < rest_at + 2) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const owner = words[rest_at];
+    uint64_t const flags = words[rest_at + 1];
 
-struct Resolution {
-    Resolved kind;
-    Volume const *volume;   /* when kind == Volume */
-    Binding const *binding; /* when kind == Union */
-    uint32_t rest_length;
-};
-
-/* Defined below, beside the walk it shares with resolve: `bind` resolves a
- * member's path when it is bound, so the member pins a volume rather than a
- * name (specs/namespace.md). */
-Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
-                        char *rest, uint32_t rest_capacity) noexcept;
+    static char base[aegir::nmspace::kPathMax];
+    Resolution const resolved =
+        resolve_path(badge, source, source_length, base, sizeof(base));
+    if (resolved.kind != Resolved::Volume) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Volume const *src = resolved.volume;
+    uint32_t const base_length = resolved.rest_length;
+    if (Volume *existing = find_volume(view, view_length);
+        existing != nullptr && existing->base_length == base_length &&
+        aegir::ipc::is_user_badge(existing->owner) && aegir::ipc::is_user_badge(owner) &&
+        aegir::ipc::user_index(existing->owner) == aegir::ipc::user_index(owner) &&
+        same_bytes(existing->base, base, base_length)) {
+        uint64_t answer[aegir::nmspace::kNameMax / 8 + 1];
+        uint32_t const answer_words = aegir::nmspace::pack_string(
+            answer, existing->name, existing->name_length, aegir::nmspace::kNameMax);
+        port.reply_words(answer, answer_words);
+        return;
+    }
+    char *stored_base = nullptr;
+    if (base_length != 0) {
+        stored_base = static_cast<char *>(arena_take(base_length));
+        if (stored_base == nullptr) {
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        for (uint32_t i = 0; i < base_length; ++i) {
+            stored_base[i] = base[i];
+        }
+    }
+    Volume *volume = static_cast<Volume *>(arena_take(sizeof(Volume)));
+    if (volume == nullptr ||
+        !assign_name(volume->name, &volume->name_length, view, view_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    volume->flags = flags;
+    volume->port = src->port;
+    volume->owner = owner;
+    volume->base = stored_base;
+    volume->base_length = base_length;
+    volume->next = g_volumes;
+    g_volumes = volume;
+    ++g_volume_count;
+    write("  vfs: ");
+    write(volume->name, volume->name_length);
+    write(": mounted\n");
+    uint64_t answer[aegir::nmspace::kNameMax / 8 + 1];
+    uint32_t const answer_words =
+        aegir::nmspace::pack_string(answer, volume->name, volume->name_length,
+                                    aegir::nmspace::kNameMax);
+    port.reply_words(answer, answer_words);
+}
 
 /* bind: a badge, flags, an alias name, the path it stands for
  * (specs/vfs.md's Aliases, specs/namespace.md's union). A pair binds once -- a
@@ -380,10 +519,23 @@ void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         return;
     }
     member->volume = resolved.volume;
-    for (uint32_t i = 0; i < resolved.rest_length; ++i) {
-        member->rest[i] = member_rest[i];
+    /* A view already carries its base, and resolve will prepend it again, so a
+     * member that pins a view stores its rest relative to the view: strip the
+     * base the resolve just composed (specs/ownership.md). */
+    uint32_t offset = 0;
+    if (resolved.volume->base_length != 0 &&
+        resolved.rest_length >= resolved.volume->base_length &&
+        same_bytes(resolved.volume->base, member_rest,
+                   resolved.volume->base_length)) {
+        offset = resolved.volume->base_length;
+        if (offset < resolved.rest_length && member_rest[offset] == '/') {
+            ++offset;
+        }
     }
-    member->rest_length = resolved.rest_length;
+    for (uint32_t i = offset; i < resolved.rest_length; ++i) {
+        member->rest[i - offset] = member_rest[i];
+    }
+    member->rest_length = resolved.rest_length - offset;
     member->flags = flags;
     member->next = nullptr;
 
@@ -509,6 +661,62 @@ bool compose_path(char const *member, uint32_t member_length, char const *rest,
     return true;
 }
 
+/* A view's path: its base with the caller's path applied on top
+ * (specs/ownership.md). The base is the view root, so a `/` (parent) at the
+ * root stays at the root -- that clamp is what keeps a view the volume it is
+ * named. A path with no view base is copied through unchanged. */
+bool compose_view(Volume const *volume, char const *path, uint32_t path_length,
+                  char *out, uint32_t out_capacity, uint32_t *out_length) noexcept
+{
+    uint32_t const base = volume->base_length;
+    if (base == 0) {
+        if (path_length > out_capacity) {
+            return false;
+        }
+        for (uint32_t i = 0; i < path_length; ++i) {
+            out[i] = path[i];
+        }
+        *out_length = path_length;
+        return true;
+    }
+    uint32_t length = 0;
+    for (uint32_t i = 0; i < base; ++i) {
+        out[length++] = volume->base[i];
+    }
+    uint32_t i = 0;
+    while (true) {
+        uint32_t const start = i;
+        while (i < path_length && path[i] != '/') {
+            ++i;
+        }
+        uint32_t const component = i - start;
+        if (component == 0 && start != path_length) {
+            /* A `/`: one parent, clamped at the view root. */
+            uint32_t p = length;
+            while (p > base && out[p - 1] != '/') {
+                --p;
+            }
+            length = (p > base) ? p - 1 : base;
+        } else if (component != 0) {
+            if (length + 1 + component > out_capacity) {
+                return false;
+            }
+            if (length != 0) {
+                out[length++] = '/';
+            }
+            for (uint32_t k = 0; k < component; ++k) {
+                out[length++] = path[start + k];
+            }
+        }
+        if (i >= path_length) {
+            break;
+        }
+        ++i;
+    }
+    *out_length = length;
+    return true;
+}
+
 /* Resolve `path`'s leading `Name:` to a volume: a volume's own name answers
  * with its rest, and an alias answers with its first member's volume and the
  * member's rest composed with the caller's. The member was resolved when it
@@ -530,12 +738,13 @@ Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
     }
     Volume const *volume = find_volume(path, colon);
     if (volume != nullptr) {
-        uint32_t const rest_length = path_length - colon - 1;
-        if (rest_length > rest_capacity) {
+        if (!may_resolve(badge, volume)) {
             return {Resolved::None, nullptr, nullptr, 0};
         }
-        for (uint32_t i = 0; i < rest_length; ++i) {
-            rest[i] = path[colon + 1 + i];
+        uint32_t rest_length = 0;
+        if (!compose_view(volume, path + colon + 1, path_length - colon - 1, rest,
+                          rest_capacity, &rest_length)) {
+            return {Resolved::None, nullptr, nullptr, 0};
         }
         return {Resolved::Volume, volume, nullptr, rest_length};
     }
@@ -557,10 +766,18 @@ Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
         return {Resolved::Union, nullptr, binding, rest_length};
     }
     Member const *member = binding->members;
-    uint32_t rest_length = 0;
+    if (!may_resolve(badge, member->volume)) {
+        return {Resolved::None, nullptr, nullptr, 0};
+    }
+    static char composed[aegir::nmspace::kPathMax];
+    uint32_t composed_length = 0;
     if (!compose_path(member->rest, member->rest_length, path + colon + 1,
-                      path_length - colon - 1, rest, &rest_length) ||
-        rest_length > rest_capacity) {
+                      path_length - colon - 1, composed, &composed_length)) {
+        return {Resolved::None, nullptr, nullptr, 0};
+    }
+    uint32_t rest_length = 0;
+    if (!compose_view(member->volume, composed, composed_length, rest, rest_capacity,
+                      &rest_length)) {
         return {Resolved::None, nullptr, nullptr, 0};
     }
     return {Resolved::Volume, member->volume, nullptr, rest_length};
@@ -640,19 +857,41 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
                       aegir::bootstrap::kCNodeBits);
 }
 
-void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+/* How many volumes a caller may resolve (specs/ownership.md): count and
+ * describe disclose only these, so a private name is not leaked. */
+uint32_t resolvable_count(uint64_t badge) noexcept
 {
-    if (count < 1 || words[0] >= g_volume_count) {
+    uint32_t n = 0;
+    for (Volume const *v = g_volumes; v != nullptr; v = v->next) {
+        if (may_resolve(badge, v)) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                     uint64_t badge) noexcept
+{
+    uint32_t const total = resolvable_count(badge);
+    if (count < 1 || words[0] >= total) {
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t index = words[0];
     /* The list is youngest-first; the index a client walks is oldest-first,
      * so that a registration during the walk does not move what was seen. */
-    uint32_t const want = g_volume_count - 1 - static_cast<uint32_t>(index);
-    Volume const *volume = g_volumes;
-    for (uint32_t i = 0; i < want && volume != nullptr; ++i) {
-        volume = volume->next;
+    uint32_t const want = total - 1 - static_cast<uint32_t>(words[0]);
+    Volume const *volume = nullptr;
+    uint32_t seen = 0;
+    for (Volume const *v = g_volumes; v != nullptr; v = v->next) {
+        if (!may_resolve(badge, v)) {
+            continue;
+        }
+        if (seen == want) {
+            volume = v;
+            break;
+        }
+        ++seen;
     }
     if (volume == nullptr) {
         port.reply_words(nullptr, 0);
@@ -664,6 +903,7 @@ void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     }
     row.flags = volume->flags;
     row.bound = 1;
+    row.owner = volume->owner;
     port.reply_words(reinterpret_cast<uint64_t const *>(&row), aegir::nmspace::kRowWords);
 }
 
@@ -1064,12 +1304,15 @@ int main(int argc, char *argv[])
             answer_resolve(port, words, count, badge);
             break;
         case aegir::nmspace::kMethodCount: {
-            uint64_t n = g_volume_count;
+            uint64_t n = resolvable_count(badge);
             port.reply_words(&n, 1);
             break;
         }
         case aegir::nmspace::kMethodDescribe:
-            answer_describe(port, words, count);
+            answer_describe(port, words, count, badge);
+            break;
+        case aegir::nmspace::kMethodMount:
+            answer_mount(port, words, count, badge);
             break;
         case aegir::nmspace::kMethodBind:
             answer_bind(port, words, count);

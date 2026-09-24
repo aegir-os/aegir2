@@ -74,6 +74,20 @@ constexpr seL4_Word make_user_badge(uint64_t user, uint64_t serial) noexcept
     return kUserBadge | (user << 24) | serial;
 }
 
+/** The user index a badge carries: bits 24..61. A system badge has none, and
+ *  is the superuser (specs/authority.md, specs/ownership.md). */
+constexpr uint64_t kUserIndexMask = 0x3fffffffffull;
+
+constexpr uint64_t user_index(seL4_Word badge) noexcept
+{
+    return (badge >> 24) & kUserIndexMask;
+}
+
+constexpr bool is_user_badge(seL4_Word badge) noexcept
+{
+    return (badge & kUserBadge) != 0;
+}
+
 /** One word of payload, in each direction. Enough for the boot set's protocols;
  *  a protocol that needs more words is a change to this envelope, which is why
  *  it is here and not in a service. */

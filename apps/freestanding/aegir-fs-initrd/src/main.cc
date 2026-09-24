@@ -268,7 +268,7 @@ int main(int argc, char *argv[])
     uint64_t out[aegir::nmspace::kNameMax / 8 + 2];
     uint32_t out_words = aegir::nmspace::pack_string(out, kVolume, sizeof(kVolume) - 1,
                                                      aegir::nmspace::kNameMax);
-    out[out_words++] = aegir::nmspace::kFlagReadOnly;
+    out[out_words++] = aegir::nmspace::kFlagReadOnly | aegir::nmspace::kFlagPublic;
     uint64_t in[aegir::nmspace::kNameMax / 8 + 1];
     aegir::ipc::WordsReply const registered =
         nmspace.call_transfer(aegir::nmspace::kMethodRegister, out, out_words, caller_half,

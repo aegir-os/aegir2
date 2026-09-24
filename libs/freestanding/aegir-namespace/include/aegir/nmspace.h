@@ -60,6 +60,14 @@ constexpr uint32_t kMethodBindDescribe = 8; /* in: an index; answer: a BindingRo
 constexpr uint32_t kMethodBindMember = 9;   /* in: binding index, member index;
                                              * answer: a MemberRow + the rest */
 
+/* mount: a view -- a volume standing for a sub-path of another, with its own
+ * name and owner (specs/ownership.md). In: the source path, the view's name,
+ * an owner badge, flags. Answer: the name the view got (the `_N` suffix
+ * applies; a second mount of the same name and owner index returns the first).
+ * The source is resolved for the caller, so an alias works. Only the system
+ * class may mount. */
+constexpr uint32_t kMethodMount = 10;
+
 /** Bind flags (specs/namespace.md). A second bind of the same name appends or
  *  prepends a member -- the union, a name read as an ordered list of
  *  directories; the default replaces the binding, which is the one-member
@@ -96,6 +104,10 @@ inline uint32_t union_id(uint64_t badge) noexcept
 /** Register flags. */
 constexpr uint64_t kFlagReadOnly = 1;
 constexpr uint64_t kFlagBoot = 2; /* the system volume -- the VFS aliases it Sys: */
+/* Public: resolvable by every caller. A volume with a user owner is private to
+ * it; the system's volumes are its own to share, and the boot volume is shared
+ * by definition (specs/ownership.md). */
+constexpr uint64_t kFlagPublic = 4;
 
 /** The longest name a volume may carry, NUL not included: short enough to
  *  travel in the envelope with room for what comes after it, long enough for
@@ -148,6 +160,7 @@ struct Row {
     char name[kNameMax]; /* NUL-terminated within the field */
     uint64_t flags;      /* kFlagReadOnly and friends */
     uint64_t bound;      /* 1 when a filesystem's cap is held for it */
+    uint64_t owner;      /* the owner badge; zero for the system's */
 };
 
 /** The Row as the message carries it. */

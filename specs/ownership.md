@@ -40,11 +40,12 @@ A user's home is a directory on the system volume, but it is also a volume of
 its own to resolve. A **view** is a volume that stands for a sub-path of
 another: it carries the source's port, a base path, a name, and an owner.
 
-- **mount** — words: the source volume's name, the base path, the view's name,
-  the owner badge, flags. Answer: the name the view got (a duplicate gains the
-  `_N` suffix, as `register` does). Only the system class may mount; auth is
-  the system class. A mount naming a source the caller may not resolve, or a
-  base that escapes it, is refused.
+- **mount** — words: the source path, the view's name, the owner badge, flags.
+  Answer: the name the view got (a duplicate gains the `_N` suffix, as
+  `register` does). The source is resolved for the caller, so an alias works --
+  auth mounts over `Sys:Homes/<name>` -- and the path's rest is the view's
+  base. Only the system class may mount; auth is the system class. A mount
+  whose source the caller may not resolve is refused.
 - **mount is idempotent by name**: a mount whose name is already a view with
   the same owner index returns that view rather than making a second. auth
   logs in again and again (`specs/auth.md`'s reclaim proves sixteen), and each
