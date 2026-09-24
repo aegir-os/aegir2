@@ -204,7 +204,7 @@ account   = system
 owns      = console.gui
 needs     = log.main, devmgr.registry
 maps      = true
-memory_kib = 16384
+memory_kib = 65536
 restart   = always
 
 # auth owns the user database and the login port (specs/auth.md): it reads
@@ -221,10 +221,11 @@ account   = system
 owns      = auth.login
 needs     = log.main, vfs.namespace, console.gui
 spawns    = session.*, greeter
-# Auth's delegation holds the greeter's kit, the session pool the bureau comes
-# out of, and auth's own objects. The bureau is a toolkit app now -- its heap
-# and its font -- so the default 4 MiB is raised to 8.
-delegate_mib = 8
+# Auth's delegation holds the greeter's kit, the session pool the bureau and
+# the terminal come out of, and auth's own objects. Both session children are
+# toolkit apps now -- their heaps and fonts -- and their images are near a
+# megabyte each, so the default 4 MiB is raised to 16.
+delegate_mib = 16
 restart   = always
 
 # The login window (specs/console.md's login arc): auth's face, started once
@@ -336,5 +337,18 @@ binary    = aegir-bureau
 authority = user
 account   = user
 owns      = bureau.menu
+needs     = log.main, vfs.namespace, console.gui
+restart   = never
+
+# The session's terminal (specs/terminal.md, specs/shell.md): the CON: handler
+# and the command line, started by auth beside the bureau at login with its
+# own window, the namespace, and its Home current directory. It is the first
+# slice a person can use -- the built-in commands and the implicit directory
+# change -- and the process a shell's external commands will be given a stream
+# by in a later arc.
+[session.terminal]
+binary    = aegir-terminal
+authority = user
+account   = user
 needs     = log.main, vfs.namespace, console.gui
 restart   = never

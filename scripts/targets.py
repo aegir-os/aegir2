@@ -401,6 +401,28 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # before the session starts. Evidence only -- the bureau's dump
             # below reads what the screen shows once they are gone.
             QmpStep(r"auth: the greeter's windows are reaped"),
+            # The terminal (specs/terminal.md, specs/shell.md): auth starts it
+            # beside the bureau at login, focused, with its window clear of the
+            # test bed's red one, the demo's and the screen bar's samples. The
+            # typed line's cue is the shell having received and parsed it. The
+            # typing is paced on the terminal's ready, before the bureau's cue
+            # lets the demo's click take the focus.
+            QmpStep(
+                r"terminal: ready",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 60, 200, 204, 204, 204),
+                    ("gpu0", 500, 300, 204, 204, 204),
+                ),
+                press="echo hello\n",
+            ),
+            QmpStep(
+                r"terminal: line echo hello",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 60, 200, 204, 204, 204),),
+            ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across
             # its top -- #6688bb, the Workbench menus in it -- over the

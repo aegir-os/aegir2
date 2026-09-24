@@ -101,6 +101,9 @@ void TerminalView::on_paint(Canvas& canvas, const PaintEvent& event) {
 }
 
 void TerminalView::on_key_down(const KeyEvent& event) {
+    if (on_key && on_key(event)) {
+        return;
+    }
     switch (event.code) {
     case KeyCode::PAGE_UP:
         buffer_.scroll_by(buffer_.rows());

@@ -1,7 +1,11 @@
 # terminal: the CON: handler, its window, and its line
 
-Status: decided (2026-09). This is the spec the terminal arc lands under —
-the Amiga `CON:` handler and the text surface the shell (a later arc,
+Status: decided (2026-09), and its first two phases landed: the text surface
+(`TerminalBuffer`, `TerminalView`, the generated Unicode widths, BiDi
+reordering) and the terminal process with the line editor and the command
+line. The `con.stream` port and the shell as a separate process are Phase 3,
+with the spawn authority they need. This is the spec the terminal arc lands
+under —the Amiga `CON:` handler and the text surface the shell (a later arc,
 `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
 `CON:` handler" as future work and left them there; this is that work's first
 half.
@@ -27,6 +31,12 @@ scrollback, the line editor and the history; it serves a character-I/O port.
 The shell is a separate process that opens a console stream on that port,
 prints a prompt, reads lines, and launches commands. A command is a process
 whose standard input and output are the same console stream.
+
+Until the spawn arc gives a session its spawn authority, the shell is the
+terminal's **in-process** client over the same `LineEditor` the port will
+serve: the separation is real at the window (CON: owns it), and the process
+boundary lands when a session can start a child. What this buys immediately is
+the command line; what it defers is only where the shell runs.
 
 The alternative — the shell owning the window and rendering its own text —
 was rejected, and the reason is not fidelity:
@@ -180,10 +190,9 @@ wrapping and scrolling, `\r`/`\b` overwrite, wide-character occupancy,
 combining zero-width, BiDi reordering and cursor mapping, and scrollback
 retrieval — whole-run and exact.
 
-On target, the demo client (`apps/hosted/aegir-gui-demo`) renders a grid that
-includes an RTL line and a wide character and prints a cue the runner reads.
-The real terminal app, its `con.stream` protocol, and the input the runner
-types through it — a shell typing a command over QMP and reading the echo and
-the output, and the cursor moving where the BiDi mapping says — are Phase 2's,
-written with `specs/shell.md`; the arrow-key and cursor check waits for them,
-because the handler is what owns the focus and the line the cursor is on.
+On target, the terminal process (`apps/hosted/aegir-terminal`) renders the
+grid and the prompt and the runner reads its window back; the runner then
+types a line at it through QMP and reads the shell's cue for the parsed line
+(`specs/shell.md`'s acceptance). The `con.stream` port, the shell as a
+separate process, and the arrow/history check wait for the spawn arc, because
+until then the handler and the shell share one process.

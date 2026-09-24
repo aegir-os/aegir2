@@ -65,6 +65,7 @@ set(aegir_initrd_binaries
     aegir-console
     aegir-greeter
     aegir-bureau-app
+    aegir-terminal-app
     aegir-auth
     aegir-session-smoke
     aegir-test
@@ -90,6 +91,7 @@ set(aegir_initrd_binary_names
     "aegir-console"
     "aegir-greeter"
     "aegir-bureau"
+    "aegir-terminal"
     "aegir-auth"
     "aegir-session-smoke"
     "aegir-test"

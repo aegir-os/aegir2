@@ -15,6 +15,7 @@
 #include <aegir/trinket/terminal_buffer.h>
 #include <aegir/trinket/widget.h>
 #include <cstdint>
+#include <functional>
 
 namespace aegir::trinket {
 
@@ -44,6 +45,12 @@ public:
 
     bool focusable() const override { return true; }
     Size preferred_size() const override;
+
+    /* A key hook, ahead of the view's own scrolling: a line editor set here
+     * consumes the keys it edits with and returns true, so the arrows do not
+     * also scroll the scrollback. When it returns false -- or is unset -- the
+     * view scrolls on Page Up/Down and Home/End. */
+    std::function<bool(KeyEvent const&)> on_key;
 
     /* Whether the cursor is drawn (the handler shows it while a line is
      * being edited). */

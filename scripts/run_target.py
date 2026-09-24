@@ -197,9 +197,9 @@ def qmp_command(socket_path: Path, command: dict) -> dict:
 
 
 # The characters the acceptance script types, as QEMU's qcodes: a lowercase
-# letter or a digit is its own name, and the two whitespaces are QEMU's.
+# letter or a digit is its own name, and the three whitespaces are QEMU's.
 # Anything else would need a shift chord, and no step types one yet.
-_PRESS_QCODES = {"\t": "tab", "\n": "ret"}
+_PRESS_QCODES = {"\t": "tab", "\n": "ret", " ": "spc"}
 
 
 def send_key(socket_path: Path, keys: str) -> bool:

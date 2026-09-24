@@ -88,7 +88,13 @@ seL4_CPtr g_home_slot = 0;
  * charged, and the grant grows when that says so. It holds the bureau's own
  * untyped besides the spawn's objects, and the bureau is a toolkit app now
  * (its heap and its font), so it is 2 MiB of the delegation. */
-constexpr uint32_t kSessionPoolBits = 21; /* 2 MiB of the delegation */
+constexpr uint32_t kSessionPoolBits = 23; /* 8 MiB of the delegation: the
+                                           * bureau and the terminal each
+                                           * carve a 1 MiB untyped, and their
+                                           * two images are mapped from the
+                                           * rest -- a hosted terminal is
+                                           * near a megabyte with libc++ and
+                                           * the filesystem. */
 seL4_CPtr g_session_pool = 0;
 uint64_t g_session_pool_physical = 0;
 
@@ -423,11 +429,19 @@ void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
  * serving resumes (specs/auth.md's Session reclaim). */
 void start_session(uint32_t user, bool bureau) noexcept
 {
-    uint64_t const badge =
-        aegir::ipc::make_user_badge(user, g_serials[user]);
+    uint32_t const serial = g_serials[user];
+    uint64_t const badge = aegir::ipc::make_user_badge(user, serial);
+    /* The terminal is a second session child with a badge -- and so a console
+     * slice -- of its own: the console carves one slice per badge and refuses
+     * a second attach, so two windows cannot share one (specs/console.md).
+     * Its serial is the next. */
+    uint64_t const terminal_badge = aegir::ipc::make_user_badge(user, serial + 1);
     /* The home first: ensured and bound before the spawn, so the session
      * never sees a Home: that does not resolve (specs/auth.md's Homes). */
     ensure_home(user, badge);
+    if (bureau) {
+        ensure_home(user, terminal_badge);
+    }
 
     seL4_CPtr const mark = g_objects.slot_mark();
     /* The scratch window's own mark: the spawn stages the child's block and
@@ -560,7 +574,70 @@ void start_session(uint32_t user, bool bureau) noexcept
     write(" authenticated, session started, badge ");
     aegir::debug_write_hex(badge);
     write("\n");
-    ++g_serials[user];
+
+    /* The terminal (specs/terminal.md, specs/shell.md): a second session
+     * child, with its own badge -- and so its own console slice -- the
+     * namespace, and the user's Home as its current directory. Spawned after
+     * the bureau, so its window is created above the backdrop. It is the same
+     * spawner over the same pool, and its failure is logged without taking
+     * the bureau down. */
+    if (bureau) {
+        seL4_Error terminal_fault_error = seL4_NoError;
+        seL4_CPtr const terminal_fault =
+            g_session_mem.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                       session_account, &terminal_fault_error);
+        seL4_Error terminal_untyped_error = seL4_NoError;
+        uint64_t terminal_untyped_physical = 0;
+        seL4_CPtr const terminal_untyped =
+            g_session_mem.carve_untyped(kBureauUntypedBits, session_account,
+                                        &terminal_untyped_error,
+                                        &terminal_untyped_physical);
+        aegir::spawn::PortGrant const terminal_ports[] = {
+            {aegir::log::kPortName, aegir::log::kPortNameLength,
+             aegir::bootstrap::kSlotFirstDeclared, g_spawn_log,
+             seL4_CapRights_new(1, 0, 0, 1), terminal_badge, 0},
+            {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+             aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
+             seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
+            {aegir::console::kPortName, aegir::console::kPortNameLength,
+             aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_gui,
+             seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
+            /* The toolkit finds its untyped by name, the way the bureau's
+             * does: the capability entry is what adopt_memory looks up. */
+            {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3,
+             terminal_untyped, seL4_AllRights, 0, kBureauUntypedBits},
+        };
+        static char const kTerminalName[] = "session.terminal";
+        static char const kTerminalBinary[] = "aegir-terminal";
+        aegir::spawn::Request terminal_request{};
+        terminal_request.name = kTerminalName;
+        terminal_request.name_length = sizeof(kTerminalName) - 1;
+        terminal_request.binary = kTerminalBinary;
+        terminal_request.binary_length = sizeof(kTerminalBinary) - 1;
+        terminal_request.account = g_rows[user].account;
+        terminal_request.account_length =
+            field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
+        terminal_request.cwd = kHomeCwd;
+        terminal_request.cwd_length = sizeof(kHomeCwd) - 1;
+        terminal_request.priority = seL4_MaxPrio - 2;
+        terminal_request.ports = terminal_ports;
+        terminal_request.port_count = 4;
+        terminal_request.fault_endpoint = terminal_fault;
+        terminal_request.badge = terminal_badge;
+        terminal_request.give_vspace = true;
+        terminal_request.untyped_physical = terminal_untyped_physical;
+        terminal_request.untyped_bits = kBureauUntypedBits;
+        aegir::spawn::Process terminal_process{};
+        if (terminal_fault == 0 || terminal_untyped == 0 ||
+            !spawner.spawn(terminal_request, session_account, terminal_process)) {
+            write("      auth: FAIL spawning the terminal: ");
+            write(spawner.problem());
+            write("\n");
+        } else {
+            write("      auth: the terminal is up\n");
+        }
+    }
+    g_serials[user] += bureau ? 2 : 1;
 
     /* The ready, waited on the way the partition manager waits for a
      * filesystem's: a session that faults first leaves us here, which is

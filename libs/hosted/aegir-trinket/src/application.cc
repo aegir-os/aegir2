@@ -146,25 +146,37 @@ bool Application::start_console() {
     uint64_t frames = 0;
     if (!aegir::console::attach(gui_port_, bytes, &frame_bits, &frames) ||
         frame_bits != seL4_LargePageBits || frames != wanted) {
+        aegir::debug_write("trinket: FAIL console attach was refused\n");
         return false;
     }
 
     /* The frames map one after another: the backing is one range. */
     for (uint64_t i = 0; i < frames; ++i) {
         seL4_CPtr const slot = g_objects.alloc_slot();
-        if (slot == 0 || !aegir::console::frame(gui_port_, i, slot)) return false;
+        if (slot == 0 || !aegir::console::frame(gui_port_, i, slot)) {
+            aegir::debug_write("trinket: FAIL a slice frame was refused\n");
+            return false;
+        }
         void* const mapped = g_scratch.map_large(slot);
-        if (mapped == nullptr) return false;
+        if (mapped == nullptr) {
+            aegir::debug_write("trinket: FAIL the slice would not map\n");
+            return false;
+        }
         if (i == 0) {
             slice_ = static_cast<uint8_t*>(mapped);
         } else if (static_cast<uint8_t*>(mapped) != slice_ + i * frame_bytes) {
+            aegir::debug_write("trinket: FAIL the slice frames are not adjacent\n");
             return false;
         }
     }
     slice_bytes_ = bytes;
 
     events_ = g_objects.alloc_slot();
-    return events_ != 0 && aegir::console::listen(gui_port_, events_);
+    if (events_ == 0 || !aegir::console::listen(gui_port_, events_)) {
+        aegir::debug_write("trinket: FAIL console listen was refused\n");
+        return false;
+    }
+    return true;
 }
 
 int Application::exec() {

@@ -105,11 +105,14 @@ this arc's record of the order.
 - **Phase 1 — the text surface.** `specs/terminal.md`'s `TerminalView`,
   input completeness, scrollback, BiDi and width. The ground the shell
   stands on; no shell yet.
-- **Phase 2 — the CON: handler and the command line.** The terminal process
-  serves `con.stream`; the shell is its first client, reading lines and
-  running **built-in commands only** — `CD`, `Dir`, `Type`, `Echo`, `Quit`.
-  Typing a directory changes the current directory; `CD` prints it. This is
-  the first slice a person can use, and it needs no spawn at all.
+- **Phase 2 — the CON: handler and the command line.** Landed: the terminal
+  process owns the window and runs the shell in it, over the `LineEditor`
+  (the cooked line editor and history, `specs/terminal.md`) -- **built-in
+  commands only** — `CD`, `Dir`, `Type`, `Echo`, `Quit`. Typing a directory
+  changes the current directory; `CD` prints it. The shell is the terminal's
+  in-process client for now; the `con.stream` port and the shell as a
+  separate process need the spawn authority, so they land with Phase 3. This
+  is the first slice a person can use, and it needs no spawn at all.
 - **Phase 3 — external commands.** Resolve a name to `Initrd:`, spawn it
   with the console stream, wait, report the status. This needs the spawn
   authority a session is meant to have and does not yet hold
@@ -139,12 +142,13 @@ this arc's record of the order.
 
 ## Acceptance
 
-Phase 2's: over QMP, the login starts the terminal, the runner types a known
-line at the prompt (characters asserted through the console keymap,
-`specs/console.md`), and reads the echo and the built-in's output back from
-the window — a `CD` changing the prompt, a `Dir` listing a known volume
-entry, and `Echo` of a known string. No external process is needed, so the
-acceptance stands while the spawn authority is still Phase 3's.
+Phase 2's, landed: auth starts the terminal beside the bureau at login, the
+runner types `echo hello` at the prompt through QMP (characters asserted
+through the console keymap, `specs/console.md`), and reads the shell's
+`terminal: line echo hello` cue — proof the keys crossed the console's keymap
+to the line editor and the shell parsed the line. The terminal window's
+pixels are read back too. `Dir` and `CD` are the same call path; a directory
+name typed as a command changes the current directory.
 
 Phase 3's adds one command: a name that resolves to an `Initrd:` binary is
 spawned, its output reaches the grid, and its non-zero exit prints the

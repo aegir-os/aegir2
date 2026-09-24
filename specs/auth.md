@@ -188,6 +188,18 @@ A successful login starts a session. The decisions, taken 2026-09:
 - **Resolve stays open.** There is no volume-ownership model to check
   against, and a check without one would be an arbitrary rule, not a
   policy. Permission checks land with home volumes.
+- **A login starts the bureau and the terminal.** Two session children, not
+  one (specs/terminal.md, specs/shell.md): the bureau is the backdrop, and
+  the terminal is the window above it that the command line runs in. Each
+  has its own user badge, because the console carves one pixel slice per
+  badge and refuses a second attach -- so a badge is a window's slice, and
+  the terminal's serial is the bureau's plus one. The terminal is spawned
+  second, so its window is created over the backdrop; it gets the namespace
+  and the user's Home, as the bureau does. The session pool grew from 2 to
+  8 MiB -- the two hosted images are near a megabyte each -- and the
+  console's memory grant from 16 to 64 MiB, because the console retypes each
+  client's slice from it, and a slice is the screen-bounded maximum the
+  window may resize to.
 
 ## Session reclaim
 

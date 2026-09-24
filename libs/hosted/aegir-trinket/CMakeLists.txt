@@ -115,6 +115,7 @@ add_library(aegir-trinket STATIC
     src/bidi.cc
     "${AEGIR_BIDI_TABLES}"
     src/terminal_buffer.cc
+    src/line_editor.cc
     src/terminal_view.cc
     "${AEGIR_WIDTH_TABLES}"
     src/translation.cc
