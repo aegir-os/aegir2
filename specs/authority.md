@@ -484,6 +484,10 @@ portable one, and a driver that finds no pair polls.
   exit is one revoke and one slot release -- a long-lived spawner reclaims
   where a shared allocator could not (specs/shell.md's Phase 4). The window is
   still the toolkit's: a process has one VSpace root.
+- The terminal is also delegated a **4 MiB shell pool**: the shell is its own
+  process now, spawned once from that pool and never reclaimed, so its memory
+  is separate from the command pool's (specs/shell.md's Phase 6). The terminal
+  keeps the command pool and starts the shell's commands on its request.
 - Badges for a service's spawned children count from **256** for the device manager's
   (the low badges are director's boot set), from **512** for the partition
   manager's, and from **768** for auth's -- the greeter is auth's system child

@@ -72,6 +72,7 @@ set(aegir_initrd_binaries
     aegir-echo
     aegir-print
     aegir-read
+    aegir-shell
     aegir-cxx-smoke
     aegir-env-smoke
     aegir-fs-smoke
@@ -101,6 +102,7 @@ set(aegir_initrd_binary_names
     "aegir-echo"
     "aegir-print"
     "aegir-read"
+    "aegir-shell"
     "aegir-cxx-smoke"
     "aegir-env-smoke"
     "aegir-fs-smoke"

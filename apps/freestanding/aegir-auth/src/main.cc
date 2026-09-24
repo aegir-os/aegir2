@@ -608,6 +608,14 @@ void start_session(uint32_t user, bool bureau) noexcept
         seL4_CPtr const terminal_command_pool =
             g_session_mem.carve_untyped(kTerminalCommandPoolBits, session_account,
                                         &command_pool_error, &command_pool_physical);
+        /* The shell pool: the shell is its own process now, and its runtime
+         * untyped is carved once from here and never reclaimed (specs/shell.md). */
+        constexpr uint32_t kTerminalShellPoolBits = 22;
+        seL4_Error shell_pool_error = seL4_NoError;
+        uint64_t shell_pool_physical = 0;
+        seL4_CPtr const terminal_shell_pool =
+            g_session_mem.carve_untyped(kTerminalShellPoolBits, session_account,
+                                        &shell_pool_error, &shell_pool_physical);
         aegir::spawn::PortGrant const terminal_ports[] = {
             {aegir::log::kPortName, aegir::log::kPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, g_spawn_log,
@@ -636,6 +644,8 @@ void start_session(uint32_t user, bool bureau) noexcept
              seL4_CapRights_new(1, 0, 0, 1), 0, 0},
             {"spawn:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
              g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
+            {"shell-pool", 10, aegir::bootstrap::kSlotFirstDeclared + 8,
+             terminal_shell_pool, seL4_AllRights, 0, kTerminalShellPoolBits},
         };
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
@@ -654,7 +664,7 @@ void start_session(uint32_t user, bool bureau) noexcept
         /* The spawn kit's four entries are dead when the carve failed: the
          * count keeps them out, the terminal runs without a spawner, and it
          * says so rather than failing to start. */
-        terminal_request.port_count = terminal_command_pool != 0 ? 8 : 4;
+        terminal_request.port_count = terminal_command_pool != 0 ? 9 : 4;
         terminal_request.fault_endpoint = terminal_fault;
         terminal_request.badge = terminal_badge;
         terminal_request.give_vspace = true;

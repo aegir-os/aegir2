@@ -15,7 +15,7 @@ cmake_minimum_required(VERSION 3.16.0)
 project(aegir-terminal CXX)
 
 if(AEGIR_TOOLKIT)
-  add_executable(aegir-terminal-app src/main.cc src/shell.cc
+  add_executable(aegir-terminal-app src/main.cc
                                      src/console_stream_server.cc src/spawn_kit.cc)
 
   target_compile_options(aegir-terminal-app PRIVATE -Wall -Wextra -Werror)

@@ -8,7 +8,11 @@
 #include "spawn_kit.h"
 
 #include <aegir/bootstrap.h>
+#include <aegir/console_stream.h>
+#include <aegir/debug.h>
+#include <aegir/log.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/nmspace.h>
 #include <aegir/trinket/application.h>
 
 namespace aegir::terminal {
@@ -43,6 +47,17 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     }
     command_pool_ = static_cast<seL4_CPtr>(pool_slot);
     command_pool_bits_ = pool_bits;
+
+    /* The shell's pool: a second pool, because the shell is spawned once and
+     * never reclaimed (specs/shell.md). */
+    uint64_t shell_pool_slot = 0;
+    uint32_t shell_pool_bits = 0;
+    if (!aegir::bootstrap::capability("shell-pool", 10, &shell_pool_slot) ||
+        !aegir::bootstrap::capability_size_bits("shell-pool", 10, &shell_pool_bits)) {
+        return false;
+    }
+    shell_pool_ = static_cast<seL4_CPtr>(shell_pool_slot);
+    shell_pool_bits_ = shell_pool_bits;
 
     uint64_t asid_pool = 0;
     if (!aegir::bootstrap::capability("asid-pool", 9, &asid_pool)) {
@@ -85,6 +100,74 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
 aegir::mem::Allocator& SpawnKit::memory()
 {
     return g_command_mem;
+}
+
+bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
+                           uint32_t cwd_length, uint64_t badge)
+{
+    if (!ready_ || shell_pool_ == 0 || app_ == nullptr) {
+        aegir::debug_write("  terminal: shell spawn: not ready\n");
+        return false;
+    }
+    /* The shell's pool is its own runtime untyped: dedicated, so it is handed
+     * over whole rather than carved, and the shell's heap grows into it. Its
+     * objects and page tables come from the toolkit's allocator, which is the
+     * one the terminal already owns. */
+    aegir::mem::Account account{"shell", 0, 0, 0};
+    aegir::mem::Arena arena(app_->allocator(), app_->scratch(), account);
+    aegir::spawn::Initrd const initrd(nullptr, 0);
+    aegir::spawn::Spawner spawner(app_->allocator(), app_->scratch(), arena, initrd,
+                                  asid_pool_,
+                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                  aegir::bootstrap::kCNodeBits);
+    aegir::spawn::PortGrant const ports[] = {
+        {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
+         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
+        {aegir::log::kPortName, aegir::log::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 1, log_port_,
+         seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+        {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 2, nmspace_port_,
+         seL4_CapRights_new(1, 1, 0, 1), 0, 0},
+        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
+         seL4_AllRights, 0, shell_pool_bits_},
+    };
+    static char const kName[] = "session.shell";
+    static char const kAccountText[] = "shell";
+    aegir::spawn::Request request{};
+    request.name = kName;
+    request.name_length = sizeof(kName) - 1;
+    request.binary_image = image;
+    request.binary_image_bytes = image_bytes;
+    request.account = kAccountText;
+    request.account_length = sizeof(kAccountText) - 1;
+    request.cwd = cwd;
+    request.cwd_length = cwd_length;
+    request.priority = seL4_MaxPrio - 2;
+    request.ports = ports;
+    request.port_count = 4;
+    request.fault_endpoint = fault_endpoint_;
+    request.badge = badge;
+    request.give_vspace = true;
+    /* The pool's physical is not known to the terminal, and only a driver
+     * needs it; zero is the "not given" the block and the allocator accept. */
+    request.untyped_physical = 0;
+    request.untyped_bits = shell_pool_bits_;
+    aegir::spawn::Process process{};
+    if (!spawner.spawn(request, account, process)) {
+        aegir::debug_write("  terminal: shell spawn: ");
+        aegir::debug_write(spawner.problem());
+        char const *const detail = spawner.detail();
+        if (detail != nullptr && detail[0] != '\0') {
+            aegir::debug_write(" (");
+            aegir::debug_write(detail);
+            aegir::debug_write(")");
+        }
+        aegir::debug_write("\n");
+        return false;
+    }
+    return true;
 }
 
 bool SpawnKit::begin()

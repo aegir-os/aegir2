@@ -1,32 +1,28 @@
 /*
- * aegir-terminal: the session's CON: handler and command line.
+ * aegir-terminal: the session's CON: handler.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * The terminal owns one console window and a text grid, serves con.stream on
- * its own endpoint, and runs the shell as its first client. Auth starts it
- * beside the bureau at login with the console, the namespace, its Home, and
- * the spawn kit that lets it run the session's commands (specs/terminal.md,
- * specs/shell.md, specs/authority.md).
- *
- * A command is spawned with a caller copy of the shell's stream, so its
- * output lands on the same grid the shell writes to, and reports the status
- * it finished with (the interim until exit() carries one, Phase 4). The shell
- * is in-process for now; the stream it uses is the same one a command reaches
- * over the port.
+ * The terminal owns one console window and a text grid, and serves con.stream
+ * on its own endpoint. The shell is its own process now (aegir-shell): it
+ * opens a stream, reads lines, runs the built-ins, and asks the terminal to
+ * run a command. The terminal holds the window and the spawn authority, so a
+ * command starts here -- with a caller copy of the shell's stream, so its
+ * output lands on the same grid -- and its exit is read back by the shell
+ * (specs/terminal.md, specs/shell.md, specs/authority.md).
  */
 
-#include "shell.h"
 #include "spawn_kit.h"
+#include "console_stream_server.h"
 
 #include <aegir/bootstrap.h>
 #include <aegir/console.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
-#include <aegir/environment.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/nmspace.h>
 #include <aegir/spawn/process.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/line_editor.h>
@@ -47,10 +43,10 @@
 
 namespace {
 
-/* The shell's stream, keyed by this number: a command's con.stream cap is
- * badged with it, so the command writes to the shell's stream rather than
- * opening one of its own (specs/terminal.md). Not a badge the kernel minted,
- * just a key inside the handler. */
+/* The shell's stream, keyed by this number: the shell's con.stream copy is
+ * badged with it, and so is every command's, so all of them share one stream
+ * (specs/terminal.md). Not a badge the kernel minted, just a key inside the
+ * handler. */
 constexpr uint64_t kShellStream = 1;
 
 /* Clear of the test bed's windows, the demo, and the screen bar's samples. */
@@ -69,6 +65,33 @@ void write_unsigned(uint64_t value)
     aegir::debug_write_unsigned(value);
 }
 
+std::vector<std::string> split_words(std::string const &text)
+{
+    std::vector<std::string> words;
+    std::string current;
+    for (char const c : text) {
+        if (c == ' ' || c == '\t') {
+            if (!current.empty()) {
+                words.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(c);
+        }
+    }
+    if (!current.empty()) {
+        words.push_back(current);
+    }
+    return words;
+}
+
+/* The packed words a string of `length` bytes occupies: the count word, then
+ * the bytes (nmspace::pack_string's own arithmetic). */
+uint32_t packed_words(uint32_t length)
+{
+    return 1 + (length + 7) / 8;
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -84,15 +107,15 @@ int main(int argc, char *argv[])
 
     Application& app = Application::create(argc, argv);
 
-    /* The authority to start the session's commands (specs/authority.md,
-     * specs/shell.md): auth delegates it, the terminal adopts it into the
-     * toolkit's one allocator. A failure here turns external commands off and
-     * leaves the built-in command line working. */
+    /* The authority to start the session's commands and its shell
+     * (specs/authority.md, specs/shell.md): auth delegates it, the terminal
+     * adopts it. A failure here leaves the window but no command line. */
     aegir::terminal::SpawnKit spawn_kit;
-    if (spawn_kit.adopt(app)) {
+    bool const kit = spawn_kit.adopt(app);
+    if (kit) {
         write("  terminal: spawn kit ready\n");
     } else {
-        write("  terminal: no spawn kit -- external commands are off\n");
+        write("  terminal: no spawn kit -- no shell, no commands\n");
     }
 
     aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
@@ -111,60 +134,75 @@ int main(int argc, char *argv[])
     view->set_font(app.default_font());
     view->set_colors(app.theme().color(ColorRole::TEXT),
                      app.theme().color(ColorRole::WINDOW_BG));
-    TerminalView* const terminal = view.get();
+    TerminalView *const terminal = view.get();
 
     aegir::terminal::ConsoleStreamServer server(terminal->buffer());
     /* The grid changed -- the banner, a command's output, the next prompt --
      * so the view that draws it must repaint. */
     server.on_change = [terminal]() { terminal->damage(); };
-    auto shell = std::make_unique<aegir::terminal::Shell>(
-        server, kShellStream, [&app]() { app.quit(0); });
 
     /* The terminal's keys, routed by the handler: the shell's editor while it
      * is idle, the stream's input queue while a command runs (specs/shell.md's
-     * Phase 4). A key while a command runs is the command's stdin. */
-    terminal->on_key = [&server](KeyEvent const &event) {
+     * Phase 4). The shell is its own process and opens the stream a moment
+     * after the terminal says it is ready, so a key that arrives before its
+     * editor exists waits here and is replayed (on_poll). */
+    std::vector<KeyEvent> pending_keys;
+    terminal->on_key = [&server, &pending_keys](KeyEvent const &event) {
+        LineEditor *const editor = server.editor(kShellStream);
+        if (editor == nullptr || (!editor->editing() && !server.in_command(kShellStream))) {
+            /* The shell has not begun its prompt yet (or is between commands):
+             * hold the key and ring its doorbell, so it wakes and begins the
+             * editor; on_poll replays the held keys then. */
+            pending_keys.push_back(event);
+            if (server.on_wake) {
+                server.on_wake(kShellStream);
+            }
+            return true;
+        }
         return server.on_key(kShellStream, event);
+    };
+
+    /* One buffer for every image the terminal reads, kept across commands: its
+     * pages come from the toolkit's untyped, and the hosted heap never returns
+     * a large mapping (sys_munmap is a no-op, specs/cxx.md), so a fresh vector
+     * per command would spend the untyped a command at a time. It is sized
+     * once from the file, so the grow-by-doubling that leaves a trail of
+     * mappings never happens. */
+    std::vector<char> image;
+    auto load_image = [&](std::string const &path) -> bool {
+        int const fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) {
+            return false;
+        }
+        image.clear();
+        std::error_code size_error;
+        uintmax_t const bytes = std::filesystem::file_size(path, size_error);
+        if (!size_error && bytes > 0) {
+            image.reserve(static_cast<std::size_t>(bytes));
+        }
+        char chunk[512];
+        ssize_t have = 0;
+        while ((have = ::read(fd, chunk, sizeof(chunk))) > 0) {
+            image.insert(image.end(), chunk, chunk + have);
+        }
+        ::close(fd);
+        return !image.empty();
     };
 
     uint64_t command_serial = 0;
     aegir::spawn::Process command_process{};
     bool command_running = false;
-    /* One buffer for every command's image, kept across commands: its pages
-     * come from the toolkit's untyped, and the hosted heap never returns a
-     * large mapping (sys_munmap is a no-op, specs/cxx.md), so a fresh vector
-     * per command would spend the untyped a command at a time. It is sized
-     * once from the file, so the grow-by-doubling that leaves a trail of
-     * mappings never happens. */
-    std::vector<char> command_image;
-    auto spawn_command = [&](std::string const &name,
-                             std::vector<std::string> const &args) -> bool {
-        if (!spawn_kit.ready()) {
+    auto spawn_command = [&](std::string const &name, std::vector<std::string> const &args,
+                             std::string const &cwd,
+                             std::vector<char const *> const &environment) -> bool {
+        if (!kit) {
             return false;
         }
         /* The image comes from Initrd: through the namespace, not from a
          * mapped initrd: it is 5.7 MiB and does not fit a child
          * (specs/shell.md, specs/authority.md). */
-        std::string const path = "Initrd:" + name;
-        int const fd = ::open(path.c_str(), O_RDONLY);
-        if (fd < 0) {
+        if (!load_image("Initrd:" + name)) {
             write("  terminal: no image for the command\n");
-            return false;
-        }
-        command_image.clear();
-        std::error_code size_error;
-        uintmax_t const image_bytes = std::filesystem::file_size(path, size_error);
-        if (!size_error && image_bytes > 0) {
-            command_image.reserve(static_cast<std::size_t>(image_bytes));
-        }
-        char chunk[512];
-        ssize_t have = 0;
-        while ((have = ::read(fd, chunk, sizeof(chunk))) > 0) {
-            command_image.insert(command_image.end(), chunk, chunk + have);
-        }
-        ::close(fd);
-        if (command_image.empty()) {
-            write("  terminal: the command image is empty\n");
             return false;
         }
 
@@ -194,7 +232,6 @@ int main(int argc, char *argv[])
             argument_pointers.push_back(arg.c_str());
         }
         static std::string const kAccountText = "command";
-        std::string const cwd = shell->current_directory();
         aegir::spawn::PortGrant const ports[] = {
             {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, spawn_kit.stream_endpoint(),
@@ -207,21 +244,16 @@ int main(int argc, char *argv[])
         aegir::spawn::Request request{};
         request.name = name.c_str();
         request.name_length = static_cast<uint32_t>(name.size());
-        request.binary_image = command_image.data();
-        request.binary_image_bytes = command_image.size();
+        request.binary_image = image.data();
+        request.binary_image_bytes = image.size();
         request.account = kAccountText.c_str();
         request.account_length = static_cast<uint32_t>(kAccountText.size());
         request.arguments = argument_pointers.data();
         request.argument_count = static_cast<uint32_t>(args.size());
-        /* Inheritance is the default (specs/environment.md): the command gets
-         * the shell's environment, so `Set` reaches it. */
-        char const *const *environment = aegir::environment::environ();
-        uint32_t environment_count = 0;
-        while (environment[environment_count] != nullptr) {
-            ++environment_count;
-        }
-        request.environment = environment;
-        request.environment_count = environment_count;
+        /* Inheritance: the command gets the environment the shell sent in its
+         * `run`, so `Set` reaches it (specs/environment.md). */
+        request.environment = environment.empty() ? nullptr : environment.data();
+        request.environment_count = static_cast<uint32_t>(environment.size());
         request.cwd = cwd.c_str();
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.priority = seL4_MaxPrio - 2;
@@ -250,26 +282,101 @@ int main(int argc, char *argv[])
         write("\n");
         return true;
     };
-    shell->set_spawn(spawn_command);
 
-    /* The shell is the stream's first client, and the terminal serves the port
-     * a command reaches it through. Only the port needs the kit. */
-    if (spawn_kit.ready()) {
+    /* The shell: its own process, spawned once from its own pool. Its
+     * con.stream copy is badged with the shell's stream, and it opens the
+     * stream itself -- the terminal is serving before it gets there. It is
+     * spawned in on_started, after the ready cue, so the cue is not delayed by
+     * the spawn (the acceptance types at it before the demo's zoom). */
+    if (kit) {
         app.serve(aegir::ipc::Owner(spawn_kit.stream_endpoint()));
-        app.on_call = [&server, &app](uint32_t method, uint64_t const *words,
-                                      uint32_t count, seL4_Word badge, bool cap_arrived,
-                                      uint64_t *reply, uint32_t capacity) {
-            uint32_t const answer = server.handle(method, words, count, badge, reply, capacity);
+        app.on_call = [&](uint32_t method, uint64_t const *words, uint32_t count,
+                          seL4_Word badge, bool cap_arrived, uint64_t *reply,
+                          uint32_t capacity) -> uint32_t {
+            /* The shell asks the terminal to run a command: the line, the
+             * directory to run it in, and the shell's environment (three
+             * strings, packed in that order). The terminal holds the spawn
+             * authority, so it starts the command here. */
+            if (method == aegir::console::kStreamMethodRun) {
+                if (capacity < 1) {
+                    return 0;
+                }
+                char const *line = nullptr;
+                char const *cwd = nullptr;
+                char const *environment = nullptr;
+                uint32_t line_length = 0;
+                uint32_t cwd_length = 0;
+                uint32_t environment_length = 0;
+                uint32_t at = 0;
+                if (!aegir::nmspace::unpack_string(words + at, count - at,
+                                                   aegir::console::kStreamBytesMax, &line,
+                                                   &line_length)) {
+                    return 0;
+                }
+                at += packed_words(line_length);
+                if (!aegir::nmspace::unpack_string(words + at, count - at,
+                                                   aegir::console::kStreamBytesMax, &cwd,
+                                                   &cwd_length)) {
+                    return 0;
+                }
+                at += packed_words(cwd_length);
+                if (!aegir::nmspace::unpack_string(words + at, count - at,
+                                                   aegir::console::kStreamBytesMax,
+                                                   &environment, &environment_length)) {
+                    return 0;
+                }
+                std::vector<std::string> const words_of_line =
+                    split_words(std::string(line, line_length));
+                if (words_of_line.empty()) {
+                    reply[0] = 0;
+                    return 1;
+                }
+                /* The environment rides as NUL-separated NAME=VALUE; the
+                 * spawner wants pointers, so they point into a copy. */
+                std::vector<char> environment_buffer(environment,
+                                                     environment + environment_length);
+                std::vector<char const *> environment_pointers;
+                std::size_t index = 0;
+                while (index < environment_buffer.size()) {
+                    environment_pointers.push_back(&environment_buffer[index]);
+                    while (index < environment_buffer.size() &&
+                           environment_buffer[index] != '\0') {
+                        ++index;
+                    }
+                    ++index;
+                }
+                reply[0] = spawn_command(
+                               words_of_line[0],
+                               std::vector<std::string>(words_of_line.begin() + 1,
+                                                        words_of_line.end()),
+                               std::string(cwd, cwd_length), environment_pointers)
+                               ? 1
+                               : 0;
+                return 1;
+            }
+
+            uint32_t const answer =
+                server.handle(method, words, count, badge, reply, capacity);
             if (cap_arrived) {
-                /* A capability rode with the call -- the client's doorbell on
-                 * an open (specs/terminal.md). Move it out of the scratch slot
-                 * before the next receive, and record it for the stream so
-                 * on_wake can ring it. */
+                /* A capability rode with the call -- the shell's doorbell on
+                 * its open (specs/terminal.md). Move it out of the scratch slot
+                 * before the next receive, and record it for the stream. */
                 seL4_CPtr const slot = app.alloc_slot();
                 if (slot != 0 && aegir::ipc::take_received_cap(slot) &&
                     method == aegir::console::kStreamMethodOpen && answer == 1 &&
                     reply[0] == 1) {
                     server.set_doorbell(badge, slot);
+                }
+            }
+            if (method == aegir::console::kStreamMethodCommandStatus && answer == 1) {
+                /* The shell has taken the command's status, so the command is
+                 * done: stop and reclaim it, so its pool goes back whole. */
+                write("  terminal: command exited ");
+                write_unsigned(reply[0]);
+                write("\n");
+                if (command_running) {
+                    spawn_kit.finish(command_process.tcb);
+                    command_running = false;
                 }
             }
             return answer;
@@ -292,36 +399,38 @@ int main(int argc, char *argv[])
     window.request_focus();
     window.show();
 
-    /* A finished line runs the shell; a command's exit draws the next prompt.
-     * Both happen here rather than in the key callback, because a command's
-     * output arrives between the Enter and the prompt (specs/shell.md). */
+    /* The shell opens its stream a moment after the terminal is up; keys that
+     * arrived first are replayed once its editor is there. */
     app.on_poll = [&]() {
-        if (server.line_ready(kShellStream)) {
-            std::u32string const line = server.take_line(kShellStream);
-            write("  terminal: line ");
-            write(aegir::trinket::utf32_to_utf8(line).c_str());
-            write("\n");
-            shell->run_line(line);
+        if (pending_keys.empty()) {
+            return;
         }
-        if (shell->busy() && server.command_finished(kShellStream)) {
-            uint64_t const status = server.exit_status(kShellStream);
-            server.clear_command(kShellStream);
-            if (command_running) {
-                /* Stop and reclaim the command: its pool goes back whole, so
-                 * the next command starts from the same memory. */
-                spawn_kit.finish(command_process.tcb);
-                command_running = false;
-            }
-            write("  terminal: command exited ");
-            write_unsigned(status);
-            write("\n");
-            shell->command_finished(status);
+        LineEditor *const editor = server.editor(kShellStream);
+        if (editor == nullptr || (!editor->editing() && !server.in_command(kShellStream))) {
+            return;
+        }
+        std::vector<KeyEvent> keys;
+        keys.swap(pending_keys);
+        for (KeyEvent const &event : keys) {
+            (void)server.on_key(kShellStream, event);
         }
     };
 
     app.on_started = [&]() {
         write("  terminal: ready\n");
-        shell->start();
+        if (kit) {
+            std::error_code cwd_error;
+            std::string const cwd = std::filesystem::current_path(cwd_error).string();
+            if (!load_image("Initrd:aegir-shell")) {
+                write("  terminal: no image for the shell\n");
+            } else if (!spawn_kit.spawn_shell(image.data(), image.size(), cwd.c_str(),
+                                              static_cast<uint32_t>(cwd.size()),
+                                              kShellStream)) {
+                write("  terminal: FAIL the shell would not start\n");
+            } else {
+                write("  terminal: shell started\n");
+            }
+        }
         if (log.valid()) {
             (void)log.call(aegir::log::kMethodEvent,
                            static_cast<uint64_t>(aegir::log::Event::Ready));

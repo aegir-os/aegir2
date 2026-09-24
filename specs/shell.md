@@ -113,9 +113,9 @@ this arc's record of the order.
   process owns the window and runs the shell in it, over the `LineEditor`
   (the cooked line editor and history, `specs/terminal.md`) -- **built-in
   commands only** — `CD`, `Dir`, `Type`, `Echo`, `Quit`. Typing a directory
-  changes the current directory; `CD` prints it. The shell is the terminal's
-  in-process client for now; the `con.stream` port and the shell as a
-  separate process need the spawn authority, so they land with Phase 3. This
+  changes the current directory; `CD` prints it. The shell was the terminal's
+  in-process client at this point; the `con.stream` port and the shell as a
+  separate process landed with Phases 3 and 6. This
   is the first slice a person can use, and it needs no spawn at all.
 - **Phase 3 — external commands.** Landed. Resolve a name to `Initrd:`, spawn
   it with the console stream, wait, report the status. The spawn authority a
@@ -158,6 +158,20 @@ this arc's record of the order.
   persistent half -- the `ENV:` union and the `Sys:`/`Home:` `Prefs/Env-Archive`
   files, so a variable survives a login -- is the next piece, with the union
   binding `specs/namespace.md` defines.
+- **Phase 6 — the shell as its own process.** Landed. `aegir-shell` opens a
+  cooked stream on the terminal's `con.stream`, passes its own doorbell on
+  `open`, and loops: `read_line`, run the built-ins, and for a command ask the
+  terminal to `run` it. The terminal keeps the spawn authority (the pool, the
+  ASID pool and the `spawn:` ports are still auth's delegation to it), and the
+  shell's environment and current directory ride in the `run` call, so the
+  command inherits what the shell set; the terminal reports the exit through
+  the stream and the shell reads it with `command_status`. The terminal spawns
+  the shell once, from a pool of its own (`auth`'s `shell-pool`), in
+  `on_started` after the ready cue -- the spawn reads a 260 KiB image and would
+  otherwise delay the cue past the demo's zoom. The line editor, the history
+  and the grid stay the terminal's; only the words moved. Two interims from
+  Phase 3 remain: the command badge is still a placeholder, and a command holds
+  only the console stream and its runtime untyped.
 
 ## What this is not
 
@@ -191,3 +205,8 @@ steps by cue, so the demo's zoom would take the focus mid-typing); the command
 inherits `exitcode=9` from the shell and exits 9, which the terminal's
 `command exited 9` cue reports. `Get` prints the value to the grid; the
 `ENV:` union and the archive files are the next piece.
+
+Phase 6's is the same run: every line the runner types is read by `aegir-shell`
+in its own process and every command is one the terminal started on its
+request, so the whole command line -- `set`, `aegir-print`, `aegir-read`, and
+the history recall -- is the shell-as-a-process path.

@@ -10,9 +10,11 @@ fd 1/2 and its exit to the stream. fd 0 is the stream's queued input: while a
 command runs the terminal routes the keyboard to the stream rather than the
 idle editor, and the command's `read` drains it (`aegir-read`). The handler
 also rings a client's doorbell -- a notification passed at `open` -- when there
-is something to read, so a client can wait instead of poll. What remains is the
-shell as a separate process, whose loop is the doorbell's first real client.
-This is the spec
+is something to read, so a client can wait instead of poll. The shell is its
+own process now (`aegir-shell`): the terminal spawns it once from a pool of its
+own, it opens a cooked stream with a doorbell, runs the built-ins, and asks the
+terminal to run a command (the terminal holds the spawn authority). This is the
+spec
 the terminal arc lands under —the Amiga `CON:` handler and the text surface
 the shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
 `CON:` handler" as future work and left them there; this is that work's first
@@ -38,13 +40,11 @@ missing is the layer between a program's `printf` and those pixels.
 scrollback, the line editor and the history; it serves a character-I/O port.
 The shell is a separate process that opens a console stream on that port,
 prints a prompt, reads lines, and launches commands. A command is a process
-whose standard input and output are the same console stream.
-
-Until the spawn arc gives a session its spawn authority, the shell is the
-terminal's **in-process** client over the same `LineEditor` the port will
-serve: the separation is real at the window (CON: owns it), and the process
-boundary lands when a session can start a child. What this buys immediately is
-the command line; what it defers is only where the shell runs.
+whose standard input and output are the same console stream. The terminal
+keeps the spawn authority -- the shell asks it to run a command (`run`), and
+reads the command's status back with `command_status` -- so the shell is a
+plain CON: client and the command's environment is what the shell sent, not a
+second copy the terminal invented.
 
 The alternative — the shell owning the window and rendering its own text —
 was rejected, and the reason is not fidelity:
@@ -128,9 +128,20 @@ port does not know is answered by saying nothing.
   forgets the line it was holding.
 - `exit`. In: the status a *command* finished with. The stream stays open --
   it is the shell's, and a command inherited a copy -- so this is distinct
-  from `close`, and it is what the terminal finalizes on: the shell's status
-  line and its next prompt. This is the interim until `exit()` carries a
-  status itself (Phase 4); the command talks through Aegir's own API.
+  from `close`. The handler records it and rings the doorbell; the shell reads
+  it with `command_status`.
+- `set_prompt`. In: the prompt as a string. A shell that changed directory
+  redraws its prompt through this rather than reopening the stream.
+- `run`. In: the command line, the current directory and the shell's
+  environment, each a string (the environment is the NUL-separated
+  `NAME=VALUE` the spawner wants). Answer: one word, `1` started and `0`
+  refused. The terminal holds the spawn authority, so the shell asks it to
+  start the command -- with the shell's stream, so the output lands on the
+  same grid -- and the environment rides in the call because the shell's is
+  the shell's.
+- `command_status`. Answer: one word, the status, when a command has finished;
+  an empty answer otherwise. Reading it clears the finished state, so the
+  shell prints one `return code` line and draws the next prompt.
 - `get`/`set` attributes (`title`, `size`, later color). `size` answers the
   grid in columns and rows from the font metrics, which is what a program
   laying out columns needs.
@@ -151,9 +162,12 @@ is `aegir/console_stream.h`, and it deliberately pulls no kernel header,
 because the handler is a value the host build tests. The client's call
 helpers are `aegir/console_stream_client.h`; the handler's side,
 `ConsoleStreamServer`, owns the streams and their line editors in the
-terminal. One handler serves both: the wire and the terminal's own shell,
-which shares the process for now and so reaches the same stream directly,
-because a process cannot call its own endpoint.
+terminal. One handler serves every client: the wire (the shell and its
+commands) and the terminal's own key path, which reaches the same stream
+directly because a process cannot call its own endpoint. The terminal also
+owns the shell's spawn: `SpawnKit::spawn_shell` starts `aegir-shell` once from
+auth's `shell-pool`, and the shell's `run` calls come back to the terminal,
+which holds the command pool.
 
 ### The terminal's window and render
 

@@ -254,7 +254,12 @@ bool untyped(uint64_t *physical, uint32_t *size_bits, uint64_t *address) noexcep
     }
     for (uint32_t i = 0; i < block->entry_count; ++i) {
         Entry const &entry = block->entries[i];
-        if (entry.kind == EntryKind::Untyped && entry.number != 0) {
+        /* A physical base of zero is "the giver did not say" -- an untyped
+         * delegated without one (the terminal's command and shell pools) --
+         * not "no untyped": the size in `reserved` is what makes it real, and
+         * the child's allocator already carries unknown addresses. */
+        if (entry.kind == EntryKind::Untyped &&
+            (entry.number != 0 || entry.reserved != 0)) {
             if (physical != nullptr) {
                 *physical = entry.number;
             }

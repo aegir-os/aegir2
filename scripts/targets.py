@@ -49,6 +49,18 @@ class QmpStep:
     events: tuple[dict, ...] = ()
 
 
+# The terminal window's own click (its content, in the tablet's coordinates):
+# focus it before typing. The bureau's bar and the demo's gadgets take the
+# focus, and a key typed while another window has it is dropped, so every
+# terminal step that types clicks first.
+TERMINAL_CLICK = (
+    {"type": "abs", "data": {"axis": "x", "value": 8192}},
+    {"type": "abs", "data": {"axis": "y", "value": 12699}},
+    {"type": "btn", "data": {"button": "left", "down": True}},
+    {"type": "btn", "data": {"button": "left", "down": False}},
+)
+
+
 @dataclass(frozen=True)
 class Target:
     name: str
@@ -428,12 +440,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"demo: closed",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 8192}},
-                    {"type": "abs", "data": {"axis": "y", "value": 12699}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                events=TERMINAL_CLICK,
                 press="aegir-print\n",
             ),
             QmpStep(
@@ -446,6 +453,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dark=(("gpu0", 50, 145, 500, 60, 100),),
                 # Then the command that reads the console: aegir-read waits on
                 # fd 0, and the step below answers it while it runs.
+                events=TERMINAL_CLICK,
                 press="aegir-read\n",
             ),
             # fd 0's queued input (specs/shell.md's Phase 4, specs/terminal.md):
@@ -455,6 +463,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # for this one and not aegir-print's start.
             QmpStep(
                 r"terminal: command started aegir-read",
+                events=TERMINAL_CLICK,
                 press="hello\n",
             ),
             # The command echoed what it read and exited 0: the input reached
@@ -465,6 +474,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 100),),
+                events=TERMINAL_CLICK,
                 press="aegir-print 5\n",
             ),
             # History and the arrows (specs/terminal.md): the up arrow recalls
@@ -474,6 +484,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the bare `6` and report nothing.
             QmpStep(
                 r"terminal: command exited 5",
+                events=TERMINAL_CLICK,
                 press="<up><backspace>6\n",
             ),
             QmpStep(
