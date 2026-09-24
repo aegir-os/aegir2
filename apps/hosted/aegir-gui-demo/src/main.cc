@@ -22,10 +22,12 @@
 #include <aegir/trinket/label.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
+#include <aegir/trinket/terminal_view.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/translation.h>
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -124,13 +126,21 @@ int main(int argc, char *argv[])
     window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
     window.set_gadgets(true, true, true);
 
-    auto panel = std::make_unique<Panel>(Panel::Style::FLAT);
-    panel->set_background(app.theme().color(ColorRole::WINDOW_BG));
-    auto label = std::make_unique<Label>("the window manager");
-    label->set_text_color(app.theme().color(ColorRole::TEXT));
-    label->set_rect({16, 16, 220, 12});
-    panel->add_child(std::move(label));
-    window.set_content(std::move(panel));
+    auto terminal = std::make_unique<TerminalView>();
+    terminal->set_font(app.default_font());
+    terminal->set_colors(app.theme().color(ColorRole::TEXT),
+                         app.theme().color(ColorRole::WINDOW_BG));
+    TerminalBuffer& grid = terminal->buffer();
+    grid.write("Aegir terminal\n");
+    grid.write("wide: \u65E5\u672C  combining: e\u0301\n");
+    grid.write("rtl:  \u05E9\u05DC\u05D5\u05DD\n");
+    for (int i = 1; i <= 16; ++i) {
+        char line[24];
+        std::snprintf(line, sizeof(line), "line %d\n", i);
+        grid.write(line);
+    }
+    grid.scroll_to_bottom();
+    window.set_content(std::move(terminal));
     window.show();
 
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
@@ -211,6 +221,7 @@ int main(int argc, char *argv[])
     };
 
     app.on_started = [&]() {
+        write("  demo: terminal grid 3 scripts, 1 wide, 1 combining, 1 rtl\n");
         write("  demo: ready\n");
         if (log.valid()) {
             (void)log.call(aegir::log::kMethodEvent,

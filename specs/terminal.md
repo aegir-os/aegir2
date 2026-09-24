@@ -1,0 +1,189 @@
+# terminal: the CON: handler, its window, and its line
+
+Status: decided (2026-09). This is the spec the terminal arc lands under —
+the Amiga `CON:` handler and the text surface the shell (a later arc,
+`specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
+`CON:` handler" as future work and left them there; this is that work's first
+half.
+
+On the Amiga, `console.device` is the low-level display and keyboard driver,
+and **CON: is a handler**: it owns the window, renders the characters, keeps
+the line, and hands its clients a character stream. A client — the Shell, a
+`Type`, an editor — opens a CON: stream and reads and writes it, and never
+touches a window. Several programs can share one CON: window, and the window
+outlives any one of them.
+
+Aegir already has the bottom half of that stack. `console.gui`
+(`specs/console.md`) is the compositor: it owns the display and the input
+devices, carves each client a pixel slice, and delivers packed key, pointer
+and focus events. It renders no text and knows nothing of lines. What is
+missing is the layer between a program's `printf` and those pixels.
+
+## The separation, decided
+
+**CON: is its own process, and the shell is a client of it.** A per-session
+**terminal** process owns one `console.gui` window, a cell grid with
+scrollback, the line editor and the history; it serves a character-I/O port.
+The shell is a separate process that opens a console stream on that port,
+prints a prompt, reads lines, and launches commands. A command is a process
+whose standard input and output are the same console stream.
+
+The alternative — the shell owning the window and rendering its own text —
+was rejected, and the reason is not fidelity:
+
+- **A command must print without linking the toolkit.** The moment the shell
+  runs an external program, that program's output has to reach the window.
+  The only shape that gives *any* program a console is a stream to a process
+  that owns the window and renders. Fusing shell and terminal would buy a
+  shortcut for the built-in-command case alone and have to be undone before
+  the first external command.
+- **The window outlives the shell.** A console that a shell owns dies with
+  the shell; a console that owns itself can hold a new shell, or several.
+- **Pixels stay the console's, text stays the handler's.** The compositor
+  never learns to draw glyphs, and the handler never talks to a device. Each
+  layer keeps the vocabulary it already has.
+
+The handler is a **session** process, not a boot service: it is per-user, it
+holds `console.gui` the way the bureau does, and auth starts it with the
+bureau (`specs/auth.md`). A system-wide text service was rejected because
+there is no system-wide screen to put it on: windows belong to a session's
+badge, and the console is already the one system process that touches the
+display.
+
+## The stream, and the two disciplines
+
+A console stream is opened by a client and carries bytes both ways. The
+handler renders what the client writes and reads the client's keys.
+
+- **Cooked** (`ReadLine`): the handler owns the line editor. It echoes the
+  prompt and the keys as they are typed, keeps the line in a buffer, handles
+  the arrow keys (history, cursor), Home/End, Backspace/Delete, and
+  **Shift-Backspace clears the line**; Enter ends the line and returns it.
+  History is the console's, per stream, grown on demand. This is the mode
+  the shell uses, and it is the Amiga console's own command line.
+- **Raw** (`Read`): keys are bytes. The handler delivers the character under
+  the cursor's key, and a program that wants an editor's control reads raw
+  and does its own drawing. The escape vocabulary is small and grows by
+  need: `\r`, `\b`, `\t`, `\n`, and erase-to-end-of-line.
+
+Both disciplines share the same output path: a write appends to the grid at
+the cursor, wraps and scrolls, and honors `\r`, `\b` and `\n`. A terminal
+that only understands the minimal set is what the shell and the first
+programs need; a fuller ANSI subset is a later arc, recorded below.
+
+**Why the handler cooks when the Amiga shell also edited.** The Amiga Shell
+used the console's own line editor; the console kept the history. Keeping
+that in the handler puts the editing in one place, in front of the pixels it
+draws to, and leaves the shell a small program that reads lines and runs
+them. A program that wants the keyboard without a line asks for raw.
+
+## The shape
+
+### The `con.stream` protocol
+
+Owned by the terminal. Strings travel in the namespace protocol's shape
+(`aegir/nmspace.h`); method numbers are the version rule, and a method the
+port does not know is answered by saying nothing.
+
+- `open`. In: the mode (cooked or raw) and, in cooked mode, a prompt. Out:
+  nothing (the stream is the caller's, keyed by its badge) — a per-caller
+  stream, so a badge holds one console. A second `open` from the same badge
+  is refused, as `listen` is.
+- `write`. In: the bytes. They land at the stream's cursor. Reply: the count
+  written, less than asked the refusal.
+- `read`. Out: bytes, or an error when nothing is available. Ok, blocking
+  read is a later method: a single-threaded client that calls `read` blocks
+  its own event loop, and the console's own shape — a notification and a
+  ring — is what the stream grows into. Tier 1 is a *poll*: the handler
+  answers with whatever input is queued, and the client drains on the
+  notification it already waits on (below).
+- `read_line`. In: nothing. Out: one line, when the line editor has one; an
+  empty reply otherwise. This is the cooked call; the shell loops on it.
+- `close`. In: nothing. The stream is dropped and the handler forgets the
+  line it was holding.
+- `get`/`set` attributes (`title`, `size`, later color). `size` answers the
+  grid in columns and rows from the font metrics, which is what a program
+  laying out columns needs.
+
+The handler wakes a client the way the console wakes its clients: each
+stream carries the client's own doorbell (`listen`-style capability
+transfer), and the handler signals it when input is queued. The client
+already waits on the console's event notification; it does not wait on a
+second one — the toolkit's `on_poll` hook is where a terminal client checks
+its console stream after a drain (`specs/workbench.md`'s `Application`
+shape). A freestanding client that waits on the notification directly does
+the same after each wake.
+
+### The terminal's window and render
+
+The terminal is a trinket client (`specs/trinket.md`): `Application`, one
+decorated `Window`, the XEN theme, the embedded Terminus font. Its content
+is a `TerminalView`, a cell grid whose cell is the font's advance by its
+height (Terminus 12 is 6×12, strictly monospace). A cell holds a codepoint
+and its attributes; the grid is rows×cols derived from the window's size.
+
+- **Unicode.** Writes arrive UTF-8 and are decoded a codepoint at a time.
+  A codepoint's width is Unicode's: East Asian wide and fullwidth occupy two
+  cells, combining marks occupy none and attach to the cell before them,
+  format controls occupy none. Widths and combining classes come from the
+  pinned UCD, generated at build time, not guessed from the glyph (`the
+  font` below). The glyph is looked up separately: a codepoint the font
+  cannot draw is still a cell of its width, so a CJK string occupies the
+  right amount of the line and renders blank until a fallback font lands.
+- **BiDi.** Each visual line is one paragraph: `bidi.cc`'s
+  `analyze_paragraph` gives the runs, the runs are reordered for display,
+  and mirrored brackets are drawn from `mirror_char`. The cursor is mapped
+  through the same runs, so an arrow key moves visually. This is the first
+  consumer of the UAX #9 work (`specs/locale.md`), which until now had none.
+- **Scrollback.** Lines scrolled off the top of the grid go to a ring the
+  view keeps. The ring grows on demand, to a memory budget the application
+  sets — not a line count guessed here (project rule: no arbitrary limits).
+  Page Up/Down and the wheel move the view; the view follows the end
+  otherwise.
+- **Damage.** Only the cells that change are repainted, unioned into one
+  rectangle and handed to `console::damage` (`specs/window-manager.md`).
+
+### The font, and what it cannot draw
+
+The embedded font is Terminus 12 (`specs/trinket.md`): 1356 glyphs,
+Latin/Greek/Cyrillic/Hebrew and box drawing, **no CJK and no Arabic**. The
+width and BiDi tables are the Unicode data's, so the *layout* is correct for
+those scripts even though the glyph is not drawn. A fallback chain exists
+(`Font::add_fallback`) and `font.cc` already names the Noto families for
+each script; loading the vendored Noto faces is its own arc, recorded below.
+The pager and the shell work with every script the font draws; a script it
+does not renders as correctly-sized blanks rather than collapsing the line.
+
+## What this is not
+
+- **The command line and the DOS toolset.** `specs/shell.md` is the shell;
+  `SetVar`/`GetVar` and the `ENV:` union stay `specs/environment.md`'s later
+  arc.
+- **A full ANSI/VT terminal.** Tier 1 understands `\r`, `\b`, `\t`, `\n` and
+  erase-to-end-of-line. Colors, alternate screen, cursor addressing, scroll
+  regions and mouse reporting are a later arc, added as programs need them.
+- **Blocking `read`, and `select`.** Tier 1 is poll-on-notification.
+- **Selection, copy and paste.** There is no clipboard service; selecting the
+  grid and copying is deferred until one exists.
+- **Multiple consoles per session, and windows other than the one.** One
+  terminal, one window, one stream per badge to start.
+- **Noto fallback fonts** (declared, not loaded).
+- **Scrollback persisted across processes.** The handler holds it; closing
+  the handler drops it.
+
+## Acceptance
+
+Host-side, the grid is a pure value and is tested like the locale and bidi
+work: `scripts/terminal_conformance.cc` compiled and run by
+`scripts/check_terminal.py` (`make check-terminal`) asserts cell placement,
+wrapping and scrolling, `\r`/`\b` overwrite, wide-character occupancy,
+combining zero-width, BiDi reordering and cursor mapping, and scrollback
+retrieval — whole-run and exact.
+
+On target, the demo client (`apps/hosted/aegir-gui-demo`) renders a grid that
+includes an RTL line and a wide character and prints a cue the runner reads.
+The real terminal app, its `con.stream` protocol, and the input the runner
+types through it — a shell typing a command over QMP and reading the echo and
+the output, and the cursor moving where the BiDi mapping says — are Phase 2's,
+written with `specs/shell.md`; the arrow-key and cursor check waits for them,
+because the handler is what owns the focus and the line the cursor is on.

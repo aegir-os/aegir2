@@ -78,9 +78,13 @@ stays at its defaults (scale 1.0); a window's geometry is the client's to set.
 The console's packed words (`aegir/console.h`) map to `KeyEvent`/`MouseEvent`:
 a translated character becomes `text`, `\b`/`\t`/`\n` become `BACKSPACE`/
 `TAB`/`ENTER`; a pointer event's code is its button (with `kButtonRelease`
-meaning up) and its value is window-local x and y. Events are routed to the
-window whose id they carry, then hit-tested down the content tree with the
-container's `child_at`.
+meaning up) and its value is window-local x and y. The raw key code is
+mapped to the key keys the keymap has no character for — the arrows, Home/
+End, Page Up/Down, Insert/Delete, F1–F12 and the modifier keys — and the
+console's modifier state is copied into `KeyEvent::modifiers`
+(`specs/terminal.md`); until this the toolkit's `KeyCode` enum for those
+keys was unreachable. Events are routed to the window whose id they carry,
+then hit-tested down the content tree with the container's `child_at`.
 
 Focus is the toolkit's, on top of console's click-to-focus: a `Widget` gains
 `focusable()` (true for `TextBox` and `Button`), the window holds the focused

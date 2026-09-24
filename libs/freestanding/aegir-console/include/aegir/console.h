@@ -145,9 +145,16 @@ constexpr uint16_t kEventFocus = 3;   /* value: 1 in, 0 out */
 constexpr uint16_t kEventScreenOwner = 4;
 
 /* A key event's value: bits 0..15 the translated character -- the keymap
- * is console's, US layout v1, and an unmapped code carries zero -- and
- * bit 16 set for a press, clear for a release. */
+ * is console's, US layout v1, and an unmapped code carries zero -- bit 16
+ * set for a press, clear for a release, and the modifier bits above it.
+ * The raw code rides in the event's code field, so a client that needs a
+ * key the keymap has no character for (an arrow, a function key) reads the
+ * code; the modifiers say what was held while it was pressed. */
 constexpr uint32_t kKeyPressed = 1u << 16;
+constexpr uint32_t kKeyShift = 1u << 17;
+constexpr uint32_t kKeyControl = 1u << 18;
+constexpr uint32_t kKeyAlt = 1u << 19;
+constexpr uint32_t kKeySuper = 1u << 20;
 
 /* A pointer event's value: x in bits 0..15, y in bits 16..31, window-local.
  * A button event's code carries kButtonRelease for the up. */

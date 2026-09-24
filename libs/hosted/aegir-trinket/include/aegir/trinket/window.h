@@ -102,6 +102,10 @@ public:
 private:
     friend class Application;
 
+    // The raw key code as a KeyCode, for the keys the keymap has no
+    // character for (arrows, function keys, modifiers).
+    static KeyCode keycode_for(uint16_t code);
+
     Application& app_;
     std::u32string title_;
     Rect rect_;

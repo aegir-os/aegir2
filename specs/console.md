@@ -109,7 +109,12 @@ The vocabulary is console's (`libs/aegir-console`), three kinds to start:
 - **key** — the raw code, and the translated character in the same event.
   The keymap is console's (a table in the service, US layout v1): key-code
   to character is a property of the system's HID layer, not of every client
-  that takes text. Unmapped codes carry a zero character.
+  that takes text. Unmapped codes carry a zero character. The console also
+  tracks the modifier keys (shift, control, alt, super) and carries their
+  state in the event, because a client that needs an arrow, a function key
+  or a control chord reads the raw code and cannot otherwise know what was
+  held; the raw code is the key's identity and the character is a
+  convenience over it (`aegir/console.h`).
 - **pointer** — motion and buttons, in **window-local coordinates**,
   delivered to the window under the cursor; and, for the length of a drag, to
   the grab-held window in **screen coordinates**, because a window the drag

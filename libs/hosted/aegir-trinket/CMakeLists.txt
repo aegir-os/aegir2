@@ -33,6 +33,23 @@ add_custom_command(
   VERBATIM
 )
 
+# The character widths, from the same pinned UCD: the terminal's grid lays a
+# combining mark in no cells and an East Asian wide character in two
+# (specs/terminal.md). EastAsianWidth gives the wide ranges, the general
+# category the zero-width ones.
+set(AEGIR_WIDTH_TABLES "${CMAKE_CURRENT_BINARY_DIR}/width_tables.cc")
+add_custom_command(
+  OUTPUT "${AEGIR_WIDTH_TABLES}"
+  COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/gen_width_tables.py"
+          "${AEGIR_UCD_DIR}" "${AEGIR_WIDTH_TABLES}"
+  DEPENDS
+    "${AEGIR_UCD_DIR}/EastAsianWidth.txt"
+    "${AEGIR_UCD_DIR}/extracted/DerivedGeneralCategory.txt"
+    "${CMAKE_SOURCE_DIR}/scripts/gen_width_tables.py"
+  COMMENT "Generating the character-width table from the pinned UCD"
+  VERBATIM
+)
+
 # The locale data: scripts/gen_locale_data.py compiles the pinned CLDR for the
 # locales manifests/locales.toml names into the .locale blobs the toolkit
 # embeds (locale_data.cc) and, beside them, a .locale file per locale for
@@ -97,6 +114,9 @@ add_library(aegir-trinket STATIC
     "${AEGIR_LOCALE_DATA}"
     src/bidi.cc
     "${AEGIR_BIDI_TABLES}"
+    src/terminal_buffer.cc
+    src/terminal_view.cc
+    "${AEGIR_WIDTH_TABLES}"
     src/translation.cc
     "${AEGIR_TRANSLATION_DATA}"
     src/theme.cc

@@ -36,7 +36,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal build run run-ui envelope test clean distclean
 
 all: help
 
@@ -75,6 +75,9 @@ check-locale: ## run Locale formatting against the generated CLDR data (host)
 
 check-translation: ## run the gettext .mo parser against in-memory images (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_translation.py
+
+check-terminal: ## run the terminal grid against its host conformance cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_terminal.py
 
 build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only

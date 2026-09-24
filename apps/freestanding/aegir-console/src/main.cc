@@ -175,9 +175,23 @@ constexpr char kKeymap[58][2] = {
     {'.', '>'},      {'/', '?'},      {0, 0},      {0, 0},      /* 52-55 */
     {0, 0},          {' ', ' '},                                  /* 56-57 */
 };
+constexpr uint16_t kKeyLeftCtrl = 29;
+constexpr uint16_t kKeyRightCtrl = 97;
 constexpr uint16_t kKeyLeftShift = 42;
 constexpr uint16_t kKeyRightShift = 54;
+constexpr uint16_t kKeyLeftAlt = 56;
+constexpr uint16_t kKeyRightAlt = 100;
+constexpr uint16_t kKeyLeftMeta = 125;
+constexpr uint16_t kKeyRightMeta = 126;
+
+/* The modifier keys are the console's state: the keymap's shifted column
+ * needs shift, and a client that maps the raw code needs all four. Each is
+ * set on its press and cleared on its release, and the delivered event
+ * carries the state after the key was applied. */
 bool g_shift = false;
+bool g_control = false;
+bool g_alt = false;
+bool g_super = false;
 
 /* The pointer: tracked by the console (the tablet's absolute events are
  * the natural feed, the mouse's relative ones integrate to the same
@@ -423,17 +437,47 @@ void pointer_button(uint16_t code, uint32_t state) noexcept
 
 void key_event(uint16_t code, uint32_t state) noexcept
 {
-    if (code == kKeyLeftShift || code == kKeyRightShift) {
-        g_shift = state != 0;
-        return;
+    bool const pressed = state != 0;
+    switch (code) {
+    case kKeyLeftShift:
+    case kKeyRightShift:
+        g_shift = pressed;
+        break;
+    case kKeyLeftCtrl:
+    case kKeyRightCtrl:
+        g_control = pressed;
+        break;
+    case kKeyLeftAlt:
+    case kKeyRightAlt:
+        g_alt = pressed;
+        break;
+    case kKeyLeftMeta:
+    case kKeyRightMeta:
+        g_super = pressed;
+        break;
+    default:
+        break;
     }
     if (g_focused == nullptr) {
         return;
     }
     uint32_t const translated =
         code < 58 ? static_cast<uint8_t>(kKeymap[code][g_shift ? 1 : 0]) : 0;
+    uint32_t modifiers = 0;
+    if (g_shift) {
+        modifiers |= aegir::console::kKeyShift;
+    }
+    if (g_control) {
+        modifiers |= aegir::console::kKeyControl;
+    }
+    if (g_alt) {
+        modifiers |= aegir::console::kKeyAlt;
+    }
+    if (g_super) {
+        modifiers |= aegir::console::kKeySuper;
+    }
     deliver(g_focused->owner, aegir::console::kEventKey, code,
-            translated | (state != 0 ? aegir::console::kKeyPressed : 0),
+            translated | (pressed ? aegir::console::kKeyPressed : 0) | modifiers,
             g_focused->id);
 }
 

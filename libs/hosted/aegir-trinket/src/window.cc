@@ -241,11 +241,17 @@ void Window::dispatch_key(uint64_t event) {
     char const c = static_cast<char>(value & 0xffff);
     bool const pressed = (value & aegir::console::kKeyPressed) != 0;
 
-    /* The console hands over the translated character; the few keys the
-     * toolkit acts on get a KeyCode as well. Tab is the window's, because it
-     * moves the focus rather than reaching a widget. */
+    /* The console hands over the raw code and the translated character; the
+     * character covers the printable keys, and the code is what gives the
+     * arrow/function/modifier keys a KeyCode. The toolkit's modifier bits
+     * are its own (widget.h), so the console's are mapped, not copied. */
     KeyEvent key;
     key.pressed = pressed;
+    if (value & aegir::console::kKeyShift) key.modifiers |= 1u;
+    if (value & aegir::console::kKeyControl) key.modifiers |= 2u;
+    if (value & aegir::console::kKeyAlt) key.modifiers |= 4u;
+    if (value & aegir::console::kKeySuper) key.modifiers |= 8u;
+    key.code = keycode_for(aegir::input::event_code(event));
     switch (c) {
     case '\b': key.code = KeyCode::BACKSPACE; break;
     case '\t': key.code = KeyCode::TAB; break;
@@ -266,6 +272,49 @@ void Window::dispatch_key(uint64_t event) {
         focused_->dispatch_key_down(key);
     } else {
         focused_->dispatch_key_up(key);
+    }
+}
+
+/* The raw code as a KeyCode: the console's keymap has no character for
+ * these, so the code is their only identity (specs/terminal.md). The
+ * printable keys fall through to text and carry no code. */
+KeyCode Window::keycode_for(uint16_t code) {
+    switch (code) {
+    case 29: return KeyCode::CTRL_L;
+    case 97: return KeyCode::CTRL_R;
+    case 42: return KeyCode::SHIFT_L;
+    case 54: return KeyCode::SHIFT_R;
+    case 56: return KeyCode::ALT_L;
+    case 100: return KeyCode::ALT_R;
+    case 125: return KeyCode::META_L;
+    case 126: return KeyCode::META_R;
+    case 1: return KeyCode::ESCAPE;
+    case 14: return KeyCode::BACKSPACE;
+    case 15: return KeyCode::TAB;
+    case 28: return KeyCode::ENTER;
+    case 102: return KeyCode::HOME;
+    case 103: return KeyCode::UP;
+    case 104: return KeyCode::PAGE_UP;
+    case 105: return KeyCode::LEFT;
+    case 106: return KeyCode::RIGHT;
+    case 107: return KeyCode::END;
+    case 108: return KeyCode::DOWN;
+    case 109: return KeyCode::PAGE_DOWN;
+    case 110: return KeyCode::INSERT;
+    case 111: return KeyCode::DELETE_KEY;
+    case 59: return KeyCode::F1;
+    case 60: return KeyCode::F2;
+    case 61: return KeyCode::F3;
+    case 62: return KeyCode::F4;
+    case 63: return KeyCode::F5;
+    case 64: return KeyCode::F6;
+    case 65: return KeyCode::F7;
+    case 66: return KeyCode::F8;
+    case 67: return KeyCode::F9;
+    case 68: return KeyCode::F10;
+    case 87: return KeyCode::F11;
+    case 88: return KeyCode::F12;
+    default: return KeyCode::UNKNOWN;
     }
 }
 

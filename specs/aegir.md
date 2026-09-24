@@ -41,6 +41,10 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/console.md` — the display, the pointer, the windows, and the greeter.
 - `specs/trinket.md` — the GUI toolkit: console integration, the look, and the
   greeter rebuilt on it.
+- `specs/terminal.md` — the `CON:` handler: the text surface, the line, and the
+  character stream the shell runs in.
+- `specs/shell.md` — the Amiga command line: implicit directory changes,
+  built-ins, and the commands the shell runs.
 - `specs/bureau.md` — the session's desktop, and the screen-size query.
 - `specs/workbench.md` — the screen title bar and the always-visible menus.
 - `specs/window-manager.md` — client-side decorations, move/raise, and the
