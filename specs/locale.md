@@ -17,13 +17,13 @@ order, each its own checkpoint.
   (`scripts/build_libcxx.sh`), so `std::locale`'s facets are in the library;
   the time zone database is off, because it wants an IANA zoneinfo tree Aegir
   does not ship. The runtime accepts it (`apps/hosted/aegir-cxx-smoke`).
-- **`aegir-trinket`'s `locale.cc` reads real CLDR data** (piece 3, first part):
-  number, percent, currency, scientific and list formatting come from `.locale`
-  blobs compiled from the pinned CLDR, with the locale's direction. Date/time
-  formatting and CLDR plural rules are the remaining parts of piece 3.
-  **`bidi.cc` is the real algorithm** (piece 1) with conformance green;
-  **`translation.cc`** is a gettext `.mo` parser that is not yet in the build.
-  `translation.cc` is gated out
+- **`aegir-trinket`'s `locale.cc` reads real CLDR data** (piece 3, most of it):
+  number, percent, currency, scientific, list and gregorian date/time
+  formatting come from `.locale` blobs compiled from the pinned CLDR, with the
+  locale's direction. The CLDR plural-rule grammar and calendars other than
+  gregorian are what remain of piece 3. **`bidi.cc` is the real algorithm**
+  (piece 1) with conformance green; **`translation.cc`** is a gettext `.mo`
+  parser that is not yet in the build. `translation.cc` is gated out
   (`libs/hosted/aegir-trinket/CMakeLists.txt`).
 
 ## The pieces, in order
@@ -46,9 +46,12 @@ order, each its own checkpoint.
 3. **Trinket's `Locale`, against real CLDR data.** Number, date, currency,
    percent, plural and list formatting from a compiled CLDR subset, replacing
    the hardcoded fields. The `.locale` file format is decided here. Number,
-   percent, currency, scientific and list formatting are landed, with the data
-   compiled from CLDR and the format below; date/time formatting and the CLDR
-   plural-rule grammar are the rest of the piece.
+   percent, currency, scientific, list and gregorian date/time formatting are
+   landed, with the data compiled from CLDR and the format below; the CLDR
+   plural-rule grammar is the rest of the piece. Dates are formatted in UTC
+   through the toolkit's own civil-date arithmetic, not musl's C-locale
+   `strftime`, and a pattern's zone field becomes `UTC` because time zones are
+   deferred.
 4. **`translation.cc`, gettext for real.** The `.mo` parser reaches the build
    and a toolkit string is translated through it.
 
@@ -103,8 +106,11 @@ length, and the value. List-valued properties join their elements with U+001F
 (`numbers.decimal`, `numbers.percent`, `numbers.currency`,
 `numbers.scientific`), the number symbols (`numbers.symbol.*`, `numbers.digits`
 for the numbering system's digits), the per-code currency symbols
-(`currency.symbol.<CODE>`), and the list patterns (`list.start`, `list.middle`,
-`list.end`, `list.two`).
+(`currency.symbol.<CODE>`), the list patterns (`list.start`, `list.middle`,
+`list.end`, `list.two`), and the gregorian calendar -- the date, time and
+combining patterns (`date.pattern.*`, `time.pattern.*`, `datetime.pattern.*`),
+the joined names (`months.*`, `days.*`, `periods.*`, `eras.*`), each a U+001F
+list.
 
 `Locale(name)` embeds one blob per shipped locale and resolves a name by its
 language (so `en_GB` uses the `en` blob); a name that matches no shipped locale
@@ -132,7 +138,8 @@ than inheriting from root; the nine are complete for the fields compiled.
 generated blobs with the host compiler and runs `scripts/locale_conformance.cc`,
 which asserts the exact string CLDR's data produces for the shipped locales --
 separators, groupings, currency position and symbols, the negative subpattern,
-scientific form, list joins, direction, fallback and `Locale::load`. It is
+scientific form, list joins, date and time patterns with their names, quoting
+and day periods, direction, fallback and `Locale::load`. It is
 whole-run and exact. The toolkit embeds the same bytes, so the build compiling
 and linking them is the target-side check; a runtime cue and toolkit use
 arrive with the toolkit's localization.
@@ -169,6 +176,6 @@ is a pin change and a re-run of conformance, not a code change.
   in the toolkit; the follow-up is `.locale` files staged into the initrd and
   read at startup once the VFS serves them.
 - **CLDR's full data set.** Number/date/plural for the locales Aegir ships, not
-  all of CLDR. Dates, the plural-rule grammar, and calendars other than
-  gregorian are the remaining parts of piece 3; root inheritance is unneeded
-  because the shipped languages are complete.
+  all of CLDR. The plural-rule grammar and calendars other than gregorian (and
+  time zones -- dates are UTC) are the remaining parts of piece 3; root
+  inheritance is unneeded because the shipped languages are complete.

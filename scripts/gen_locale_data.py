@@ -99,6 +99,45 @@ def list_properties(cluster: Path, loc: str) -> dict[str, str]:
     }
 
 
+MONTH_KEYS = [str(i) for i in range(1, 13)]
+DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+
+def join_field(values: list[str]) -> str:
+    return SEPARATOR.join(values)
+
+
+def date_properties(cluster: Path, loc: str) -> dict[str, str]:
+    gregorian = load(cluster / "cldr-dates-full" / "main" / loc / "ca-gregorian.json")[
+        "main"
+    ][loc]["dates"]["calendars"]["gregorian"]
+    properties: dict[str, str] = {}
+    for width in ("short", "medium", "long", "full"):
+        properties[f"date.pattern.{width}"] = gregorian["dateFormats"][width]
+        properties[f"time.pattern.{width}"] = gregorian["timeFormats"][width]
+        # The combining pattern places the date in {1} and the time in {0}
+        # (CLDR's dateTimeFormats); a locale that omits it joins with a comma.
+        properties[f"datetime.pattern.{width}"] = gregorian.get("dateTimeFormats", {}).get(
+            width, "{1}, {0}"
+        )
+
+    months = gregorian["months"]["format"]
+    for width in ("wide", "abbreviated", "narrow"):
+        properties[f"months.{width}"] = join_field([months[width][key] for key in MONTH_KEYS])
+    days = gregorian["days"]["format"]
+    for width in ("wide", "abbreviated", "narrow", "short"):
+        if width in days:
+            properties[f"days.{width}"] = join_field([days[width][key] for key in DAY_KEYS])
+    for width in ("abbreviated", "wide", "narrow"):
+        periods = gregorian["dayPeriods"]["format"][width]
+        properties[f"periods.{width}"] = join_field([periods["am"], periods["pm"]])
+    eras = gregorian["eras"]
+    for field, key in (("abbreviated", "eraAbbr"), ("wide", "eraNames"), ("narrow", "eraNarrow")):
+        names = eras[key]
+        properties[f"eras.{field}"] = join_field([names["0"], names["1"]])
+    return properties
+
+
 def direction_of(cluster: Path, loc: str) -> str:
     orientation = load(cluster / "cldr-misc-full" / "main" / loc / "layout.json")[
         "main"
@@ -116,6 +155,7 @@ def locale_properties(cluster: Path, loc: str) -> dict[str, str]:
     }
     properties.update(number_properties(cluster, loc))
     properties.update(list_properties(cluster, loc))
+    properties.update(date_properties(cluster, loc))
     return properties
 
 

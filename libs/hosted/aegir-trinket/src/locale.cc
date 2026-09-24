@@ -406,6 +406,245 @@ std::string substitute_list(std::string_view pattern, std::string_view first, st
     return out;
 }
 
+/* The date names a pattern field writes, all U+001F-joined lists from the
+ * blob. Empty for the C locale, whose patterns name nothing. */
+struct DateNames {
+    std::string_view months_wide;
+    std::string_view months_abbreviated;
+    std::string_view months_narrow;
+    std::string_view days_wide;
+    std::string_view days_abbreviated;
+    std::string_view days_narrow;
+    std::string_view days_short;
+    std::string_view periods_wide;
+    std::string_view periods_abbreviated;
+    std::string_view periods_narrow;
+    std::string_view eras_wide;
+    std::string_view eras_abbreviated;
+    std::string_view eras_narrow;
+};
+
+/* A civil (gregorian) date and time, in UTC. */
+struct Civil {
+    int64_t year;
+    int month;   /* 1..12 */
+    int day;     /* 1..31 */
+    int weekday; /* 0 = Sunday */
+    int hour;    /* 0..23 */
+    int minute;
+    int second;
+};
+
+std::string_view field_at(std::string_view joined, int index)
+{
+    int current = 0;
+    std::size_t start = 0;
+    while (true) {
+        std::size_t const separator = joined.find('\x1f', start);
+        std::size_t const stop = separator == std::string_view::npos ? joined.size() : separator;
+        if (current == index) {
+            return joined.substr(start, stop - start);
+        }
+        if (separator == std::string_view::npos) {
+            return {};
+        }
+        start = separator + 1;
+        current += 1;
+    }
+}
+
+int64_t floor_div(int64_t dividend, int64_t divisor)
+{
+    int64_t quotient = dividend / divisor;
+    if (dividend % divisor != 0 && (dividend < 0) != (divisor < 0)) {
+        quotient -= 1;
+    }
+    return quotient;
+}
+
+/* Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm), so a
+ * timestamp is read without musl's C-locale strftime. */
+void civil_from_days(int64_t days, int64_t &year, int &month, int &day)
+{
+    days += 719468;
+    int64_t const era = (days >= 0 ? days : days - 146096) / 146097;
+    unsigned const day_of_era = static_cast<unsigned>(days - era * 146097);
+    unsigned const year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    int64_t const year0 = static_cast<int64_t>(year_of_era) + era * 400;
+    unsigned const day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    unsigned const month_prime = (5 * day_of_year + 2) / 153;
+    day = static_cast<int>(day_of_year - (153 * month_prime + 2) / 5 + 1);
+    month = static_cast<int>(month_prime < 10 ? month_prime + 3 : month_prime - 9);
+    year = year0 + (month <= 2 ? 1 : 0);
+}
+
+Civil civil_from_timestamp(int64_t seconds)
+{
+    int64_t const days = floor_div(seconds, 86400);
+    int64_t const remainder = seconds - days * 86400;
+    Civil civil{};
+    civil_from_days(days, civil.year, civil.month, civil.day);
+    civil.weekday = static_cast<int>(((days % 7) + 7 + 4) % 7); /* 1970-01-01 was a Thursday */
+    civil.hour = static_cast<int>(remainder / 3600);
+    civil.minute = static_cast<int>((remainder % 3600) / 60);
+    civil.second = static_cast<int>(remainder % 60);
+    return civil;
+}
+
+std::string pad_number(int64_t value, int width, NumberSymbols const &symbols)
+{
+    bool const negative = value < 0;
+    if (negative) {
+        value = -value;
+    }
+    std::string digits = std::to_string(value);
+    while (static_cast<int>(digits.size()) < width) {
+        digits.insert(digits.begin(), '0');
+    }
+    std::string out = map_digits(digits, symbols.digits);
+    if (negative) {
+        out = std::string(symbols.minus) + out;
+    }
+    return out;
+}
+
+void append_date_field(std::string &out, char letter, int count, Civil const &time, DateNames const &names,
+                       NumberSymbols const &symbols)
+{
+    switch (letter) {
+    case 'G': {
+        int const index = time.year < 0 ? 0 : 1;
+        std::string_view const source =
+            count >= 4 ? names.eras_wide : (count == 5 ? names.eras_narrow : names.eras_abbreviated);
+        out += field_at(source, index);
+        return;
+    }
+    case 'y': {
+        int64_t year = time.year < 0 ? -time.year : time.year;
+        if (count == 2) {
+            year %= 100;
+        }
+        out += pad_number(year, count, symbols);
+        return;
+    }
+    case 'M':
+    case 'L': {
+        if (count >= 3) {
+            std::string_view const source = count == 3   ? names.months_abbreviated
+                                            : count == 4 ? names.months_wide
+                                                         : names.months_narrow;
+            out += field_at(source, time.month - 1);
+        } else {
+            out += pad_number(time.month, count, symbols);
+        }
+        return;
+    }
+    case 'd':
+        out += pad_number(time.day, count, symbols);
+        return;
+    case 'E':
+    case 'e':
+    case 'c': {
+        std::string_view const source = count >= 6   ? names.days_short
+                                        : count == 4 ? names.days_wide
+                                        : count == 5 ? names.days_narrow
+                                                     : names.days_abbreviated;
+        out += field_at(source, time.weekday);
+        return;
+    }
+    case 'a': {
+        std::string_view const source =
+            count >= 5 ? names.periods_narrow : (count == 4 ? names.periods_wide : names.periods_abbreviated);
+        out += field_at(source, time.hour < 12 ? 0 : 1);
+        return;
+    }
+    case 'h': {
+        int hour = time.hour % 12;
+        if (hour == 0) {
+            hour = 12;
+        }
+        out += pad_number(hour, count, symbols);
+        return;
+    }
+    case 'H':
+        out += pad_number(time.hour, count, symbols);
+        return;
+    case 'K':
+        out += pad_number(time.hour % 12, count, symbols);
+        return;
+    case 'k': {
+        int hour = time.hour;
+        if (hour == 0) {
+            hour = 24;
+        }
+        out += pad_number(hour, count, symbols);
+        return;
+    }
+    case 'm':
+        out += pad_number(time.minute, count, symbols);
+        return;
+    case 's':
+        out += pad_number(time.second, count, symbols);
+        return;
+    case 'S':
+        /* Sub-second digits: a timestamp is whole seconds, so there are none. */
+        return;
+    case 'z':
+    case 'Z':
+    case 'O':
+    case 'v':
+    case 'V':
+    case 'X':
+    case 'x':
+        out += "UTC"; /* Time zones are deferred; the values are UTC. */
+        return;
+    default:
+        for (int i = 0; i < count; ++i) {
+            out.push_back(letter);
+        }
+        return;
+    }
+}
+
+std::string format_date_pattern(std::string_view pattern, Civil const &time, DateNames const &names,
+                                NumberSymbols const &symbols)
+{
+    std::string out;
+    std::size_t i = 0;
+    while (i < pattern.size()) {
+        char const c = pattern[i];
+        if (c == '\'') {
+            if (i + 1 < pattern.size() && pattern[i + 1] == '\'') {
+                out.push_back('\'');
+                i += 2;
+            } else {
+                i += 1;
+                while (i < pattern.size() && pattern[i] != '\'') {
+                    out.push_back(pattern[i]);
+                    i += 1;
+                }
+                if (i < pattern.size()) {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+            std::size_t j = i;
+            while (j < pattern.size() && pattern[j] == c) {
+                j += 1;
+            }
+            append_date_field(out, c, static_cast<int>(j - i), time, names, symbols);
+            i = j;
+            continue;
+        }
+        out.push_back(c);
+        i += 1;
+    }
+    return out;
+}
+
 std::string_view value_or(std::string_view value, std::string_view fallback)
 {
     return value.empty() ? fallback : value;
@@ -458,6 +697,25 @@ struct Locale::Impl {
             }
         }
         return std::string(code);
+    }
+
+    DateNames date_names() const
+    {
+        DateNames names;
+        names.months_wide = get("months.wide");
+        names.months_abbreviated = get("months.abbreviated");
+        names.months_narrow = get("months.narrow");
+        names.days_wide = get("days.wide");
+        names.days_abbreviated = get("days.abbreviated");
+        names.days_narrow = get("days.narrow");
+        names.days_short = get("days.short");
+        names.periods_wide = get("periods.wide");
+        names.periods_abbreviated = get("periods.abbreviated");
+        names.periods_narrow = get("periods.narrow");
+        names.eras_wide = get("eras.wide");
+        names.eras_abbreviated = get("eras.abbreviated");
+        names.eras_narrow = get("eras.narrow");
+        return names;
     }
 
     bool parse(unsigned char const *data, unsigned int size);
@@ -615,21 +873,43 @@ std::string Locale::format_scientific(double value) const
 
 std::string Locale::format_date(int64_t timestamp, DateFormat fmt) const
 {
-    static_cast<void>(timestamp);
-    static_cast<void>(fmt);
-    return "";  /* CLDR date patterns are the next piece of the arc. */
+    static char const *const kKeys[] = {"date.pattern.short", "date.pattern.medium", "date.pattern.long",
+                                        "date.pattern.full"};
+    std::string_view const iso = "yyyy-MM-dd";
+    int index = static_cast<int>(fmt);
+    if (index < 0 || index > 3) {
+        index = 0;
+    }
+    std::string_view const pattern = impl_ ? impl_->pattern(kKeys[index], iso) : iso;
+    DateNames const names = impl_ ? impl_->date_names() : DateNames{};
+    NumberSymbols const symbols = impl_ ? impl_->symbols() : NumberSymbols{};
+    return format_date_pattern(pattern, civil_from_timestamp(timestamp), names, symbols);
 }
 
 std::string Locale::format_time(int64_t timestamp, TimeFormat fmt) const
 {
-    static_cast<void>(timestamp);
-    static_cast<void>(fmt);
-    return "";
+    static char const *const kKeys[] = {"time.pattern.short", "time.pattern.medium", "time.pattern.long",
+                                        "time.pattern.full"};
+    std::string_view const iso = "HH:mm:ss";
+    int index = static_cast<int>(fmt);
+    if (index < 0 || index > 3) {
+        index = 0;
+    }
+    std::string_view const pattern = impl_ ? impl_->pattern(kKeys[index], iso) : iso;
+    DateNames const names = impl_ ? impl_->date_names() : DateNames{};
+    NumberSymbols const symbols = impl_ ? impl_->symbols() : NumberSymbols{};
+    return format_date_pattern(pattern, civil_from_timestamp(timestamp), names, symbols);
 }
 
 std::string Locale::format_datetime(int64_t timestamp) const
 {
-    return format_date(timestamp) + " " + format_time(timestamp);
+    /* CLDR combines the date and the time with a locale pattern: {1} is the
+     * date and {0} the time in the shipped data. */
+    std::string_view const combine =
+        impl_ ? impl_->pattern("datetime.pattern.short", "{1}, {0}") : std::string_view("{1}, {0}");
+    std::string const date = format_date(timestamp, DateFormat::SHORT);
+    std::string const time = format_time(timestamp, TimeFormat::SHORT);
+    return substitute_list(combine, time, date);
 }
 
 int Locale::plural_form(uint64_t n) const

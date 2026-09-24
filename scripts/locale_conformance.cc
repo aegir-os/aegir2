@@ -81,6 +81,8 @@ int main(int argc, char **argv)
     Locale const ja("ja");
     expect_string(ja.format_currency(500.0, "JPY"), "\uffe5500.00", "ja yen symbol from its own data");
 
+    Locale const zh("zh");
+
     expect_string(en.format_list({"a"}), "a", "list of one");
     expect_string(en.format_list({"a", "b"}), "a and b", "list of two");
     expect_string(en.format_list({"a", "b", "c"}), "a, b, and c", "list of three");
@@ -91,12 +93,44 @@ int main(int argc, char **argv)
     expect_string(requested.territory(), "GB", "territory from the name");
     expect_string(requested.format_currency(1.0, "GBP"), "\u00a31.00", "en_GB resolves to the en blob");
 
+    /* Dates and times from the CLDR gregorian calendar, in UTC. The epoch is
+     * 1970-01-01, a Thursday; 1614959229 is 2021-03-05, a Friday. */
+    expect_string(en.format_date(0, Locale::DateFormat::SHORT), "1/1/70", "en date, short");
+    expect_string(en.format_date(0, Locale::DateFormat::MEDIUM), "Jan 1, 1970", "en date, medium");
+    expect_string(en.format_date(0, Locale::DateFormat::LONG), "January 1, 1970", "en date, long");
+    expect_string(en.format_date(0, Locale::DateFormat::FULL), "Thursday, January 1, 1970",
+                  "en date, full names a weekday");
+    expect_string(en.format_time(0, Locale::TimeFormat::SHORT), "12:00\u202fAM", "en time, short");
+    expect_string(en.format_time(0, Locale::TimeFormat::MEDIUM), "12:00:00\u202fAM", "en time, medium");
+    expect_string(en.format_datetime(0), "1/1/70, 12:00\u202fAM", "en date and time combined");
+    expect_string(en.format_date(1614959229, Locale::DateFormat::FULL), "Friday, March 5, 2021",
+                  "en resolves a later date");
+    expect_string(en.format_time(1614959229, Locale::TimeFormat::MEDIUM), "3:47:09\u202fPM",
+                  "en resolves a later time");
+
+    expect_string(de.format_date(0, Locale::DateFormat::MEDIUM), "01.01.1970", "de date, day first");
+    expect_string(de.format_time(0, Locale::TimeFormat::SHORT), "00:00", "de time is 24-hour");
+    expect_string(fr.format_date(0, Locale::DateFormat::MEDIUM), "1 janv. 1970", "fr month name");
+    expect_string(fr.format_datetime(0), "01/01/1970 00:00", "fr combines without a comma");
+    expect_string(ru.format_date(0, Locale::DateFormat::MEDIUM), "1 \u044f\u043d\u0432. 1970\u202f\u0433.",
+                  "ru date with its quoted literal");
+    expect_string(ar.format_date(0, Locale::DateFormat::SHORT), "1\u200f/1\u200f/1970",
+                  "ar date with its direction marks");
+    expect_string(ar.format_time(0, Locale::TimeFormat::SHORT), "12:00 \u0635", "ar day period");
+    expect_string(ar.format_datetime(0), "1\u200f/1\u200f/1970\u060c 12:00 \u0635",
+                  "ar combines with an Arabic comma");
+    expect_string(ja.format_date(0, Locale::DateFormat::SHORT), "1970/01/01", "ja date, zero padded");
+    expect_string(zh.format_date(0, Locale::DateFormat::MEDIUM), "1970\u5e741\u67081\u65e5",
+                  "zh date with its markers");
+
     Locale const unknown("xx");
     expect_string(unknown.format_number(1234.5), "1,234.5", "an unshipped locale falls back to the default");
 
     Locale const c_locale;
     expect_string(c_locale.name(), "C", "the default locale is the C locale");
     expect_string(c_locale.format_number(1234.5), "1,234.5", "the C locale formats");
+    expect_string(c_locale.format_date(0), "1970-01-01", "the C locale dates in ISO");
+    expect_string(c_locale.format_time(0), "00:00:00", "the C locale times in ISO");
 
     if (argc > 1) {
         std::string const path = std::string(argv[1]) + "/en.locale";
