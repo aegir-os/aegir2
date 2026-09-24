@@ -43,6 +43,12 @@ constexpr uint32_t kMethodQueryNext = 18;
 constexpr uint32_t kMethodQueryClose = 19;
 constexpr uint32_t kMethodQueryOpenLive = 20;
 
+/* The AmigaDOS pair that changes an inode's mode and owner (specs/bfs.md
+ * decision 7). Only the owner or the system class may call them; FAT answers
+ * kUnsupported. */
+constexpr uint32_t kMethodProtect = 21; /* in: path, mode; answer: status */
+constexpr uint32_t kMethodOwner = 22;   /* in: path, uid, gid; answer: status */
+
 /** The most bytes of a query string the service holds per open query. A
  *  longer one is refused. */
 constexpr uint32_t kQueryTextMax = 128;
@@ -72,6 +78,7 @@ constexpr uint64_t kReadOnly = 4;
 constexpr uint64_t kNoSpace = 5;
 constexpr uint64_t kNotADirectory = 6;
 constexpr uint64_t kIsADirectory = 7;
+constexpr uint64_t kPermission = 8;
 
 /** An attribute name is at most this many bytes, and never empty
  *  (specs/bfs.md's Attributes). */

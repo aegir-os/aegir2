@@ -31,6 +31,7 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/process.h>
@@ -227,6 +228,30 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
             aegir::ipc::WordsReply const answered = volume.call_words(
                 aegir::volume::kMethodMkdir, mout, mout_words, min, 1);
             made = answered.error == 0 && answered.count == 1 && min[0] == 1;
+            /* The directory belongs to the user and to no one else
+             * (specs/ownership.md): Owner makes it theirs, Protect 0700. The
+             * view is the namespace's half; without these it stays the
+             * system's and a second user reaching it through Sys: would
+             * enter. */
+            uint64_t owords[aegir::nmspace::kPathMax / 8 + 3];
+            uint32_t ow = aegir::nmspace::pack_string(
+                owords, rest, rest_length, aegir::nmspace::kPathMax);
+            owords[ow++] = user;
+            owords[ow++] = user;
+            uint64_t oin[1];
+            aegir::ipc::WordsReply const owned = volume.call_words(
+                aegir::metadata::kMethodOwner, owords, ow, oin, 1);
+            uint64_t pwords[aegir::nmspace::kPathMax / 8 + 2];
+            uint32_t pw = aegir::nmspace::pack_string(
+                pwords, rest, rest_length, aegir::nmspace::kPathMax);
+            pwords[pw++] = 0700;
+            uint64_t pin[1];
+            aegir::ipc::WordsReply const protected_ = volume.call_words(
+                aegir::metadata::kMethodProtect, pwords, pw, pin, 1);
+            if (owned.error != 0 || oin[0] != aegir::metadata::kOk ||
+                protected_.error != 0 || pin[0] != aegir::metadata::kOk) {
+                write("      auth: FAIL the home would not be owned\n");
+            }
             seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
                               aegir::bootstrap::kCNodeBits);
         }

@@ -331,6 +331,40 @@ uint64_t vol_mkdir(seL4_CPtr port, char const *path, uint32_t path_length) noexc
     return in[0];
 }
 
+/* owner: set an inode's uid and gid (the AmigaDOS Owner) -- 1 done, 0 refused
+ * (specs/ownership.md). */
+uint64_t vol_owner(seL4_CPtr port, char const *path, uint32_t path_length,
+                   uint64_t uid, uint64_t gid) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 3];
+    uint32_t words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    out[words++] = uid;
+    out[words++] = gid;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::metadata::kMethodOwner, out, words, in, 1);
+    return (answer.error == 0 && answer.count == 1 && in[0] == aegir::metadata::kOk) ? 1
+                                                                                     : 0;
+}
+
+/* protect: set an inode's mode (the AmigaDOS Protect) -- 1 done, 0 refused. */
+uint64_t vol_protect(seL4_CPtr port, char const *path, uint32_t path_length,
+                     uint64_t mode) noexcept
+{
+    aegir::ipc::Consumer volume(port);
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 2];
+    uint32_t words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    out[words++] = mode;
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        volume.call_words(aegir::metadata::kMethodProtect, out, words, in, 1);
+    return (answer.error == 0 && answer.count == 1 && in[0] == aegir::metadata::kOk) ? 1
+                                                                                     : 0;
+}
+
 /* remove: 1 removed, 0 refused -- not found, not empty, open, read-only,
  * or the root. */
 uint64_t vol_remove(seL4_CPtr port, char const *path, uint32_t path_length) noexcept
@@ -816,12 +850,16 @@ int main(int argc, char *argv[])
         write("  test: AEGIR:AEGIR.TXT reads back what the disk holds\n");
     }
 
-    /* FAT has no attributes, and says so rather than pretending. */
+    /* FAT has no attributes, and says so rather than pretending. The system
+     * volume is BFS since the migration arc (specs/bfs.md); SCRATCH is FAT. */
     {
+        seL4_CPtr const fat_volume =
+            resolve("SCRATCH:", 8, &rest, &rest_length,
+                    static_cast<seL4_CPtr>(first_free + 48));
         uint32_t type = 0;
         uint64_t size = 0;
         bool const unsupported =
-            meta_attr_stat(aegir_volume, rest, rest_length,
+            meta_attr_stat(fat_volume, rest, rest_length,
                            aegir::metadata::kNameType,
                            sizeof(aegir::metadata::kNameType) - 1, &type,
                            &size) == aegir::metadata::kUnsupported;
@@ -2268,6 +2306,35 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* bar's home, made and owned by the system before rroland logs in
+     * (specs/ownership.md): the denial the session smoke must meet through
+     * the public Sys:, and the system's own read of the same file, which must
+     * still work. bar is user row one, so uid and gid 1. */
+    static char const kBarDir[] = "Homes/bar";
+    static char const kBarRecord[] = "Homes/bar/RECORD.TXT";
+    static char const kBarWords[] = "bar's record, which no other user may read\n";
+    {
+        seL4_CPtr const sys = resolve("Sys:", 4, &rest, &rest_length,
+                                      static_cast<seL4_CPtr>(first_free + 47));
+        bool ok = vol_mkdir(sys, kBarDir, sizeof(kBarDir) - 1) == 1 &&
+                  vol_owner(sys, kBarDir, sizeof(kBarDir) - 1, 1, 1) == 1 &&
+                  vol_protect(sys, kBarDir, sizeof(kBarDir) - 1, 0700) == 1;
+        uint64_t const handle =
+            ok ? vol_open(sys, kBarRecord, sizeof(kBarRecord) - 1,
+                          aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate)
+               : 0;
+        ok = ok && handle != 0 &&
+             vol_write(sys, handle, reinterpret_cast<uint8_t const *>(kBarWords),
+                       sizeof(kBarWords) - 1) == sizeof(kBarWords) - 1 &&
+             vol_close(sys, handle) == 1;
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, sys,
+                          aegir::bootstrap::kCNodeBits);
+        if (!ok) {
+            write("  test: FAIL bar's home could not be set up\n");
+            ++failed;
+        }
+    }
+
     /* auth.login: the entry the build packed is the checksum -- accepted
      * with its secret, and refused the same way for a wrong secret and an
      * unknown name, because the port is not an oracle (specs/auth.md). */
@@ -2310,6 +2377,37 @@ int main(int argc, char *argv[])
         ++failed;
     } else {
         write("  test: Sys:Homes/rroland/WELCOME.TXT is the session's own words\n");
+    }
+
+    /* The denial, end to end (specs/ownership.md): rroland's session tried
+     * bar's home through the public Sys: and was refused, and it said so in
+     * its own home, which the system reads back here. The other side is that
+     * the system class still reads bar's record, the same path a user cannot
+     * reach. Both are properties of the guard, not of either process's
+     * say-so. */
+    static char const kOwnedPath[] = "Sys:Homes/rroland/OWNED.TXT";
+    static char const kOwnedMark[] = "the other user's home was refused\n";
+    seL4_CPtr const owned_volume =
+        resolve(kOwnedPath, sizeof(kOwnedPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 45));
+    if (!read_and_check(owned_volume, rest, rest_length, kOwnedMark,
+                        sizeof(kOwnedMark) - 1)) {
+        write("  test: FAIL rroland's session did not record bar's home as refused\n");
+        ++failed;
+    } else {
+        write("  test: rroland could not reach bar's home through Sys:, and said so\n");
+    }
+    static char const kRecordPath[] = "Sys:Homes/bar/RECORD.TXT";
+    static char const kRecordWords[] = "bar's record, which no other user may read\n";
+    seL4_CPtr const record_volume =
+        resolve(kRecordPath, sizeof(kRecordPath) - 1, &rest, &rest_length,
+                static_cast<seL4_CPtr>(first_free + 46));
+    if (!read_and_check(record_volume, rest, rest_length, kRecordWords,
+                        sizeof(kRecordWords) - 1)) {
+        write("  test: FAIL the system did not read bar's record\n");
+        ++failed;
+    } else {
+        write("  test: the system reads bar's record, which no user may\n");
     }
 
     /* The session-reclaim arc (specs/auth.md): the leaked LEAK.TXT handle

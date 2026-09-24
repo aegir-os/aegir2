@@ -268,6 +268,78 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Another user's home is another user's (specs/ownership.md): Sys: is
+     * public, but the directory inside it is not, so this badge reaching
+     * Sys:Homes/bar/PROBE.TXT must be refused. The session records the
+     * refusal in its own home -- the system test's other end; a probe that
+     * opened is the failure, and leaves no record. */
+    {
+        static char const kProbe[] = "Sys:Homes/bar/PROBE.TXT";
+        seL4_CPtr probe_volume = 0;
+        uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+        uint32_t const out_words = aegir::nmspace::pack_string(
+            out, kProbe, sizeof(kProbe) - 1, aegir::nmspace::kPathMax);
+        uint64_t in[aegir::nmspace::kResolveWords];
+        bool cap_arrived = false;
+        aegir::ipc::WordsReply const answer = nmspace.call_transfer(
+            aegir::nmspace::kMethodResolve, out, out_words, 0, in,
+            aegir::nmspace::kResolveWords, &cap_arrived);
+        char const *text = nullptr;
+        uint32_t length = 0;
+        if (answer.error == 0 && cap_arrived &&
+            aegir::nmspace::unpack_string(in, answer.count, aegir::nmspace::kPathMax,
+                                          &text, &length) &&
+            aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free + 2))) {
+            probe_volume = static_cast<seL4_CPtr>(first_free + 2);
+        }
+        bool refused = true;
+        if (probe_volume != 0) {
+            uint64_t const handle =
+                vol_open(probe_volume, text, length,
+                         aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
+            if (handle != 0) {
+                (void)vol_close(probe_volume, handle);
+                refused = false;
+            }
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, probe_volume,
+                              aegir::bootstrap::kCNodeBits);
+        }
+        if (refused) {
+            static char const kOwned[] = "Home:OWNED.TXT";
+            static char const kMark[] = "the other user's home was refused\n";
+            seL4_CPtr owned_volume = 0;
+            uint64_t oout[aegir::nmspace::kPathMax / 8 + 1];
+            uint32_t const oout_words = aegir::nmspace::pack_string(
+                oout, kOwned, sizeof(kOwned) - 1, aegir::nmspace::kPathMax);
+            uint64_t oin[aegir::nmspace::kResolveWords];
+            bool oc = false;
+            aegir::ipc::WordsReply const oans = nmspace.call_transfer(
+                aegir::nmspace::kMethodResolve, oout, oout_words, 0, oin,
+                aegir::nmspace::kResolveWords, &oc);
+            char const *otext = nullptr;
+            uint32_t olen = 0;
+            if (oans.error == 0 && oc &&
+                aegir::nmspace::unpack_string(oin, oans.count, aegir::nmspace::kPathMax,
+                                              &otext, &olen) &&
+                aegir::ipc::take_received_cap(static_cast<seL4_CPtr>(first_free + 3))) {
+                owned_volume = static_cast<seL4_CPtr>(first_free + 3);
+            }
+            if (owned_volume != 0) {
+                uint64_t const handle = vol_open(owned_volume, otext, olen,
+                                                 aegir::volume::kOpenCreate |
+                                                     aegir::volume::kOpenTruncate);
+                if (handle != 0) {
+                    (void)vol_write(owned_volume, handle,
+                                    reinterpret_cast<uint8_t const *>(kMark),
+                                    sizeof(kMark) - 1);
+                    (void)vol_close(owned_volume, handle);
+                }
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, owned_volume,
+                                  aegir::bootstrap::kCNodeBits);
+            }
+        }
+    }
+
     /* No input path of its own: the devices are the console's, exclusively
      * (specs/console.md), and a session's events arrive as windows' events
      * when the bureau arc lands. */

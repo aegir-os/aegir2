@@ -133,10 +133,58 @@ bool is_directory(aegir::bfs::Inode const &inode) noexcept
     return (inode.mode & 0xf000) == 0x4000;
 }
 
+/* The permission bits a check names (specs/bfs.md decision 7): read, write,
+ * and execute (traverse a directory). */
+constexpr uint32_t kPermRead = 4;
+constexpr uint32_t kPermWrite = 2;
+constexpr uint32_t kPermExec = 1;
+
+/* The Aegir user index a badge names: its bits 24..61, or zero for the system
+ * class, which owns what a user does not (specs/ownership.md). */
+uint32_t owner_index(uint64_t badge) noexcept
+{
+    return aegir::ipc::is_user_badge(badge)
+               ? static_cast<uint32_t>(aegir::ipc::user_index(badge))
+               : 0;
+}
+
+/* Whether a caller may do `bits` to an inode. The system class may do
+ * anything; a user matches the inode's uid and gid alike -- a user is its own
+ * group -- and sees the owner and group triads together, or the other triad. */
+bool permits(uint64_t badge, aegir::bfs::Inode const &inode, uint32_t bits) noexcept
+{
+    if (!aegir::ipc::is_user_badge(badge)) {
+        return true;
+    }
+    uint32_t const perms = inode.mode & 07u;
+    uint32_t const group = (inode.mode >> 3) & 07u;
+    uint32_t const owner = (inode.mode >> 6) & 07u;
+    uint32_t const index = owner_index(badge);
+    uint32_t const available = (inode.uid == index || inode.gid == index)
+                                   ? (owner | group)
+                                   : perms;
+    return (available & bits) == bits;
+}
+
+/* Who may change an inode's owner or mode (specs/bfs.md decision 7): the
+ * system class, or the user the inode already belongs to -- not a permission
+ * bit, an ownership. */
+bool owner_or_system(uint64_t badge, aegir::bfs::Inode const &inode) noexcept
+{
+    if (!aegir::ipc::is_user_badge(badge)) {
+        return true;
+    }
+    uint32_t const index = owner_index(badge);
+    return inode.uid == index || inode.gid == index;
+}
+
 /* Walk a component path from the root. The empty path is the root; an empty
  * component and ".." are the parent, "." the directory itself (specs/vfs.md's
- * Amiga convention). */
-bool walk(char const *path, uint32_t length, aegir::bfs::Inode *out) noexcept
+ * Amiga convention). Every directory a step descends from must be executable
+ * by the caller, which is what keeps a user out of another user's home even
+ * when a file inside it is world-readable (specs/ownership.md). */
+bool walk(uint64_t badge, char const *path, uint32_t length,
+          aegir::bfs::Inode *out) noexcept
 {
     aegir::bfs::Inode inode;
     if (!g_volume.read_inode(g_volume.root_block(), &inode)) {
@@ -144,6 +192,9 @@ bool walk(char const *path, uint32_t length, aegir::bfs::Inode *out) noexcept
     }
     uint32_t start = 0;
     while (start < length) {
+        if (!permits(badge, inode, kPermExec)) {
+            return false;
+        }
         uint32_t end = start;
         while (end < length && path[end] != '/') {
             ++end;
@@ -174,9 +225,11 @@ bool walk(char const *path, uint32_t length, aegir::bfs::Inode *out) noexcept
 
 /* Split a path into the directory that holds its last component and the
  * component itself, as a write operation wants them. The empty path has no
- * last component and is refused. */
-bool walk_parent(char const *path, uint32_t length, uint64_t *parent_block,
-                 char const **name, uint32_t *name_length) noexcept
+ * last component and is refused. Every directory a step descends from must be
+ * executable by the caller. */
+bool walk_parent(uint64_t badge, char const *path, uint32_t length,
+                 uint64_t *parent_block, char const **name,
+                 uint32_t *name_length) noexcept
 {
     uint64_t dir_block = g_volume.root_block();
     uint32_t start = 0;
@@ -196,7 +249,8 @@ bool walk_parent(char const *path, uint32_t length, uint64_t *parent_block,
             return true;
         }
         aegir::bfs::Inode dir;
-        if (!g_volume.read_inode(dir_block, &dir)) {
+        if (!g_volume.read_inode(dir_block, &dir) ||
+            !permits(badge, dir, kPermExec)) {
             return false;
         }
         if (component == 0) {
@@ -218,8 +272,10 @@ bool walk_parent(char const *path, uint32_t length, uint64_t *parent_block,
 }
 
 /* mkdir's shape: make every missing component on the way, leaving the ones
- * that are there alone. An existing component that is a file refuses. */
-bool make_dirs(char const *path, uint32_t length) noexcept
+ * that are there alone. An existing component that is a file refuses. A step
+ * descends with execute, and makes a component with write and execute, on the
+ * directory above it; a made directory belongs to the caller. */
+bool make_dirs(uint64_t badge, char const *path, uint32_t length) noexcept
 {
     uint64_t dir_block = g_volume.root_block();
     uint32_t start = 0;
@@ -231,7 +287,8 @@ bool make_dirs(char const *path, uint32_t length) noexcept
         uint32_t const component = end - start;
         if (component != 0) {
             aegir::bfs::Inode dir;
-            if (!g_volume.read_inode(dir_block, &dir)) {
+            if (!g_volume.read_inode(dir_block, &dir) ||
+                !permits(badge, dir, kPermExec)) {
                 return false;
             }
             uint64_t child = 0;
@@ -242,9 +299,13 @@ bool make_dirs(char const *path, uint32_t length) noexcept
                 }
                 dir_block = child;
             } else {
+                if (!permits(badge, dir, kPermWrite)) {
+                    return false;
+                }
+                uint32_t const owner = owner_index(badge);
                 uint64_t created = 0;
                 if (!g_writer.create(dir_block, path + start, component,
-                                     aegir::bfs::kModeDirectory | 0755, 0, 0,
+                                     aegir::bfs::kModeDirectory | 0755, owner, owner,
                                      inode_time(), &created)) {
                     return false;
                 }
@@ -428,7 +489,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     uint64_t parent_block = 0;
     char const *name = nullptr;
     uint32_t name_length = 0;
-    if (!walk_parent(path, path_length, &parent_block, &name, &name_length)) {
+    if (!walk_parent(badge, path, path_length, &parent_block, &name, &name_length)) {
         port.reply_words(&handle, 1);
         return;
     }
@@ -442,7 +503,8 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     bool ok = false;
     if (g_volume.dir_find(parent, name, name_length, &inode_block)) {
         aegir::bfs::Inode existing;
-        if (!g_volume.read_inode(inode_block, &existing) || is_directory(existing)) {
+        if (!g_volume.read_inode(inode_block, &existing) || is_directory(existing) ||
+            !permits(badge, existing, kPermWrite)) {
             port.reply_words(&handle, 1);
             return;
         }
@@ -457,8 +519,13 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
             }
         }
     } else if ((flags & aegir::volume::kOpenCreate) != 0) {
+        if (!permits(badge, parent, kPermWrite | kPermExec)) {
+            port.reply_words(&handle, 1);
+            return;
+        }
+        uint32_t const owner = owner_index(badge);
         ok = g_writer.create(parent_block, name, name_length,
-                             aegir::bfs::kModeRegular | 0644, 0, 0, inode_time(),
+                             aegir::bfs::kModeRegular | 0644, owner, owner, inode_time(),
                              &inode_block);
     }
     if (ok) {
@@ -485,7 +552,9 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     }
     Handle *handle = handle_lookup(words[0], badge);
     uint64_t const bytes = words[1];
-    if (handle == nullptr || bytes > aegir::volume::kWriteMax ||
+    aegir::bfs::Inode inode;
+    if (handle == nullptr || !g_volume.read_inode(handle->inode_block, &inode) ||
+        !permits(badge, inode, kPermWrite) || bytes > aegir::volume::kWriteMax ||
         count < 2 + static_cast<uint32_t>((bytes + 7) / 8)) {
         port.reply_words(&written, 1);
         return;
@@ -523,7 +592,8 @@ void answer_reap(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(&reaped, 1);
 }
 
-void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
 {
     uint64_t made = 0;
     char const *path = nullptr;
@@ -531,13 +601,14 @@ void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     if (g_writable && count != 0 &&
         aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
                                       &path_length) &&
-        path_length != 0 && make_dirs(path, path_length)) {
+        path_length != 0 && make_dirs(badge, path, path_length)) {
         made = 1;
     }
     port.reply_words(&made, 1);
 }
 
-void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                   uint64_t badge) noexcept
 {
     uint64_t removed = 0;
     char const *path = nullptr;
@@ -548,7 +619,10 @@ void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
         uint64_t parent_block = 0;
         char const *name = nullptr;
         uint32_t name_length = 0;
-        if (walk_parent(path, path_length, &parent_block, &name, &name_length) &&
+        aegir::bfs::Inode parent;
+        if (walk_parent(badge, path, path_length, &parent_block, &name, &name_length) &&
+            g_volume.read_inode(parent_block, &parent) &&
+            permits(badge, parent, kPermWrite | kPermExec) &&
             g_writer.remove(parent_block, name, name_length)) {
             removed = 1;
         }
@@ -556,7 +630,8 @@ void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
     port.reply_words(&removed, 1);
 }
 
-void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                   uint64_t badge) noexcept
 {
     uint64_t renamed = 0;
     char const *src = nullptr;
@@ -577,9 +652,14 @@ void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
             char const *dst_name = nullptr;
             uint32_t src_name_length = 0;
             uint32_t dst_name_length = 0;
-            if (walk_parent(src, src_length, &src_parent, &src_name, &src_name_length) &&
-                walk_parent(dst, dst_length, &dst_parent, &dst_name, &dst_name_length) &&
+            aegir::bfs::Inode parent;
+            if (walk_parent(badge, src, src_length, &src_parent, &src_name,
+                            &src_name_length) &&
+                walk_parent(badge, dst, dst_length, &dst_parent, &dst_name,
+                            &dst_name_length) &&
                 src_parent == dst_parent &&
+                g_volume.read_inode(src_parent, &parent) &&
+                permits(badge, parent, kPermWrite | kPermExec) &&
                 g_writer.rename(src_parent, src_name, src_name_length, dst_name,
                                 dst_name_length)) {
                 renamed = 1;
@@ -590,7 +670,7 @@ void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t coun
 }
 
 void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
-                     uint32_t count) noexcept
+                     uint32_t count, uint64_t badge) noexcept
 {
     uint64_t resized = 0;
     char const *path = nullptr;
@@ -601,12 +681,14 @@ void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
         uint32_t const path_words = 1 + (path_length + 7) / 8;
         if (count >= path_words + 1) {
             aegir::bfs::Inode inode;
-            if (walk(path, path_length, &inode) && !is_directory(inode)) {
+            if (walk(badge, path, path_length, &inode) && !is_directory(inode) &&
+                permits(badge, inode, kPermWrite)) {
                 uint64_t parent_block = 0;
                 char const *name = nullptr;
                 uint32_t name_length = 0;
                 uint64_t inode_block = 0;
-                if (walk_parent(path, path_length, &parent_block, &name, &name_length) &&
+                if (walk_parent(badge, path, path_length, &parent_block, &name,
+                                &name_length) &&
                     g_volume.read_inode(parent_block, &inode) &&
                     g_volume.dir_find(inode, name, name_length, &inode_block) &&
                     g_writer.truncate(inode_block, words[path_words], inode_time())) {
@@ -618,7 +700,8 @@ void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
     port.reply_words(&resized, 1);
 }
 
-void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -636,7 +719,8 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     uint64_t const offset = words[path_words];
     uint64_t wanted = words[path_words + 1];
     aegir::bfs::Inode inode;
-    if (!walk(path, path_length, &inode) || is_directory(inode) ||
+    if (!walk(badge, path, path_length, &inode) || is_directory(inode) ||
+        !permits(badge, inode, kPermRead) ||
         offset > static_cast<uint64_t>(inode.size)) {
         port.reply_words(nullptr, 0);
         return;
@@ -658,7 +742,8 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
                      aegir::volume::kReadHeaderWords + static_cast<uint32_t>((got + 7) / 8));
 }
 
-void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -674,7 +759,8 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         return;
     }
     aegir::bfs::Inode dir;
-    if (!walk(path, path_length, &dir) || !is_directory(dir)) {
+    if (!walk(badge, path, path_length, &dir) || !is_directory(dir) ||
+        !permits(badge, dir, kPermRead)) {
         port.reply_words(nullptr, 0);
         return;
     }
@@ -706,7 +792,8 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 
-void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -717,7 +804,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         return;
     }
     aegir::bfs::Inode inode;
-    if (!walk(path, path_length, &inode)) {
+    if (!walk(badge, path, path_length, &inode)) {
         port.reply_words(nullptr, 0);
         return;
     }
@@ -1078,8 +1165,8 @@ bool unpack_path_name(uint64_t const *words, uint32_t count, char const **path,
 
 /* A path and a name that could name an attribute: false with the status the
  * client should read when either is wrong. */
-bool attr_target(char const *path, uint32_t path_length, char const *name,
-                 uint32_t name_length, aegir::bfs::Inode *inode,
+bool attr_target(uint64_t badge, char const *path, uint32_t path_length,
+                 char const *name, uint32_t name_length, aegir::bfs::Inode *inode,
                  uint64_t *status) noexcept
 {
     if (name == nullptr || name_length == 0 ||
@@ -1087,7 +1174,7 @@ bool attr_target(char const *path, uint32_t path_length, char const *name,
         *status = aegir::metadata::kInvalidName;
         return false;
     }
-    if (!walk(path, path_length, inode)) {
+    if (!walk(badge, path, path_length, inode)) {
         *status = aegir::metadata::kNotFound;
         return false;
     }
@@ -1095,7 +1182,7 @@ bool attr_target(char const *path, uint32_t path_length, char const *name,
 }
 
 void answer_attr_stat(aegir::ipc::Owner &port, uint64_t const *words,
-                      uint32_t count) noexcept
+                      uint32_t count, uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -1104,22 +1191,26 @@ void answer_attr_stat(aegir::ipc::Owner &port, uint64_t const *words,
     aegir::bfs::Inode inode;
     uint64_t status = aegir::metadata::kNotFound;
     if (unpack_path_name(words, count, &path, &path_length, &name, &name_length) &&
-        attr_target(path, path_length, name, name_length, &inode, &status)) {
-        uint32_t type = 0;
-        uint64_t size = 0;
-        if (g_volume.attr_stat(inode, name, name_length, &type, &size)) {
-            uint64_t const answer[aegir::metadata::kAttrStatTailWords + 1] = {
-                aegir::metadata::kOk, type, size,
-            };
-            port.reply_words(answer, aegir::metadata::kAttrStatTailWords + 1);
-            return;
+        attr_target(badge, path, path_length, name, name_length, &inode, &status)) {
+        if (!permits(badge, inode, kPermRead)) {
+            status = aegir::metadata::kPermission;
+        } else {
+            uint32_t type = 0;
+            uint64_t size = 0;
+            if (g_volume.attr_stat(inode, name, name_length, &type, &size)) {
+                uint64_t const answer[aegir::metadata::kAttrStatTailWords + 1] = {
+                    aegir::metadata::kOk, type, size,
+                };
+                port.reply_words(answer, aegir::metadata::kAttrStatTailWords + 1);
+                return;
+            }
         }
     }
     port.reply_words(&status, 1);
 }
 
 void answer_attr_read(aegir::ipc::Owner &port, uint64_t const *words,
-                      uint32_t count) noexcept
+                      uint32_t count, uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -1141,9 +1232,14 @@ void answer_attr_read(aegir::ipc::Owner &port, uint64_t const *words,
     uint64_t wanted = words[after + 1];
     aegir::bfs::Inode inode;
     uint64_t target_status = aegir::metadata::kNotFound;
-    if (!attr_target(path, path_length, name, name_length, &inode,
+    if (!attr_target(badge, path, path_length, name, name_length, &inode,
                      &target_status)) {
         port.reply_words(&target_status, 1);
+        return;
+    }
+    if (!permits(badge, inode, kPermRead)) {
+        uint64_t const denied = aegir::metadata::kPermission;
+        port.reply_words(&denied, 1);
         return;
     }
     if (wanted > aegir::metadata::kAttrDataMax) {
@@ -1166,7 +1262,7 @@ void answer_attr_read(aegir::ipc::Owner &port, uint64_t const *words,
 }
 
 void answer_attr_write(aegir::ipc::Owner &port, uint64_t const *words,
-                       uint32_t count) noexcept
+                       uint32_t count, uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -1203,9 +1299,14 @@ void answer_attr_write(aegir::ipc::Owner &port, uint64_t const *words,
     }
     aegir::bfs::Inode inode;
     uint64_t target_status = aegir::metadata::kNotFound;
-    if (!attr_target(path, path_length, name, name_length, &inode,
+    if (!attr_target(badge, path, path_length, name, name_length, &inode,
                      &target_status)) {
         port.reply_words(&target_status, 1);
+        return;
+    }
+    if (!permits(badge, inode, kPermWrite)) {
+        answer[0] = aegir::metadata::kPermission;
+        port.reply_words(answer, 1);
         return;
     }
     auto const *bytes = reinterpret_cast<uint8_t const *>(words + after + 3);
@@ -1223,7 +1324,7 @@ void answer_attr_write(aegir::ipc::Owner &port, uint64_t const *words,
 }
 
 void answer_attr_remove(aegir::ipc::Owner &port, uint64_t const *words,
-                        uint32_t count) noexcept
+                        uint32_t count, uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -1241,9 +1342,14 @@ void answer_attr_remove(aegir::ipc::Owner &port, uint64_t const *words,
     }
     aegir::bfs::Inode inode;
     uint64_t target_status = aegir::metadata::kNotFound;
-    if (!attr_target(path, path_length, name, name_length, &inode,
+    if (!attr_target(badge, path, path_length, name, name_length, &inode,
                      &target_status)) {
         port.reply_words(&target_status, 1);
+        return;
+    }
+    if (!permits(badge, inode, kPermWrite)) {
+        answer = aegir::metadata::kPermission;
+        port.reply_words(&answer, 1);
         return;
     }
     uint64_t const block = g_volume.to_block(inode.run);
@@ -1254,7 +1360,7 @@ void answer_attr_remove(aegir::ipc::Owner &port, uint64_t const *words,
 }
 
 void answer_attr_list(aegir::ipc::Owner &port, uint64_t const *words,
-                      uint32_t count) noexcept
+                      uint32_t count, uint64_t badge) noexcept
 {
     char const *path = nullptr;
     uint32_t path_length = 0;
@@ -1272,8 +1378,13 @@ void answer_attr_list(aegir::ipc::Owner &port, uint64_t const *words,
         return;
     }
     aegir::bfs::Inode inode;
-    if (!walk(path, path_length, &inode)) {
+    if (!walk(badge, path, path_length, &inode)) {
         port.reply_words(&status, 1);
+        return;
+    }
+    if (!permits(badge, inode, kPermRead)) {
+        uint64_t const denied = aegir::metadata::kPermission;
+        port.reply_words(&denied, 1);
         return;
     }
     char name[aegir::metadata::kAttrNameMax];
@@ -1299,6 +1410,84 @@ void answer_attr_list(aegir::ipc::Owner &port, uint64_t const *words,
     answer[1 + name_words] = type;
     answer[1 + name_words + 1] = size;
     port.reply_words(answer, 1 + name_words + aegir::metadata::kAttrListTailWords);
+}
+
+/* Protect: set an inode's mode (the low permission bits; the type and the
+ * extended bits stay). The AmigaDOS Protect. */
+void answer_protect(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                    uint64_t badge) noexcept
+{
+    uint64_t status = aegir::metadata::kNotFound;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (!g_writable || count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        status = g_writable ? status : aegir::metadata::kReadOnly;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    if (!walk(badge, path, path_length, &inode)) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    if (!owner_or_system(badge, inode)) {
+        status = aegir::metadata::kPermission;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const mode = (inode.mode & ~07777u) |
+                          (static_cast<uint32_t>(words[path_words]) & 07777u);
+    uint64_t const block = g_volume.to_block(inode.run);
+    status = g_writer.set_owner_mode(block, inode.uid, inode.gid, mode)
+                 ? aegir::metadata::kOk
+                 : aegir::metadata::kNoSpace;
+    port.reply_words(&status, 1);
+}
+
+/* Owner: set an inode's uid and gid (the AmigaDOS Owner). A user is its own
+ * group, so both are the user index (specs/ownership.md). */
+void answer_owner(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    uint64_t status = aegir::metadata::kNotFound;
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (!g_writable || count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        status = g_writable ? status : aegir::metadata::kReadOnly;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 2) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    if (!walk(badge, path, path_length, &inode)) {
+        port.reply_words(&status, 1);
+        return;
+    }
+    if (!owner_or_system(badge, inode)) {
+        status = aegir::metadata::kPermission;
+        port.reply_words(&status, 1);
+        return;
+    }
+    uint32_t const uid = static_cast<uint32_t>(words[path_words]);
+    uint32_t const gid = static_cast<uint32_t>(words[path_words + 1]);
+    uint64_t const block = g_volume.to_block(inode.run);
+    status = g_writer.set_owner_mode(block, uid, gid, inode.mode)
+                 ? aegir::metadata::kOk
+                 : aegir::metadata::kNoSpace;
+    port.reply_words(&status, 1);
 }
 
 }  // namespace
@@ -1537,13 +1726,13 @@ int main(int argc, char *argv[])
             method == aegir::metadata::kMethodAttrRemove;
         switch (method) {
         case aegir::volume::kMethodRead:
-            answer_read(vol, words, count);
+            answer_read(vol, words, count, badge);
             break;
         case aegir::volume::kMethodList:
-            answer_list(vol, words, count);
+            answer_list(vol, words, count, badge);
             break;
         case aegir::volume::kMethodStat:
-            answer_stat(vol, words, count);
+            answer_stat(vol, words, count, badge);
             break;
         case aegir::volume::kMethodOpen:
             answer_open(vol, words, count, badge);
@@ -1555,34 +1744,40 @@ int main(int argc, char *argv[])
             answer_close(vol, words, count, badge);
             break;
         case aegir::volume::kMethodMkdir:
-            answer_mkdir(vol, words, count);
+            answer_mkdir(vol, words, count, badge);
             break;
         case aegir::volume::kMethodRemove:
-            answer_remove(vol, words, count);
+            answer_remove(vol, words, count, badge);
             break;
         case aegir::volume::kMethodRename:
-            answer_rename(vol, words, count);
+            answer_rename(vol, words, count, badge);
             break;
         case aegir::volume::kMethodTruncate:
-            answer_truncate(vol, words, count);
+            answer_truncate(vol, words, count, badge);
             break;
         case aegir::volume::kMethodReap:
             answer_reap(vol, words, count);
             break;
         case aegir::metadata::kMethodAttrStat:
-            answer_attr_stat(vol, words, count);
+            answer_attr_stat(vol, words, count, badge);
             break;
         case aegir::metadata::kMethodAttrRead:
-            answer_attr_read(vol, words, count);
+            answer_attr_read(vol, words, count, badge);
             break;
         case aegir::metadata::kMethodAttrWrite:
-            answer_attr_write(vol, words, count);
+            answer_attr_write(vol, words, count, badge);
             break;
         case aegir::metadata::kMethodAttrRemove:
-            answer_attr_remove(vol, words, count);
+            answer_attr_remove(vol, words, count, badge);
             break;
         case aegir::metadata::kMethodAttrList:
-            answer_attr_list(vol, words, count);
+            answer_attr_list(vol, words, count, badge);
+            break;
+        case aegir::metadata::kMethodProtect:
+            answer_protect(vol, words, count, badge);
+            break;
+        case aegir::metadata::kMethodOwner:
+            answer_owner(vol, words, count, badge);
             break;
         case aegir::metadata::kMethodQueryOpen:
             answer_query_open(vol, words, count, badge);

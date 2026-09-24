@@ -69,6 +69,24 @@ PARTITIONS = [
     ("BFS", 43008, 63487, None, None),
 ]
 
+# The system volume's tree (specs/services.md, specs/bfs.md): the migration to
+# BFS, so what Sys: holds is what the file permissions arc can own. The names
+# are the ones the FAT build used, long names included, so the readers see the
+# same disk by a different filesystem.
+AEGIR_BFS_TREE = [
+    ("file", "AEGIR.TXT", b"aegir read this file off a disk it enumerated itself\n"),
+    ("dir", "DOCS", [
+        ("file", "NESTED.TXT",
+         b"two components deep, and the walk found it\n"),
+    ]),
+    ("file", "Readme With A Long Name.txt",
+     b"a long name, read back whole -- the 8.3 form cannot spell it\n"),
+    ("dir", "A Long Folder", [
+        ("file", "Inside Long Name.txt",
+         b"a long directory, a long file, and the walk still ends at it\n"),
+    ]),
+]
+
 # The BFS volume's tree: a known file and a directory with a nested file, so
 # the component walk crosses a directory the way the FAT one does.
 BFS_TREE = [
@@ -133,9 +151,10 @@ def main() -> int:
     subprocess.run(sgdisk, check=True, capture_output=True)
 
     for name, first, _, known_name, known_content in PARTITIONS:
-        if name == "BFS":
-            # Not mtools': the BFS volume is built by scripts/mkfs_bfs.py,
-            # below, so its on-disk format is the one specs/bfs.md fixes.
+        if name in ("AEGIR", "BFS"):
+            # Not mtools': AEGIR is the system volume and BFS the second BFS
+            # volume, both built by scripts/mkfs_bfs.py below, so their
+            # on-disk format is the one specs/bfs.md fixes.
             continue
         volume = f"{args.image}@@{first * SECTOR}"
         if name == "FAT16":
@@ -191,6 +210,8 @@ def main() -> int:
             return 1
 
     for name, directory, nested_name, nested_content in NESTED:
+        if name == "AEGIR":
+            continue  # the system volume is BFS now; its tree is AEGIR_BFS_TREE
         first = next(p[1] for p in PARTITIONS if p[0] == name)
         volume = f"{args.image}@@{first * SECTOR}"
         subprocess.run(["mmd", "-i", volume, f"::{directory}"], check=True,
@@ -210,6 +231,8 @@ def main() -> int:
             return 1
 
     for name, long_name, long_content in LONG_ROOT:
+        if name == "AEGIR":
+            continue  # the system volume is BFS now; its tree is AEGIR_BFS_TREE
         first = next(p[1] for p in PARTITIONS if p[0] == name)
         volume = f"{args.image}@@{first * SECTOR}"
         with tempfile.TemporaryDirectory() as staging:
@@ -220,6 +243,8 @@ def main() -> int:
                 check=True, capture_output=True)
 
     for name, directory, long_name, long_content in LONG_NESTED:
+        if name == "AEGIR":
+            continue  # the system volume is BFS now; its tree is AEGIR_BFS_TREE
         first = next(p[1] for p in PARTITIONS if p[0] == name)
         volume = f"{args.image}@@{first * SECTOR}"
         subprocess.run(["mmd", "-i", volume, f"::{directory}"], check=True,
@@ -231,22 +256,22 @@ def main() -> int:
                 ["mcopy", "-i", volume, str(source), f"::{directory}/{long_name}"],
                 check=True, capture_output=True)
 
-    # The BFS volume: built into the image at its partition's offset, the
-    # same way mtools fills a FAT partition through `image@@offset`.
-    bfs_first = next(p[1] for p in PARTITIONS if p[0] == "BFS")
-    bfs_last = next(p[2] for p in PARTITIONS if p[0] == "BFS")
-    bfs_offset = bfs_first * SECTOR
-    bfs_size = (bfs_last - bfs_first + 1) * SECTOR
+    # The two BFS volumes -- the system volume and the second one: built into
+    # the image at their partitions' offsets, the same way mtools fills a FAT
+    # partition through `image@@offset`.
     with args.image.open("r+b") as handle:
         handle.seek(0)
         image = bytearray(handle.read())
-        make_bfs(image, bfs_offset, bfs_size, "BFS", BFS_TREE)
+        for name, tree in (("AEGIR", AEGIR_BFS_TREE), ("BFS", BFS_TREE)):
+            first = next(p[1] for p in PARTITIONS if p[0] == name)
+            last = next(p[2] for p in PARTITIONS if p[0] == name)
+            make_bfs(image, first * SECTOR, (last - first + 1) * SECTOR, name, tree)
         handle.seek(0)
         handle.write(image)
 
-    print(f"make_disk: {args.image}: GPT, four FAT partitions and one BFS, "
-          "two known files each, one nested, long names, one empty volume, "
-          "one FAT16")
+    print(f"make_disk: {args.image}: GPT, three FAT partitions and two BFS "
+          "(the system volume among them), known files, nested and long names, "
+          "one empty volume, one FAT16")
     return 0
 
 

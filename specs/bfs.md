@@ -1,7 +1,7 @@
 # The Be File System (BFS)
 
-BFS is Aegir's **primary filesystem**: the format the system volume will
-stand on, and the one that carries the metadata the Workbench and the rest of
+BFS is Aegir's **primary filesystem**: the format the system volume stands
+on, and the one that carries the metadata the Workbench and the rest of
 the desktop read — icons, file types, tooltypes, and whatever else names a
 file's meaning. FAT stays the interchange filesystem (`specs/fat.md`); BFS is
 where Aegir keeps its own things.
@@ -606,6 +606,30 @@ read from the beginning, so a read always shows the whole current set. When
 the last live query closes, the filesystem revokes the untyped, reclaiming the
 endpoints -- and a client's copy, should the client forget it. A live open the
 filesystem has no endpoint for is refused (`kNoSpace`).
+
+## Permissions
+
+`uid` and `gid` are the Aegir user index of the owner, and a user is its own
+group (`specs/ownership.md`); a system badge is the superuser. The `mode`'s low
+nine bits are what a user's calls are checked against, and the mapping is
+POSIX's:
+
+- read a file's bytes: `r`; list a directory: `r`; stat, and traverse any
+  component on the way to a name: `x`;
+- open for writing, truncate, or write: `w` on the file, and `w` with `x` on
+  the directory a new name is made in;
+- mkdir, remove and rename: `w` with `x` on the directory that holds the name;
+- an attribute's read, stat and list: `r`; its write and remove: `w`;
+- `Protect` and `Owner`: the inode's owner or the system class alone, which is
+  an ownership, not a mode bit.
+
+A directory a caller may not traverse refuses before the walk descends, which
+is what keeps a user out of another user's home even when a file inside it is
+world-readable. `Protect` sets the low permission bits and leaves the type and
+the extended bits alone; `Owner` sets `uid` and `gid`. A new inode is owned by
+its creator -- the caller's user index, or the system's -- and a file is born
+`0644` and a directory `0755`. FAT answers `kUnsupported` to both, and
+`kPermission` is the status when a caller may not touch an attribute.
 
 ## Sparseness
 

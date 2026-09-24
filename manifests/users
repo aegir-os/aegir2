@@ -7,4 +7,10 @@
 # an explicit one). The
 # secret is the plain word, honestly interim until login becomes a
 # challenge -- this one is the development credential, not a real one.
-name=rroland secret=aegir account=rroland
+# One row per user: name, secret, account (defaults to the name), home.
+# The home is the row's own statement -- the convention Sys:Homes/<name> is
+# only the packer's default; auth reads whatever the row says (specs/auth.md).
+name=rroland secret=aegir account=rroland home=Sys:Homes/rroland
+# A second user, for the ownership arc's denial: bar's home is bar's, and
+# rroland's session must not reach it through the public Sys: (specs/ownership.md).
+name=bar secret=bar account=bar home=Sys:Homes/bar

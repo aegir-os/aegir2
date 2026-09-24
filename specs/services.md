@@ -343,8 +343,10 @@ That map is the reason it exists, and everything else it does is in service of i
   manifest entry declares.
 - **Which filesystem serves which type is data.** `manifests/filesystems.registry`
   (the `drivers.registry` pattern) maps a GPT partition type GUID to the service
-  kind and the initrd binary: the system GUID and Microsoft basic data to FAT
-  today, and the BeFS GUID to BeFS the day it lands (`specs/bfs.md`). The device
+  kind and the initrd binary: the system GUID and the BeFS GUID to BeFS, and
+  Microsoft basic data to FAT (`specs/bfs.md`). Since the migration arc the
+  system volume is BFS, so what `Sys:` holds carries the owners and modes the
+  permissions arc enforces. The device
   manager bundles every image the registry names, with the registry text as an
   entry, and hands the partition manager the one blob (`aegir/fsbundle.h`) — a
   filesystem's image is the part of spawning a capability cannot carry. The
@@ -1121,4 +1123,9 @@ would cover ever-made rather than live-at-once, and the fifteenth session's
 system volume announces itself by partition type
 GUID, the VFS aliases it `Sys:`, and a login makes and binds `Home:`
 (`specs/auth.md`). The badge space is designed now
-(`specs/authority.md`, Identity is a badge).
+(`specs/authority.md`, Identity is a badge). The ownership model landed with it
+(`specs/ownership.md`): volumes have owners and a public/private stance, resolve
+checks the caller's badge, and a session's home is a private view whose
+directory carries the user's uid and mode 0700. That needed a filesystem with
+owners, so the system volume migrated from FAT to BFS (`specs/bfs.md`), and the
+same arc added `Protect` and `Owner` and the mode check to BFS.
