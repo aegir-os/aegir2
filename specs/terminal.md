@@ -172,7 +172,15 @@ and its attributes; the grid is rows×cols derived from the window's size.
   Page Up/Down and the wheel move the view; the view follows the end
   otherwise.
 - **Damage.** Only the cells that change are repainted, unioned into one
-  rectangle and handed to `console::damage` (`specs/window-manager.md`).
+  rectangle and handed to `console::damage` (`specs/window-manager.md`). The
+  grid is a value that knows no view, so the handler is where the two meet: a
+  write (`ConsoleStreamServer`) and a key the line editor consumed both damage
+  the view, or a client that fills the buffer after `show()` -- the shell's
+  banner does -- would never be drawn.
+- **A grid is not sized before it is laid out.** `TerminalView::on_layout`
+  returns when its rect is empty: a grid sized to a zero rect is one column
+  wide, and a client that writes its buffer before `show()` -- the demo's
+  grid does -- would wrap every character into its own line.
 
 ### The font, and what it cannot draw
 
@@ -220,5 +228,8 @@ types a line at it through QMP, the shell resolves it to a command and the
 terminal spawns it with a caller copy of the console stream, and the runner
 reads the command's exit cue (`specs/shell.md`'s acceptance) -- the whole
 Phase 3 and 4 path, the output on the same grid the shell writes to. The
+runner checks the window holds *ink* -- dark pixels in the text area, not only
+solid background -- so a grid that draws nothing, or wraps every character
+into one column, fails where the background samples cannot see it. The
 arrow-key and history check, and a command's own raw stream, wait for the next
 arc.

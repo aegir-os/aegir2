@@ -113,6 +113,9 @@ int main(int argc, char *argv[])
     TerminalView* const terminal = view.get();
 
     aegir::terminal::ConsoleStreamServer server(terminal->buffer());
+    /* The grid changed -- the banner, a command's output, the next prompt --
+     * so the view that draws it must repaint. */
+    server.on_change = [terminal]() { terminal->damage(); };
     auto shell = std::make_unique<aegir::terminal::Shell>(
         server, kShellStream, [&app]() { app.quit(0); });
 

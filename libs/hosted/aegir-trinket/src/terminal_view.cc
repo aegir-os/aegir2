@@ -51,6 +51,11 @@ Size TerminalView::preferred_size() const {
 }
 
 void TerminalView::on_layout() {
+    /* Before the window lays the content out the rect is empty, and a grid
+     * sized to it is one column wide. A client that fills the buffer before
+     * show() -- the demo's grid does -- would then wrap every character into
+     * its own line. No rect, no resize. */
+    if (rect_.width <= 0 || rect_.height <= 0) return;
     int const advance = cell_advance();
     int const height = cell_height();
     if (advance <= 0 || height <= 0) return;
@@ -102,6 +107,9 @@ void TerminalView::on_paint(Canvas& canvas, const PaintEvent& event) {
 
 void TerminalView::on_key_down(const KeyEvent& event) {
     if (on_key && on_key(event)) {
+        /* The editor wrote the line into the buffer; the view is what draws it,
+         * so a key that changed the line damages the view. */
+        damage();
         return;
     }
     switch (event.code) {

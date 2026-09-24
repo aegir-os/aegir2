@@ -73,6 +73,9 @@ uint32_t ConsoleStreamServer::write_stream(uint64_t caller, std::string_view tex
     }
     buffer_.write(text);
     buffer_.scroll_to_bottom();
+    if (on_change) {
+        on_change();
+    }
     return static_cast<uint32_t>(text.size());
 }
 
@@ -114,6 +117,9 @@ void ConsoleStreamServer::begin(uint64_t caller)
     Stream* s = find(caller);
     if (s != nullptr && s->editor != nullptr && !s->editor->editing()) {
         s->editor->begin();
+        if (on_change) {
+            on_change();
+        }
     }
 }
 

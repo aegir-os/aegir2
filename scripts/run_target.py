@@ -444,6 +444,27 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                                 flush=True,
                             )
                             failed = True
+                    for region in step.dark:
+                        named, x, y, w, h, least = region
+                        if named != device:
+                            continue
+                        found = 0
+                        for yy in range(y, min(y + h, height)):
+                            for xx in range(x, min(x + w, width)):
+                                at = (yy * width + xx) * 3
+                                if (
+                                    pixels[at] < 90
+                                    and pixels[at + 1] < 90
+                                    and pixels[at + 2] < 90
+                                ):
+                                    found += 1
+                        if found < least:
+                            print(
+                                f"    runner: FAIL {device} region ({x},{y},{w},{h}) "
+                                f"has {found} dark pixels, expected at least {least}",
+                                flush=True,
+                            )
+                            failed = True
                     if failed:
                         continue
                     print(f"    runner: {device} shows {width}x{height}, true to its checks", flush=True)

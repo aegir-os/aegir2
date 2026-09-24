@@ -41,6 +41,11 @@ class QmpStep:
     expect: tuple[tuple[int, int], ...] = ()
     bands: tuple[str, ...] = ()
     pixels: tuple[tuple[str, int, int, int, int, int], ...] = ()
+    # A region that must have drawn ink: device, x, y, width, height, and the
+    # least dark pixels it must hold. A grid's text is dark on a light
+    # background, so a region with none is a grid that drew nothing -- which the
+    # solid-background `pixels` samples cannot tell.
+    dark: tuple[tuple[str, int, int, int, int, int], ...] = ()
     events: tuple[dict, ...] = ()
 
 
@@ -436,6 +441,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 60, 200, 204, 204, 204),),
+                # The banner and the command's output are on the grid: a window
+                # that painted none of its text would hold no dark pixels here.
+                dark=(("gpu0", 50, 145, 500, 60, 100),),
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across
@@ -495,6 +503,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 910, 460, 204, 204, 204),),
+                # The demo's terminal grid has text on it: a grid that wrapped
+                # every character into one column, or drew nothing, has far less
+                # ink than this.
+                dark=(("gpu0", 902, 470, 240, 90, 100),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},

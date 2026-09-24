@@ -18,6 +18,7 @@
 #include <aegir/trinket/terminal_buffer.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -28,6 +29,11 @@ namespace aegir::terminal {
 class ConsoleStreamServer {
 public:
     explicit ConsoleStreamServer(aegir::trinket::TerminalBuffer& buffer);
+
+    /* Called after the grid changed -- a write landed or a prompt was drawn --
+     * so the terminal can damage the view that shows it. The buffer is a pure
+     * value and knows no view; the handler is the one place both meet. */
+    std::function<void()> on_change;
 
     /* The wire: one call from a stream's client. The reply words land in
      * `reply` (up to `capacity`); the answer is how many were written. */
