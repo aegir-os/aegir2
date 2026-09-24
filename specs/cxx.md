@@ -298,8 +298,11 @@ The order:
       futex: musl's `__wait` and the joiner's `__tl_sync` spin on that word, so
       clearing it is the wake. A thread that exits suspends its TCB; a
       killed or exited thread is not rebuilt, and its caps are not reclaimed.
-   6. **`std::thread`** then falls out; the acceptance extends the cxx-smoke
-      with a thread that joins and a mutex held across two threads.
+   6. **`std::thread`** (landed). It falls out of the pieces above: the
+      cxx-smoke starts a thread that joins and takes a `std::mutex` while it
+      runs ("std::thread runs, joins, and takes a std::mutex") -- the mutex a
+      proof of musl's lock over the thread's own TLS, the same class of check
+      as the unwind.
 5. **The filesystem.** `std::filesystem` in the runtime, and `aegir::filesystem`
    beside it. The runtime answers the file calls with Aegir-path semantics, and
    a tracked libc++ patch gives `path` the Aegir grammar, modelled on its
