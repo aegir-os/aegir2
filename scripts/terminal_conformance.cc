@@ -400,6 +400,46 @@ void check_stream_input()
                 "input: Backspace as BS, then the two-byte character");
 }
 
+/* The doorbell: the handler raises on_wake when the stream has something to
+ * read, and the terminal signals the recorded slot (specs/terminal.md). */
+void check_stream_doorbell()
+{
+    TerminalBuffer b(20, 5);
+    ConsoleStreamServer server(b);
+    int wakes = 0;
+    uint64_t last_caller = 0;
+    server.on_wake = [&](uint64_t caller) {
+        ++wakes;
+        last_caller = caller;
+    };
+    uint64_t reply[1] = {0};
+    uint64_t open_words[1 + aegir::nmspace::kPathMax / 8 + 1];
+    open_words[0] = aegir::console::kStreamModeCooked;
+    uint32_t const open_count =
+        1 + aegir::nmspace::pack_string(open_words + 1, "Home>", 5, aegir::nmspace::kPathMax);
+    static_cast<void>(server.handle(aegir::console::kStreamMethodOpen, open_words, open_count,
+                                    11, reply, 1));
+
+    expect_int(static_cast<int>(server.doorbell(11)), 0, "doorbell: none until it is set");
+    server.set_doorbell(11, 0x1234);
+    expect_int(static_cast<int>(server.doorbell(11)), 0x1234, "doorbell: the slot is recorded");
+    expect_int(static_cast<int>(server.doorbell(99)), 0, "doorbell: an unknown stream has none");
+
+    server.begin(11);
+    server.queue_input(11, "x");
+    expect_int(wakes, 1, "doorbell: queued input wakes the client");
+    expect_int(static_cast<int>(last_caller), 11, "doorbell: the wake names the stream");
+
+    LineEditor* const editor = server.editor(11);
+    editor->on_key(char_key(U'y'));
+    editor->on_key(code_key(KeyCode::ENTER));
+    expect_int(wakes, 2, "doorbell: a finished line wakes the client");
+
+    uint64_t exit_words[1] = {3};
+    server.handle(aegir::console::kStreamMethodExit, exit_words, 1, 11, reply, 1);
+    expect_int(wakes, 3, "doorbell: a command's exit wakes the client");
+}
+
 } // namespace
 
 int main()
@@ -420,6 +460,7 @@ int main()
     check_line_editor();
     check_stream_wire();
     check_stream_input();
+    check_stream_doorbell();
 
     std::printf("terminal: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

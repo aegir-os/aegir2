@@ -53,6 +53,9 @@ bool ConsoleStreamServer::open_stream(uint64_t caller, uint32_t mode,
             if (s != nullptr) {
                 s->pending = line;
                 s->ready = true;
+                if (on_wake) {
+                    on_wake(caller);
+                }
             }
         });
     }
@@ -156,6 +159,9 @@ void ConsoleStreamServer::queue_input(uint64_t caller, std::string_view bytes)
     Stream* s = find(caller);
     if (s != nullptr) {
         s->input.append(bytes);
+        if (on_wake) {
+            on_wake(caller);
+        }
     }
 }
 
@@ -192,6 +198,20 @@ bool ConsoleStreamServer::in_command(uint64_t caller) const
 {
     Stream const* s = find(caller);
     return s != nullptr && s->command;
+}
+
+void ConsoleStreamServer::set_doorbell(uint64_t caller, uint64_t slot)
+{
+    Stream* s = find(caller);
+    if (s != nullptr) {
+        s->doorbell = slot;
+    }
+}
+
+uint64_t ConsoleStreamServer::doorbell(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s == nullptr ? 0 : s->doorbell;
 }
 
 bool ConsoleStreamServer::on_key(uint64_t caller, aegir::trinket::KeyEvent const& event)
@@ -328,6 +348,9 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
                 s->status = words[0];
             }
             s->finished = true;
+            if (on_wake) {
+                on_wake(caller);
+            }
         }
         return 0;
     }

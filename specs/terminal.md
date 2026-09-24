@@ -8,8 +8,10 @@ delegates, and a command resolved to `Initrd:`, spawned out of a reclaimable
 pool, printed to the grid, and reported through the runtime that routes its
 fd 1/2 and its exit to the stream. fd 0 is the stream's queued input: while a
 command runs the terminal routes the keyboard to the stream rather than the
-idle editor, and the command's `read` drains it (`aegir-read`). What remains
-is the shell as a separate process, and a read that waits rather than polls.
+idle editor, and the command's `read` drains it (`aegir-read`). The handler
+also rings a client's doorbell -- a notification passed at `open` -- when there
+is something to read, so a client can wait instead of poll. What remains is the
+shell as a separate process, whose loop is the doorbell's first real client.
 This is the spec
 the terminal arc lands under —the Amiga `CON:` handler and the text surface
 the shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
@@ -133,14 +135,15 @@ port does not know is answered by saying nothing.
   grid in columns and rows from the font metrics, which is what a program
   laying out columns needs.
 
-The handler wakes a client the way the console wakes its clients: each
-stream carries the client's own doorbell (`listen`-style capability
-transfer), and the handler signals it when input is queued. The client
-already waits on the console's event notification; it does not wait on a
-second one — the toolkit's `on_poll` hook is where a terminal client checks
-its console stream after a drain (`specs/workbench.md`'s `Application`
-shape). A freestanding client that waits on the notification directly does
-the same after each wake.
+The handler wakes a client the way the console wakes its clients: each stream
+carries the client's own doorbell -- a notification the client passes as a
+capability when it opens the stream (the `listen` shape), which the handler
+rings when input is queued, a line is ready, or a command finishes. The
+terminal's handler raises `on_wake`; the terminal, which holds the kernel, does
+the signal. A toolkit client already waits on the console's event notification
+and checks its stream in `on_poll` after each drain (specs/workbench.md's
+`Application` shape); a client without that -- the shell as its own process --
+waits on its doorbell and reads after each wake.
 
 **Where the protocol lives.** The wire vocabulary -- the port name, the
 method numbers, the modes, the byte bound and the namespace's string shape --

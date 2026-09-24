@@ -36,6 +36,12 @@ public:
      * value and knows no view; the handler is the one place both meet. */
     std::function<void()> on_change;
 
+    /* Called when the stream has something for its client to read -- input
+     * queued, a line ready, a command finished -- so the terminal signals the
+     * stream's doorbell (specs/terminal.md). The handler is host-tested and
+     * knows no kernel; the terminal does the signal. */
+    std::function<void(uint64_t caller)> on_wake;
+
     /* The wire: one call from a stream's client. The reply words land in
      * `reply` (up to `capacity`); the answer is how many were written. */
     uint32_t handle(uint32_t method, uint64_t const* words, uint32_t count,
@@ -65,6 +71,11 @@ public:
     void begin_command(uint64_t caller);
     bool in_command(uint64_t caller) const;
 
+    /* The client's doorbell: the CSpace slot its notification was moved to
+     * (zero when it polls). The terminal signals it from `on_wake`. */
+    void set_doorbell(uint64_t caller, uint64_t slot);
+    uint64_t doorbell(uint64_t caller) const;
+
     /* One key, routed by the stream's discipline: a command bracket or a raw
      * stream queues it as bytes; an idle cooked stream feeds the editor. True
      * when the key was consumed. */
@@ -88,6 +99,7 @@ private:
         bool command = false;
         bool finished = false;
         uint64_t status = 0;
+        uint64_t doorbell = 0;
     };
 
     Stream* find(uint64_t caller);

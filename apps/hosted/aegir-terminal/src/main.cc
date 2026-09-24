@@ -256,10 +256,32 @@ int main(int argc, char *argv[])
      * a command reaches it through. Only the port needs the kit. */
     if (spawn_kit.ready()) {
         app.serve(aegir::ipc::Owner(spawn_kit.stream_endpoint()));
-        app.on_call = [&server](uint32_t method, uint64_t const *words, uint32_t count,
-                                seL4_Word badge, bool, uint64_t *reply,
-                                uint32_t capacity) {
-            return server.handle(method, words, count, badge, reply, capacity);
+        app.on_call = [&server, &app](uint32_t method, uint64_t const *words,
+                                      uint32_t count, seL4_Word badge, bool cap_arrived,
+                                      uint64_t *reply, uint32_t capacity) {
+            uint32_t const answer = server.handle(method, words, count, badge, reply, capacity);
+            if (cap_arrived) {
+                /* A capability rode with the call -- the client's doorbell on
+                 * an open (specs/terminal.md). Move it out of the scratch slot
+                 * before the next receive, and record it for the stream so
+                 * on_wake can ring it. */
+                seL4_CPtr const slot = app.alloc_slot();
+                if (slot != 0 && aegir::ipc::take_received_cap(slot) &&
+                    method == aegir::console::kStreamMethodOpen && answer == 1 &&
+                    reply[0] == 1) {
+                    server.set_doorbell(badge, slot);
+                }
+            }
+            return answer;
+        };
+        /* The handler says the stream has something to read; the terminal rings
+         * the client's doorbell. The handler is a pure value, so the signal
+         * lives here. */
+        server.on_wake = [&server](uint64_t caller) {
+            seL4_CPtr const slot = server.doorbell(caller);
+            if (slot != 0) {
+                seL4_Signal(slot);
+            }
         };
     }
 
