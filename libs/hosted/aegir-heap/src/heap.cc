@@ -504,6 +504,33 @@ void report_exit(int status) noexcept
     aegir::halt();
 }
 
+/* A hosted process ends through musl, not through sel4runtime's exit bridge.
+ * `std::exit` reaches exit_group and report_exit, but a program that merely
+ * returns from main leaves sel4runtime's `__sel4runtime_start_main` to call
+ * its exit callback -- which aegir-runtime installed as a bare halt. Replace
+ * that callback with report_exit, so `return N` from main reports N through
+ * the console stream exactly as `std::exit(N)` does, and a hosted program
+ * never has to name the exit call at all. The constructor priority is above
+ * aegir-runtime's bridge (201), so this is the one that survives. */
+extern "C" {
+typedef void sel4runtime_exit_cb(int code);
+sel4runtime_exit_cb *sel4runtime_set_exit(sel4runtime_exit_cb *cb);
+}
+
+namespace {
+
+void hosted_exit(int code) noexcept
+{
+    report_exit(code);
+}
+
+}  // namespace
+
+__attribute__((constructor(202))) void install_hosted_exit() noexcept
+{
+    sel4runtime_set_exit(hosted_exit);
+}
+
 /* SYS_writev: what musl's stdio actually uses. Without it, vfprintf's output
  * (libc++'s verbose-abort message among it) is lost and the abort looks
  * silent. A standard stream goes to the debug console; any other fd is a file

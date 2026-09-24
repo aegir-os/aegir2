@@ -121,7 +121,10 @@ without the `libsel4utils` dependency:
 - **The standard streams are the console's when the process has one.** A
   session's command is handed a caller copy of the terminal's `con.stream`
   (specs/shell.md), and fd 1/2 route there — `printf` reaches the grid — while
-  `exit(status)` reports through it. A process with no stream keeps the debug
+  `exit(status)` reports through it. A plain `return` from main reports it too:
+  the hosted runtime installs its exit callback over the bare halt
+  sel4runtime's bridge leaves, so a hosted program never names the exit call.
+  A process with no stream keeps the debug
   serial, so every boot service is unchanged. fd 0 is the stream's queued
   input: `read` polls it, and `readv` routes fd 0 there too, so a buffered
   `fread` on stdin is the stream's bytes and not a file's. While a command

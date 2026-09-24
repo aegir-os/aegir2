@@ -95,11 +95,9 @@ int main(int argc, char **argv)
         (void)::write(1, buffer, static_cast<size_t>(got));
         for (long i = 0; i < got; ++i) {
             if (buffer[i] == '\n' || buffer[i] == '\r') {
-                /* std::exit, not `return`: only musl's exit reaches the
-                 * exit_group syscall the runtime reports the status through.
-                 * Returning from main goes through sel4runtime's exit bridge,
-                 * which halts without reporting. */
-                std::exit(0);
+                /* A hosted program just returns: the runtime's exit callback
+                 * reports the status through the console stream. */
+                return 0;
             }
         }
     }

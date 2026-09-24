@@ -136,10 +136,11 @@ this arc's record of the order.
 - **Phase 4 — standard input and output.** Landed. The
   hosted runtime routes fd 1/2 to the console stream when the process has one
   (the debug serial otherwise, so every boot service is unchanged), so a
-  command's `printf` reaches the grid; and `exit(status)` reports the status
-  through the stream, so the shell's return-code line comes from the command's
-  own exit rather than from Aegir's API. `aegir-print` is the first command
-  that uses libc and nothing else. fd 0 is the stream's queued input: while a
+  command's `printf` reaches the grid; and `exit(status)` -- or a plain
+  `return` from main, through the hosted runtime's exit callback -- reports the
+  status through the stream, so the shell's return-code line comes from the
+  command's own exit rather than from Aegir's API. `aegir-print` is the first
+  command that uses libc and nothing else. fd 0 is the stream's queued input: while a
   command runs the terminal routes the keyboard to the stream rather than the
   idle editor (design A), and the command's `read` -- and `readv`, for
   buffered `fread` -- drains it. `aegir-read` is the command that proves it,

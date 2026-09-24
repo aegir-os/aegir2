@@ -105,11 +105,11 @@ int main(int argc, char **argv)
     std::printf("\n");
     std::fflush(stdout);
 
-    /* exit() flushes the stream and carries the status: the runtime's
-     * SYS_exit_group reports it through the console stream (specs/shell.md's
-     * Phase 4). A numeric argument is the status; without one, the inherited
-     * variable exitcode is, so a shell's `Set` is visible here -- the
-     * environment the shell passes on (specs/shell.md's Phase 5). */
+    /* A plain return carries the status: the hosted runtime's exit callback
+     * reports it through the console stream, the same path `std::exit` takes
+     * (specs/shell.md's Phase 4). A numeric argument is the status; without
+     * one, the inherited variable exitcode is, so a shell's `Set` is visible
+     * here -- the environment the shell passes on (specs/shell.md's Phase 5). */
     uint64_t status = 0;
     if (argc > 1) {
         status = status_from(argv[1]);
@@ -117,5 +117,5 @@ int main(int argc, char **argv)
                    aegir::environment::getenv("exitcode")) {
         status = status_from(from_environment);
     }
-    std::exit(static_cast<int>(status));
+    return static_cast<int>(status);
 }
