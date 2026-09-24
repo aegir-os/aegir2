@@ -50,6 +50,17 @@ uint64_t Volume::run_bytes(Run const &run) const noexcept
     return static_cast<uint64_t>(run.length) * block_size();
 }
 
+bool Volume::discard_run(Run const &run) const noexcept
+{
+    if (discard_ == nullptr || run.length == 0) {
+        return false;
+    }
+    uint32_t const sectors_per_block = block_size() / kSectorBytes;
+    uint64_t const first = to_block(run) * sectors_per_block;
+    return discard_(context_, first,
+                    static_cast<uint64_t>(run.length) * sectors_per_block);
+}
+
 bool Volume::open(ReadSector read, void *context, WriteSector write) noexcept
 {
     read_ = read;

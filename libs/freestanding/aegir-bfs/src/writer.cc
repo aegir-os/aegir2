@@ -179,12 +179,19 @@ bool Writer::finish(bool ok) noexcept
 {
     if (!ok) {
         journal_.abort();
+        allocator_.drop_discards();
         return false;
     }
     if (!journal_.commit()) {
         journal_.abort();
+        allocator_.drop_discards();
         return false;
     }
+    /* Only now is a freed run really free: a discard before the commit would
+     * throw away data the log has not yet made durable, and an abort would
+     * leave the file it belonged to alive with its blocks gone (specs/bfs.md's
+     * TRIM). */
+    allocator_.flush_discards();
     return true;
 }
 

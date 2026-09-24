@@ -100,7 +100,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # to the run and gone after it, which keeps the image's
             # created-once invariant true now that filesystems write.
             "-snapshot",
-            "-drive file=disk.img,if=none,format=raw,id=hd",
+            "-drive file=disk.img,if=none,format=raw,id=hd,discard=unmap",
             "-device virtio-blk-device,drive=hd",
             "-device virtio-keyboard-device",
             # The pointers: an absolute tablet and a relative mouse. Both are

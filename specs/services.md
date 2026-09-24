@@ -999,7 +999,13 @@ What was decided, and what it took:
 - **The block port** (libs/aegir-block, v1 in full): `identify` writes the answer
   (name, sector count and size, the window's capacity) into the caller's window;
   `read` packs first-sector and count into one word (48 + 16 bits) and DMAs
-  straight into the caller's window. Bulk data never crosses the message. **One
+  straight into the caller's window. `write` is the same clamp in the other
+  direction, and `discard` names a range of sectors to forget, bounded by the
+  caller's range but not by its window, since no data crosses (specs/bfs.md's
+  TRIM). `caps` answers a device's support for discard as two reply words rather
+  than through a window: a window belongs to whoever started the caller and the
+  driver maps only its own, so a filesystem asking on mount has none the driver
+  could write. Bulk data never crosses the message. **One
   window per client, not per device**: the endpoint serializes the DMAs, but it
   cannot stop one client's window from being written while that client is
   preempted between its call and its consumption, so each client reads through

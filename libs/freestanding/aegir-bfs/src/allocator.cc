@@ -137,7 +137,43 @@ bool Allocator::free(Run const &run) noexcept
     uint64_t const used = volume_->used_blocks();
     volume_->set_used_blocks(used >= run.length ? used - run.length : 0);
     (void)volume_->flush_superblock();
+    queue_discard(run);
     return true;
+}
+
+void Allocator::queue_discard(Run const &run) noexcept
+{
+    if (volume_ == nullptr || !volume_->can_discard() || run.length == 0) {
+        return;
+    }
+    if (discard_pending_ &&
+        pending_discard_.allocation_group == run.allocation_group &&
+        static_cast<uint32_t>(pending_discard_.length) + run.length <= kMaxRun) {
+        /* Two runs that touch -- either order, since a free sweep need not walk
+         * ascending -- become one discard. */
+        if (run.start == pending_discard_.start + pending_discard_.length) {
+            pending_discard_.length =
+                static_cast<uint16_t>(pending_discard_.length + run.length);
+            return;
+        }
+        if (pending_discard_.start == run.start + run.length) {
+            pending_discard_.start = run.start;
+            pending_discard_.length =
+                static_cast<uint16_t>(pending_discard_.length + run.length);
+            return;
+        }
+    }
+    flush_discards();
+    pending_discard_ = run;
+    discard_pending_ = true;
+}
+
+void Allocator::flush_discards() noexcept
+{
+    if (discard_pending_ && volume_ != nullptr) {
+        (void)volume_->discard_run(pending_discard_);
+    }
+    discard_pending_ = false;
 }
 
 }  // namespace aegir::bfs

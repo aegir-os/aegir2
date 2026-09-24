@@ -34,6 +34,12 @@ using ReadSector = bool (*)(void *context, uint64_t sector, uint8_t *out);
  *  write half of the same transport; null on a volume opened read-only. */
 using WriteSector = bool (*)(void *context, uint64_t sector, uint8_t const *in);
 
+/** Tell the device that `sectors` sectors from `sector` hold nothing worth
+ *  keeping: a discard, a hint the device may ignore, so its answer is
+ *  advisory. The service hands one in only when the block port advertised
+ *  discard (specs/bfs.md's TRIM); without it a volume simply never asks. */
+using DiscardSectors = bool (*)(void *context, uint64_t sector, uint64_t sectors);
+
 /** What a caller needs of an inode: its kind, its size, its time, its place in
  *  the tree, and its data stream (so a stream read needs no second visit). */
 struct Inode {
@@ -67,6 +73,16 @@ public:
 
     bool valid() const noexcept { return valid_; }
     bool writable() const noexcept { return write_ != nullptr; }
+
+    /** Give the volume a discard transport, when the device has one. The
+     *  allocator tells the device about a run it frees through it. */
+    void attach_discard(DiscardSectors discard) noexcept { discard_ = discard; }
+    bool can_discard() const noexcept { return discard_ != nullptr; }
+
+    /** Discard the blocks of `run`: the device's business, and a no-op -- with
+     *  a false answer -- when no discard transport was attached. A block is
+     *  four 512-byte sectors. */
+    bool discard_run(Run const &run) const noexcept;
     bool clean() const noexcept
     {
         return le32(superblock_ + superblock::kFlags) == kClean;
@@ -233,6 +249,7 @@ private:
 
     ReadSector read_ = nullptr;
     WriteSector write_ = nullptr;
+    DiscardSectors discard_ = nullptr;
     void *context_ = nullptr;
     uint32_t block_shift_ = 0;
     uint32_t ag_shift_ = 0;

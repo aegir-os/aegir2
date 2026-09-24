@@ -97,10 +97,10 @@ bool record_clamp(uint64_t badge, uint64_t first, uint64_t sectors,
 /* Read or write, the range question is the same: badge 0 is the manager and
  * the whole device; any other badge, only inside the range recorded for it,
  * and a badge with no record gets nothing. */
-bool clamp_allows(uint64_t badge, uint64_t first, uint32_t sectors, uint64_t capacity,
-                  uint32_t window_sectors) noexcept
+bool clamp_allows_range(uint64_t badge, uint64_t first, uint32_t sectors,
+                        uint64_t capacity) noexcept
 {
-    if (sectors > window_sectors || first + sectors > capacity) {
+    if (first + sectors > capacity) {
         return false;
     }
     if (badge == 0) {
@@ -109,6 +109,17 @@ bool clamp_allows(uint64_t badge, uint64_t first, uint32_t sectors, uint64_t cap
     Clamp const *clamp = find_clamp(badge);
     return clamp != nullptr && first >= clamp->first &&
            first + sectors <= clamp->first + clamp->sectors;
+}
+
+/* A read or a write also has to fit the window its data crosses through; a
+ * discard carries no data, so it is bounded only by the range. */
+bool clamp_allows(uint64_t badge, uint64_t first, uint32_t sectors, uint64_t capacity,
+                  uint32_t window_sectors) noexcept
+{
+    if (sectors > window_sectors) {
+        return false;
+    }
+    return clamp_allows_range(badge, first, sectors, capacity);
 }
 
 /* The physical window a caller's data belongs in: the manager (badge 0) reads
@@ -202,7 +213,8 @@ int main(int argc, char *argv[])
     }
 
     uint32_t features = 0;
-    if (!aegir::virtio::handshake(registers, &features)) {
+    if (!aegir::virtio::handshake(registers, &features,
+                                  aegir::virtio::kBlkFeatureDiscard)) {
         write_line("FAIL", "the device refused the features we asked for");
         return 0;
     }
@@ -218,6 +230,34 @@ int main(int argc, char *argv[])
     aegir::debug_write(" KiB, ");
     aegir::debug_write_unsigned((capacity * 512) / (1024 * 1024));
     aegir::debug_write(" MiB)\n");
+
+    /* The discard bounds, when the device took the feature. A discard's range
+     * lives in a segment array (kMethodDiscard), so the two numbers that matter
+     * are how large one range may be and how many segments a request may
+     * carry; this driver sends one segment, so a device that allows none is a
+     * device without discard. The alignment says where a range may start. */
+    aegir::block::BlockCaps caps{};
+    uint32_t discard_alignment = 0;
+    if ((features & aegir::virtio::kBlkFeatureDiscard) != 0) {
+        uint32_t const max_sectors =
+            registers.read(aegir::virtio::kConfig +
+                           aegir::virtio::kConfigMaxDiscardSectors);
+        uint32_t const max_segments =
+            registers.read(aegir::virtio::kConfig + aegir::virtio::kConfigMaxDiscardSeg);
+        discard_alignment =
+            registers.read(aegir::virtio::kConfig + aegir::virtio::kConfigDiscardAlignment);
+        if (max_segments >= 1 && max_sectors > 0) {
+            caps.flags |= aegir::block::kCapsDiscard;
+            caps.max_discard_sectors = max_sectors;
+        }
+    }
+    aegir::debug_write("      discard: ");
+    aegir::debug_write((caps.flags & aegir::block::kCapsDiscard) != 0 ? "yes" : "no");
+    aegir::debug_write(", max ");
+    aegir::debug_write_unsigned(caps.max_discard_sectors);
+    aegir::debug_write(" sectors, alignment ");
+    aegir::debug_write_unsigned(discard_alignment);
+    aegir::debug_write("\n");
 
     /* The device's own status is read for FAILED below, once DRIVER_OK has actually been
      * written -- after the queue is set up. */
@@ -419,6 +459,40 @@ int main(int argc, char *argv[])
                         break;
                     }
                     ++done;
+                }
+            }
+            port.reply(done);
+        } else if (method == aegir::block::kMethodCaps && count == 0) {
+            /* An answer of two words, not a window: a caller's window is the
+             * one it was started with, and only badge 0's is the driver's own
+             * (aegir/block.h). A filesystem asking on mount reads these. */
+            uint64_t const answer[2] = {caps.flags, caps.max_discard_sectors};
+            port.reply_words(answer, 2);
+        } else if (method == aegir::block::kMethodDiscard && count == 2) {
+            uint64_t const first = words[0];
+            uint64_t const asked = words[1];
+            uint32_t done = 0;
+            if ((caps.flags & aegir::block::kCapsDiscard) != 0 && asked != 0 &&
+                asked <= 0xffffffffull &&
+                clamp_allows_range(badge, first, static_cast<uint32_t>(asked), capacity)) {
+                /* Discard only whole aligned ranges: a partial edge block stays
+                 * allocated, which is what a hint is allowed to leave behind. */
+                uint64_t const align = discard_alignment == 0 ? 1 : discard_alignment;
+                uint64_t begin = (first + align - 1) / align * align;
+                uint64_t const end = (first + asked) / align * align;
+                while (begin < end) {
+                    uint64_t const span = end - begin;
+                    uint32_t const chunk =
+                        span > caps.max_discard_sectors
+                            ? caps.max_discard_sectors
+                            : static_cast<uint32_t>(span);
+                    aegir::virtio::ReadResult const result =
+                        aegir::virtio::discard_sectors(registers, queue, begin, chunk);
+                    if (!result.completed || result.status != 0) {
+                        break;
+                    }
+                    done += chunk;
+                    begin += chunk;
                 }
             }
             port.reply(done);

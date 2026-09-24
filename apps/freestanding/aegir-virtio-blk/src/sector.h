@@ -26,16 +26,36 @@ constexpr uint32_t kStatusOffset = kDataOffset + 512;                         /*
 constexpr uint32_t kSectorBytes = 512;
 
 /* The block device's request header (virtio 1.x, 5.2.6): a type, a reserved word, and the
- * 512-byte sector to start at. `type` 0 is a read into the data buffer, 1 a write from it. */
+ * 512-byte sector to start at. `type` 0 is a read into the data buffer, 1 a write from it,
+ *  and 11 a discard (5.2.6.2), whose range travels in a segment array instead of the header's
+ * sector. */
 constexpr uint32_t kBlkTypeIn = 0;
 constexpr uint32_t kBlkTypeOut = 1;
+constexpr uint32_t kBlkTypeDiscard = 11;
 constexpr uint32_t kBlkOk = 0;
 constexpr uint32_t kBlkUnsupp = 2;
+
+/* The feature bit that promises discard, and the config fields that bound one
+ * (virtio 1.x, 5.2.5 and 5.3): the largest range in sectors, how many segments
+ * one request may carry, and the alignment a range's first sector must keep.
+ * The config offsets are from `kConfig` in mmio.h. */
+constexpr uint32_t kBlkFeatureDiscard = 1u << 13;
+constexpr uint32_t kConfigMaxDiscardSectors = 36;
+constexpr uint32_t kConfigMaxDiscardSeg = 40;
+constexpr uint32_t kConfigDiscardAlignment = 44;
 
 struct BlkRequest {
     uint32_t type;
     uint32_t reserved;
     uint64_t sector;
+};
+
+/** One discard range (virtio 1.x, 5.2.6.2): the start sector, the count, and a
+ *  flags word that is zero for a discard (the write-zeroes form sets bits). */
+struct DiscardSegment {
+    uint64_t sector;
+    uint32_t num_sectors;
+    uint32_t flags;
 };
 
 /** What one transfer produced: the queue's answer, plus the device's own
@@ -66,5 +86,13 @@ ReadResult read_sector(Registers const &registers, Queue &queue, uint64_t sector
  *  byte. */
 ReadResult write_sector(Registers const &registers, Queue &queue, uint64_t sector,
                         uint64_t data_physical) noexcept;
+
+/** Discard `sectors` sectors from `sector`: one discard request whose range
+ *  travels in a segment the driver writes into the queue page, since a discard
+ *  carries no data. `max_sectors` is the device's own bound (the config's
+ *  max_discard_sectors); a request larger than it is the caller's to split.
+ *  The result is read_sector's. */
+ReadResult discard_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                           uint32_t sectors) noexcept;
 
 }  // namespace aegir::virtio

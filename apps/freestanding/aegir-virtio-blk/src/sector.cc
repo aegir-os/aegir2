@@ -92,4 +92,49 @@ ReadResult write_sector(Registers const &registers, Queue &queue, uint64_t secto
     return transfer_sector(registers, queue, sector, data_physical, nullptr, kBlkTypeOut);
 }
 
+ReadResult discard_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                           uint32_t sectors) noexcept
+{
+    ReadResult result{false, 0, 0, 0, 0, 0, 0};
+    volatile uint8_t *page = queue.page();
+    uint64_t const physical = queue.physical();
+
+    /* The header's own sector stays zero: a discard names its range in the
+     * segment, and the device reads that segment rather than writing a data
+     * buffer. Both the header and the segment are written before the publish,
+     * because the device may look as soon as it is told there is work. */
+    put_word(word_at(page, kRequestOffset + 0), 0, kBlkTypeDiscard);
+    put_word(word_at(page, kRequestOffset + 0), 1, 0);
+    volatile uint32_t *sector_words = word_at(page, kRequestOffset + 8);
+    put_word(sector_words, 0, 0);
+    put_word(sector_words, 1, 0);
+
+    auto *segment =
+        reinterpret_cast<volatile DiscardSegment *>(page + kDataOffset);
+    segment->sector = sector;
+    segment->num_sectors = sectors;
+    segment->flags = 0;
+    *byte_at(page, kStatusOffset) = 0xff;
+
+    ChainBuf const chain[] = {
+        {physical + kRequestOffset, sizeof(BlkRequest), false},
+        {physical + kDataOffset, sizeof(DiscardSegment), false},
+        {physical + kStatusOffset, 1, true},
+    };
+    queue.publish(registers, 0, chain, 3);
+
+    UsedResult const used = queue.wait_used(registers);
+    result.status = *byte_at(page, kStatusOffset);
+    result.used_flags = used.used_flags;
+    result.used_idx = used.used_idx;
+    result.used_bytes = used.bytes;
+    result.device_status = used.device_status;
+    result.interrupt_status = used.interrupt_status;
+    if (!used.completed) {
+        return result;
+    }
+    result.completed = true;
+    return result;
+}
+
 }  // namespace aegir::virtio

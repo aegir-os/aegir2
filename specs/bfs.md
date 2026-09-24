@@ -662,24 +662,30 @@ list simply ends. Phase 3 implements this; `AEGIR_BFS_SPARSE` is not used.
 
 ### TRIM
 
-The block protocol (`specs/services.md`) grows a **capabilities** answer and a
-**discard** method:
+The block protocol (`specs/services.md`) grows a **caps** method (5) and a
+**discard** method (6):
 
-- **caps** — the answer, written into the caller's window, is a `BlockCaps`
-  struct with a flags word; bit 0 is "discard is supported", plus the largest
-  discard the device accepts. `Identify` keeps its fixed 24-byte wire and is
-  not extended; a filesystem asks caps when it mounts.
+- **caps** — no words in, an answer of two: `flags`, whose bit 0 is "discard is
+  supported", then `max_discard_sectors`, the largest range one discard may
+  name. It crosses in the reply rather than in a window because a window
+  belongs to whoever started the caller and the driver maps only its own
+  (`libs/freestanding/aegir-block/include/aegir/block.h`), so a filesystem
+  asking on mount has no window the driver could write. `Identify` keeps its
+  fixed 24-byte wire and is not extended.
 - **discard** — words: first sector, sector count; clamped by the caller's
-  badge exactly as read and write are. The driver translates it to the
-  device's unmapped-range command. A device that does not support discard
-  answers zero, and the filesystem stops asking.
+  badge to its range, as read and write are, though not by the window, since
+  nothing crosses it. The driver translates it to the device's unmapped-range
+  command, splitting by the device's own bound and dropping partial edge
+  sectors it cannot align. A device that does not support discard answers zero,
+  and the filesystem stops asking.
 
 The virtio-blk driver negotiates `VIRTIO_BLK_F_DISCARD` (feature bit 13) and
 issues `VIRTIO_BLK_T_DISCARD` requests; the QEMU drive is given
 `discard=unmap` in `scripts/targets.py`, since without it the backend does not
 advertise the feature. BFS discards a run when it frees it, in
-`BlockAllocator::Free`'s shape, coalescing adjacent frees so a directory's
-death is a few large discards rather than many small ones.
+`Allocator::free`'s shape: adjacent frees coalesce into one run, and the run is
+handed to the device only once the transaction that freed it has committed --
+a discard before the commit would throw away blocks an abort still needs.
 
 ## Deferred
 

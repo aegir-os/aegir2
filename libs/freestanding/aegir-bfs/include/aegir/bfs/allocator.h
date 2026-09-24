@@ -38,11 +38,28 @@ public:
     bool allocate(uint32_t max_blocks, Run *out,
                   uint32_t min_blocks = 1) noexcept;
 
-    /** Return a run's blocks to the free pool. */
+    /** Return a run's blocks to the free pool. The run is queued for a discard
+     *  when the volume has a discard transport; adjacent frees coalesce, so a
+     *  directory's death is a few large discards rather than many small ones. */
     bool free(Run const &run) noexcept;
+
+    /** Tell the device about the run `free` has queued. Called once a
+     *  transaction has committed: a discard before the commit would throw away
+     *  data an abort has to keep. A no-op with no queued run, or no transport. */
+    void flush_discards() noexcept;
+
+    /** Throw away the run `free` queued without telling the device: a
+     *  transaction that aborted put its bitmap change back, so the blocks are
+     *  not free after all and a later flush would discard live data. */
+    void drop_discards() noexcept { discard_pending_ = false; }
 
 private:
     static constexpr uint32_t kMaxRun = 65535;
+
+    /** Hold `run` back for a discard, merging it with the pending run when the
+     *  two are adjacent in the same allocation group. A new, non-adjacent run
+     *  flushes the pending one first. */
+    void queue_discard(Run const &run) noexcept;
 
     uint32_t bits_per_block() const noexcept { return block_size_ * 8; }
     uint64_t group_bits(uint32_t group) const noexcept;
@@ -56,6 +73,8 @@ private:
     uint32_t blocks_per_ag_ = 1;
     uint32_t ag_shift_ = 0;
     uint8_t bitmap_[kMaxBlockSize] = {};
+    Run pending_discard_{};
+    bool discard_pending_ = false;
 };
 
 }  // namespace aegir::bfs

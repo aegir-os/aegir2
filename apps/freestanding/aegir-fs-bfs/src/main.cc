@@ -47,6 +47,8 @@ aegir::ipc::Consumer g_blk;
 uint8_t *g_window = nullptr;
 uint64_t g_first = 0;
 bool g_writable = false;
+bool g_discard = false; /* the device answered discard on mount (specs/bfs.md) */
+bool g_trim_reported = false; /* the first real discard says so, once */
 
 /* The handle table's page and its serial, exactly as fs-fat keeps them. */
 uint8_t *g_memory = nullptr;
@@ -120,6 +122,37 @@ bool write_sector(void *context, uint64_t sector, uint8_t const *in) noexcept
     aegir::ipc::Reply const reply =
         g_blk.call(aegir::block::kMethodWrite, aegir::block::pack_read(g_first + sector, 1));
     return reply.error == 0 && reply.word == 1;
+}
+
+/* The trim: the allocator tells the device about a run it has freed, and the
+ * device is free to ignore it (aegir/block.h). The range crosses as the two
+ * words the method takes; the answer is how many sectors the device really
+ * discarded, which is fewer than asked when it aligned the edges or has no
+ * discard at all. False then, so the allocator stops expecting it. The blocks
+ * are already free in the bitmap either way -- a discard is a hint, not the
+ * free itself (specs/bfs.md's TRIM). */
+bool discard_sectors(void *context, uint64_t sector, uint64_t sectors) noexcept
+{
+    static_cast<void>(context);
+    if (!g_discard || g_window == nullptr || sectors == 0) {
+        return false;
+    }
+    uint64_t const out[2] = {g_first + sector, sectors};
+    uint64_t answer[1] = {};
+    aegir::ipc::WordsReply const reply =
+        g_blk.call_words(aegir::block::kMethodDiscard, out, 2, answer, 1);
+    bool const ok = reply.error == 0 && reply.count >= 1 && answer[0] == sectors;
+    if (ok && !g_trim_reported) {
+        /* The device completed a real discard, which is the whole path: the
+         * allocator's free, the protocol word, and the driver's request. Said
+         * once, because a running system trims often and this is evidence, not
+         * a log. */
+        g_trim_reported = true;
+        aegir::debug_write("      fs.bfs: the first trim discarded ");
+        aegir::debug_write_unsigned(sectors);
+        aegir::debug_write(" sectors\n");
+    }
+    return ok;
 }
 
 /* The Writer turns each operation into a journal transaction: it writes the
@@ -1552,6 +1585,18 @@ int main(int argc, char *argv[])
     g_window = reinterpret_cast<uint8_t *>(window_address);
     g_first = first;
 
+    /* What the device can do, once, before any write: the answer crosses as
+     * two words, because a window belongs to whoever started us and the driver
+     * maps only its own (aegir/block.h). A device with discard gets the
+     * allocator's frees as TRIMs; one without simply never hears from us. */
+    uint64_t caps_answer[2] = {};
+    aegir::ipc::WordsReply const caps =
+        g_blk.call_words(aegir::block::kMethodCaps, nullptr, 0, caps_answer, 2);
+    if (caps.error == 0 && caps.count >= 2 &&
+        (caps_answer[0] & aegir::block::kCapsDiscard) != 0) {
+        g_discard = true;
+    }
+
     if (instance != nullptr) {
         aegir::debug_write("      ");
         aegir::debug_write(instance, instance_length);
@@ -1566,6 +1611,9 @@ int main(int argc, char *argv[])
         aegir::debug_write("      FAIL fs.bfs: not a Be File System this reader speaks\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
+    }
+    if (g_discard) {
+        g_volume.attach_discard(discard_sectors);
     }
     if (g_writable && !g_writer.open(&g_volume)) {
         aegir::debug_write("      FAIL fs.bfs: the writer would not open\n");
@@ -1605,6 +1653,9 @@ int main(int argc, char *argv[])
     aegir::debug_write(" blocks");
     if (g_writable) {
         aegir::debug_write(", writable");
+    }
+    if (g_discard) {
+        aegir::debug_write(", trim");
     }
     aegir::debug_write("\n");
 

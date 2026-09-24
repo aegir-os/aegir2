@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: MIT
  *
  * v1, in full. A call carries a method in MR0 and words after it -- one for
- * a read or a write, three for a clamp; a reply is one word. Bulk data never
+ * a read or a write, three for a clamp, two for a discard, none for caps; a
+ * reply is one word, or two for caps. Bulk data never
  * crosses the message: each *client* has a window of its own, mapped into the
  * driver and into that client, and what does not fit in a word -- the identify
  * answer, the sectors a read asked for or a write carries -- is written there.
@@ -55,6 +56,30 @@ constexpr uint32_t kMethodClamp = 3;
  * exactly as a read's do, in the other direction: the caller fills the
  * window, then calls. */
 constexpr uint32_t kMethodWrite = 4;
+/* What the device can do beyond sectors: no words, an answer of two words --
+ * flags then max_discard_sectors, the BlockCaps fields below. The answer
+ * crosses in the reply rather than the window, because a window belongs to
+ * whoever started the caller and the driver maps only its own; a filesystem
+ * asking caps on mount has no window the driver could write. */
+constexpr uint32_t kMethodCaps = 5;
+/* The trim: words are {first sector, sector count}. The same clamp by badge
+ * that read and write take, and no data at all -- a discard is a hint that a
+ * range holds nothing worth keeping, and the device is free to treat it as a
+ * no-op. The reply is the number of sectors discarded, zero when the device
+ * does not support discard or the range was refused; a filesystem that reads
+ * zero stops asking (specs/bfs.md). */
+constexpr uint32_t kMethodDiscard = 6;
+
+/** The capabilities answer: bit 0 of `flags` is "discard is supported", and
+ *  `max_discard_sectors` is the largest range one discard request may name,
+ *  in 512-byte sectors. It travels as the two words of a kMethodCaps reply,
+ *  in that order. */
+struct BlockCaps {
+    uint32_t flags;
+    uint32_t max_discard_sectors;
+};
+
+constexpr uint32_t kCapsDiscard = 1u;
 
 /** The identify answer, written at offset 0 of the shared window. The device
  *  names *itself* -- "BD0" -- because the public block-device namespace is the
