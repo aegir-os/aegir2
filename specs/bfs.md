@@ -713,6 +713,15 @@ Written down so the omissions are decisions:
 - **Preallocation and defragmentation.**
 - **Per-volume concurrency.** The service serves one call at a time, as the
   volume protocol defines.
+- **A live query hears every change, not only the ones it may see.** Any change
+  (create, remove, rename, write, truncate, attribute write) signals every open
+  live query's endpoint without asking whether the changed inode is one the
+  subscriber may reach, so a subscriber learns that *something* changed the
+  volume -- not what, and not whose. The name-level guard in `Queries` keeps
+  the answer itself clean, so this is a timing side channel rather than a leak
+  of names; closing it means tracking, per query, which changed inodes entered
+  or left that caller's reachable set, which a one-way signal with no payload
+  cannot carry. Recorded here, not fixed.
 
 ## Decisions taken for review
 
