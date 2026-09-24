@@ -201,18 +201,53 @@ def qmp_command(socket_path: Path, command: dict) -> dict:
 # Anything else would need a shift chord, and no step types one yet.
 _PRESS_QCODES = {"\t": "tab", "\n": "ret", " ": "spc", "-": "minus"}
 
+# The keys that are not characters, spelled between angle brackets in a step's
+# `press` -- the editor's arrows and editing keys (specs/terminal.md). A token
+# is one key; `<up><backspace>6\n` is up, backspace, 6, Enter.
+_PRESS_KEYS = {
+    "up": "up",
+    "down": "down",
+    "left": "left",
+    "right": "right",
+    "home": "home",
+    "end": "end",
+    "ret": "ret",
+    "enter": "ret",
+    "tab": "tab",
+    "spc": "spc",
+    "space": "spc",
+    "esc": "esc",
+    "backspace": "backspace",
+    "delete": "delete",
+}
+
 
 def send_key(socket_path: Path, keys: str) -> bool:
-    """Keypresses through QEMU's QMP socket, one per character of `keys`: the
-    acceptance check's fingers. False -- and nothing sent -- when a character
-    has no qcode, because half a typed password is worse than none."""
+    """Keypresses through QEMU's QMP socket, one per key of `keys`: the
+    acceptance check's fingers. A printable character is itself, and a key
+    with no character -- an arrow, Backspace -- is `<name>` (_PRESS_KEYS).
+    False -- and nothing sent -- when a key has no qcode, because half a typed
+    password is worse than none."""
     qcodes: list[str] = []
-    for char in keys:
+    index = 0
+    while index < len(keys):
+        if keys[index] == "<":
+            end = keys.find(">", index + 1)
+            if end == -1:
+                return False
+            name = keys[index + 1 : end]
+            if name not in _PRESS_KEYS:
+                return False
+            qcodes.append(_PRESS_KEYS[name])
+            index = end + 1
+            continue
+        char = keys[index]
         qcode = _PRESS_QCODES.get(char, char)
         if not ((len(qcode) == 1 and (qcode.islower() or qcode.isdigit())) or
                 qcode in _PRESS_QCODES.values()):
             return False
         qcodes.append(qcode)
+        index += 1
     for qcode in qcodes:
         qmp_command(
             socket_path,

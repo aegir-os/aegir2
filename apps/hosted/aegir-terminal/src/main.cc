@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fcntl.h>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unistd.h>
@@ -129,6 +130,13 @@ int main(int argc, char *argv[])
     uint64_t command_serial = 0;
     aegir::spawn::Process command_process{};
     bool command_running = false;
+    /* One buffer for every command's image, kept across commands: its pages
+     * come from the toolkit's untyped, and the hosted heap never returns a
+     * large mapping (sys_munmap is a no-op, specs/cxx.md), so a fresh vector
+     * per command would spend the untyped a command at a time. It is sized
+     * once from the file, so the grow-by-doubling that leaves a trail of
+     * mappings never happens. */
+    std::vector<char> command_image;
     auto spawn_command = [&](std::string const &name,
                              std::vector<std::string> const &args) -> bool {
         if (!spawn_kit.ready()) {
@@ -143,14 +151,19 @@ int main(int argc, char *argv[])
             write("  terminal: no image for the command\n");
             return false;
         }
-        std::vector<char> image;
+        command_image.clear();
+        std::error_code size_error;
+        uintmax_t const image_bytes = std::filesystem::file_size(path, size_error);
+        if (!size_error && image_bytes > 0) {
+            command_image.reserve(static_cast<std::size_t>(image_bytes));
+        }
         char chunk[512];
         ssize_t have = 0;
         while ((have = ::read(fd, chunk, sizeof(chunk))) > 0) {
-            image.insert(image.end(), chunk, chunk + have);
+            command_image.insert(command_image.end(), chunk, chunk + have);
         }
         ::close(fd);
-        if (image.empty()) {
+        if (command_image.empty()) {
             write("  terminal: the command image is empty\n");
             return false;
         }
@@ -194,8 +207,8 @@ int main(int argc, char *argv[])
         aegir::spawn::Request request{};
         request.name = name.c_str();
         request.name_length = static_cast<uint32_t>(name.size());
-        request.binary_image = image.data();
-        request.binary_image_bytes = image.size();
+        request.binary_image = command_image.data();
+        request.binary_image_bytes = command_image.size();
         request.account = kAccountText.c_str();
         request.account_length = static_cast<uint32_t>(kAccountText.size());
         request.arguments = argument_pointers.data();

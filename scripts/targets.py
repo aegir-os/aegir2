@@ -459,8 +459,25 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             # The command echoed what it read and exited 0: the input reached
             # fd 0, and the output landed on the same grid the shell writes to.
+            # Then a command whose status is the check: 5 is not used elsewhere.
             QmpStep(
                 r"terminal: command exited 0",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 50, 145, 500, 60, 100),),
+                press="aegir-print 5\n",
+            ),
+            # History and the arrows (specs/terminal.md): the up arrow recalls
+            # the last line, `aegir-print 5`, and Backspace edits its digit to
+            # 6. The 6 only prints if the line was recalled -- the runner never
+            # typed `aegir-print`, so an editor that lost its history would run
+            # the bare `6` and report nothing.
+            QmpStep(
+                r"terminal: command exited 5",
+                press="<up><backspace>6\n",
+            ),
+            QmpStep(
+                r"terminal: command exited 6",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 100),),

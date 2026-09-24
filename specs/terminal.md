@@ -246,5 +246,7 @@ solid background -- so a grid that draws nothing, or wraps every character
 into one column, fails where the background samples cannot see it. fd 0 is on
 the same run: after the hosted command, the runner types a line at the
 console while `aegir-read` runs, and the command's exit 0 proves the keys
-reached its `read` through the stream's queue. The arrow-key and history
-check waits for the next arc.
+reached its `read` through the stream's queue. History and the arrows are on
+the run too: the runner recalls the last line with the up arrow and edits its
+digit with Backspace, and the edited command's exit is the proof the line came
+back.
