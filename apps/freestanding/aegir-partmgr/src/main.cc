@@ -506,7 +506,14 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
          * descriptor row already told the child -- plus boot when the
          * partition's type GUID said this is the system volume
          * (specs/services.md). One statement, two hearers. */
-        out[out_words++] = boot != 0 ? aegir::nmspace::kFlagBoot : 0;
+        uint64_t flags = boot != 0 ? aegir::nmspace::kFlagBoot : 0;
+        /* FAT is the interchange filesystem: its volumes are shareable, so a
+         * session resolves one and the acceptance reaches a FAT volume
+         * (specs/vfs.md). */
+        if (type_length >= 3 && type[0] == 'F' && type[1] == 'A' && type[2] == 'T') {
+            flags |= aegir::nmspace::kFlagPublic;
+        }
+        out[out_words++] = flags;
         out_words += aegir::nmspace::pack_string(out + out_words, type, type_length,
                                                  aegir::nmspace::kTypeMax);
         aegir::ipc::WordsReply const registered = nmspace.call_transfer(

@@ -15,7 +15,9 @@ handed over**, so a user's things are the ones the user can resolve.
 - A volume is **public** or private. A public volume is resolvable by every
   caller; the system volume is public (`kFlagBoot` implies it), and any volume
   may be marked so (`kFlagPublic`). A private volume is resolvable by its
-  owner and by the system class, and by no one else.
+  owner and by the system class, and by no one else. The partition manager
+  marks a **FAT** volume public: FAT is the interchange filesystem, meant to
+  be shared, so a session resolves it.
 - **resolve** checks the owner. The caller is the system class (badge bit 62
   clear), or the volume is public, or the caller's user index (badge bits
   24..61) equals the owner's, or the answer is a refusal. The check is on the

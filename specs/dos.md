@@ -198,9 +198,10 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   an absent `COMMENT` removes the note. A filesystem with no attributes
   refuses with `EOPNOTSUPP`, and the message names the volume's filesystem --
   `FAT32 does not support attributes` -- which the namespace's new
-  `describe_path` supplies (`specs/vfs.md`). That path is reachable when a
-  session can resolve the volume; the boot test asserts FAT's refusal and the
-  type's travel, and the acceptance runs `filenote` on the BFS home.
+  `describe_path` supplies (`specs/vfs.md`). The boot test asserts FAT's
+  refusal and the type's travel; FAT is the interchange filesystem, so its
+  volumes are public (`specs/vfs.md`), and the acceptance reaches one: the
+  last `filenote` is on the FAT16 volume and is the error path.
 
   `protect` is the ownership arc's mode made a command: its Amiga letters map
   r/w/e to the POSIX read/write/execute bits for every class, and the runtime
@@ -262,16 +263,16 @@ files from `Sys:` into the first, a `list` of both, a `type` of both, a
 `search` of two files for a word one holds, a `sort` into the first, a `join`
 of a file with itself `AS` a second file there, a `more` of `Sys:LONG.TXT` (a
 file longer than the window, so it pages and waits for a key), a `rename` of
-one file within its directory, a `protect` of it to `rwe`, a `filenote` of it,
-a `delete` of both
-trees, and a `type` of the
-name that delete removed -- each a program read from `Sys:C`, started by the
-terminal, resolving the session's namespace on its own badge (the terminal's
-namespace copy). Most lines name several files, which is the Amiga's
-argument-list shape; `more`'s key is typed while it runs, and the rename line
-queued behind it runs after it exits. The last `type` returns 10, and the grid
-shows the `return code 10` line, which is the error path. The pixel checks
-prove the output reached the grid and not a serial line.
+one file within its directory, a `protect` of it to `rwe`, a `delete` of both
+trees, and a `filenote` of a name on the FAT16 volume -- each a program read
+from `Sys:C`, started by the terminal, resolving the session's namespace on its
+own badge (the terminal's namespace copy). Most lines name several files, which
+is the Amiga's argument-list shape; `more`'s key is typed while it runs, and
+the rename line queued behind it runs after it exits. The FAT volume is public
+because FAT is the interchange filesystem (`specs/vfs.md`), so the session
+resolves it; it has no attributes, so the last `filenote` names the filesystem
+and returns 10 -- the error path. The pixel checks prove the output reached the
+grid and not a serial line.
 
 Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
 it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's
