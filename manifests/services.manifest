@@ -278,15 +278,6 @@ maps      = true
 memory_kib = 4096
 restart   = never
 
-# The ReadArgs library's acceptance client (specs/dos.md): a freestanding smoke
-# that needs no port, no window and no memory grant -- aegir::args is pointers
-# into the caller's own argv -- and prints ARGS_SMOKE_OK at boot.
-[argssmoke]
-binary    = aegir-args-smoke
-authority = system
-account   = boot
-restart   = never
-
 # The process environment's acceptance client (specs/environment.md): a spawned
 # service that checks the argv, environment and current directory its spawner
 # gave it. It runs the hosted runtime, so it takes the maps grant and its own

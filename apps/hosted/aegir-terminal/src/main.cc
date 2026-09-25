@@ -207,10 +207,9 @@ int main(int argc, char *argv[])
         if (!kit) {
             return false;
         }
-        /* The image comes from Initrd: through the namespace, not from a
-         * mapped initrd: it is 5.7 MiB and does not fit a child
-         * (specs/shell.md, specs/authority.md). */
-        if (!load_image("Initrd:" + name)) {
+        /* The image comes from C: -- the alias of Sys:C, the command set
+         * (specs/dos.md) -- through the namespace, not from a mapped initrd. */
+        if (!load_image("C:" + name)) {
             write("  terminal: no image for the command\n");
             return false;
         }

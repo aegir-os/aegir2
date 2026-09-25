@@ -357,17 +357,18 @@ def bands_at_posts(width: int, height: int, pixels: bytes) -> bool:
 
 def ensure_disk(build_dir: Path) -> None:
     """The machine's block device needs a disk to be a block device *of*. It is
-    a GPT with three FAT partitions -- two holding a known file, one empty and
-    writable -- built by make_disk.py in the build directory. Created once and
-    left alone, and QEMU's -snapshot keeps even a writing run off it: a disk
-    that changes between runs is not something to depend on. It lives in the
-    build output rather than the repository, where scratch belongs."""
+    a GPT built by make_disk.py in the build directory, with the command set
+    packed as Sys:C (specs/dos.md). Rebuilt on every run, because the commands
+    it carries change with the build and the AEGIR partition is sized from
+    them: a stale disk would serve a stale command. QEMU's -snapshot keeps even
+    a writing run off it. It lives in the build output rather than the
+    repository, where scratch belongs."""
     disk = build_dir / "disk.img"
-    if not disk.exists():
-        subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "make_disk.py"), str(disk)],
-            check=True,
-        )
+    commands = build_dir / "sys-c"
+    command = [sys.executable, str(Path(__file__).parent / "make_disk.py"), str(disk)]
+    if commands.is_dir():
+        command += ["--commands", str(commands)]
+    subprocess.run(command, check=True)
 
 
 def boot_interactive(target: Target, build_dir: Path) -> int:

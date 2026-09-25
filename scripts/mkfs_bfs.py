@@ -299,7 +299,7 @@ def _typed_tree(data_type: int, entries: list[tuple[bytes, int]]) -> bytes:
 
 
 def make_bfs(buf: bytearray, offset: int, size: int, label: str,
-             tree: list) -> None:
+             tree: list) -> int:
     """Write a BFS volume into `buf` at `offset`.
 
     `tree` is a list of entries, each one of:
@@ -357,10 +357,23 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
                 runs: list[bytes] = []
                 if content:
                     blocks = (len(content) + BLOCK - 1) // BLOCK
+                    # One run for the whole file: the blocks are allocated
+                    # contiguously, so they are one extent. (One run per block
+                    # was the bug: an inode stores only twelve direct runs and
+                    # this builder writes no indirect block, so any file over
+                    # twelve blocks lost its run list past the twelfth and read
+                    # as zeros -- which only showed once a command image went
+                    # to Sys:C.) A run's length is sixteen bits, so a file over
+                    # 65535 blocks would need an indirect block this builder
+                    # does not yet write.
+                    if blocks > 65535:
+                        raise RuntimeError(
+                            f"a BFS file of {blocks} blocks needs an indirect run "
+                            "list, which this builder does not write")
+                    base = take(blocks)
+                    runs.append(_run(base, blocks, ag_shift))
                     for b in range(blocks):
-                        data_block = take()
-                        runs.append(_run(data_block, 1, ag_shift))
-                        data_blocks.append((data_block, content[b * BLOCK : (b + 1) * BLOCK]))
+                        data_blocks.append((base + b, content[b * BLOCK : (b + 1) * BLOCK]))
                 inodes.append((child_block, _inode(
                     run=_run(child_block, 1, ag_shift), mode=S_IFREG | 0o644,
                     parent=_run(own_block, 1, ag_shift), attributes=ZERO_RUN,
@@ -487,6 +500,39 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
     # does, so a leftover boot sector cannot confuse identification.
     buf[offset : offset + SECTOR] = b"\x00" * SECTOR
     buf[offset + 1024 : offset + 1536] = b"\x00" * SECTOR
+    return used_blocks
+
+
+def bfs_minimum_bytes(tree, label: str = "AEGIR") -> int:
+    """The smallest partition size, a multiple of BLOCK, that holds `tree`.
+
+    A volume's own figure, not a constant: a dry layout gives the block count,
+    the geometry follows, and the caller asks for that. The layout is laid out
+    from a generous first guess downward until the block count is stable, since
+    the geometry (log and bitmaps) itself depends on the size -- the fixed
+    point is reached from above."""
+    def content_blocks(entries: list) -> int:
+        total = 0
+        for entry in entries:
+            total += 1  # the inode, and for a directory its tree block
+            if entry[0] == "file":
+                total += (len(entry[2]) + BLOCK - 1) // BLOCK
+            else:
+                total += content_blocks(entry[2])
+        return total
+
+    def round_up(value: int) -> int:
+        return ((value + BLOCK - 1) // BLOCK) * BLOCK
+
+    size = max(round_up((content_blocks(tree) + 64) * BLOCK * 2), 64 * BLOCK)
+    for _ in range(64):
+        scratch = bytearray(size)
+        used = make_bfs(scratch, 0, size, label, tree)
+        need = max(round_up(used * BLOCK), 64 * BLOCK)
+        if need == size:
+            return size
+        size = need
+    raise RuntimeError("the BFS sizing pass did not settle")
 
 
 def _main() -> int:

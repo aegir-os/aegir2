@@ -121,6 +121,17 @@ std::string join_tail(std::string const &line, std::string const &first)
     return line.substr(i);
 }
 
+/* The line with its command token lowercased: the Amiga is case-blind, C: is
+ * not, and the command a typed `Copy` names is C:copy (specs/dos.md). */
+std::string with_lowercased_command(std::string const &line, std::string const &command)
+{
+    std::size_t const at = line.find(command);
+    if (at == std::string::npos) {
+        return to_lower(line);
+    }
+    return line.substr(0, at) + to_lower(command) + line.substr(at + command.size());
+}
+
 std::string parent_of(std::string const &path)
 {
     if (path.empty() || path.back() == ':') {
@@ -423,11 +434,15 @@ private:
             (void)change_directory(words[0]);
         } else {
             /* A program, run by the terminal on this shell's behalf: it owns
-             * the spawn authority and starts the command with this stream. */
+             * the spawn authority and starts the command with this stream.
+             * The command token is lowercased first -- the Amiga is
+             * case-blind and C: is not (specs/dos.md) -- so `Copy` resolves
+             * C:copy. */
+            std::string const command_line = with_lowercased_command(line, words[0]);
             std::string const cwd = current_directory();
             std::string const environment = environment_string();
-            if (aegir::console::stream_run(port_, line.data(),
-                                           static_cast<uint32_t>(line.size()),
+            if (aegir::console::stream_run(port_, command_line.data(),
+                                           static_cast<uint32_t>(command_line.size()),
                                            cwd.c_str(), static_cast<uint32_t>(cwd.size()),
                                            environment.data(),
                                            static_cast<uint32_t>(environment.size()))) {

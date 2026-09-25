@@ -30,10 +30,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from mkfs_bfs import make_bfs
+from mkfs_bfs import bfs_minimum_bytes, make_bfs
 
 SECTOR = 512
-DISK_BYTES = 32 << 20
+# The image's size is not a constant: it follows the partition table, which
+# follows the command set (disk_bytes below, specs/dos.md).
 # The Aegir system volume's partition type GUID (specs/services.md): the
 # disk's own statement of which partition the system stands on, which the
 # partition manager reads and the VFS aliases as Sys:. The discovery shape
@@ -43,30 +44,31 @@ AEGIR_SYSTEM_GUID = "5cd58811-9bf5-4af3-8682-9b76edce3535"
 # is BFS, and the filesystem registry turns that into the service that serves
 # it.
 BEFS_GUID = "42465331-3ba3-10f1-802a-4861696b7521"
-# The partitions: name, first LBA, last LBA (None = to the end of the disk),
-# and the file each volume's root will hold. The first starts at the
-# conventional LBA -- the first megabyte is the GPT's, which is also what
-# real partitioning tools leave. What the filesystem services will be asked
-# to find: the contents are the checksum, a reader that got the wrong
-# sectors does not print them. BFS is built by mkfs_bfs, not mtools, so its
-# last two fields are unused.
-PARTITIONS = [
-    ("AEGIR", 2048, 18431, "AEGIR.TXT",
+# The partitions, in disk order. The AEGIR and BFS volumes are built by
+# scripts/mkfs_bfs.py, so their contents live in the trees below and only the
+# FAT partitions carry a known file. The first starts at the conventional LBA
+# -- the first megabyte is the GPT's, which is also what real partitioning
+# tools leave. A size of None is computed: AEGIR's from its tree, because
+# Sys:C holds the command set and the set grows (specs/dos.md). Every start
+# follows from the partition before it, so a bigger AEGIR shifts the rest and
+# the image with them.
+PARTITION_LAYOUT = [
+    ("AEGIR", None, "AEGIR.TXT",
      b"aegir read this file off a disk it enumerated itself\n"),
-    ("SECOND", 18432, 26623, "SECOND.TXT",
+    ("SECOND", 8192, "SECOND.TXT",
      b"a second volume, a second service, the same reader\n"),
     # No file: the writable volume the write side proves itself on. An empty
     # root directory is the point -- everything in it, the system put there.
-    ("SCRATCH", 26624, 32766, None, None),
+    ("SCRATCH", 6143, None, None),
     # FAT16, and provably so: with one sector per cluster this many sectors
     # is past the 4085-cluster FAT12 ceiling and under FAT32's floor, which
     # is the format's own definition of the flavor. mtools picks from the
     # geometry, so the minfo check below is the checksum, not a courtesy.
-    ("FAT16", 32768, 43007, None, None),
+    ("FAT16", 10240, None, None),
     # The Be File System: Aegir's own. mkfs_bfs makes a root with a known
     # file and a directory with a nested file, so the read half has something
     # to walk.
-    ("BFS", 43008, 63487, None, None),
+    ("BFS", 20480, None, None),
 ]
 
 # The system volume's tree (specs/services.md, specs/bfs.md): the migration to
@@ -105,6 +107,46 @@ BFS_TREE = [
     ]),
 ]
 
+
+def aegir_tree(commands) -> list:
+    """The system volume's tree, with the command set as Sys:C.
+
+    `commands` is a list of (name, bytes): each becomes C/<name>, the flat
+    lowercase command name the shell resolves (specs/dos.md)."""
+    tree = list(AEGIR_BFS_TREE)
+    if commands:
+        tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
+    return tree
+
+
+def partition_table(commands) -> list:
+    """Lay the partitions out from their contents.
+
+    AEGIR's size is its tree's, computed (specs/dos.md); every start is the
+    previous partition's end rounded up to a whole megabyte, so a bigger
+    command set moves what follows and the image grows with it. Rows are the
+    shape the rest of this file uses: (name, first LBA, last LBA, known file,
+    known content)."""
+    cursor = 2048
+    rows = []
+    for name, sectors, known_name, known_content in PARTITION_LAYOUT:
+        first = ((cursor + 2047) // 2048) * 2048
+        if sectors is None:
+            needed = bfs_minimum_bytes(aegir_tree(commands), name)
+            sectors = (needed + SECTOR - 1) // SECTOR
+            sectors = ((sectors + 2047) // 2048) * 2048
+        last = first + sectors - 1
+        rows.append((name, first, last, known_name, known_content))
+        cursor = last + 1
+    return rows
+
+
+def disk_bytes(partitions) -> int:
+    # A whole megabyte past the last partition too: the backup GPT lives at
+    # the end of the image, and sgdisk refuses a partition that reaches it.
+    end = max(last for _, _, last, _, _ in partitions) + 1 + 2048
+    return ((end + 2047) // 2048) * 2048 * SECTOR
+
 # Beyond the root files: a directory with a file in it, so the component
 # walk has something to find (specs/vfs.md). (volume name, directory, file,
 # content -- the content is the checksum again.)
@@ -131,7 +173,18 @@ LONG_NESTED = [
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path, help="the disk image to create")
+    parser.add_argument(
+        "--commands", type=Path, default=None,
+        help="a directory of command images, one per file, packed as Sys:C "
+             "(specs/dos.md); the AEGIR partition is sized from them")
     args = parser.parse_args()
+
+    commands = []
+    if args.commands is not None and args.commands.is_dir():
+        commands = [(path.name, path.read_bytes())
+                    for path in sorted(args.commands.iterdir()) if path.is_file()]
+    partitions = partition_table(commands)
+    total_bytes = disk_bytes(partitions)
 
     for tool in ("sgdisk", "mformat", "mcopy", "mdir"):
         if shutil.which(tool) is None:
@@ -139,13 +192,13 @@ def main() -> int:
             return 1
 
     with args.image.open("wb") as handle:
-        handle.truncate(DISK_BYTES)
+        handle.truncate(total_bytes)
 
     # Three partitions. The first carries the Aegir system volume's type
     # GUID -- the disk says which volume is Sys: -- the rest are plain
     # Microsoft basic data, the type a FAT volume on GPT carries.
     sgdisk = ["sgdisk", "--clear"]
-    for number, (name, first, last, _, _) in enumerate(PARTITIONS, start=1):
+    for number, (name, first, last, _, _) in enumerate(partitions, start=1):
         if number == 1:
             typecode = AEGIR_SYSTEM_GUID
         elif name == "BFS":
@@ -158,7 +211,7 @@ def main() -> int:
     sgdisk.append(str(args.image))
     subprocess.run(sgdisk, check=True, capture_output=True)
 
-    for name, first, _, known_name, known_content in PARTITIONS:
+    for name, first, _, known_name, known_content in partitions:
         if name in ("AEGIR", "BFS"):
             # Not mtools': AEGIR is the system volume and BFS the second BFS
             # volume, both built by scripts/mkfs_bfs.py below, so their
@@ -220,7 +273,7 @@ def main() -> int:
     for name, directory, nested_name, nested_content in NESTED:
         if name == "AEGIR":
             continue  # the system volume is BFS now; its tree is AEGIR_BFS_TREE
-        first = next(p[1] for p in PARTITIONS if p[0] == name)
+        first = next(p[1] for p in partitions if p[0] == name)
         volume = f"{args.image}@@{first * SECTOR}"
         subprocess.run(["mmd", "-i", volume, f"::{directory}"], check=True,
                        capture_output=True)
@@ -241,7 +294,7 @@ def main() -> int:
     for name, long_name, long_content in LONG_ROOT:
         if name == "AEGIR":
             continue  # the system volume is BFS now; its tree is AEGIR_BFS_TREE
-        first = next(p[1] for p in PARTITIONS if p[0] == name)
+        first = next(p[1] for p in partitions if p[0] == name)
         volume = f"{args.image}@@{first * SECTOR}"
         with tempfile.TemporaryDirectory() as staging:
             source = Path(staging) / long_name
@@ -253,7 +306,7 @@ def main() -> int:
     for name, directory, long_name, long_content in LONG_NESTED:
         if name == "AEGIR":
             continue  # the system volume is BFS now; its tree is AEGIR_BFS_TREE
-        first = next(p[1] for p in PARTITIONS if p[0] == name)
+        first = next(p[1] for p in partitions if p[0] == name)
         volume = f"{args.image}@@{first * SECTOR}"
         subprocess.run(["mmd", "-i", volume, f"::{directory}"], check=True,
                        capture_output=True)
@@ -270,9 +323,9 @@ def main() -> int:
     with args.image.open("r+b") as handle:
         handle.seek(0)
         image = bytearray(handle.read())
-        for name, tree in (("AEGIR", AEGIR_BFS_TREE), ("BFS", BFS_TREE)):
-            first = next(p[1] for p in PARTITIONS if p[0] == name)
-            last = next(p[2] for p in PARTITIONS if p[0] == name)
+        for name, tree in (("AEGIR", aegir_tree(commands)), ("BFS", BFS_TREE)):
+            first = next(p[1] for p in partitions if p[0] == name)
+            last = next(p[2] for p in partitions if p[0] == name)
             make_bfs(image, first * SECTOR, (last - first + 1) * SECTOR, name, tree)
         handle.seek(0)
         handle.write(image)
@@ -280,6 +333,9 @@ def main() -> int:
     print(f"make_disk: {args.image}: GPT, three FAT partitions and two BFS "
           "(the system volume among them), known files, nested and long names, "
           "one empty volume, one FAT16")
+    if commands:
+        print(f"make_disk: Sys:C holds {len(commands)} commands, the AEGIR "
+              f"partition sized from them")
     return 0
 
 

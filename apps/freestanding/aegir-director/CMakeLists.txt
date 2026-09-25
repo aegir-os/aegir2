@@ -70,7 +70,6 @@ set(aegir_initrd_binaries
     aegir-session-smoke
     aegir-test
     aegir-echo
-    aegir-args-smoke
     aegir-print
     aegir-read
     aegir-shell
@@ -101,7 +100,6 @@ set(aegir_initrd_binary_names
     "aegir-session-smoke"
     "aegir-test"
     "aegir-echo"
-    "aegir-args-smoke"
     "aegir-print"
     "aegir-read"
     "aegir-shell"
