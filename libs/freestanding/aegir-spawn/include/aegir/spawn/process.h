@@ -66,6 +66,14 @@ struct PortGrant {
      *  of it changes hands whole, and the giver's slot is empty afterwards. Rights
      *  and badge do not apply to a move. Same placement rule as size_bits. */
     bool move = false;
+    /* Copy the capability as it stands -- badge and rights preserved -- rather
+     *  than minting. A parent that shares a *badged* port with a child needs
+     *  this: a badged endpoint cap cannot be minted again (updateCapData
+     *  refuses a non-zero badge, kernel/src/object/objecttype.c:402-407), so a
+     *  session's command is handed the namespace the same way it would be
+     *  copied -- carrying the session's identity. Rights and badge do not
+     *  apply. Same placement rule as size_bits. (specs/dos.md) */
+    bool copy = false;
 };
 
 /** A device frame handed over as a *capability* rather than a mapping: the child
@@ -245,6 +253,8 @@ private:
                  seL4_CapRights_t rights, uint64_t badge) noexcept;
     /** Move rather than mint: for the caps a copy cannot carry (PortGrant.move). */
     bool install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept;
+    /** Copy rather than mint, preserving the source's badge (PortGrant.copy). */
+    bool install_copied(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept;
     /** Lay out argc/argv/envp/auxv on the child's stack. Returns the stack
      *  pointer, or 0 when it does not fit. */
     uintptr_t build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,

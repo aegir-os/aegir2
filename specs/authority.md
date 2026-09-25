@@ -412,16 +412,16 @@ chain is never broken by the map that made it (`specs/vfs.md`). A range or a
 permission that one day clamps by badge has the true caller to clamp by.
 
 The same rule is why a session's commands can touch files without a syscall in
-the command. The terminal holds the session's badged `vfs.namespace` -- and, for
-the DOS toolset, an **unbadged** `spawn:vfs.namespace` and `spawn:clock.main`
-beside `spawn:log.main` -- so it can mint each command its *first* badged copy
-of the namespace and the clock, with the session's identity, at the spawn
-(`specs/dos.md`). The command's runtime finds them by name
-(`aegir-heap/src/files.cc`, `time.cc`) and the command names no slot: the
-identity a service checks is still the caller's, minted by the spawner that knew
-who the caller was. (The process's *own* badge is a separate placeholder until
-the bootstrap block carries it, `specs/shell.md`; the ports a command is given
-carry the session's identity either way.)
+the command. A session's namespace reaches a command by **copy**, not by mint:
+the terminal holds the session's badged `vfs.namespace`, and `seL4_CNode_Copy`
+preserves that badge, so a command is handed the same identity the shell has
+(`specs/dos.md`). There is no unbadged source here and no badge value the
+terminal must know -- the copy carries what the terminal's own cap carried. The
+clock arrives the same way when the tools that need it do. The command's runtime
+finds the port by name (`aegir-heap/src/files.cc`, `time.cc`) and the command
+names no slot. (The process's *own* badge is a separate placeholder until the
+bootstrap block carries it, `specs/shell.md`; the ports a command is given carry
+the session's identity either way.)
 ### A frame cap serves one address space; the copies come first
 
 A frame's *first* mapping pins it: the mapped ASID and address are written into the

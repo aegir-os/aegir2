@@ -157,16 +157,18 @@ in the `run` call; the terminal passes it to the spawner unchanged.
 - **Phase 0 — this spec.** The classification, the decisions, and the hooks
   into `specs/shell.md`, `specs/environment.md`, `specs/authority.md`,
   `specs/services.md` and `specs/bfs.md`.
-- **Phase 1 — the command is granted what it needs.** auth binds `C:`; the
-  terminal holds unbadged `vfs.namespace` and `clock.main` and mints a
-  per-command copy badged with the session, granting `vfs.namespace` and
-  `clock.main` beside `con.stream`; the shell lowercases the command token and
-  the terminal reads the image from `C:`. No command exists yet; the path is
-  proven with the first tool.
+- **Phase 1 — the command is granted what it needs.** auth binds `C:` for the
+  session and terminal badges; the terminal copies its own session-badged
+  `vfs.namespace` into each command as it starts it -- a copy preserves the
+  badge, so the command carries the session's identity beside `con.stream`. No
+  command uses it yet; the path is proven with the first tool. The clock is
+  granted the same way, by copy, with the first tool that asks the time.
 - **Phase 2 — `aegir::args`.** The template parser and its acceptance.
 - **Phase 3 — `Sys:C` on the system volume, sized from the set.** The
   commands are built, stripped, packed into `Sys:C`, and the AEGIR partition
   and the image are sized from what they weigh rather than from a constant.
+  With the commands on `C:`, the terminal resolves an image from `C:<name>`
+  instead of `Initrd:<name>` and the shell lowercases the command token.
 - **Phase 4 — the first commands.** `copy`, `delete`, `makedir`, `rename`,
   `list`, `type`; and `Dir`/`List`/`Type` leave the shell's built-ins.
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,

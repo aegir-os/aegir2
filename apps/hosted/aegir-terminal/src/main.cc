@@ -38,6 +38,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -179,10 +180,14 @@ int main(int argc, char *argv[])
             return false;
         }
         image.clear();
-        std::error_code size_error;
-        uintmax_t const bytes = std::filesystem::file_size(path, size_error);
-        if (!size_error && bytes > 0) {
-            image.reserve(static_cast<std::size_t>(bytes));
+        /* The size comes from the fd already open, not a second resolve by
+         * path: the fd holds the volume capability, and a path stat would ask
+         * the namespace to resolve the same file again. (A terminal that did
+         * the path stat hung here; the fd's own stat is both fewer calls and
+         * the one that cannot disagree with the fd the bytes come from.) */
+        struct stat info {};
+        if (::fstat(fd, &info) == 0 && info.st_size > 0) {
+            image.reserve(static_cast<std::size_t>(info.st_size));
         }
         char chunk[512];
         ssize_t have = 0;
@@ -244,6 +249,14 @@ int main(int argc, char *argv[])
              * tables come from, and (below) its own VSpace root and window. */
             {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 1, command_untyped,
              seL4_AllRights, 0, aegir::terminal::SpawnKit::kCommandUntypedBits},
+            /* The namespace the command needs, copied from the terminal's own
+             * badged cap: the copy keeps the session's identity, so the command
+             * resolves Home:/ENV:/C: and its writes are owned by the session
+             * (specs/dos.md). Copied, not minted: a badged endpoint cap cannot
+             * be minted again (specs/authority.md). */
+            {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+             aegir::bootstrap::kSlotFirstDeclared + 2, spawn_kit.command_nmspace_port(),
+             seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true},
         };
         aegir::spawn::Request request{};
         request.name = name.c_str();
@@ -262,7 +275,7 @@ int main(int argc, char *argv[])
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.priority = seL4_MaxPrio - 2;
         request.ports = ports;
-        request.port_count = 2;
+        request.port_count = 3;
         request.fault_endpoint = spawn_kit.fault_endpoint();
         request.badge = 0x1000 + command_serial++;
         request.give_vspace = true;

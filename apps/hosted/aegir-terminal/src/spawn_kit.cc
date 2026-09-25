@@ -77,6 +77,18 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     log_port_ = static_cast<seL4_CPtr>(log_slot);
     nmspace_port_ = static_cast<seL4_CPtr>(nmspace_slot);
 
+    /* The terminal's own badged namespace, handed to a command by *copy* so it
+     * carries the session's identity (specs/dos.md). The namespace name is the
+     * runtime's own find, so the terminal resolves exactly what a command
+     * will. */
+    uint64_t command_nmspace_slot = 0;
+    if (!aegir::bootstrap::capability(aegir::nmspace::kPortName,
+                                      aegir::nmspace::kPortNameLength,
+                                      &command_nmspace_slot)) {
+        return false;
+    }
+    command_nmspace_port_ = static_cast<seL4_CPtr>(command_nmspace_slot);
+
     /* The terminal's own con.stream endpoint and a fault endpoint for its
      * children, retyped from the toolkit's memory (they live as long as the
      * terminal, not as long as a command). */

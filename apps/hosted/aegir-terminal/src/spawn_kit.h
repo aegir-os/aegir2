@@ -65,6 +65,11 @@ public:
     /* The unbadged copies a command's own caps are minted from. */
     seL4_CPtr log_port() const { return log_port_; }
     seL4_CPtr nmspace_port() const { return nmspace_port_; }
+    /* The terminal's own badged namespace, which a command is handed by *copy*
+     * (specs/dos.md): it carries the session's identity, so a command resolves
+     * Home:/ENV:/C: and its writes are owned by the session, without a command
+     * naming a slot or the terminal knowing a badge value. */
+    seL4_CPtr command_nmspace_port() const { return command_nmspace_port_; }
 
     /* The shell process: spawned once from auth's `shell-pool`, not bracketed
      * and reclaimed like a command, because it lives as long as the terminal.
@@ -85,6 +90,7 @@ private:
     seL4_CPtr fault_endpoint_ = 0;
     seL4_CPtr log_port_ = 0;
     seL4_CPtr nmspace_port_ = 0;
+    seL4_CPtr command_nmspace_port_ = 0;
     seL4_CPtr asid_pool_ = 0;
     seL4_CPtr command_pool_ = 0;
     uint32_t command_pool_bits_ = 0;

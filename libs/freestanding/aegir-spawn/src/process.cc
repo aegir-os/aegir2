@@ -130,6 +130,26 @@ bool Spawner::install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr sour
     return true;
 }
 
+bool Spawner::install_copied(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept
+{
+    /* Copy, not mint: the capability crosses as it stands, its badge preserved.
+     * A badged endpoint cap cannot be minted again -- updateCapData refuses a
+     * non-zero badge (kernel/src/object/objecttype.c:402-407) -- so a parent
+     * that shares a badged port with a child copies it, and the copy keeps the
+     * identity the parent's own cap carried (specs/dos.md). The addressing is
+     * install()'s. maskCapRights leaves an endpoint cap unchanged, so the
+     * rights argument does not narrow what the source held. */
+    seL4_Error const copy_error =
+        seL4_CNode_Copy(into_cspace, slot, bootstrap::kCNodeBits, source_root_, source,
+                        source_depth_, seL4_AllRights);
+    if (copy_error != seL4_NoError) {
+        detail_ = "copying a capability into the child's CSpace";
+        error_ = copy_error;
+        return false;
+    }
+    return true;
+}
+
 uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
                                      Elf const &elf, Request const &request, uintptr_t block,
                                      uintptr_t ipc_buffer) noexcept
@@ -647,8 +667,10 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         PortGrant const &grant = request.ports[i];
         if (grant.capability == 0 ||
             (grant.move ? !install_moved(process.cspace, grant.slot, grant.capability)
-                        : !install(process.cspace, grant.slot, grant.capability, grant.rights,
-                                   grant.badge))) {
+             : grant.copy
+                 ? !install_copied(process.cspace, grant.slot, grant.capability)
+                 : !install(process.cspace, grant.slot, grant.capability, grant.rights,
+                            grant.badge))) {
             return fail("a port could not be installed into the child");
         }
     }

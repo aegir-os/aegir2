@@ -382,6 +382,26 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
         env_second.error != 0 || env_second.count != 1 || env_in[0] != 1) {
         write("      auth: FAIL the ENV: bind was refused\n");
     }
+
+    /* C: (specs/dos.md): the command directory. A single-member alias of
+     * Sys:C for now -- a session's own Home:C, and the command that installs
+     * into it, arrive with a later slice. Read-only here: no create flag,
+     * because a user does not write the system's command directory. */
+    static char const kCmdSys[] = "Sys:C";
+    uint64_t c_out[2 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
+    uint64_t c_in[1];
+    c_out[0] = badge;
+    c_out[1] = 0; /* replace */
+    uint32_t c_words = 2;
+    c_words += aegir::nmspace::pack_string(c_out + c_words, "C", 1,
+                                           aegir::nmspace::kNameMax);
+    c_words += aegir::nmspace::pack_string(c_out + c_words, kCmdSys,
+                                           sizeof(kCmdSys) - 1, aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const c_bound =
+        g_nmspace.call_words(aegir::nmspace::kMethodBind, c_out, c_words, c_in, 1);
+    if (c_bound.error != 0 || c_bound.count != 1 || c_in[0] != 1) {
+        write("      auth: FAIL the C: bind was refused\n");
+    }
 }
 
 /* The teardown, once the wait says the session is done (specs/auth.md's
