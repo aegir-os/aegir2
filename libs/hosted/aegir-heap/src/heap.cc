@@ -754,6 +754,13 @@ long vsyscall(long sysnum, ...) noexcept
     case 49: /* SYS_chdir */
         ret = files::chdir(va_arg(ap, char const *));
         break;
+    case 52: /* SYS_fchmod: musl's fchmod, and the fd form of Protect */
+        ret = files::fchmod(va_arg(ap, int), va_arg(ap, int));
+        break;
+    case 53: /* SYS_fchmodat: musl's chmod on riscv64 (three args; fchmodat2 is 452) */
+        ret = files::fchmodat(va_arg(ap, int), va_arg(ap, char const *),
+                              va_arg(ap, int));
+        break;
     case 56: /* SYS_openat */
         ret = files::openat(va_arg(ap, int), va_arg(ap, char const *),
                             va_arg(ap, int), va_arg(ap, int));

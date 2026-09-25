@@ -50,6 +50,12 @@ long renameat2(int old_dfd, char const *old_path, int new_dfd, char const *new_p
                unsigned flags) noexcept;
 long truncate(char const *path, long length) noexcept;
 long ftruncate(int fd, long length) noexcept;
+/* The file mode (the AmigaDOS Protect): chmod's family maps to the volume
+ * protocol's protect, which BFS answers and FAT refuses with EOPNOTSUPP.
+ * SYS_fchmodat is the three-argument call (fchmodat2 carries the flags, and
+ * is not this), so there is no flags argument here. */
+long fchmodat(int dfd, char const *path, int mode) noexcept;
+long fchmod(int fd, int mode) noexcept;
 long chdir(char const *path) noexcept;
 long getcwd(char *buffer, size_t size) noexcept;
 long fcntl(int fd, int command, long argument) noexcept;

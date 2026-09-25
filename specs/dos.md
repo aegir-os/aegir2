@@ -184,14 +184,20 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   otherwise `Copy From/M To/A`'s `To` was unreachable, and the parser is a
   pure value with host conformance cases now (`make check-args`).
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
-  `filenote`/`protect`, `info`/`assign`/`which`/`version`. Landed from the
-  first slice: `search`, `sort`, `join`, `more`. `join`'s destination is a
+  `filenote`/`protect`, `info`/`assign`/`which`/`version`. Landed: `search`,
+  `sort`, `join`, `more`, `protect`. `join`'s destination is a
   keyword (`AS`, the Amiga's `TO`) because that is the Amiga's template,
   `File/M/A AS=TO/K/A`, and `FROM` repeats. `more` needed the console stream's
   blocking read, which landed with it: the terminal grants each command a
   `con.doorbell` and rings it, the runtime's `read` parks on it, and a line
   typed while a command ran reaches the shell after it exits
   (`specs/terminal.md`). The page is the stream's `size`, not a constant.
+
+  `protect` is the ownership arc's mode made a command: its Amiga letters map
+  r/w/e to the POSIX read/write/execute bits for every class, and the runtime
+  grows `SYS_fchmodat`/`SYS_fchmod` onto the volume protocol's Protect
+  (`specs/bfs.md` decision 7). Only the owner or the system class may, and a
+  filesystem with no modes refuses.
 
   `rename`'s `From/A/M` is the Amiga's, but the volume protocol's rename is
   same-directory only (`specs/vfs.md`), so the multi-source move into another
@@ -247,7 +253,8 @@ files from `Sys:` into the first, a `list` of both, a `type` of both, a
 `search` of two files for a word one holds, a `sort` into the first, a `join`
 of a file with itself `AS` a second file there, a `more` of `Sys:LONG.TXT` (a
 file longer than the window, so it pages and waits for a key), a `rename` of
-one file within its directory, a `delete` of both trees, and a `type` of the
+one file within its directory, a `protect` of it to `rwe`, a `delete` of both
+trees, and a `type` of the
 name that delete removed -- each a program read from `Sys:C`, started by the
 terminal, resolving the session's namespace on its own badge (the terminal's
 namespace copy). Most lines name several files, which is the Amiga's

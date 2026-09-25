@@ -879,9 +879,56 @@ int status_errno(uint64_t status) noexcept
         return ENOTDIR;
     case aegir::metadata::kIsADirectory:
         return EISDIR;
+    case aegir::metadata::kPermission:
+        return EACCES;
     default:
         return EIO;
     }
+}
+
+/* The file mode (the AmigaDOS Protect). Only the owner or the system class may
+ * change it -- the filesystem enforces that and answers kPermission when it
+ * refuses; a filesystem with no modes answers kUnsupported, EOPNOTSUPP. */
+long fchmodat(int dfd, char const *path, int mode) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (dfd != AT_FDCWD) {
+        return -EINVAL; /* no *at anchor yet */
+    }
+    if (path == nullptr) {
+        return -EFAULT;
+    }
+    seL4_CPtr const slot = transient_slot();
+    if (slot == 0) {
+        return -EMFILE;
+    }
+    long result = -ENOENT;
+    Target target{};
+    if (resolve_target(path, text_length(path), slot, target)) {
+        uint64_t const status = aegir::vfs::Volume(target.volume)
+                                    .protect(target.rest, target.rest_length,
+                                             static_cast<uint32_t>(mode) & 07777u);
+        result = status == aegir::metadata::kOk ? 0 : -status_errno(status);
+    }
+    empty_slot(slot);
+    return result;
+}
+
+long fchmod(int fd, int mode) noexcept
+{
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr) {
+        return -EBADF;
+    }
+    uint64_t const status = aegir::vfs::Volume(entry->volume)
+                                .protect(entry->path, entry->path_length,
+                                         static_cast<uint32_t>(mode) & 07777u);
+    return status == aegir::metadata::kOk ? 0 : -status_errno(status);
 }
 
 /* Write a value of any size: one attr_write carries at most kAttrDataMax, so

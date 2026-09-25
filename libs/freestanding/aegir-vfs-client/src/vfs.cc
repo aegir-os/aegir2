@@ -377,6 +377,24 @@ bool Volume::truncate(char const *path, uint32_t length, uint64_t size) noexcept
     return reply.error == 0 && reply.count == 1 && answer[0] == 1;
 }
 
+uint64_t Volume::protect(char const *path, uint32_t length, uint32_t mode) noexcept
+{
+    uint64_t request[nmspace::kPathMax / 8 + 2];
+    uint32_t const path_words =
+        nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (path_words == 0 || path_words + 1 > aegir::ipc::kMaxWords) {
+        return metadata::kInvalidName;
+    }
+    request[path_words] = mode;
+    uint64_t answer[1] = {metadata::kNotFound};
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        metadata::kMethodProtect, request, path_words + 1, answer, 1);
+    if (reply.error != 0 || reply.count < 1) {
+        return metadata::kNotFound;
+    }
+    return answer[0];
+}
+
 uint64_t Volume::attr_stat(char const *path, uint32_t length, char const *name,
                            uint32_t name_length, uint32_t &type,
                            uint64_t &size) noexcept

@@ -154,6 +154,11 @@ public:
      *  a missing name, and a read-only volume are refused. False on refusal. */
     bool truncate(char const *path, uint32_t length, uint64_t size) noexcept;
 
+    /** Set `path`'s permission bits (metadata::kMethodProtect), the AmigaDOS
+     *  Protect: only the owner or the system class may, and a filesystem with
+     *  no modes answers kUnsupported. Answers the protocol's status word. */
+    uint64_t protect(char const *path, uint32_t length, uint32_t mode) noexcept;
+
     /* Attributes (aegir/metadata.h). Unlike the calls above, each answers the
      * protocol's status word: metadata::kOk, or kUnsupported / kNotFound /
      * kReadOnly / ... The caller tells "no such attribute" from "no metadata"

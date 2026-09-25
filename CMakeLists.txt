@@ -178,6 +178,7 @@ set(aegir_commands
   aegir-sort:sort
   aegir-join:join
   aegir-more:more
+  aegir-protect:protect
 )
 set(aegir_commands_dir "${CMAKE_BINARY_DIR}/sys-c")
 set(aegir_command_images)

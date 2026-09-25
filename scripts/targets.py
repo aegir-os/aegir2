@@ -445,9 +445,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
             # and exercises the file and framework set: makedir, copy, list,
-            # type, search, sort, join, more, rename, delete. The last type
-            # names a file the delete removed, so it fails with 10 -- the error
-            # path -- and type is exercised by it running.
+            # type, search, sort, join, more, rename, protect, delete. The last
+            # type names a file the delete removed, so it fails with 10 -- the
+            # error path -- and type is exercised by it running.
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
@@ -513,6 +513,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 # more's first page reached the grid.
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
+                events=TERMINAL_CLICK,
+                # Protect sets the file's mode; the user owns it, so it is
+                # allowed (specs/bfs.md decision 7).
+                press="protect Home:DosTest/MOVED.TXT rwe\n",
+            ),
+            QmpStep(
+                r"terminal: command started protect",
                 events=TERMINAL_CLICK,
                 press="delete Home:DosTest Home:DosTest2 ALL\n",
             ),
