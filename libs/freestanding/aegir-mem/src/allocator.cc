@@ -274,95 +274,116 @@ unsigned Allocator::largest_free_bits() const noexcept
 bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 {
     Node **const lists = this->lists(device);
-    if (lists[size_bits] != nullptr) {
+    /* A listed piece is supposed to be whole. If one is not -- it cannot yield
+     * a child -- it leaves the list and the loop looks for the next piece,
+     * rather than failing on a node no refill could ever use. */
+    for (;;) {
+        if (lists[size_bits] != nullptr) {
+            return true;
+        }
+        /* Nothing bigger exists to split: the largest untyped a word can name
+         * is one bit below the word. */
+        if (size_bits + 1 >= seL4_WordBits) {
+            return false;
+        }
+        if (!refill(device, size_bits + 1)) {
+            return false;
+        }
+        Node *const parent = lists[size_bits + 1];
+        if (parent == nullptr) {
+            continue;
+        }
+        Node *const left = alloc_node();
+        Node *const right = alloc_node();
+        if (left == nullptr || right == nullptr) {
+            if (left != nullptr) {
+                free_node(left);
+            }
+            if (right != nullptr) {
+                free_node(right);
+            }
+            return false;
+        }
+        seL4_CPtr const left_slot = alloc_slot();
+        seL4_CPtr const right_slot = left_slot != 0 ? alloc_slot() : 0;
+        if (left_slot == 0 || right_slot == 0) {
+            if (left_slot != 0) {
+                slot_failed(left_slot);
+            }
+            if (right_slot != 0) {
+                slot_failed(right_slot);
+            }
+            free_node(left);
+            free_node(right);
+            return false;
+        }
+        /* The parent's two halves: the kernel carves each from the parent's
+         * free index, low end first, so the first is the low buddy and the
+         * second the high one (kernel/src/object/untyped.c:225-232 aligns the
+         * free pointer, :294-302 retypes and moves it). */
+        seL4_Error const first = seL4_Untyped_Retype(
+            parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
+            seL4_CapInitThreadCNode, cnode_depth_, left_slot, 1);
+        if (first != seL4_NoError) {
+            /* The piece cannot even yield one child, so it is not whole: it
+             * leaves the list, or every refill would retry it and fail. */
+            unlink(parent);
+            slot_failed(left_slot);
+            slot_failed(right_slot);
+            free_node(left);
+            free_node(right);
+            continue;
+        }
+        seL4_Error const second = seL4_Untyped_Retype(
+            parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
+            seL4_CapInitThreadCNode, cnode_depth_, right_slot, 1);
+        if (second != seL4_NoError) {
+            /* The parent held one child, not two: a retype already spent its
+             * low half, so the parent is partial. It must leave the list -- a
+             * partial parent left listed was the bug, retried forever -- and
+             * the child that did succeed is a whole piece, so it is kept. The
+             * rest of the parent is lost; recovering it needs the kernel to say
+             * how much is left, which it does not. */
+            unlink(parent);
+            left->cap = left_slot;
+            left->physical = parent->physical;
+            left->size_bits = static_cast<uint8_t>(size_bits);
+            left->device = parent->device;
+            left->parent = nullptr;
+            left->sibling = nullptr;
+            left->next = nullptr;
+            left->prev = nullptr;
+            slot_failed(right_slot);
+            free_node(right);
+            insert(device, left);
+            return true;
+        }
+        /* The parent leaves the free list but its node stays: it is the merge
+         * anchor, and its memory is reclaimable once both children are deleted
+         * (the kernel resets a childless untyped's free index on the next
+         * retype, kernel/src/object/untyped.c:184-189). */
+        unlink(parent);
+        left->cap = left_slot;
+        left->physical = parent->physical;
+        left->size_bits = static_cast<uint8_t>(size_bits);
+        left->device = parent->device;
+        left->parent = parent;
+        left->sibling = right;
+        left->next = nullptr;
+        left->prev = nullptr;
+        right->cap = right_slot;
+        right->physical =
+            parent->physical != 0 ? parent->physical + (1ull << size_bits) : 0;
+        right->size_bits = static_cast<uint8_t>(size_bits);
+        right->device = parent->device;
+        right->parent = parent;
+        right->sibling = left;
+        right->next = nullptr;
+        right->prev = nullptr;
+        insert(device, right);
+        insert(device, left);
         return true;
     }
-    /* Nothing bigger exists to split: the largest untyped a word can name is
-     * one bit below the word. */
-    if (size_bits + 1 >= seL4_WordBits) {
-        return false;
-    }
-    if (!refill(device, size_bits + 1)) {
-        return false;
-    }
-    Node *const parent = lists[size_bits + 1];
-    if (parent == nullptr) {
-        return false;
-    }
-    Node *const left = alloc_node();
-    Node *const right = alloc_node();
-    if (left == nullptr || right == nullptr) {
-        if (left != nullptr) {
-            free_node(left);
-        }
-        if (right != nullptr) {
-            free_node(right);
-        }
-        return false;
-    }
-    seL4_CPtr const left_slot = alloc_slot();
-    seL4_CPtr const right_slot = left_slot != 0 ? alloc_slot() : 0;
-    if (left_slot == 0 || right_slot == 0) {
-        if (left_slot != 0) {
-            slot_failed(left_slot);
-        }
-        if (right_slot != 0) {
-            slot_failed(right_slot);
-        }
-        free_node(left);
-        free_node(right);
-        return false;
-    }
-    /* The parent's two halves: the kernel carves each from the parent's free
-     * index, low end first, so the first is the low buddy and the second the
-     * high one (kernel/src/object/untyped.c:225-232 aligns the free pointer,
-     * :294-302 retypes and moves it). */
-    seL4_Error const first = seL4_Untyped_Retype(
-        parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
-        seL4_CapInitThreadCNode, cnode_depth_, left_slot, 1);
-    if (first != seL4_NoError) {
-        slot_failed(left_slot);
-        slot_failed(right_slot);
-        free_node(left);
-        free_node(right);
-        return false;
-    }
-    seL4_Error const second = seL4_Untyped_Retype(
-        parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
-        seL4_CapInitThreadCNode, cnode_depth_, right_slot, 1);
-    if (second != seL4_NoError) {
-        seL4_CNode_Delete(seL4_CapInitThreadCNode, left_slot, cnode_depth_);
-        slot_failed(left_slot);
-        slot_failed(right_slot);
-        free_node(left);
-        free_node(right);
-        return false;
-    }
-    /* The parent leaves the free list but its node stays: it is the merge
-     * anchor, and its memory is reclaimable once both children are deleted
-     * (the kernel resets a childless untyped's free index on the next retype,
-     * kernel/src/object/untyped.c:184-189). */
-    unlink(parent);
-    left->cap = left_slot;
-    left->physical = parent->physical;
-    left->size_bits = static_cast<uint8_t>(size_bits);
-    left->device = parent->device;
-    left->parent = parent;
-    left->sibling = right;
-    left->next = nullptr;
-    left->prev = nullptr;
-    right->cap = right_slot;
-    right->physical =
-        parent->physical != 0 ? parent->physical + (1ull << size_bits) : 0;
-    right->size_bits = static_cast<uint8_t>(size_bits);
-    right->device = parent->device;
-    right->parent = parent;
-    right->sibling = left;
-    right->next = nullptr;
-    right->prev = nullptr;
-    insert(device, right);
-    insert(device, left);
-    return true;
 }
 
 Allocator::Node *Allocator::take(bool device, seL4_Word size_bits) noexcept

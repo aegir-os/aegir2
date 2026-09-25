@@ -444,11 +444,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # request, and each step is cued by the *name* of the command that
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
-            # and each command once: makedir, copy, list, delete, type. The last
-            # type names a file the delete removed, so it fails with 10 -- the
-            # error path -- and type is exercised by it running. (The terminal's
-            # spawn leaks a little per command, so the set is five until that is
-            # fixed; rename is proved by the same code path as delete.)
+            # and each command once: makedir, copy, list, type, rename, delete.
+            # The last type names a file the delete removed, so it fails with
+            # 10 -- the error path -- and type is exercised by it running.
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
@@ -474,12 +472,22 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # list prints the entry and its size.
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
+                press="type Home:DosTest/COPY.TXT\n",
+            ),
+            QmpStep(
+                r"terminal: command started type",
+                events=TERMINAL_CLICK,
+                press="rename Home:DosTest/COPY.TXT Home:DosTest/MOVED.TXT\n",
+            ),
+            QmpStep(
+                r"terminal: command started rename",
+                events=TERMINAL_CLICK,
                 press="delete Home:DosTest ALL\n",
             ),
             QmpStep(
                 r"terminal: command started delete",
                 events=TERMINAL_CLICK,
-                press="type Home:DosTest/COPY.TXT\n",
+                press="type Home:DosTest/MOVED.TXT\n",
             ),
             QmpStep(
                 r"terminal: command exited 10",

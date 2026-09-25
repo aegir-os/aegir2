@@ -24,6 +24,7 @@ TerminalBuffer::TerminalBuffer(int columns, int rows)
 
 void TerminalBuffer::resize(int columns, int rows)
 {
+    ++version_;
     columns_ = columns < 1 ? 1 : columns;
     rows_ = rows < 1 ? 1 : rows;
     if (cursor_cell_ > static_cast<int>(current_line().size())) {
@@ -40,6 +41,7 @@ TerminalLine& TerminalBuffer::current_line()
 
 void TerminalBuffer::ensure_line(int index)
 {
+    ++version_;
     while (static_cast<int>(lines_.size()) <= index) {
         lines_.emplace_back();
     }
@@ -125,6 +127,7 @@ void TerminalBuffer::tab()
 
 void TerminalBuffer::erase_to_end_of_line()
 {
+    ++version_;
     TerminalLine& line = current_line();
     if (cursor_cell_ < static_cast<int>(line.size())) {
         line.erase(line.begin() + cursor_cell_, line.end());
@@ -133,6 +136,7 @@ void TerminalBuffer::erase_to_end_of_line()
 
 void TerminalBuffer::clear()
 {
+    ++version_;
     lines_.clear();
     lines_.emplace_back();
     cursor_line_ = 0;
@@ -164,6 +168,7 @@ int TerminalBuffer::cursor_column() const
 
 void TerminalBuffer::put(char32_t cp)
 {
+    ++version_;
     int const width = detail::char_width(cp);
     if (width == 0) {
         TerminalLine& line = current_line();

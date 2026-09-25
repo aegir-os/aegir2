@@ -211,6 +211,13 @@ border.
   returns when its rect is empty: a grid sized to a zero rect is one column
   wide, and a client that writes its buffer before `show()` -- the demo's
   grid does -- would wrap every character into its own line.
+- **The display order is derived once per change, not once per paint.** A
+  repaint of unchanged text is common (a window uncovered, a neighbour's
+  damage), and deriving each line's UAX #9 order allocates; recomputing it
+  every paint grew the heap until a spawn could not find memory
+  (`specs/dos.md`'s leak). `TerminalBuffer` carries a `version`, bumped by
+  every content change, and `TerminalView` caches the visible rows' cells,
+  recomputing only when the version or the viewport's first line changes.
 
 ### The font, and what it cannot draw
 

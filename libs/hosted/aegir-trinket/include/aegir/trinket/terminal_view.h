@@ -16,6 +16,7 @@
 #include <aegir/trinket/widget.h>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace aegir::trinket {
 
@@ -68,6 +69,13 @@ private:
     Color text_color_{0xD0u, 0xD0u, 0xD0u};
     Color background_{0x00u, 0x00u, 0x00u};
     bool cursor_visible_ = true;
+    /* The visible rows' cells in display order, recomputed only when the buffer
+     * changes or the viewport moves: a repaint of unchanged text gives the same
+     * order every time, and recomputing it (UAX #9 per line) on each paint both
+     * cost time and grew the heap (specs/terminal.md). */
+    mutable uint64_t cached_version_ = ~0ull;
+    mutable int cached_first_ = -1;
+    mutable std::vector<std::vector<TerminalCell>> cached_visual_;
 };
 
 } // namespace aegir::trinket

@@ -181,15 +181,25 @@ in the `run` call; the terminal passes it to the spawner unchanged.
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
   `filenote`/`protect`, `info`/`assign`/`which`/`version`.
 
-## An interim the toolset exposed
+## The leak the toolset exposed
 
-A terminal can start a handful of commands in one session and then cannot: the
-spawn leaks a little of the terminal's memory -- `allocated` climbs by a few
-hundred kilobytes a command -- and the seventh retype finds none, whatever the
-untyped's size (16 MiB failed where 4 did, so it is not capacity). The DOS
-acceptance runs five commands within it. The leak is the terminal's spawn
-path's, not the commands', and it is the first thing the next slice should
-fix; growing the grant is not.
+The richer command set first ran out of the terminal's memory after a handful
+of commands. It was not capacity: 16 MiB failed where 4 did, with a large free
+piece still reported. Two bugs, both fixed here:
+
+- The terminal's repaint recomputed the display order (UAX #9) of every visible
+  line on every paint, allocating per line and per paint; a repaint of unchanged
+  text is common, and the churn grew the heap until a retype found none.
+  `TerminalBuffer` now carries a version, and `TerminalView` caches the visible
+  rows' cells, recomputing only when the text or the viewport changed
+  (`specs/terminal.md`).
+- The allocator's `refill` left a partially-consumed parent on its free list
+  after a failed split, so a later split retried a piece with no room and failed
+  the allocation. A parent that cannot yield its children now leaves the list,
+  and the loop looks for the next piece; the child a half-split did produce is
+  kept. A piece the heap will never free also returns its node to the pool.
+
+With both, the acceptance runs the whole set in one session.
 
 
 ## What this is not
@@ -208,14 +218,13 @@ fix; growing the grant is not.
 
 Phase 1 and 4 together, landed: after the demo closes, the runner types a
 `makedir` that creates a directory on the session's Home, a `copy` of a file
-from `Sys:` into it, a `list` of the directory, a `delete` of the tree, and a
-`type` of a name that delete removed -- each a program read from `Sys:C`,
-started by the terminal, resolving the session's namespace on its own badge
-(the terminal's namespace copy). The last `type` returns 10, and the grid shows
-the `return code 10` line, which is the error path. The pixel checks prove the
-output reached the grid and not a serial line. The sequence is five commands
-because of the spawn interim above; `rename` is exercised by the same file
-operations as `delete`.
+from `Sys:` into it, a `list` of the directory, a `type` of the copy, a
+`rename`, a `delete` of the tree, and a `type` of a name that delete removed --
+each a program read from `Sys:C`, started by the terminal, resolving the
+session's namespace on its own badge (the terminal's namespace copy). The last
+`type` returns 10, and the grid shows the `return code 10` line, which is the
+error path. The pixel checks prove the output reached the grid and not a serial
+line.
 
 Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
 it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's

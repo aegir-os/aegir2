@@ -94,6 +94,11 @@ public:
     /* The line index drawn at the top of a `rows`-tall viewport. */
     int visible_first_line() const;
 
+    /* Bumped by every content change, so a renderer can cache what it derived
+     * from the cells (the BiDi order a paint walks) and recompute only when the
+     * text actually changed -- a repaint of unchanged text is common. */
+    uint64_t version() const { return version_; }
+
 private:
     TerminalLine& current_line();
     void ensure_line(int index);
@@ -109,6 +114,7 @@ private:
     int cursor_cell_ = 0;
     std::size_t scrollback_budget_ = 0;
     int scroll_offset_ = 0;
+    uint64_t version_ = 0;
 };
 
 } // namespace aegir::trinket

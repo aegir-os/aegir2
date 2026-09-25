@@ -85,18 +85,29 @@ void TerminalView::on_paint(Canvas& canvas, const PaintEvent& event) {
     int const advance = cell_advance();
     int const height = font->height();
     int const first = buffer_.visible_first_line();
-    for (int row = 0; row < buffer_.rows(); ++row) {
-        int const index = first + row;
-        if (index >= buffer_.line_count()) break;
+    /* The display order is derived from the text; derive it only when the text
+     * or the viewport changed, not on every repaint of the same grid. */
+    if (buffer_.version() != cached_version_ || first != cached_first_) {
+        cached_version_ = buffer_.version();
+        cached_first_ = first;
+        cached_visual_.clear();
+        for (int row = 0; row < buffer_.rows(); ++row) {
+            int const index = first + row;
+            if (index >= buffer_.line_count()) break;
+            cached_visual_.push_back(buffer_.visual_cells(index));
+        }
+    }
+    for (int row = 0; row < static_cast<int>(cached_visual_.size()); ++row) {
         int x = rect_.x + kTextPadding;
         int const y = rect_.y + kTextPadding + row * height;
-        for (TerminalCell const& cell : buffer_.visual_cells(index)) {
+        for (TerminalCell const& cell : cached_visual_[static_cast<std::size_t>(row)]) {
             /* A blank cell is the background already filled; a combining mark
              * (width 0) draws at the running x and does not advance; a wide
              * cell draws once and advances two. */
             if (!(cell.cp == U' ' && cell.width == 1)) {
-                std::u32string const one(1, cell.cp);
-                canvas.draw_text({x, y}, one, font, text_color_);
+                char32_t const one_char = cell.cp;
+                canvas.draw_text({x, y}, std::u32string_view(&one_char, 1), font,
+                                 text_color_);
             }
             x += cell.width * advance;
         }
