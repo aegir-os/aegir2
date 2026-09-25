@@ -70,6 +70,13 @@ adds a member; the default replaces the list, which is the one-member alias
 `specs/vfs.md` already describes. `unbind` drops the badge's bindings as it
 does today, a union with them.
 
+A caller cannot read the badge on the namespace capability it holds, so the
+slice that made binding a command (`specs/dos.md`'s `assign`) added two forms
+beside the named one: `bind_self`, which takes the badge from the message
+rather than from a word, so a caller binds its own session; and `unbind_name`,
+which drops one named binding. `unbind` drops the badge's whole set -- the
+session teardown's mechanism, and too much for naming one.
+
 ### The union directory
 
 The VFS keeps, per binding, the members' volume capabilities and their order,

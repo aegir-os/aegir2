@@ -185,7 +185,8 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   pure value with host conformance cases now (`make check-args`).
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
   `filenote`/`protect`, `info`/`assign`/`which`/`version`. Landed: `search`,
-  `sort`, `join`, `more`, `protect`, `filenote`. `join`'s destination is a
+  `sort`, `join`, `more`, `protect`, `filenote`, `info`, `assign`, `which`,
+  `version` -- the set is complete. `join`'s destination is a
   keyword (`AS`, the Amiga's `TO`) because that is the Amiga's template,
   `File/M/A AS=TO/K/A`, and `FROM` repeats. `more` needed the console stream's
   blocking read, which landed with it: the terminal grants each command a
@@ -213,6 +214,21 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   same-directory only (`specs/vfs.md`), so the multi-source move into another
   directory waits on a cross-directory rename there; the acceptance renames one
   file within its directory.
+
+  The framework four are the namespace's: `info` lays out its
+  count/describe rows -- the volumes the caller may resolve, with their
+  filesystem type and status -- and `which` answers the path a command name
+  resolves to through the session's `C:`, warning (5) when it is not there.
+  `version` scans a file for the Amiga's `$VER:` marker and prints the line,
+  and a file without one warns (5). `assign` is that alias made a command, and
+  it needed two wire forms the namespace did not have: a command cannot read
+  the badge on the namespace capability it holds, so binding its own session
+  wants a self form that takes the badge from the message
+  (`nmspace::kMethodBindSelf`), and the existing `unbind` drops *every*
+  binding a badge holds -- too much for naming one -- so a per-name unbind
+  joins it (`nmspace::kMethodUnbindName`, `specs/namespace.md`). The
+  acceptance binds an alias and then reads a file through it, so the binding
+  is exercised by a later command rather than by its own exit alone.
 
 ## The leak the toolset exposed
 
@@ -263,21 +279,23 @@ files from `Sys:` into the first, a `list` of both, a `type` of both, a
 `search` of two files for a word one holds, a `sort` into the first, a `join`
 of a file with itself `AS` a second file there, a `more` of `Sys:LONG.TXT` (a
 file longer than the window, so it pages and waits for a key), a `rename` of
-one file within its directory, a `protect` of it to `rwe`, a `delete` of both
-trees, and a `filenote` of a name on the FAT16 volume -- each a program read
-from `Sys:C`, started by the terminal, resolving the session's namespace on its
-own badge (the terminal's namespace copy). Most lines name several files, which
-is the Amiga's argument-list shape; `more`'s key is typed while it runs, and
-the rename line queued behind it runs after it exits. The FAT volume is public
-because FAT is the interchange filesystem (`specs/vfs.md`), so the session
-resolves it; it has no attributes, so the last `filenote` names the filesystem
-and returns 10 -- the error path. The pixel checks prove the output reached the
-grid and not a serial line.
+one file within its directory, a `protect` of it to `rwe`, an `info`, a
+`which` of a command, an `assign` that binds an alias, a `version` that reads
+a file through that alias, a `delete` of both trees, and a `filenote` of a
+name on the FAT16 volume -- each a program read from `Sys:C`, started by the
+terminal, resolving the session's namespace on its own badge (the terminal's
+namespace copy). Most lines name several files, which is the Amiga's
+argument-list shape; `more`'s key is typed while it runs, and the rename line
+queued behind it runs after it exits. The FAT volume is public because FAT is
+the interchange filesystem (`specs/vfs.md`), so the session resolves it; it has
+no attributes, so the last `filenote` names the filesystem and returns 10 --
+the error path. The pixel checks prove the output reached the grid and not a
+serial line.
 
 Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
 it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's
 size as its tree's, not a constant, and the image boots. `Sys:` also carries
-`LONG.TXT`, the pager's file.
+`LONG.TXT`, the pager's file, and `VER.TXT`, the file `version` reports.
 
 The runner cues each step on the name of the command that just started, and
 every cue is unique: it fires a step on *every* match of its trigger, so a

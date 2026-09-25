@@ -78,6 +78,20 @@ public:
      *  to no volume. */
     bool describe_path(char const *path, uint32_t length, nmspace::Row &row) const noexcept;
 
+    /** Bind `name` to `path` in the caller's *own* namespace. The badge is the
+     *  caller's, taken from the call (nmspace::kMethodBindSelf), because a
+     *  caller cannot read the badge on the namespace capability it holds; so a
+     *  command binds the session's namespace. `flags` are
+     *  nmspace::kBindAppend and friends, the default replaces. False when
+     *  refused: a name that is a volume's or carries a colon, or a path that
+     *  names no volume (specs/dos.md's assign). */
+    bool bind(char const *name, uint32_t name_length, char const *path,
+              uint32_t path_length, uint64_t flags) noexcept;
+
+    /** Drop the caller's own binding named `name`
+     *  (nmspace::kMethodUnbindName). False when there was none. */
+    bool unbind(char const *name, uint32_t name_length) noexcept;
+
 private:
     aegir::ipc::Consumer port_;
     char rest_[nmspace::kPathMax];

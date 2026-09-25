@@ -480,25 +480,29 @@ void answer_mount(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
 /* bind: a badge, flags, an alias name, the path it stands for
  * (specs/vfs.md's Aliases, specs/namespace.md's union). A pair binds once -- a
  * badge's serial is never reused, so a second bind of the same pair is a lie,
- * not a correction; the flags decide how a *name* with a second member grows. */
-void answer_bind(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+ * not a correction; the flags decide how a *name* with a second member grows.
+ * `badge` is the binder: kMethodBind names it in its first word (auth binds
+ * for a session), kMethodBindSelf takes it from the message, so a command
+ * binds its own session without knowing its badge (specs/dos.md's assign). The
+ * remaining `words` are the flags, then the name and the path. */
+void answer_bind(aegir::ipc::Owner &port, uint64_t badge, uint64_t const *words,
+                 uint32_t count) noexcept
 {
     char const *name = nullptr;
     uint32_t name_length = 0;
     char const *target = nullptr;
     uint32_t target_length = 0;
-    if (count < 3 ||
-        !aegir::nmspace::unpack_string(words + 2, count - 2, aegir::nmspace::kNameMax,
+    if (count < 2 ||
+        !aegir::nmspace::unpack_string(words + 1, count - 1, aegir::nmspace::kNameMax,
                                        &name, &name_length) ||
         name_length == 0) {
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const badge = words[0];
-    uint64_t const flags = words[1];
+    uint64_t const flags = words[0];
     uint32_t const name_words = 1 + (name_length + 7) / 8;
-    if (count < 2 + name_words ||
-        !aegir::nmspace::unpack_string(words + 2 + name_words, count - 2 - name_words,
+    if (count < 1 + name_words ||
+        !aegir::nmspace::unpack_string(words + 1 + name_words, count - 1 - name_words,
                                        aegir::nmspace::kPathMax, &target, &target_length) ||
         target_length == 0) {
         port.reply_words(nullptr, 0);
@@ -648,6 +652,42 @@ void answer_unbind(aegir::ipc::Owner &port, uint64_t const *words,
             --g_binding_count;
             ++dropped;
         } else {
+            at = &b->next;
+        }
+    }
+    port.reply_words(&dropped, 1);
+}
+
+/* unbind_name: one binding, the caller's own, by name (specs/dos.md's assign
+ * REMOVE). The whole-badge unbind above is the session teardown's and is too
+ * much for naming one; this drops the named binding and answers 0 or 1. */
+void answer_unbind_name(aegir::ipc::Owner &port, uint64_t badge,
+                        uint64_t const *words, uint32_t count) noexcept
+{
+    uint64_t dropped = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (count >= 1 &&
+        aegir::nmspace::unpack_string(words, count, aegir::nmspace::kNameMax,
+                                      &name, &name_length) &&
+        name_length != 0) {
+        Binding **at = &g_bindings;
+        while (*at != nullptr) {
+            Binding *b = *at;
+            if (b->badge == badge &&
+                same_volume(b->name, b->name_length, name, name_length)) {
+                *at = b->next;
+                while (b->members != nullptr) {
+                    Member *member = b->members;
+                    b->members = member->next;
+                    member_free(member);
+                }
+                b->next = g_binding_free;
+                g_binding_free = b;
+                --g_binding_count;
+                dropped = 1;
+                break;
+            }
             at = &b->next;
         }
     }
@@ -1707,10 +1747,20 @@ int main(int argc, char *argv[])
             answer_mount(port, words, count, badge);
             break;
         case aegir::nmspace::kMethodBind:
-            answer_bind(port, words, count);
+            if (count < 1) {
+                port.reply_words(nullptr, 0);
+                break;
+            }
+            answer_bind(port, words[0], words + 1, count - 1);
+            break;
+        case aegir::nmspace::kMethodBindSelf:
+            answer_bind(port, badge, words, count);
             break;
         case aegir::nmspace::kMethodUnbind:
             answer_unbind(port, words, count);
+            break;
+        case aegir::nmspace::kMethodUnbindName:
+            answer_unbind_name(port, badge, words, count);
             break;
         case aegir::nmspace::kMethodBindCount:
             answer_bind_count(port);

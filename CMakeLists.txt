@@ -180,6 +180,10 @@ set(aegir_commands
   aegir-more:more
   aegir-protect:protect
   aegir-filenote:filenote
+  aegir-info:info
+  aegir-assign:assign
+  aegir-which:which
+  aegir-version:version
 )
 set(aegir_commands_dir "${CMAKE_BINARY_DIR}/sys-c")
 set(aegir_command_images)

@@ -178,6 +178,44 @@ bool Namespace::describe_path(char const *path, uint32_t length,
     return true;
 }
 
+bool Namespace::bind(char const *name, uint32_t name_length, char const *path,
+                     uint32_t path_length, uint64_t flags) noexcept
+{
+    uint64_t request[aegir::ipc::kMaxWords];
+    request[0] = flags;
+    uint32_t words = 1;
+    uint32_t const name_words =
+        nmspace::pack_string(request + words, name, name_length, nmspace::kNameMax);
+    if (name_words == 0) {
+        return false;
+    }
+    words += name_words;
+    uint32_t const path_words =
+        nmspace::pack_string(request + words, path, path_length, nmspace::kPathMax);
+    if (path_words == 0) {
+        return false;
+    }
+    words += path_words;
+    uint64_t answer[1];
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(nmspace::kMethodBindSelf, request, words, answer, 1);
+    return reply.error == 0 && reply.count == 1 && answer[0] == 1;
+}
+
+bool Namespace::unbind(char const *name, uint32_t name_length) noexcept
+{
+    uint64_t request[nmspace::kNameMax / 8 + 1];
+    uint32_t const words =
+        nmspace::pack_string(request, name, name_length, nmspace::kNameMax);
+    if (words == 0) {
+        return false;
+    }
+    uint64_t answer[1];
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(nmspace::kMethodUnbindName, request, words, answer, 1);
+    return reply.error == 0 && reply.count == 1 && answer[0] == 1;
+}
+
 Volume::Volume(seL4_CPtr port) noexcept : port_(port), reply_{} {}
 
 bool Volume::read(char const *path, uint32_t length, uint64_t offset, uint64_t capacity,

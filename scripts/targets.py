@@ -444,11 +444,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # request, and each step is cued by the *name* of the command that
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
-            # and exercises the file and framework set: makedir, copy, list,
-            # type, search, sort, join, more, rename, protect, delete,
-            # filenote. The last is on the public FAT16 volume, which has no
-            # attributes: it names the filesystem and fails with 10 -- the
-            # error path, and a FAT volume in the acceptance.
+            # and exercises the whole set: makedir, copy, list, type, search,
+            # sort, join, more, rename, protect, info, which, assign, version,
+            # delete, filenote. filenote is on the public FAT16 volume, which
+            # has no attributes: it names the filesystem and fails with 10 --
+            # the error path, and a FAT volume in the acceptance. version reads
+            # VER.TXT through the alias assign bound.
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
@@ -521,6 +522,31 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"terminal: command started protect",
+                events=TERMINAL_CLICK,
+                # info lists the volumes the session may resolve.
+                press="info\n",
+            ),
+            QmpStep(
+                r"terminal: command started info",
+                events=TERMINAL_CLICK,
+                # which resolves a command name through the C: assignment.
+                press="which copy\n",
+            ),
+            QmpStep(
+                r"terminal: command started which",
+                events=TERMINAL_CLICK,
+                # assign binds an alias in the session's namespace; the version
+                # line reads a file through it, so the binding is exercised by
+                # a later command and not only by its own exit.
+                press="assign FOOVOL Sys:\n",
+            ),
+            QmpStep(
+                r"terminal: command started assign",
+                events=TERMINAL_CLICK,
+                press="version FOOVOL:VER.TXT\n",
+            ),
+            QmpStep(
+                r"terminal: command started version",
                 events=TERMINAL_CLICK,
                 press="delete Home:DosTest Home:DosTest2 ALL\n",
             ),

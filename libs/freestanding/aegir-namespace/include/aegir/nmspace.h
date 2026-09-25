@@ -75,6 +75,20 @@ constexpr uint32_t kMethodMount = 10;
  * type (specs/vfs.md). */
 constexpr uint32_t kMethodDescribePath = 11;
 
+/* bind_self: a binding for the caller's *own* badge. In: flags, name, path --
+ * the same words as kMethodBind without its leading badge. The server takes
+ * the badge from the message, because a caller cannot read the badge on the
+ * namespace capability it holds, so a command binds the session's namespace
+ * rather than naming a badge it does not know (specs/dos.md's assign).
+ * Answer: 1 bound, 0 refused. */
+constexpr uint32_t kMethodBindSelf = 12;
+
+/* unbind_name: one binding of the caller's own, by name. In: name words.
+ * Answer: how many were dropped (0 or 1). kMethodUnbind drops every binding a
+ * badge holds -- the session teardown's mechanism -- and is too much for
+ * assign's REMOVE, which names one (specs/dos.md). */
+constexpr uint32_t kMethodUnbindName = 13;
+
 /** Bind flags (specs/namespace.md). A second bind of the same name appends or
  *  prepends a member -- the union, a name read as an ordered list of
  *  directories; the default replaces the binding, which is the one-member
