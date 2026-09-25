@@ -145,6 +145,27 @@ seL4_CPtr resolve(char const *path, uint32_t path_length, char const **rest,
     }
 }
 
+/* The Row of the volume `path` names, through the aliases
+ * (nmspace::kMethodDescribePath). False when the path resolves to no volume.
+ * It is how a caller learns a volume's name and filesystem type without a
+ * volume capability (specs/vfs.md). */
+bool describe_path(char const *path, uint32_t path_length,
+                   aegir::nmspace::Row &row) noexcept
+{
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    uint64_t in[aegir::nmspace::kRowWords];
+    aegir::ipc::WordsReply const answer = g_nmspace.call_words(
+        aegir::nmspace::kMethodDescribePath, out, out_words, in,
+        aegir::nmspace::kRowWords);
+    if (answer.error != 0 || answer.count != aegir::nmspace::kRowWords) {
+        return false;
+    }
+    row = *reinterpret_cast<aegir::nmspace::Row const *>(in);
+    return true;
+}
+
 /* The console's event channel: wait for one event of a kind for a window,
  * scanning past the rest -- the motion on the way to a click, a key's
  * release after its press. The Wait on the notification is the kernel's
@@ -901,6 +922,20 @@ int main(int argc, char *argv[])
             ++failed;
         } else {
             write("  test: FAT answers kUnsupported to attribute requests\n");
+        }
+        /* The type travels with the volume: describe_path, resolved through the
+         * namespace, names the filesystem -- what filenote's message stands on
+         * (specs/dos.md). */
+        aegir::nmspace::Row row{};
+        bool const typed =
+            describe_path("SCRATCH:", 8, row) && row.type[0] == 'F' &&
+            row.type[1] == 'A' && row.type[2] == 'T' && row.type[3] == '3' &&
+            row.type[4] == '2' && row.type[5] == '\0';
+        if (!typed) {
+            write("  test: FAIL describe_path did not name SCRATCH's filesystem FAT32\n");
+            ++failed;
+        } else {
+            write("  test: describe_path names SCRATCH's filesystem FAT32\n");
         }
     }
 

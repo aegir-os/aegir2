@@ -534,6 +534,7 @@ own additions use an `AEGIR:` prefix and are named in `aegir/metadata`:
 | `BEOS:ICON` | `'RAWT'` | the file's icon, in the toolkit's format |
 | `BEOS:MINI_ICON` | `'RAWT'` | the small icon |
 | `AEGIR:TOOLTYPES` | `'CSTR'` | the Amiga tooltype list: newline-separated `KEY=VALUE` lines, an `.info` file flattened into one attribute |
+| `AEGIR:COMMENT` | `'CSTR'` | the AmigaDOS file comment (`Filenote`); an absent attribute is no comment (`specs/dos.md`) |
 
 Tooltypes are one attribute rather than many because the Amiga model is one
 ordered list, and because a per-file attribute list with a fixed order is not

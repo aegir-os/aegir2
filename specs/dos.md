@@ -185,13 +185,22 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   pure value with host conformance cases now (`make check-args`).
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
   `filenote`/`protect`, `info`/`assign`/`which`/`version`. Landed: `search`,
-  `sort`, `join`, `more`, `protect`. `join`'s destination is a
+  `sort`, `join`, `more`, `protect`, `filenote`. `join`'s destination is a
   keyword (`AS`, the Amiga's `TO`) because that is the Amiga's template,
   `File/M/A AS=TO/K/A`, and `FROM` repeats. `more` needed the console stream's
   blocking read, which landed with it: the terminal grants each command a
   `con.doorbell` and rings it, the runtime's `read` parks on it, and a line
   typed while a command ran reaches the shell after it exits
   (`specs/terminal.md`). The page is the stream's `size`, not a constant.
+
+  `filenote` is a BFS attribute, `AEGIR:COMMENT` (`specs/bfs.md`), reached
+  through the POSIX xattr calls the runtime maps onto the metadata protocol;
+  an absent `COMMENT` removes the note. A filesystem with no attributes
+  refuses with `EOPNOTSUPP`, and the message names the volume's filesystem --
+  `FAT32 does not support attributes` -- which the namespace's new
+  `describe_path` supplies (`specs/vfs.md`). That path is reachable when a
+  session can resolve the volume; the boot test asserts FAT's refusal and the
+  type's travel, and the acceptance runs `filenote` on the BFS home.
 
   `protect` is the ownership arc's mode made a command: its Amiga letters map
   r/w/e to the POSIX read/write/execute bits for every class, and the runtime
@@ -253,7 +262,8 @@ files from `Sys:` into the first, a `list` of both, a `type` of both, a
 `search` of two files for a word one holds, a `sort` into the first, a `join`
 of a file with itself `AS` a second file there, a `more` of `Sys:LONG.TXT` (a
 file longer than the window, so it pages and waits for a key), a `rename` of
-one file within its directory, a `protect` of it to `rwe`, a `delete` of both
+one file within its directory, a `protect` of it to `rwe`, a `filenote` of it,
+a `delete` of both
 trees, and a `type` of the
 name that delete removed -- each a program read from `Sys:C`, started by the
 terminal, resolving the session's namespace on its own badge (the terminal's

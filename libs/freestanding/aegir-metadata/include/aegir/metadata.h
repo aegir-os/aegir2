@@ -137,6 +137,10 @@ constexpr char kNameAppSig[] = "BEOS:APP_SIG";
 constexpr char kNameIcon[] = "BEOS:ICON";
 constexpr char kNameMiniIcon[] = "BEOS:MINI_ICON";
 constexpr char kNameTooltypes[] = "AEGIR:TOOLTYPES";
+/** The AmigaDOS file comment (Filenote) as a string; it has no BeOS
+ *  equivalent, so it is Aegir's own and carries the AEGIR: prefix. An absent
+ *  attribute is no comment. */
+constexpr char kNameComment[] = "AEGIR:COMMENT";
 
 /* The value codecs: an attribute's data is bytes, and these are the type_code
  * shapes in the byte order BFS stores, little-endian. The typed access above

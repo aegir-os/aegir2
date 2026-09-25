@@ -2103,7 +2103,9 @@ int main(int argc, char *argv[])
         case aegir::metadata::kMethodQueryOpen:
         case aegir::metadata::kMethodQueryNext:
         case aegir::metadata::kMethodQueryClose:
-        case aegir::metadata::kMethodQueryOpenLive: {
+        case aegir::metadata::kMethodQueryOpenLive:
+        case aegir::metadata::kMethodProtect:
+        case aegir::metadata::kMethodOwner: {
             /* FAT has no attributes and no queries: it says so rather than
              * pretending (specs/fat.md, specs/vfs.md's metadata protocol). */
             uint64_t const status = aegir::metadata::kUnsupported;
