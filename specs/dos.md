@@ -83,10 +83,10 @@ disk utilities and the firmware tools of AmigaDOS are other arcs or none.
 
 | Command | Does | Needs |
 | --- | --- | --- |
-| `copy` | copy files or directories | `FROM/A`,`TO/A`,`ALL/S`,`CLONE/S` |
+| `copy` | copy files or directories | `FROM/M`,`TO/A`,`ALL/S` |
 | `delete` | delete files or directories | `FILE/A`,`ALL/S`,`FORCE/S` |
-| `makedir` | create a directory | `NAME/A` |
-| `rename` | rename a file or directory | `FROM/A`,`TO/A` |
+| `makedir` | create a directory | `NAME/M` |
+| `rename` | rename a file or directory | `FROM/M/A`,`TO/A` |
 | `list` | list a directory's entries in detail | `DIR/A`,`ALL/S` |
 | `type` | display a text file | `FILE/A`,`NUMBER/S` |
 | `more` | page a text file | `FILE/A` |
