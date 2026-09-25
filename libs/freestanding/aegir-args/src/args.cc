@@ -9,7 +9,9 @@
  * is a name then a run of flags after '/'; the items are split on ','. A line
  * is read item by item: NAME=VALUE names a value outright, a bare name is a
  * switch or a keyword (whose value is the next token), and anything else fills
- * the next positional item in template order.
+ * the next positional item in template order. A /M positional takes the bare
+ * tokens but leaves one for each positional item after it, as ReadArgs does,
+ * so `FROM/M TO/A` can reach TO.
  */
 
 #include "aegir/args.h"
@@ -169,6 +171,50 @@ bool positional_item_at(char const *tmpl, uint32_t index, Item &out) noexcept
     }
 }
 
+/* How many positional items the template has: the ones a bare token fills. */
+uint32_t positional_count(char const *tmpl) noexcept
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0;; ++i) {
+        Item item{};
+        if (!item_at(tmpl, i, item)) {
+            return count;
+        }
+        if (!item.switch_ && !item.keyword) {
+            ++count;
+        }
+    }
+}
+
+/* How many bare positional tokens remain in argv from `start`. A token that
+ * names a switch takes one slot, a keyword takes two (its name and the value
+ * after it), and a NAME=VALUE names its item outright; anything else is a
+ * positional. This is what a /M item reserves for the items after it. */
+uint32_t positional_tokens_after(char const *tmpl, char const *const *argv,
+                                 int argc, int start) noexcept
+{
+    uint32_t count = 0;
+    for (int i = start; i < argc; ++i) {
+        char const *const token = argv[i];
+        uint32_t const length = text_length(token);
+        if (find_char(token, length, '=') >= 0) {
+            continue; /* NAME=VALUE fills its item by name, not in order */
+        }
+        Item item{};
+        if (item_by_name(tmpl, token, length, item)) {
+            if (item.switch_) {
+                continue;
+            }
+            if (item.keyword) {
+                ++i; /* its value, not a positional */
+                continue;
+            }
+        }
+        ++count;
+    }
+    return count;
+}
+
 /* One supplied value: the template item it filled, the value (a slice of argv),
  * and whether the line named an item the template has. */
 struct Supplied {
@@ -220,10 +266,18 @@ void for_each(Result const &r, Visit visit) noexcept
                 Item place{};
                 if (positional_item_at(r.tmpl, positional, place)) {
                     visit(Supplied{place, token, token_length, true});
-                    /* A /M item takes every remaining bare token; only a plain
-                     * positional advances to the next item. */
+                    /* A /M item takes the bare tokens, but it must leave one
+                     * for each positional item after it -- otherwise a later
+                     * positional, `Copy FROM/M TO/A`'s TO, could never be
+                     * reached. It stops when no more than that many positional
+                     * tokens remain; a plain item advances at once. */
                     if (!place.multiple) {
                         ++positional;
+                    } else {
+                        uint32_t const rest = positional_count(r.tmpl) - positional - 1;
+                        if (positional_tokens_after(r.tmpl, r.argv, r.argc, i + 1) <= rest) {
+                            ++positional;
+                        }
                     }
                 } else {
                     visit(Supplied{Item{}, token, token_length, false});
