@@ -41,7 +41,7 @@ namespace aegir::nmspace {
 constexpr char kPortName[] = "vfs.namespace";
 constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
-constexpr uint32_t kMethodRegister = 1; /* in: name words + 1 cap; answer: assigned name */
+constexpr uint32_t kMethodRegister = 1; /* in: name words, flags, type words; answer: assigned name */
 constexpr uint32_t kMethodResolve = 2;  /* in: path words; answer: the rest string + 1 cap */
 constexpr uint32_t kMethodCount = 3;    /* answer: how many volumes the namespace holds */
 constexpr uint32_t kMethodDescribe = 4; /* in: an index; answer: a Row's words */
@@ -67,6 +67,13 @@ constexpr uint32_t kMethodBindMember = 9;   /* in: binding index, member index;
  * The source is resolved for the caller, so an alias works. Only the system
  * class may mount. */
 constexpr uint32_t kMethodMount = 10;
+
+/* describe_path: the volume a path resolves to, as a Row. In: the path words.
+ * Answer: a Row's words, or nothing when the path resolves to no volume. It is
+ * describe by path rather than by index, so a caller that holds only a path --
+ * a command naming a volume through an alias -- learns the volume's name and
+ * type (specs/vfs.md). */
+constexpr uint32_t kMethodDescribePath = 11;
 
 /** Bind flags (specs/namespace.md). A second bind of the same name appends or
  *  prepends a member -- the union, a name read as an ordered list of
@@ -113,6 +120,12 @@ constexpr uint64_t kFlagPublic = 4;
  *  travel in the envelope with room for what comes after it, long enough for
  *  a filesystem label with a `_N` suffix. */
 constexpr uint32_t kNameMax = 24;
+
+/** The longest filesystem type a volume may carry, NUL not included: `BFS`,
+ *  `FAT16`, `FAT32`, `ExFAT`, and short names after them. It names the
+ *  filesystem on the volume so a client can tell a refusal's reason apart --
+ *  `filenote` says which filesystem has no attributes (specs/dos.md). */
+constexpr uint32_t kTypeMax = 16;
 
 /** The longest path a resolve may carry: what fits the envelope after the
  *  length word (aegir/ipc's kMaxWords words, less one). A path longer than
@@ -161,6 +174,7 @@ struct Row {
     uint64_t flags;      /* kFlagReadOnly and friends */
     uint64_t bound;      /* 1 when a filesystem's cap is held for it */
     uint64_t owner;      /* the owner badge; zero for the system's */
+    char type[kTypeMax]; /* the filesystem's type, NUL-terminated; empty when unknown */
 };
 
 /** The Row as the message carries it. */

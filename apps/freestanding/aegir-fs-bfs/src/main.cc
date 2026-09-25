@@ -1735,9 +1735,13 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     if (partman.valid() && label_length != 0) {
-        uint64_t out[aegir::nmspace::kNameMax / 8 + 1];
-        uint32_t const out_words = aegir::nmspace::pack_string(out, label, label_length,
-                                                               aegir::nmspace::kNameMax);
+        uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 2];
+        uint32_t out_words = aegir::nmspace::pack_string(out, label, label_length,
+                                                         aegir::nmspace::kNameMax);
+        /* The filesystem's type rides beside the label, so the namespace can
+         * say which filesystem a volume is (specs/vfs.md). */
+        out_words += aegir::nmspace::pack_string(out + out_words, "BFS", 3,
+                                                 aegir::nmspace::kTypeMax);
         uint64_t in[aegir::nmspace::kNameMax / 8 + 1];
         aegir::ipc::WordsReply const announced = partman.call_words(
             aegir::partman::kMethodAnnounce, out, out_words, in,

@@ -65,10 +65,14 @@ Owned by the `vfs` service (boot-set order 3, before the partition manager, so
 filesystems have somewhere to register — `specs/services.md`).
 
 - **register** — words: the volume name, flags (read-only; boot — the
-  system volume, see Aliases); one cap: the
+  system volume, see Aliases), and the filesystem's type (`BFS`, `FAT16`,
+  `FAT32`, `INITRD`); one cap: the
   volume port's caller half, unbadged. Reply: the assigned name after `_N`
   dedup, or an error. Whoever spawns the filesystem registers for it, or the
-  filesystem registers itself if it is a manifest service (see below).
+  filesystem registers itself if it is a manifest service (see below). The
+  type names the filesystem on the volume so a client can tell why a call was
+  refused — `filenote` says which filesystem has no attributes
+  (`specs/dos.md`).
 - **resolve** — words: a path, `Volume:rest`, where the volume part may be
   an alias (see Aliases). Reply: one cap, the volume port minted with the
   caller's badge, and **the volume-relative path the argument truly names,
@@ -86,8 +90,12 @@ filesystems have somewhere to register — `specs/services.md`).
   binding's row serves the next bind — a binding is one size — so the
   table's bound is the most aliases live at once, not ever made.
 - **count / describe** — the volumes, one row per describe: name, flags,
-  whether a filesystem is bound. The registry pattern
+  whether a filesystem is bound, and its type. The registry pattern
   (`libs/aegir-registry`) applied to names.
+- **describe_path** — a path, resolved through the aliases like `resolve`;
+  the reply is the Row of the volume it names, or nothing. It is `describe`
+  by path, so a caller that holds only a path learns the volume's name and
+  type without a volume capability (`filenote`, and later `info`).
 
 The registration table **grows on demand**; there is no fixed volume count.
 

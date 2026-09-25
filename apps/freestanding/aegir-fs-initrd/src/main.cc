@@ -265,10 +265,14 @@ int main(int argc, char *argv[])
      * is the name the volume actually got -- Initrd has no label to
      * discover, so the name asked for is the name expected. */
     constexpr char kVolume[] = "Initrd";
-    uint64_t out[aegir::nmspace::kNameMax / 8 + 2];
+    uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 2];
     uint32_t out_words = aegir::nmspace::pack_string(out, kVolume, sizeof(kVolume) - 1,
                                                      aegir::nmspace::kNameMax);
     out[out_words++] = aegir::nmspace::kFlagReadOnly | aegir::nmspace::kFlagPublic;
+    /* The initrd's own type, beside the flags; it is not a BFS or FAT volume
+     * (specs/vfs.md). */
+    out_words += aegir::nmspace::pack_string(out + out_words, "INITRD", 6,
+                                             aegir::nmspace::kTypeMax);
     uint64_t in[aegir::nmspace::kNameMax / 8 + 1];
     aegir::ipc::WordsReply const registered =
         nmspace.call_transfer(aegir::nmspace::kMethodRegister, out, out_words, caller_half,

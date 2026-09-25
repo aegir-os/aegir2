@@ -159,6 +159,25 @@ bool Namespace::describe(uint64_t index, nmspace::Row &row) const noexcept
     return true;
 }
 
+bool Namespace::describe_path(char const *path, uint32_t length,
+                              nmspace::Row &row) const noexcept
+{
+    uint64_t request[nmspace::kPathMax / 8 + 1];
+    uint32_t const request_words =
+        nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (request_words == 0) {
+        return false;
+    }
+    uint64_t answer[nmspace::kRowWords];
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        nmspace::kMethodDescribePath, request, request_words, answer, nmspace::kRowWords);
+    if (reply.error != 0 || reply.count != nmspace::kRowWords) {
+        return false;
+    }
+    row = *reinterpret_cast<nmspace::Row const *>(answer);
+    return true;
+}
+
 Volume::Volume(seL4_CPtr port) noexcept : port_(port), reply_{} {}
 
 bool Volume::read(char const *path, uint32_t length, uint64_t offset, uint64_t capacity,

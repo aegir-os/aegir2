@@ -51,6 +51,8 @@ struct Volume {
     uint64_t flags;
     seL4_CPtr port; /* the caller half, unbadged; each resolve mints from it */
     uint64_t owner; /* the owner badge; zero for the system's (specs/ownership.md) */
+    char type[aegir::nmspace::kTypeMax]; /* the filesystem's type, e.g. BFS */
+    uint8_t type_length;
     char const *base;     /* a view's base path within its source, in the arena;
                            * null for an ordinary volume */
     uint32_t base_length;
@@ -288,6 +290,14 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     uint32_t const name_words =
         count > 0 ? 1 + static_cast<uint32_t>((words[0] + 7) / 8) : 0;
     uint64_t const flags = count > name_words ? words[name_words] : 0;
+    /* The filesystem's type is a string after the flags word; an older
+     * registrant that sends none leaves it empty (specs/vfs.md). */
+    char const *type = "";
+    uint32_t type_length = 0;
+    if (count > name_words + 1) {
+        (void)aegir::nmspace::unpack_string(words + name_words + 1, count - name_words - 1,
+                                            aegir::nmspace::kTypeMax, &type, &type_length);
+    }
     if (count == 0 ||
         !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kNameMax, &name,
                                        &name_length) ||
@@ -311,6 +321,14 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     volume->flags = flags;
     volume->port = stored;
     volume->owner = 0; /* a registered volume is the system's (specs/ownership.md) */
+    volume->type_length = static_cast<uint8_t>(
+        type_length < aegir::nmspace::kTypeMax ? type_length : aegir::nmspace::kTypeMax - 1);
+    for (uint32_t i = 0; i < volume->type_length; ++i) {
+        volume->type[i] = type[i];
+    }
+    for (uint32_t i = volume->type_length; i < aegir::nmspace::kTypeMax; ++i) {
+        volume->type[i] = '\0';
+    }
     volume->base = nullptr;
     volume->base_length = 0;
     volume->next = g_volumes;
@@ -870,6 +888,20 @@ uint32_t resolvable_count(uint64_t badge) noexcept
     return n;
 }
 
+/* The Row one volume answers with -- describe by index and by path share it. */
+void fill_row(aegir::nmspace::Row &row, Volume const &volume) noexcept
+{
+    for (uint32_t i = 0; i < volume.name_length; ++i) {
+        row.name[i] = volume.name[i];
+    }
+    row.flags = volume.flags;
+    row.bound = 1;
+    row.owner = volume.owner;
+    for (uint32_t i = 0; i < volume.type_length; ++i) {
+        row.type[i] = volume.type[i];
+    }
+}
+
 void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                      uint64_t badge) noexcept
 {
@@ -898,12 +930,32 @@ void answer_describe(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
         return;
     }
     aegir::nmspace::Row row{};
-    for (uint32_t i = 0; i < volume->name_length; ++i) {
-        row.name[i] = volume->name[i];
+    fill_row(row, *volume);
+    port.reply_words(reinterpret_cast<uint64_t const *>(&row), aegir::nmspace::kRowWords);
+}
+
+/* describe_path: the Row of the volume a path resolves to. The walk is
+ * resolve_path's, so an alias is followed; the caller learns the volume's
+ * name and type without holding a volume capability to ask (specs/vfs.md). */
+void answer_describe_path(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                          uint64_t badge) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
     }
-    row.flags = volume->flags;
-    row.bound = 1;
-    row.owner = volume->owner;
+    static char rest[aegir::nmspace::kPathMax];
+    Resolution const resolved = resolve_path(badge, path, path_length, rest, sizeof(rest));
+    if (resolved.kind != Resolved::Volume) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::nmspace::Row row{};
+    fill_row(row, *resolved.volume);
     port.reply_words(reinterpret_cast<uint64_t const *>(&row), aegir::nmspace::kRowWords);
 }
 
@@ -1647,6 +1699,9 @@ int main(int argc, char *argv[])
         }
         case aegir::nmspace::kMethodDescribe:
             answer_describe(port, words, count, badge);
+            break;
+        case aegir::nmspace::kMethodDescribePath:
+            answer_describe_path(port, words, count, badge);
             break;
         case aegir::nmspace::kMethodMount:
             answer_mount(port, words, count, badge);

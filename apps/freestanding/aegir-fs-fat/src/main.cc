@@ -2016,9 +2016,16 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     if (partman.valid() && volume_name_length != 0) {
-        uint64_t out[aegir::nmspace::kNameMax / 8 + 1];
-        uint32_t const out_words = aegir::nmspace::pack_string(
+        char const *const type_name =
+            flavor == aegir::fat::Flavor::Fat32 ? "FAT32" : "FAT16";
+        uint32_t const type_length = 5; /* "FAT16" or "FAT32" */
+        uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 2];
+        uint32_t out_words = aegir::nmspace::pack_string(
             out, volume_name, volume_name_length, aegir::nmspace::kNameMax);
+        /* The filesystem's type rides beside the label, so the namespace can
+         * say which filesystem a volume is (specs/vfs.md). */
+        out_words += aegir::nmspace::pack_string(out + out_words, type_name, type_length,
+                                                 aegir::nmspace::kTypeMax);
         uint64_t in[aegir::nmspace::kNameMax / 8 + 1];
         aegir::ipc::WordsReply const announced =
             partman.call_words(aegir::partman::kMethodAnnounce, out, out_words, in,

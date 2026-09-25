@@ -489,7 +489,17 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     if (method == aegir::partman::kMethodAnnounce && nmspace.valid() &&
         aegir::nmspace::unpack_string(words, count, aegir::nmspace::kNameMax, &label,
                                       &label_length)) {
-        uint64_t out[aegir::nmspace::kNameMax / 8 + 2];
+        /* The type rides after the label string; an older filesystem that
+         * sends none registers an empty type (specs/vfs.md). */
+        char const *type = "";
+        uint32_t type_length = 0;
+        uint32_t const label_words = 1 + static_cast<uint32_t>((label_length + 7) / 8);
+        if (count > label_words) {
+            (void)aegir::nmspace::unpack_string(words + label_words, count - label_words,
+                                                aegir::nmspace::kTypeMax, &type,
+                                                &type_length);
+        }
+        uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 3];
         uint32_t out_words = aegir::nmspace::pack_string(out, label, label_length,
                                                          aegir::nmspace::kNameMax);
         /* Flags: not read-only -- a FAT volume takes writes, which the
@@ -497,6 +507,8 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
          * partition's type GUID said this is the system volume
          * (specs/services.md). One statement, two hearers. */
         out[out_words++] = boot != 0 ? aegir::nmspace::kFlagBoot : 0;
+        out_words += aegir::nmspace::pack_string(out + out_words, type, type_length,
+                                                 aegir::nmspace::kTypeMax);
         aegir::ipc::WordsReply const registered = nmspace.call_transfer(
             aegir::nmspace::kMethodRegister, out, out_words, volume_caller, in,
             aegir::nmspace::kNameMax / 8 + 1, nullptr);

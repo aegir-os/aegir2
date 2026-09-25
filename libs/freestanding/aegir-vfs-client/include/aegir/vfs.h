@@ -67,9 +67,16 @@ public:
     bool resolve(char const *path, uint32_t length, seL4_CPtr slot, Resolved &out) noexcept;
 
     /** How many volumes the namespace holds, and one describe row. A Row is
-     *  the name, the flags and whether a filesystem's capability is held. */
+     *  the name, the flags, whether a filesystem's capability is held, and the
+     *  filesystem's type. */
     bool volume_count(uint64_t &count) const noexcept;
     bool describe(uint64_t index, nmspace::Row &row) const noexcept;
+
+    /** The Row of the volume `path` resolves to, following aliases: the name
+     *  and the filesystem type a caller learns without holding the volume
+     *  capability (nmspace::kMethodDescribePath). False when the path resolves
+     *  to no volume. */
+    bool describe_path(char const *path, uint32_t length, nmspace::Row &row) const noexcept;
 
 private:
     aegir::ipc::Consumer port_;

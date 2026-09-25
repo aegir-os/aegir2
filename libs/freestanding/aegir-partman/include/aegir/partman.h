@@ -10,10 +10,13 @@
  * manager cannot know without asking: the volume's *label*, which lives in
  * the filesystem's own structures (specs/vfs.md).
  *
- *   - `announce`: words carry the label. The manager registers the label
- *     with the VFS, together with the volume port's caller half it kept at
- *     the spawn, and answers with the name the volume actually got -- a
- *     duplicate gains a `_N` suffix at the VFS, and the filesystem is told.
+ *   - `announce`: words carry the label and the filesystem's type -- `BFS`,
+ *     `FAT16`, `FAT32`, `ExFAT`. The manager registers both with the VFS,
+ *     together with the volume port's caller half it kept at the spawn, and
+ *     answers with the name the volume actually got -- a duplicate gains a
+ *     `_N` suffix at the VFS, and the filesystem is told. The type names the
+ *     filesystem on the volume, so a client can tell why a call was refused
+ *     (specs/dos.md's `filenote`).
  *
  * A new filesystem type implements announce and the volume protocol, and
  * nothing about the VFS.
@@ -29,7 +32,7 @@ namespace aegir::partman {
 constexpr char kPortName[] = "partman.partitions";
 constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
-constexpr uint32_t kMethodAnnounce = 1; /* in: label words; answer: assigned name */
+constexpr uint32_t kMethodAnnounce = 1; /* in: label words, type words; answer: assigned name */
 
 /** The capability name of the untyped a filesystem retypes its live queries'
  *  notification endpoints from (specs/bfs.md). The filesystem owns the
