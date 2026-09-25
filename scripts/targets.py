@@ -444,12 +444,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # request, and each step is cued by the *name* of the command that
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
-            # and exercises the whole set: makedir, copy, list, type, search,
-            # sort, join, more, rename, protect, info, which, assign, version,
-            # delete, filenote. filenote is on the public FAT16 volume, which
-            # has no attributes: it names the filesystem and fails with 10 --
-            # the error path, and a FAT volume in the acceptance. version reads
-            # VER.TXT through the alias assign bound.
+            # and exercises the whole set: makedir, copy, list, dir, type,
+            # search, sort, join, more, rename, protect, info, which, assign,
+            # version, delete, filenote. filenote is on the public FAT16
+            # volume, which has no attributes: it names the filesystem and
+            # fails with 10 -- the error path, and a FAT volume in the
+            # acceptance. version reads VER.TXT through the alias assign
+            # bound.
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
@@ -473,6 +474,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
+                events=TERMINAL_CLICK,
+                # dir is List's names-only sibling (the Amiga's Dir): the same
+                # directory, without the sizes.
+                press="dir Home:DosTest\n",
+            ),
+            QmpStep(
+                r"terminal: command started dir",
                 events=TERMINAL_CLICK,
                 press="type Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT\n",
             ),

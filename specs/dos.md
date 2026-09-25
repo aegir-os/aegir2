@@ -88,6 +88,7 @@ disk utilities and the firmware tools of AmigaDOS are other arcs or none.
 | `makedir` | create a directory | `NAME/M` |
 | `rename` | rename a file or directory | `FROM/M/A`,`TO/A` |
 | `list` | list a directory's entries in detail | `DIR/M`,`ALL/S` |
+| `dir` | list a directory's entry names | `DIR/M`,`ALL/S` |
 | `type` | display a text file | `FROM/M/A` |
 | `more` | page a text file | `FILE/A` |
 | `join` | concatenate files | `FROM/M/A`,`AS/K/A` (the Amiga's `TO` alias too) |
@@ -229,6 +230,13 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   joins it (`nmspace::kMethodUnbindName`, `specs/namespace.md`). The
   acceptance binds an alias and then reads a file through it, so the binding
   is exercised by a later command rather than by its own exit alone.
+
+  `dir` returns as its own command, the names-only listing the Amiga's `Dir`
+  always was. It had left the shell's built-ins with `list` in Phase 4, but no
+  command replaced it -- `list` shows the sizes, which is `List` -- so `dir`
+  was the one word the shell no longer knew. The command is that missing
+  replacement: same `DIR/M,ALL/S` shape as `list`, names and trailing slashes
+  instead of detail.
 
 ## The leak the toolset exposed
 

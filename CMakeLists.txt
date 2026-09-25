@@ -173,6 +173,7 @@ set(aegir_commands
   aegir-makedir:makedir
   aegir-rename:rename
   aegir-list:list
+  aegir-dir:dir
   aegir-type:type
   aegir-search:search
   aegir-sort:sort
