@@ -148,6 +148,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the current directory its spawner gave it. Its cue is the boot's
             # first, so it is checked before anything else.
             QmpStep(r"ENV_SMOKE_OK"),
+            # The ReadArgs library's acceptance client (specs/dos.md): a
+            # freestanding smoke that parses the templates the command set
+            # uses. Its cue is a boot marker like the env smoke's.
+            QmpStep(r"ARGS_SMOKE_OK"),
             # The hosted C++ runtime's acceptance client (specs/cxx.md): its
             # malloc and libc++ container checks pass, and then -- returning
             # from main rather than halting -- its run-time exit handler runs

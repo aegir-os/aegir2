@@ -36,8 +36,9 @@ TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) t
 # The guest's own verdict: a check that fails prints "test: FAIL ..." and the
 # summary counts them ("N checks FAILED"). The marker is the boot's last line,
 # not the verdict -- a failing test still reaches it -- so a run whose checks
-# failed is a failed run however the marker arrived.
-GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED")
+# failed is a failed run however the marker arrived. A smoke that reports its
+# own failure the same way ("NAME_SMOKE_FAIL") counts too.
+GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED|_SMOKE_FAIL")
 
 
 def preflight(target: Target) -> list[str]:
