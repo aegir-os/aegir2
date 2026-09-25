@@ -75,6 +75,7 @@ private:
      * cost time and grew the heap (specs/terminal.md). */
     mutable uint64_t cached_version_ = ~0ull;
     mutable int cached_first_ = -1;
+    mutable int cached_rows_ = 0;
     mutable std::vector<std::vector<TerminalCell>> cached_visual_;
 };
 

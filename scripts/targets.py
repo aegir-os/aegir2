@@ -451,7 +451,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
-                press="makedir Home:DosTest\n",
+                press="makedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started makedir",
@@ -459,32 +459,30 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
-                press="copy Sys:AEGIR.TXT Home:DosTest/COPY.TXT\n",
+                press="copy Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT Home:DosTest\n",
             ),
             QmpStep(
                 r"terminal: command started copy",
                 events=TERMINAL_CLICK,
-                press="list Home:DosTest\n",
+                press="list Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started list",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                # list prints the entry and its size.
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
-                press="type Home:DosTest/COPY.TXT\n",
+                press="type Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT\n",
             ),
             QmpStep(
                 r"terminal: command started type",
                 events=TERMINAL_CLICK,
-                press="search Sys:AEGIR.TXT disk\n",
+                press="search Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT disk\n",
             ),
             QmpStep(
                 r"terminal: command started search",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                # search prints the line it matched.
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
                 press="sort Sys:AEGIR.TXT Home:DosTest/SORTED.TXT\n",
@@ -497,17 +495,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"terminal: command started join",
                 events=TERMINAL_CLICK,
-                press="rename Home:DosTest/COPY.TXT Home:DosTest/MOVED.TXT\n",
+                press="rename Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started rename",
                 events=TERMINAL_CLICK,
-                press="delete Home:DosTest ALL\n",
+                press="delete Home:DosTest Home:DosTest2 ALL\n",
             ),
             QmpStep(
                 r"terminal: command started delete",
                 events=TERMINAL_CLICK,
-                press="type Home:DosTest/MOVED.TXT\n",
+                press="type Home:DosTest/AEGIR.TXT\n",
             ),
             QmpStep(
                 r"terminal: command exited 10",

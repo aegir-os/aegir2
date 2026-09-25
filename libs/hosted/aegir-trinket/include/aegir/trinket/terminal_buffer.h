@@ -77,6 +77,10 @@ public:
      * a renderer walks to place a wide character in two columns and a
      * combining mark in none. */
     std::vector<TerminalCell> visual_cells(int index) const;
+    /* The same, filled into `out` with its capacity reused, for a renderer that
+     * keeps its own buffers across paints: the return-by-value form allocates a
+     * fresh vector per visible line on every keystroke. */
+    void visual_cells_into(int index, std::vector<TerminalCell>& out) const;
     int visual_column(int index, int cell) const;
     /* Every line joined by `\n`, for a whole-buffer assertion. */
     std::u32string text() const;

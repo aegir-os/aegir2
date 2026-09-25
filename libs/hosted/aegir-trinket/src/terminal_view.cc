@@ -86,18 +86,25 @@ void TerminalView::on_paint(Canvas& canvas, const PaintEvent& event) {
     int const height = font->height();
     int const first = buffer_.visible_first_line();
     /* The display order is derived from the text; derive it only when the text
-     * or the viewport changed, not on every repaint of the same grid. */
+     * or the viewport changed, not on every repaint of the same grid. The row
+     * buffers are reused, so a keystroke that changes one line does not
+     * allocate a fresh vector per visible line. */
     if (buffer_.version() != cached_version_ || first != cached_first_) {
         cached_version_ = buffer_.version();
         cached_first_ = first;
-        cached_visual_.clear();
+        int rows = 0;
         for (int row = 0; row < buffer_.rows(); ++row) {
             int const index = first + row;
             if (index >= buffer_.line_count()) break;
-            cached_visual_.push_back(buffer_.visual_cells(index));
+            if (static_cast<int>(cached_visual_.size()) <= rows) {
+                cached_visual_.emplace_back();
+            }
+            buffer_.visual_cells_into(index, cached_visual_[static_cast<std::size_t>(rows)]);
+            ++rows;
         }
+        cached_rows_ = rows;
     }
-    for (int row = 0; row < static_cast<int>(cached_visual_.size()); ++row) {
+    for (int row = 0; row < cached_rows_; ++row) {
         int x = rect_.x + kTextPadding;
         int const y = rect_.y + kTextPadding + row * height;
         for (TerminalCell const& cell : cached_visual_[static_cast<std::size_t>(row)]) {

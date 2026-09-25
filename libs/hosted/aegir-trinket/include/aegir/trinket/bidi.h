@@ -69,6 +69,11 @@ BidiParagraph analyze_paragraph(std::u32string_view text,
 /* The mirror of `c` under Bidi_Mirroring, or `c` when it has none. */
 char32_t mirror_char(char32_t c);
 
+/* The Unicode Bidi_Class of `c`, from the generated table. A caller that only
+ * needs to know whether a line can reorder tests a character's class against
+ * R, AL, AN and the explicit controls rather than running the algorithm. */
+BidiClass bidi_class(char32_t c);
+
 /* The Bidi_Class of `c`. */
 BidiClass bidi_class(char32_t c);
 

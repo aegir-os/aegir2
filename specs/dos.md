@@ -195,7 +195,8 @@ in the `run` call; the terminal passes it to the spawner unchanged.
 
 The richer command set first ran out of the terminal's memory after a handful
 of commands. It was not capacity: 16 MiB failed where 4 did, with a large free
-piece still reported. Two bugs, both fixed here:
+piece still reported, because the allocator listed pieces the kernel had
+already spent. Three bugs, all fixed here:
 
 - The terminal's repaint recomputed the display order (UAX #9) of every visible
   line on every paint, allocating per line and per paint; a repaint of unchanged
@@ -203,13 +204,20 @@ piece still reported. Two bugs, both fixed here:
   `TerminalBuffer` now carries a version, and `TerminalView` caches the visible
   rows' cells, recomputing only when the text or the viewport changed
   (`specs/terminal.md`).
+- The cache was still rebuilt on every keystroke, and a full UAX #9 pass
+  allocates a dozen vectors per visible line, so the heap still grew a page a
+  paint. `visual_cells_into` fills the view's own row buffer, whose capacity is
+  reused, and a line whose characters cannot reorder (no R, AL, AN or explicit
+  control) keeps the logical order without the algorithm. RTL text still takes
+  the full path (`specs/terminal.md`).
 - The allocator's `refill` left a partially-consumed parent on its free list
   after a failed split, so a later split retried a piece with no room and failed
   the allocation. A parent that cannot yield its children now leaves the list,
   and the loop looks for the next piece; the child a half-split did produce is
   kept. A piece the heap will never free also returns its node to the pool.
 
-With both, the acceptance runs the whole set in one session.
+With all three, the acceptance runs the whole set in one session, several files
+to a line.
 
 
 ## What this is not
@@ -227,26 +235,22 @@ With both, the acceptance runs the whole set in one session.
 ## Acceptance
 
 Phase 1 and 4 together, landed: after the demo closes, the runner types a
-`makedir` that creates a directory on the session's Home, a `copy` of a file
-from `Sys:` into it, a `list` of the directory, a `type` of the copy, a
-`search` of `Sys:AEGIR.TXT` for a word it holds, a `sort` of that file into the
-session's Home, a `join` of it with itself `AS` a second file there, a
-`rename`, a `delete` of the tree, and a `type` of a name that delete removed --
-each a program read from `Sys:C`, started by the terminal, resolving the
-session's namespace on its own badge (the terminal's namespace copy). The last
-`type` returns 10, and the grid shows the `return code 10` line, which is the
-error path. The pixel checks prove the output reached the grid and not a serial
-line.
+`makedir` that creates two directories on the session's Home, a `copy` of two
+files from `Sys:` into the first, a `list` of both, a `type` of both, a
+`search` of two files for a word one holds, a `sort` into the first, a `join`
+of a file with itself `AS` a second file there, a `rename` of two files into
+the second directory, a `delete` of both trees, and a `type` of a name that
+delete removed -- each a program read from `Sys:C`, started by the terminal,
+resolving the session's namespace on its own badge (the terminal's namespace
+copy). Most lines name several files, which is the Amiga's argument-list
+shape. The last `type` returns 10, and the grid shows the `return code 10`
+line, which is the error path. The pixel checks prove the output reached the
+grid and not a serial line.
 
 Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
 it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's
 size as its tree's, not a constant, and the image boots.
 
-The commands' templates now take the Amiga's argument lists, but this sequence
-still names one file per line. Naming several produces more output, and about
-eight commands in the terminal's untyped pool runs out; the leak grows with the
-session's output, not with the number of commands, because the same ten
-commands naming one file each pass. The multi-name acceptance lands with the
-fix. The runner cues each step on the name of the command that just started,
-and every cue is unique: it fires a step on *every* match of its trigger, so a
+The runner cues each step on the name of the command that just started, and
+every cue is unique: it fires a step on *every* match of its trigger, so a
 repeated cue would type its line more than once.

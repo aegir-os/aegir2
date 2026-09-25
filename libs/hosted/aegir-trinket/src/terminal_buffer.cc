@@ -225,16 +225,65 @@ std::u32string TerminalBuffer::visual_line(int index) const
     return result;
 }
 
+namespace {
+
+/* Whether one character can change the display order or be mirrored under UAX
+ * #9. A line with none of these classes keeps the logical order, so the
+ * algorithm -- and the allocations it makes for every visible line on every
+ * keystroke -- is skipped for it. The classes are the RTL ones and the
+ * explicit embedding, override and isolate controls (R, AL, AN and
+ * LRE/RLE/LRO/RLO/PDF/LRI/RLI/FSI/PDI). */
+bool reorders(char32_t cp) noexcept
+{
+    switch (bidi_class(cp)) {
+    case BidiClass::R:
+    case BidiClass::AL:
+    case BidiClass::AN:
+    case BidiClass::LRE:
+    case BidiClass::RLE:
+    case BidiClass::LRO:
+    case BidiClass::RLO:
+    case BidiClass::PDF:
+    case BidiClass::LRI:
+    case BidiClass::RLI:
+    case BidiClass::FSI:
+    case BidiClass::PDI:
+        return true;
+    default:
+        return false;
+    }
+}
+
+}  // namespace
+
 std::vector<TerminalCell> TerminalBuffer::visual_cells(int index) const
 {
     std::vector<TerminalCell> result;
+    visual_cells_into(index, result);
+    return result;
+}
+
+void TerminalBuffer::visual_cells_into(int index, std::vector<TerminalCell>& out) const
+{
+    out.clear();
     if (index < 0 || index >= static_cast<int>(lines_.size())) {
-        return result;
+        return;
     }
     TerminalLine const& logical = lines_[static_cast<std::size_t>(index)];
+    bool ordered = false;
+    for (TerminalCell const& cell : logical) {
+        if (reorders(cell.cp)) {
+            ordered = true;
+            break;
+        }
+    }
+    if (!ordered) {
+        out.assign(logical.begin(), logical.end());
+        return;
+    }
     std::u32string const codepoints = line(index);
     BidiParagraph const paragraph = analyze_paragraph(codepoints);
-    result.reserve(logical.size());
+    out.reserve(logical.size());
     for (int const logical_index : paragraph.order) {
         TerminalCell cell = logical[static_cast<std::size_t>(logical_index)];
         /* L4: a character is drawn mirrored only when its *resolved* direction
@@ -243,9 +292,8 @@ std::vector<TerminalCell> TerminalBuffer::visual_cells(int index) const
         if ((paragraph.levels[static_cast<std::size_t>(logical_index)] & 1u) != 0) {
             cell.cp = mirror_char(cell.cp);
         }
-        result.push_back(cell);
+        out.push_back(cell);
     }
-    return result;
 }
 
 int TerminalBuffer::visual_column(int index, int cell) const
@@ -254,9 +302,23 @@ int TerminalBuffer::visual_column(int index, int cell) const
     if (logical.empty()) {
         return 0;
     }
+    int const logical_index = std::clamp(cell, 0, static_cast<int>(logical.size()));
+    bool ordered = false;
+    for (char32_t cp : logical) {
+        if (reorders(cp)) {
+            ordered = true;
+            break;
+        }
+    }
+    if (!ordered) {
+        int column = 0;
+        for (int i = 0; i < logical_index; ++i) {
+            column += detail::char_width(logical[static_cast<std::size_t>(i)]);
+        }
+        return column;
+    }
     BidiParagraph const paragraph = analyze_paragraph(logical);
     std::vector<int> const logical_to_visual = paragraph.logical_to_visual();
-    int const logical_index = std::clamp(cell, 0, static_cast<int>(logical.size()));
     int const visual_index =
         logical_index < static_cast<int>(logical_to_visual.size())
             ? logical_to_visual[static_cast<std::size_t>(logical_index)]

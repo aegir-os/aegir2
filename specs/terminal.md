@@ -218,6 +218,14 @@ border.
   (`specs/dos.md`'s leak). `TerminalBuffer` carries a `version`, bumped by
   every content change, and `TerminalView` caches the visible rows' cells,
   recomputing only when the version or the viewport's first line changes.
+- **A line that cannot reorder is not analyzed.** The cache is rebuilt on
+  every keystroke -- the line editor writes the buffer -- and a full UAX #9
+  pass allocates a dozen vectors per visible line, which still grew the heap
+  a page a paint. `visual_cells_into` fills the view's own row buffer (its
+  capacity reused), and a line whose characters are all outside the classes
+  that can reorder or mirror (R, AL, AN, and the explicit controls) keeps the
+  logical order without the algorithm. RTL text still takes the full path;
+  `scripts/terminal_conformance.cc` asserts both.
 
 ### The font, and what it cannot draw
 
