@@ -4,11 +4,13 @@
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * A file's matching lines go to the stream. A directory needs ALL and is
- * walked, its matches labelled with the file they came from; a single file's
- * matches are not, as the Amiga's Search prints them bare. The match is a
- * substring of the line, byte for byte -- the Amiga's Search is
- * case-insensitive, but its CASE and locale rules are not this arc's.
+ * A file's matching lines go to the stream. FROM repeats, as the Amiga's
+ * From/M does; with more than one, each match is labelled with the file it
+ * came from. A directory needs ALL and is walked, its matches labelled too. A
+ * single file's matches are not labelled, as the Amiga's Search prints them
+ * bare. The match is a substring of the line, byte for byte -- the Amiga's
+ * Search is case-insensitive, but its CASE and locale rules are not this
+ * arc's.
  */
 
 #include <aegir/args.h>
@@ -95,29 +97,33 @@ int main(int argc, char **argv)
         std::_Exit(127);
     }
     aegir::args::Result const args =
-        aegir::args::read("FILE/A,SEARCH/A,ALL/S", argc - 1, argv + 1);
+        aegir::args::read("FROM/M,SEARCH/A,ALL/S", argc - 1, argv + 1);
     if (!args.ok()) {
         std::fprintf(stderr, "search: %.*s\nusage: %s\n",
                      static_cast<int>(args.missing_length), args.missing, args.usage());
         return 10;
     }
-    std::filesystem::path const file = args.value("FILE");
     char const *const needle = args.value("SEARCH");
-    std::error_code error;
-    if (std::filesystem::is_directory(file, error)) {
-        if (!args.present("ALL")) {
-            std::fprintf(stderr, "search: %s is a directory -- use ALL\n", file.c_str());
+    uint32_t const sources = args.count("FROM");
+    bool const label = sources > 1;
+    for (uint32_t i = 0; i < sources; ++i) {
+        std::filesystem::path const from = args.at("FROM", i);
+        std::error_code error;
+        if (std::filesystem::is_directory(from, error)) {
+            if (!args.present("ALL")) {
+                std::fprintf(stderr, "search: %s is a directory -- use ALL\n", from.c_str());
+                return 10;
+            }
+            if (!search_tree(from, needle, error)) {
+                std::fprintf(stderr, "search: cannot search %s\n", from.c_str());
+                return 10;
+            }
+        } else if (error) {
+            std::fprintf(stderr, "search: cannot find %s\n", from.c_str());
             return 10;
+        } else {
+            search_file(from, needle, label);
         }
-        if (!search_tree(file, needle, error)) {
-            std::fprintf(stderr, "search: cannot search %s\n", file.c_str());
-            return 10;
-        }
-    } else if (error) {
-        std::fprintf(stderr, "search: cannot find %s\n", file.c_str());
-        return 10;
-    } else {
-        search_file(file, needle, false);
     }
     return 0;
 }

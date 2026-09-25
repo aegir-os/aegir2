@@ -4,16 +4,18 @@
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * A directory needs ALL, and its whole tree goes. The walk is the command's
- * own, down the paths a directory_iterator hands out, rather than
- * std::filesystem::remove_all's: that one walks through directory file
- * descriptors, which the runtime's *at calls do not anchor on yet. FORCE is
- * accepted, for the Amiga's name, and changes nothing yet.
+ * FILE repeats, as the Amiga's File/M/A does. A directory needs ALL, and its
+ * whole tree goes. The walk is the command's own, down the paths a
+ * directory_iterator hands out, rather than std::filesystem::remove_all's:
+ * that one walks through directory file descriptors, which the runtime's *at
+ * calls do not anchor on yet. FORCE is accepted, for the Amiga's name, and
+ * changes nothing yet.
  */
 
 #include <aegir/args.h>
 #include <aegir/command.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -53,31 +55,34 @@ int main(int argc, char **argv)
         std::_Exit(127);
     }
     aegir::args::Result const args =
-        aegir::args::read("FILE/A,ALL/S,FORCE/S", argc - 1, argv + 1);
+        aegir::args::read("FILE/M/A,ALL/S,FORCE/S", argc - 1, argv + 1);
     if (!args.ok()) {
         std::fprintf(stderr, "delete: %.*s\nusage: %s\n",
                      static_cast<int>(args.missing_length), args.missing, args.usage());
         return 10;
     }
-    char const *const file = args.value("FILE");
-    std::error_code error;
-    bool const directory = std::filesystem::is_directory(file, error);
-    if (error) {
-        std::fprintf(stderr, "delete: cannot find %s\n", file);
-        return 10;
-    }
-    if (directory) {
-        if (!args.present("ALL")) {
-            std::fprintf(stderr, "delete: %s is a directory -- use ALL\n", file);
+    uint32_t const files = args.count("FILE");
+    for (uint32_t i = 0; i < files; ++i) {
+        char const *const file = args.at("FILE", i);
+        std::error_code error;
+        bool const directory = std::filesystem::is_directory(file, error);
+        if (error) {
+            std::fprintf(stderr, "delete: cannot find %s\n", file);
             return 10;
         }
-        if (!remove_tree(file, error)) {
+        if (directory) {
+            if (!args.present("ALL")) {
+                std::fprintf(stderr, "delete: %s is a directory -- use ALL\n", file);
+                return 10;
+            }
+            if (!remove_tree(file, error)) {
+                std::fprintf(stderr, "delete: cannot delete %s\n", file);
+                return 10;
+            }
+        } else if (!std::filesystem::remove(file, error) || error) {
             std::fprintf(stderr, "delete: cannot delete %s\n", file);
             return 10;
         }
-    } else if (!std::filesystem::remove(file, error) || error) {
-        std::fprintf(stderr, "delete: cannot delete %s\n", file);
-        return 10;
     }
     return 0;
 }

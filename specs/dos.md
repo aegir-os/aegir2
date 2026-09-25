@@ -84,15 +84,15 @@ disk utilities and the firmware tools of AmigaDOS are other arcs or none.
 | Command | Does | Needs |
 | --- | --- | --- |
 | `copy` | copy files or directories | `FROM/M`,`TO/A`,`ALL/S` |
-| `delete` | delete files or directories | `FILE/A`,`ALL/S`,`FORCE/S` |
+| `delete` | delete files or directories | `FILE/M/A`,`ALL/S`,`FORCE/S` |
 | `makedir` | create a directory | `NAME/M` |
 | `rename` | rename a file or directory | `FROM/M/A`,`TO/A` |
-| `list` | list a directory's entries in detail | `DIR/A`,`ALL/S` |
-| `type` | display a text file | `FILE/A`,`NUMBER/S` |
+| `list` | list a directory's entries in detail | `DIR/M`,`ALL/S` |
+| `type` | display a text file | `FROM/M/A` |
 | `more` | page a text file | `FILE/A` |
 | `join` | concatenate files | `FROM/M/A`,`AS/K/A` (the Amiga's `TO` alias too) |
 | `sort` | sort a file's lines | `FROM/A`,`TO/A` |
-| `search` | find a string in files | `FILE/A`,`SEARCH/A`,`ALL/S` |
+| `search` | find a string in files | `FROM/M`,`SEARCH/A`,`ALL/S` |
 | `filenote` | attach a comment to a file | `FILE/A`,`COMMENT` |
 | `protect` | change a file's protection bits | `FILE/A`,`FLAGS/A` |
 | `info` | describe the mounted volumes | `DEVICE` |
@@ -177,14 +177,19 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   `sendfile` in the runtime (libc++'s `copy_file` is `sendfile` on Linux), and
   `delete`'s own tree walk (the runtime's `*at` calls do not anchor on a
   directory fd yet, which `std::filesystem::remove_all` needs -- implemented
-  and reverted once because it broke the fs smoke).
+  and reverted once because it broke the fs smoke). Their templates take the
+  Amiga's argument lists -- `From/M`, `File/M/A`, `Name/M`, `From/A/M`,
+  `Dir/M`, `From/M/A` -- so one line names several files. That needed
+  `aegir::args` to reserve a later positional its argument, as ReadArgs does;
+  otherwise `Copy From/M To/A`'s `To` was unreachable, and the parser is a
+  pure value with host conformance cases now (`make check-args`).
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
   `filenote`/`protect`, `info`/`assign`/`which`/`version`. Landed from the
   first slice: `search`, `sort`, `join`. `join`'s destination is a keyword
-  (`AS`, the Amiga's `TO`) because `FROM` repeats -- in ReadArgs an `/M` item
-  takes every remaining bare token, so a bare destination after it is
-  unreachable. `more` is held until the console stream has a blocking read;
-  its read is a poll (`specs/terminal.md`), so a pager has nothing to wait on.
+  (`AS`, the Amiga's `TO`) because that is the Amiga's template,
+  `File/M/A AS=TO/K/A`, and `FROM` repeats. `more` is held until the console
+  stream has a blocking read; its read is a poll (`specs/terminal.md`), so a
+  pager has nothing to wait on.
 
 ## The leak the toolset exposed
 
@@ -224,6 +229,8 @@ With both, the acceptance runs the whole set in one session.
 Phase 1 and 4 together, landed: after the demo closes, the runner types a
 `makedir` that creates a directory on the session's Home, a `copy` of a file
 from `Sys:` into it, a `list` of the directory, a `type` of the copy, a
+`search` of `Sys:AEGIR.TXT` for a word it holds, a `sort` of that file into the
+session's Home, a `join` of it with itself `AS` a second file there, a
 `rename`, a `delete` of the tree, and a `type` of a name that delete removed --
 each a program read from `Sys:C`, started by the terminal, resolving the
 session's namespace on its own badge (the terminal's namespace copy). The last
@@ -235,11 +242,11 @@ Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
 it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's
 size as its tree's, not a constant, and the image boots.
 
-Phase 5's first slice, landed: the same session, between the `type` of the copy
-and the `rename`, runs a `search` of `Sys:AEGIR.TXT` for a word it holds, a
-`sort` of that file into the session's Home, and a `join` of it with itself
-`AS` a second file there; each resolves the session's namespace on the
-command's own badge and exits 0. The `delete` then removes those files with the
-rest of the tree, so the last `type` still fails with 10. The runner cues on
-each command's name, and every cue is unique: it fires a step on *every* match
-of its trigger, so a repeated cue would type its line more than once.
+The commands' templates now take the Amiga's argument lists, but this sequence
+still names one file per line. Naming several produces more output, and about
+eight commands in the terminal's untyped pool runs out; the leak grows with the
+session's output, not with the number of commands, because the same ten
+commands naming one file each pass. The multi-name acceptance lands with the
+fix. The runner cues each step on the name of the command that just started,
+and every cue is unique: it fires a step on *every* match of its trigger, so a
+repeated cue would type its line more than once.
