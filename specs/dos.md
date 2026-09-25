@@ -90,8 +90,8 @@ disk utilities and the firmware tools of AmigaDOS are other arcs or none.
 | `list` | list a directory's entries in detail | `DIR/A`,`ALL/S` |
 | `type` | display a text file | `FILE/A`,`NUMBER/S` |
 | `more` | page a text file | `FILE/A` |
-| `join` | concatenate files | `FROM`,`TO` |
-| `sort` | sort a file's lines | `FROM/A`,`TO` |
+| `join` | concatenate files | `FROM/M/A`,`AS/K/A` (the Amiga's `TO` alias too) |
+| `sort` | sort a file's lines | `FROM/A`,`TO/A` |
 | `search` | find a string in files | `FILE/A`,`SEARCH/A`,`ALL/S` |
 | `filenote` | attach a comment to a file | `FILE/A`,`COMMENT` |
 | `protect` | change a file's protection bits | `FILE/A`,`FLAGS/A` |
@@ -179,7 +179,12 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   directory fd yet, which `std::filesystem::remove_all` needs -- implemented
   and reverted once because it broke the fs smoke).
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
-  `filenote`/`protect`, `info`/`assign`/`which`/`version`.
+  `filenote`/`protect`, `info`/`assign`/`which`/`version`. Landed from the
+  first slice: `search`, `sort`, `join`. `join`'s destination is a keyword
+  (`AS`, the Amiga's `TO`) because `FROM` repeats -- in ReadArgs an `/M` item
+  takes every remaining bare token, so a bare destination after it is
+  unreachable. `more` is held until the console stream has a blocking read;
+  its read is a poll (`specs/terminal.md`), so a pager has nothing to wait on.
 
 ## The leak the toolset exposed
 
@@ -229,3 +234,12 @@ line.
 Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
 it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's
 size as its tree's, not a constant, and the image boots.
+
+Phase 5's first slice, landed: the same session, between the `type` of the copy
+and the `rename`, runs a `search` of `Sys:AEGIR.TXT` for a word it holds, a
+`sort` of that file into the session's Home, and a `join` of it with itself
+`AS` a second file there; each resolves the session's namespace on the
+command's own badge and exits 0. The `delete` then removes those files with the
+rest of the tree, so the last `type` still fails with 10. The runner cues on
+each command's name, and every cue is unique: it fires a step on *every* match
+of its trigger, so a repeated cue would type its line more than once.

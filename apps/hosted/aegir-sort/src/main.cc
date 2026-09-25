@@ -4,10 +4,10 @@
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * The lines are read whole, sorted, and written to TO; with no TO the file is
- * sorted in place. The order is the Amiga's default, case-insensitive, and
- * byte-for-byte otherwise -- its CASE switch and its locale's collation are
- * not this arc's.
+ * The lines are read whole, sorted, and written to TO, which is required as
+ * the Amiga's is. The order is the Amiga's default, case-insensitive, and
+ * byte-for-byte otherwise -- its CASE switch (upper case first) and its
+ * locale's collation are not this arc's.
  */
 
 #include <aegir/args.h>
@@ -99,14 +99,15 @@ int main(int argc, char **argv)
     if (!aegir::command::start("sort")) {
         std::_Exit(127);
     }
-    aegir::args::Result const args = aegir::args::read("FROM/A,TO", argc - 1, argv + 1);
+    aegir::args::Result const args =
+        aegir::args::read("FROM/A,TO/A", argc - 1, argv + 1);
     if (!args.ok()) {
         std::fprintf(stderr, "sort: %.*s\nusage: %s\n",
                      static_cast<int>(args.missing_length), args.missing, args.usage());
         return 10;
     }
     char const *const from = args.value("FROM");
-    char const *const to = args.value("TO") != nullptr ? args.value("TO") : from;
+    char const *const to = args.value("TO");
     std::string text;
     if (!slurp(from, text)) {
         std::fprintf(stderr, "sort: cannot read %s\n", from);

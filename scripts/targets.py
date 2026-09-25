@@ -445,7 +445,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
             # and exercises the file and framework set: makedir, copy, list,
-            # type, search, sort, rename, delete. The last type names a
+            # type, search, sort, join, rename, delete. The last type names a
             # file the delete removed, so it fails with 10 -- the error path --
             # and type is exercised by it running.
             QmpStep(
@@ -491,6 +491,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"terminal: command started sort",
+                events=TERMINAL_CLICK,
+                press="join Sys:AEGIR.TXT Sys:AEGIR.TXT AS Home:DosTest/JOINED.TXT\n",
+            ),
+            QmpStep(
+                r"terminal: command started join",
                 events=TERMINAL_CLICK,
                 press="rename Home:DosTest/COPY.TXT Home:DosTest/MOVED.TXT\n",
             ),
