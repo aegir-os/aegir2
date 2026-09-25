@@ -97,7 +97,13 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
                                                     seL4_EndpointBits, account_, &error);
     fault_endpoint_ = app.allocator().alloc_object(seL4_EndpointObject,
                                                    seL4_EndpointBits, account_, &error);
-    if (stream_endpoint_ == 0 || fault_endpoint_ == 0) {
+    /* The command doorbell: the terminal rings it when a running command's
+     * stream has input, so a command's `read` parks on it (specs/terminal.md).
+     * Long-lived, like the endpoints: one notification for the one command
+     * that runs at a time. */
+    command_doorbell_ = app.allocator().alloc_object(seL4_NotificationObject,
+                                                     seL4_NotificationBits, account_, &error);
+    if (stream_endpoint_ == 0 || fault_endpoint_ == 0 || command_doorbell_ == 0) {
         return false;
     }
 

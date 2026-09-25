@@ -6,7 +6,10 @@
  *
  * FROM repeats, as the Amiga's From/A/M does. One source renames to TO, or
  * moves into it when TO is a directory; several sources need TO to be a
- * directory and each lands inside it.
+ * directory and each lands inside it. The volume protocol's rename is
+ * same-directory only (specs/vfs.md), so a move into another directory is
+ * refused there until it grows a cross-directory rename; a same-directory
+ * rename is what the acceptance exercises.
  */
 
 #include <aegir/args.h>

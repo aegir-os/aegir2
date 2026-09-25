@@ -37,6 +37,13 @@ namespace aegir::console {
 constexpr char const kStreamPortName[] = "con.stream";
 constexpr uint32_t kStreamPortNameLength = sizeof(kStreamPortName) - 1;
 
+/** The notification a spawner grants a command as its console doorbell. The
+ *  terminal rings it when the running command's stream has input, so the
+ *  command's `read` parks on it instead of polling (specs/terminal.md). A
+ *  command looks it up by name; a client with no such grant polls. */
+constexpr char const kDoorbellName[] = "con.doorbell";
+constexpr uint32_t kDoorbellNameLength = sizeof(kDoorbellName) - 1;
+
 /** Open a stream. In: the mode, then the prompt as a string (unused in raw
  *  mode). The call may carry one capability: the client's own doorbell, a
  *  notification the handler signals when there is something to read -- input
@@ -52,8 +59,10 @@ constexpr uint32_t kStreamMethodOpen = 1;
  *  count written -- less than asked is the refusal. */
 constexpr uint32_t kStreamMethodWrite = 2;
 
-/** Read bytes. Answer: the queued bytes as a string, or an empty answer.
- *  Tier 1 is a poll; blocking read is a later method (specs/terminal.md). */
+/** Read bytes. In: the most bytes the caller can take, or no word for the
+ *  envelope's bound. Answer: the queued bytes as a string, or an empty answer.
+ *  Tier 1 is a poll; a caller with a console doorbell blocks instead
+ *  (specs/terminal.md). */
 constexpr uint32_t kStreamMethodRead = 3;
 
 /** Read one line. Answer: the finished line as a string when the line editor
@@ -94,6 +103,10 @@ constexpr uint32_t kStreamMethodRun = 8;
  *  clears the finished state, so the shell prints one `return code` line and
  *  then draws the next prompt. */
 constexpr uint32_t kStreamMethodCommandStatus = 9;
+
+/** The text area's size. Answer: two words, the rows then the columns, so a
+ *  pager can size a page to the window rather than a constant. */
+constexpr uint32_t kStreamMethodSize = 10;
 
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws

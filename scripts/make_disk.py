@@ -77,6 +77,8 @@ PARTITION_LAYOUT = [
 # same disk by a different filesystem.
 AEGIR_BFS_TREE = [
     ("file", "AEGIR.TXT", b"aegir read this file off a disk it enumerated itself\n"),
+    # A file longer than any window, so `more` has to page it (specs/dos.md).
+    ("file", "LONG.TXT", b"".join(b"page line %d\n" % n for n in range(1, 61))),
     ("dir", "DOCS", [
         ("file", "NESTED.TXT",
          b"two components deep, and the walk found it\n"),

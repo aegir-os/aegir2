@@ -82,14 +82,18 @@ inline uint32_t stream_read_line(aegir::ipc::Consumer const &port, char *out,
     return length;
 }
 
-/** Read queued bytes into `out`. Answers the byte count, 0 when nothing is
- *  queued. Tier 1 is a poll (specs/terminal.md). */
+/** Read queued bytes into `out`, at most `capacity`. Answers the byte count, 0
+ *  when nothing is queued. The capacity travels as the call's input word, so
+ *  the handler drains no more than the caller can hold -- a one-byte key read
+ *  must not swallow the characters queued behind it. Tier 1 is a poll
+ *  (specs/terminal.md). */
 inline uint32_t stream_read(aegir::ipc::Consumer const &port, char *out,
                             uint32_t capacity) noexcept
 {
+    uint64_t out_words[1] = {capacity};
     uint64_t in[aegir::ipc::kMaxWords];
     aegir::ipc::WordsReply const answer =
-        port.call_words(kStreamMethodRead, nullptr, 0, in, aegir::ipc::kMaxWords);
+        port.call_words(kStreamMethodRead, out_words, 1, in, aegir::ipc::kMaxWords);
     if (answer.error != 0) {
         return 0;
     }
@@ -190,6 +194,22 @@ inline bool stream_command_status(aegir::ipc::Consumer const &port,
         return false;
     }
     *status = in[0];
+    return true;
+}
+
+/** The text area's size, so a pager can size a page to the window: rows then
+ *  columns. False when refused. */
+inline bool stream_size(aegir::ipc::Consumer const &port, uint32_t *rows,
+                        uint32_t *columns) noexcept
+{
+    uint64_t in[2];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodSize, nullptr, 0, in, 2);
+    if (answer.error != 0 || answer.count != 2) {
+        return false;
+    }
+    *rows = static_cast<uint32_t>(in[0]);
+    *columns = static_cast<uint32_t>(in[1]);
     return true;
 }
 

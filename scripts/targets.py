@@ -445,9 +445,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
             # and exercises the file and framework set: makedir, copy, list,
-            # type, search, sort, join, rename, delete. The last type names a
-            # file the delete removed, so it fails with 10 -- the error path --
-            # and type is exercised by it running.
+            # type, search, sort, join, more, rename, delete. The last type
+            # names a file the delete removed, so it fails with 10 -- the error
+            # path -- and type is exercised by it running.
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
@@ -495,17 +495,31 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"terminal: command started join",
                 events=TERMINAL_CLICK,
-                press="rename Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT Home:DosTest2\n",
+                # LONG.TXT is longer than a window, so more pages it and waits.
+                press="more Sys:LONG.TXT\n",
+            ),
+            QmpStep(
+                r"terminal: command started more",
+                events=TERMINAL_CLICK,
+                # q is the key more waits for; the rename line queued behind it
+                # runs once more exits -- the terminal hands it to the shell.
+                # The rename is same-directory: the volume protocol has no
+                # cross-directory rename yet (specs/vfs.md).
+                press="qrename Home:DosTest/AEGIR.TXT Home:DosTest/MOVED.TXT\n",
             ),
             QmpStep(
                 r"terminal: command started rename",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # more's first page reached the grid.
+                dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
                 press="delete Home:DosTest Home:DosTest2 ALL\n",
             ),
             QmpStep(
                 r"terminal: command started delete",
                 events=TERMINAL_CLICK,
-                press="type Home:DosTest/AEGIR.TXT\n",
+                press="type Home:DosTest/MOVED.TXT\n",
             ),
             QmpStep(
                 r"terminal: command exited 10",

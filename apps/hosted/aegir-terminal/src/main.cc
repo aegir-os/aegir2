@@ -256,6 +256,13 @@ int main(int argc, char *argv[])
             {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared + 2, spawn_kit.command_nmspace_port(),
              seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true},
+            /* The command's console doorbell: the notification the terminal
+             * rings when this command's stream has input, so the command's
+             * `read` parks on it (specs/terminal.md). A second entry in the
+             * stream's set, beside the shell's own. */
+            {aegir::console::kDoorbellName, aegir::console::kDoorbellNameLength,
+             aegir::bootstrap::kSlotFirstDeclared + 3, spawn_kit.command_doorbell(),
+             seL4_AllRights, 0, 0, false, true},
         };
         aegir::spawn::Request request{};
         request.name = name.c_str();
@@ -274,7 +281,7 @@ int main(int argc, char *argv[])
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.priority = seL4_MaxPrio - 2;
         request.ports = ports;
-        request.port_count = 3;
+        request.port_count = 4;
         request.fault_endpoint = spawn_kit.fault_endpoint();
         request.badge = 0x1000 + command_serial++;
         request.give_vspace = true;
@@ -399,11 +406,15 @@ int main(int argc, char *argv[])
         };
         /* The handler says the stream has something to read; the terminal rings
          * the client's doorbell. The handler is a pure value, so the signal
-         * lives here. */
-        server.on_wake = [&server](uint64_t caller) {
+         * lives here. A running command's `read` parks on the command doorbell
+         * instead of its own, so ring that too (specs/terminal.md). */
+        server.on_wake = [&](uint64_t caller) {
             seL4_CPtr const slot = server.doorbell(caller);
             if (slot != 0) {
                 seL4_Signal(slot);
+            }
+            if (kit && server.in_command(caller) && spawn_kit.command_doorbell() != 0) {
+                seL4_Signal(spawn_kit.command_doorbell());
             }
         };
     }

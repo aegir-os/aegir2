@@ -39,6 +39,7 @@
 #include "files.h"
 #include "time.h"
 
+#include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/console_stream.h>
 #include <aegir/console_stream_client.h>
@@ -439,6 +440,23 @@ aegir::ipc::Consumer &console_stream() noexcept
     return const_cast<aegir::ipc::Consumer &>(stream);
 }
 
+/* The notification a spawned command was given as its console doorbell, or 0
+ * when it has none -- a boot service, or a client that polls (specs/terminal.md).
+ * Found once, by name, like the stream: the terminal rings it when the running
+ * command's stream has input, and `read` parks on it. */
+seL4_CPtr console_doorbell() noexcept
+{
+    static seL4_CPtr const doorbell = []() -> seL4_CPtr {
+        uint64_t slot = 0;
+        if (!aegir::bootstrap::capability(aegir::console::kDoorbellName,
+                                          aegir::console::kDoorbellNameLength, &slot)) {
+            return 0;
+        }
+        return static_cast<seL4_CPtr>(slot);
+    }();
+    return doorbell;
+}
+
 /* SYS_write: a standard stream goes to the console stream when the process has
  * one, the debug serial otherwise; any other fd is a file the filesystem arc
  * opened. musl's stdio and the standard library's diagnostics both reach here
@@ -473,9 +491,11 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
     return files::write(fd, buffer, length);
 }
 
-/* SYS_read: fd 0 is the console stream's queued input -- tier 1 is a poll, so
- * nothing queued answers zero (specs/terminal.md). A process with no stream
- * has no stdin. Any other fd is a file. */
+/* SYS_read: fd 0 is the console stream. A command parks on the doorbell the
+ * terminal rings when its stream has input, so `read` blocks; a client with no
+ * doorbell gets tier 1's poll, where nothing queued answers zero
+ * (specs/terminal.md). A process with no stream has no stdin. Any other fd is a
+ * file. */
 long sys_read(int fd, void *buffer, size_t length) noexcept
 {
     if (fd == 0) {
@@ -486,8 +506,18 @@ long sys_read(int fd, void *buffer, size_t length) noexcept
         uint32_t const want = length < aegir::console::kStreamBytesMax
                                   ? static_cast<uint32_t>(length)
                                   : aegir::console::kStreamBytesMax;
-        return static_cast<long>(aegir::console::stream_read(
-            stream, static_cast<char *>(buffer), want));
+        for (;;) {
+            uint32_t const got =
+                aegir::console::stream_read(stream, static_cast<char *>(buffer), want);
+            if (got != 0) {
+                return static_cast<long>(got);
+            }
+            seL4_CPtr const doorbell = console_doorbell();
+            if (doorbell == 0) {
+                return 0;
+            }
+            seL4_Wait(doorbell, nullptr);
+        }
     }
     return files::read(fd, buffer, length);
 }

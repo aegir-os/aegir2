@@ -194,6 +194,34 @@ void ConsoleStreamServer::begin_command(uint64_t caller)
     }
 }
 
+void ConsoleStreamServer::flush_input(uint64_t caller)
+{
+    Stream* s = find(caller);
+    if (s == nullptr || s->editor == nullptr || s->input.empty()) {
+        return;
+    }
+    if (!s->editor->editing()) {
+        begin(caller);
+    }
+    std::string const bytes = std::move(s->input);
+    s->input.clear();
+    for (char32_t const cp : utf8_to_utf32(bytes)) {
+        aegir::trinket::KeyEvent event;
+        if (cp == U'\r' || cp == U'\n') {
+            event.code = aegir::trinket::KeyCode::ENTER;
+        } else if (cp == U'\b' || cp == 0x7F) {
+            event.code = aegir::trinket::KeyCode::BACKSPACE;
+        } else if (cp == U'\t') {
+            event.code = aegir::trinket::KeyCode::TAB;
+        } else {
+            event.code = cp == U' ' ? aegir::trinket::KeyCode::SPACE
+                                    : aegir::trinket::KeyCode::UNKNOWN;
+            event.text = cp;
+        }
+        (void)s->editor->on_key(event);
+    }
+}
+
 bool ConsoleStreamServer::in_command(uint64_t caller) const
 {
     Stream const* s = find(caller);
@@ -316,14 +344,17 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
     }
     case console::kStreamMethodRead: {
         /* Tier 1 is a poll: answer with whatever input is queued, or an empty
-         * answer. The reply's own room bounds the bytes, so a client with more
-         * than that to drain reads in pieces. */
+         * answer. The reply's own room bounds the bytes, and the caller's
+         * requested count narrows it further -- a one-byte key read must not
+         * drain the characters queued behind it (specs/terminal.md). */
         if (find(caller) == nullptr || capacity < 1) {
             return 0;
         }
         uint32_t const room = (capacity - 1) * 8;
-        uint32_t const bound =
-            room < console::kStreamBytesMax ? room : console::kStreamBytesMax;
+        uint32_t bound = room < console::kStreamBytesMax ? room : console::kStreamBytesMax;
+        if (count >= 1 && words[0] < bound) {
+            bound = static_cast<uint32_t>(words[0]);
+        }
         char buffer[console::kStreamBytesMax];
         uint32_t const got = read_input(caller, buffer, bound);
         if (got == 0) {
@@ -377,7 +408,19 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         reply[0] = s->status;
         s->finished = false;
         s->command = false;
+        /* A line typed while the command ran is the shell's next command; the
+         * command did not read it, so hand it to the editor now. */
+        flush_input(caller);
         return 1;
+    }
+    case console::kStreamMethodSize: {
+        /* The text area, so a pager sizes a page to the window. */
+        if (find(caller) == nullptr || capacity < 2) {
+            return 0;
+        }
+        reply[0] = static_cast<uint64_t>(buffer_.rows());
+        reply[1] = static_cast<uint64_t>(buffer_.columns());
+        return 2;
     }
     default:
         /* A method this version does not know is answered by saying nothing

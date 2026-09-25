@@ -71,6 +71,12 @@ public:
      * naming a slot or the terminal knowing a badge value. */
     seL4_CPtr command_nmspace_port() const { return command_nmspace_port_; }
 
+    /* The notification the terminal rings when a running command's stream has
+     * input, so a command's `read` can park instead of poll (specs/terminal.md).
+     * One for the command pool: only one command runs at a time. A copy is
+     * granted to each command as `con.doorbell`. */
+    seL4_CPtr command_doorbell() const { return command_doorbell_; }
+
     /* The shell process: spawned once from auth's `shell-pool`, not bracketed
      * and reclaimed like a command, because it lives as long as the terminal.
      * It runs on `badge` -- the stream key its con.stream copy carries -- and
@@ -88,6 +94,7 @@ private:
     std::unique_ptr<aegir::spawn::Spawner> spawner_;
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
+    seL4_CPtr command_doorbell_ = 0;
     seL4_CPtr log_port_ = 0;
     seL4_CPtr nmspace_port_ = 0;
     seL4_CPtr command_nmspace_port_ = 0;

@@ -110,16 +110,15 @@ port does not know is answered by saying nothing.
   from the same badge is refused.
 - `write`. In: the bytes. They land at the stream's cursor. Reply: the count
   written, less than asked the refusal.
-- `read`. Out: bytes, or an empty answer when nothing is queued. Tier 1 is a
-  *poll*: the handler answers with whatever input the stream holds and the
-  client asks again. The bytes are queued by the handler as keys arrive --
-  while a *command* runs on the stream, every key is a byte on its input queue
-  rather than a keystroke for the idle editor (`specs/shell.md`'s Phase 4,
-  design A: the command inherits the shell's stream and reads it raw). A
-  client that asks in a loop lets the terminal run between asks, because each
-  ask is a call the terminal answers; a *blocking* read, which parks the client
-  until input arrives, is the later method, and the console's own shape -- a
-  notification and a ring -- is what the stream grows into.
+- `read`. In: the most bytes the caller can take (or no word for the
+  envelope's bound), so a one-byte key read drains no more than the key. Out:
+  bytes, or an empty answer when nothing is queued. The bytes are queued by the
+  handler as keys arrive -- while a *command* runs on the stream, every key is
+  a byte on its input queue rather than a keystroke for the idle editor
+  (`specs/shell.md`'s Phase 4, design A: the command inherits the shell's
+  stream and reads it raw). A client with no doorbell polls and asks again; a
+  *command* has one (below) and the read parks on it, so a pager waits for a
+  key without a poll loop.
 - `read_line`. In: nothing. Out: one line, when the line editor has one; an
   empty reply otherwise. This is the cooked call; the shell loops on it. A
   cooked read begins the line editor if it is idle.
@@ -142,9 +141,9 @@ port does not know is answered by saying nothing.
 - `command_status`. Answer: one word, the status, when a command has finished;
   an empty answer otherwise. Reading it clears the finished state, so the
   shell prints one `return code` line and draws the next prompt.
-- `get`/`set` attributes (`title`, `size`, later color). `size` answers the
-  grid in columns and rows from the font metrics, which is what a program
-  laying out columns needs.
+- `size`. Out: two words, the rows then the columns of the text area, so a
+  pager sizes a page to the window rather than a constant. It is the one
+  attribute of the `get`/`set` family (`title`, later color) that has landed.
 
 The handler wakes a client the way the console wakes its clients: each stream
 carries the client's own doorbell -- a notification the client passes as a
@@ -155,6 +154,15 @@ the signal. A toolkit client already waits on the console's event notification
 and checks its stream in `on_poll` after each drain (specs/workbench.md's
 `Application` shape); a client without that -- the shell as its own process --
 waits on its doorbell and reads after each wake.
+
+A *command* has no doorbell of its own -- it inherits the shell's stream -- so
+the terminal grants each command a *copy* of one notification as
+`con.doorbell` and rings it while a command runs. The runtime's `read` of fd 0
+(`aegir-heap`) finds that grant and parks on it, so a command blocks instead of
+polling. A line typed while a command ran past what the command read is the
+shell's next command: when the shell reads the finished status, the handler
+hands the leftover bytes to the line editor, so nothing typed ahead is lost
+(`specs/dos.md`'s `more` is the caller this was built for).
 
 **Where the protocol lives.** The wire vocabulary -- the port name, the
 method numbers, the modes, the byte bound and the namespace's string shape --
@@ -246,7 +254,9 @@ does not renders as correctly-sized blanks rather than collapsing the line.
 - **A full ANSI/VT terminal.** Tier 1 understands `\r`, `\b`, `\t`, `\n` and
   erase-to-end-of-line. Colors, alternate screen, cursor addressing, scroll
   regions and mouse reporting are a later arc, added as programs need them.
-- **Blocking `read`, and `select`.** Tier 1 is poll-on-notification.
+- **`select`, and a blocking read for a client with no doorbell.** A command's
+  read parks on the doorbell the terminal grants it; a client that opens a
+  stream without one still polls, and there is no readiness set.
 - **Selection, copy and paste.** There is no clipboard service; selecting the
   grid and copying is deferred until one exists.
 - **Multiple consoles per session, and windows other than the one.** One

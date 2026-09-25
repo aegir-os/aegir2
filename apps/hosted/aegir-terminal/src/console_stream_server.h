@@ -107,6 +107,10 @@ private:
     bool open_stream(uint64_t caller, uint32_t mode, std::u32string prompt);
     uint32_t write_stream(uint64_t caller, std::string_view text);
     bool queue_key(uint64_t caller, aegir::trinket::KeyEvent const& event);
+    /* Hand the bytes a command bracket left queued to the line editor, so a
+     * line typed while a command ran is the shell's next command rather than
+     * lost (specs/terminal.md). */
+    void flush_input(uint64_t caller);
 
     aegir::trinket::TerminalBuffer& buffer_;
     std::unordered_map<uint64_t, Stream> streams_;
