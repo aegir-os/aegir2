@@ -444,9 +444,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # request, and each step is cued by the *name* of the command that
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
-            # and each command once: makedir, copy, list, type, rename, delete.
-            # The last type names a file the delete removed, so it fails with
-            # 10 -- the error path -- and type is exercised by it running.
+            # and exercises the file and framework set: makedir, copy, list,
+            # type, search, sort, rename, delete. The last type names a
+            # file the delete removed, so it fails with 10 -- the error path --
+            # and type is exercised by it running.
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
@@ -476,6 +477,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"terminal: command started type",
+                events=TERMINAL_CLICK,
+                press="search Sys:AEGIR.TXT disk\n",
+            ),
+            QmpStep(
+                r"terminal: command started search",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # search prints the line it matched.
+                dark=(("gpu0", 50, 145, 500, 60, 40),),
+                events=TERMINAL_CLICK,
+                press="sort Sys:AEGIR.TXT Home:DosTest/SORTED.TXT\n",
+            ),
+            QmpStep(
+                r"terminal: command started sort",
                 events=TERMINAL_CLICK,
                 press="rename Home:DosTest/COPY.TXT Home:DosTest/MOVED.TXT\n",
             ),
