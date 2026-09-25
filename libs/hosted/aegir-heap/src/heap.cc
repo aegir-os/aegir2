@@ -738,6 +738,10 @@ long vsyscall(long sysnum, ...) noexcept
     case 62: /* SYS_lseek */
         ret = files::lseek(va_arg(ap, int), va_arg(ap, long), va_arg(ap, int));
         break;
+    case 71: /* SYS_sendfile: how libc++'s copy_file moves a file on Linux */
+        ret = files::sendfile(va_arg(ap, int), va_arg(ap, int),
+                              va_arg(ap, long *), va_arg(ap, size_t));
+        break;
     case 63: /* SYS_read */
         ret = sys_read(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t));
         break;

@@ -53,6 +53,9 @@ long ftruncate(int fd, long length) noexcept;
 long chdir(char const *path) noexcept;
 long getcwd(char *buffer, size_t size) noexcept;
 long fcntl(int fd, int command, long argument) noexcept;
+/* libc++'s copy_file is sendfile(out, in, nullptr, size) on Linux; without it
+ * std::filesystem::copy fails with ENOSYS (specs/dos.md's copy command). */
+long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept;
 
 /* The attribute calls (specs/bfs.md's metadata protocol). A filesystem that
  * has no attributes answers EOPNOTSUPP; one that has them but not this name

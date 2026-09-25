@@ -161,17 +161,27 @@ add_subdirectory(apps/freestanding)
 
 # The command set on Sys:C (specs/dos.md). Each command binary is copied and
 # stripped into ${CMAKE_BINARY_DIR}/sys-c/<name>, where scripts/make_disk.py
-# packs it as Sys:C and sizes the AEGIR partition from it. The name is the
-# command the shell resolves: lowercase. The list grows with the DOS toolset.
+# packs it as Sys:C and sizes the AEGIR partition from it. Each entry is
+# `target:name`: the target builds it, the name is the command the shell
+# resolves -- lowercase, and the Amiga command's own name.
 set(aegir_commands
-  aegir-print
-  aegir-read
-  aegir-echo
+  aegir-print:aegir-print
+  aegir-read:aegir-read
+  aegir-echo:aegir-echo
+  aegir-copy:copy
+  aegir-delete:delete
+  aegir-makedir:makedir
+  aegir-rename:rename
+  aegir-list:list
+  aegir-type:type
 )
 set(aegir_commands_dir "${CMAKE_BINARY_DIR}/sys-c")
 set(aegir_command_images)
-foreach(command IN LISTS aegir_commands)
-  set(image "${aegir_commands_dir}/${command}")
+foreach(pair IN LISTS aegir_commands)
+  string(REPLACE ":" ";" parts "${pair}")
+  list(GET parts 0 command)
+  list(GET parts 1 flat_name)
+  set(image "${aegir_commands_dir}/${flat_name}")
   add_custom_command(
     OUTPUT "${image}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${aegir_commands_dir}"

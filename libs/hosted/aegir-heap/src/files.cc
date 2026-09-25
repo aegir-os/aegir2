@@ -447,6 +447,8 @@ long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept
         return fstat(dfd, buffer);
     }
     if (dfd != AT_FDCWD) {
+        /* A directory fd as the anchor is not answered yet: the calls libc++'s
+         * filesystem makes in the common paths pass AT_FDCWD. */
         return -ENOENT;
     }
     if (!stat_target(path, text_length(path), static_cast<Kstat *>(buffer))) {
@@ -1204,6 +1206,57 @@ long fcntl(int fd, int command, long argument) noexcept
         return 0;
     }
     return -EINVAL;
+}
+
+/* sendfile: copy from a readable fd to a writable one, which is how libc++'s
+ * copy_file moves a file on Linux. The input is read at its cursor (or the
+ * offset the caller named, which is not advanced), the output at its own
+ * handle's cursor. A short return is a filesystem refusal or the input's end,
+ * the way the syscall reports; there is no SIGPIPE to raise. */
+long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
+{
+    Entry *const in = entry_for(in_fd);
+    Entry *const out = entry_for(out_fd);
+    if (in == nullptr || !in->readable || in->directory) {
+        return -EBADF;
+    }
+    if (out == nullptr || !out->writable || out->handle == 0) {
+        return -EBADF;
+    }
+    uint64_t position = in->offset;
+    if (offset != nullptr) {
+        position = static_cast<uint64_t>(*offset);
+    }
+    size_t total = 0;
+    while (total < count) {
+        aegir::vfs::Volume::Bytes bytes{};
+        uint32_t const wanted = static_cast<uint32_t>(
+            count - total < aegir::volume::kReadMax ? count - total
+                                                    : aegir::volume::kReadMax);
+        if (!aegir::vfs::Volume(in->volume)
+                 .read(in->path, in->path_length, position, wanted, bytes) ||
+            bytes.count == 0) {
+            break;
+        }
+        uint64_t written = 0;
+        if (!aegir::vfs::Volume(out->volume)
+                 .write(out->handle, bytes.data, static_cast<uint32_t>(bytes.count),
+                        &written) ||
+            written == 0) {
+            break;
+        }
+        position += bytes.count;
+        total += bytes.count;
+        if (bytes.eof) {
+            break;
+        }
+    }
+    if (offset != nullptr) {
+        *offset = static_cast<long>(position);
+    } else {
+        in->offset = position;
+    }
+    return static_cast<long>(total);
 }
 
 }  // namespace aegir::heap::files

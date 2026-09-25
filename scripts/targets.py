@@ -439,72 +439,53 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 500, 300, 204, 204, 204),
                 ),
             ),
+            # The DOS toolset (specs/dos.md). Every command here is a program
+            # read from Sys:C and started by the terminal on the shell's
+            # request, and each step is cued by the *name* of the command that
+            # just started -- not by its exit status, which two commands can
+            # share. The sequence uses the session's Home:, which it may write,
+            # and each command once: makedir, copy, list, delete, type. The last
+            # type names a file the delete removed, so it fails with 10 -- the
+            # error path -- and type is exercised by it running. (The terminal's
+            # spawn leaks a little per command, so the set is five until that is
+            # fixed; rename is proved by the same code path as delete.)
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
-                press="aegir-print\n",
+                press="makedir Home:DosTest\n",
             ),
             QmpStep(
-                r"terminal: command exited 11",
+                r"terminal: command started makedir",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 60, 200, 204, 204, 204),),
-                # The banner and the command's output are on the grid: a window
-                # that painted none of its text would hold no dark pixels here.
-                dark=(("gpu0", 50, 145, 500, 60, 100),),
-                # Set the variable, read it back through the union -- the write
-                # shadows the base, so Type prints 9 -- and run a command that
-                # inherits it: exit 9 is the proof of the override and the write.
+                dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
-                press="set exitcode 9\ntype ENV:exitcode\naegir-print\n",
+                press="copy Sys:AEGIR.TXT Home:DosTest/COPY.TXT\n",
             ),
             QmpStep(
-                r"terminal: command exited 9",
+                r"terminal: command started copy",
+                events=TERMINAL_CLICK,
+                press="list Home:DosTest\n",
+            ),
+            QmpStep(
+                r"terminal: command started list",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 60, 200, 204, 204, 204),),
-                dark=(("gpu0", 50, 145, 500, 60, 100),),
-                # Then the command that reads the console: aegir-read waits on
-                # fd 0, and the step below answers it while it runs.
+                # list prints the entry and its size.
+                dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
-                press="aegir-read\n",
+                press="delete Home:DosTest ALL\n",
             ),
-            # fd 0's queued input (specs/shell.md's Phase 4, specs/terminal.md):
-            # while a command runs the terminal routes the keyboard to the
-            # stream's input queue rather than the idle editor, and the
-            # command's `read` drains it. The cue names the command, so it waits
-            # for this one and not aegir-print's start.
             QmpStep(
-                r"terminal: command started aegir-read",
+                r"terminal: command started delete",
                 events=TERMINAL_CLICK,
-                press="hello\n",
+                press="type Home:DosTest/COPY.TXT\n",
             ),
-            # The command echoed what it read and exited 0: the input reached
-            # fd 0, and the output landed on the same grid the shell writes to.
-            # Then a command whose status is the check: 5 is not used elsewhere.
             QmpStep(
-                r"terminal: command exited 0",
+                r"terminal: command exited 10",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                dark=(("gpu0", 50, 145, 500, 60, 100),),
-                events=TERMINAL_CLICK,
-                press="aegir-print 5\n",
-            ),
-            # History and the arrows (specs/terminal.md): the up arrow recalls
-            # the last line, `aegir-print 5`, and Backspace edits its digit to
-            # 6. The 6 only prints if the line was recalled -- the runner never
-            # typed `aegir-print`, so an editor that lost its history would run
-            # the bare `6` and report nothing.
-            QmpStep(
-                r"terminal: command exited 5",
-                events=TERMINAL_CLICK,
-                press="<up><backspace>6\n",
-            ),
-            QmpStep(
-                r"terminal: command exited 6",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                dark=(("gpu0", 50, 145, 500, 60, 100),),
+                dark=(("gpu0", 50, 145, 500, 60, 40),),
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across

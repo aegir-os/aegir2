@@ -319,47 +319,6 @@ private:
         return true;
     }
 
-    void command_dir(std::string const &arg)
-    {
-        std::string const target = arg.empty() ? current_directory() : resolve(arg);
-        std::error_code error;
-        std::filesystem::directory_iterator it(target, error);
-        if (error) {
-            print("Dir: cannot list " + target + "\n");
-            return;
-        }
-        std::filesystem::directory_iterator const end;
-        int count = 0;
-        for (; !error && it != end; it.increment(error)) {
-            std::error_code kind_error;
-            std::string const name = it->path().filename().string();
-            bool const directory = it->is_directory(kind_error);
-            print(name + (directory ? "/\n" : "\n"));
-            ++count;
-        }
-        print(std::to_string(count) + (count == 1 ? " entry\n" : " entries\n"));
-    }
-
-    void command_type(std::string const &arg)
-    {
-        if (arg.empty()) {
-            print("Type: what file?\n");
-            return;
-        }
-        std::string const target = resolve(arg);
-        std::FILE *const file = std::fopen(target.c_str(), "rb");
-        if (file == nullptr) {
-            print("Type: cannot open " + target + "\n");
-            return;
-        }
-        char chunk[512];
-        std::size_t const have = std::fread(chunk, 1, sizeof(chunk), file);
-        if (have > 0) {
-            (void)aegir::console::stream_write(port_, chunk, static_cast<uint32_t>(have));
-        }
-        std::fclose(file);
-    }
-
     void command_set(std::string const &arg)
     {
         std::size_t const space = arg.find_first_of(" \t");
@@ -416,10 +375,6 @@ private:
             } else if (!change_directory(arg)) {
                 print("CD: not a directory: " + arg + "\n");
             }
-        } else if (command == "dir" || command == "list") {
-            command_dir(arg);
-        } else if (command == "type") {
-            command_type(arg);
         } else if (command == "echo") {
             print(arg + "\n");
         } else if (command == "set" || command == "setvar") {

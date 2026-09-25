@@ -198,10 +198,15 @@ void for_each(Result const &r, Visit visit) noexcept
             }
         } else {
             Item item{};
-            if (item_by_name(r.tmpl, token, token_length, item)) {
+            /* A bare token names a switch or a keyword; a positional item's
+             * name is not a keyword -- `copy a b` fills FROM then TO, and
+             * `TO` on its own is a value, not the name of one. (To name a
+             * positional exactly, write NAME=VALUE.) */
+            if (item_by_name(r.tmpl, token, token_length, item) &&
+                (item.switch_ || item.keyword)) {
                 if (item.switch_) {
                     visit(Supplied{item, "", 0, true});
-                } else if (item.keyword) {
+                } else {
                     char const *value = "";
                     uint32_t value_length = 0;
                     if (i + 1 < r.argc) {
@@ -210,8 +215,6 @@ void for_each(Result const &r, Visit visit) noexcept
                         ++i;
                     }
                     visit(Supplied{item, value, value_length, true});
-                } else {
-                    visit(Supplied{item, token, token_length, true});
                 }
             } else {
                 Item place{};

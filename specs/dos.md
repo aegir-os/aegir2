@@ -169,10 +169,28 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   and the image are sized from what they weigh rather than from a constant.
   With the commands on `C:`, the terminal resolves an image from `C:<name>`
   instead of `Initrd:<name>` and the shell lowercases the command token.
-- **Phase 4 — the first commands.** `copy`, `delete`, `makedir`, `rename`,
-  `list`, `type`; and `Dir`/`List`/`Type` leave the shell's built-ins.
+- **Phase 4 — the first commands.** Landed: `copy`, `delete`, `makedir`,
+  `rename`, `list`, `type`, one hosted program each in `Sys:C`; `Dir`, `List`
+  and `Type` left the shell's built-ins. Three pieces the tools needed came
+  with them, each the abstraction a tool should have found and did not: the
+  hosteded `aegir-command` stand-up (the runtime kit once, not six times),
+  `sendfile` in the runtime (libc++'s `copy_file` is `sendfile` on Linux), and
+  `delete`'s own tree walk (the runtime's `*at` calls do not anchor on a
+  directory fd yet, which `std::filesystem::remove_all` needs -- implemented
+  and reverted once because it broke the fs smoke).
 - **Phase 5 — the rest of the set,** in slices: `more`/`search`/`sort`/`join`,
   `filenote`/`protect`, `info`/`assign`/`which`/`version`.
+
+## An interim the toolset exposed
+
+A terminal can start a handful of commands in one session and then cannot: the
+spawn leaks a little of the terminal's memory -- `allocated` climbs by a few
+hundred kilobytes a command -- and the seventh retype finds none, whatever the
+untyped's size (16 MiB failed where 4 did, so it is not capacity). The DOS
+acceptance runs five commands within it. The leak is the terminal's spawn
+path's, not the commands', and it is the first thing the next slice should
+fix; growing the grant is not.
+
 
 ## What this is not
 
@@ -188,14 +206,17 @@ in the `run` call; the terminal passes it to the spawner unchanged.
 
 ## Acceptance
 
-Phase 1 and 4 together: after the demo closes, the runner types a `makedir`
-that creates a directory on the writable volume, a `copy` into it, a `list` of
-it, and a `type` of the copy — each a program read from `Sys:C`, started by the
-terminal, resolving the session's namespace on its own badge. A `type` of a
-name that is not there returns 10 and the grid shows the `return code 10` line,
-which is the error path. The pixel checks prove the output reached the grid and
-not a serial line.
+Phase 1 and 4 together, landed: after the demo closes, the runner types a
+`makedir` that creates a directory on the session's Home, a `copy` of a file
+from `Sys:` into it, a `list` of the directory, a `delete` of the tree, and a
+`type` of a name that delete removed -- each a program read from `Sys:C`,
+started by the terminal, resolving the session's namespace on its own badge
+(the terminal's namespace copy). The last `type` returns 10, and the grid shows
+the `return code 10` line, which is the error path. The pixel checks prove the
+output reached the grid and not a serial line. The sequence is five commands
+because of the spawn interim above; `rename` is exercised by the same file
+operations as `delete`.
 
-Phase 3's: the boot image's `Sys:C` holds the commands and the disk it lives on
-is sized from them — `make_disk.py` reports the AEGIR partition's size as the
-sum of its tree, not a constant, and the image still boots.
+Phase 3's, landed: the boot image's `Sys:C` holds the command set and the disk
+it lives on is sized from them -- `make_disk.py` reports the AEGIR partition's
+size as its tree's, not a constant, and the image boots.
