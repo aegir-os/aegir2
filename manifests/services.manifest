@@ -205,6 +205,19 @@ needs     = log.main, vfs.namespace
 initrd    = true
 restart   = always
 
+# The null handler (specs/boot.md, specs/vfs.md): the NIL: device, where output
+# goes to disappear and input is always at its end. A volume like any other, so
+# redirection reaches it by path and the VFS needs no special case for it --
+# `EndCLI >NIL:` is its first use. It must start after the VFS, like the initrd,
+# so its name exists before anything can redirect to it.
+[nil]
+binary    = aegir-fs-nil
+authority = system
+account   = system
+owns      = vol.nil
+needs     = log.main, vfs.namespace
+restart   = always
+
 # The console owns the display and the input devices, exclusively
 # (specs/console.md): what every other process sees of the screen and the
 # keyboard is what it serves. It maps the gpu's pixel window itself --

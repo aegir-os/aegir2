@@ -451,6 +451,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # fails with 10 -- the error path, and a FAT volume in the
             # acceptance. version reads VER.TXT through the alias assign
             # bound.
+            # The NIL: handler (specs/boot.md): a read is EOF and a write
+            # disappears. Its registration is the proof the service started and
+            # the VFS holds the name redirection reaches it by.
+            QmpStep(r"nil: NIL: registered, serving"),
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,

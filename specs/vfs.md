@@ -246,6 +246,11 @@ the one call.
   half itself, registers (`needs = vfs.namespace`, a manifest service can
   declare that), and serves read/list from the archive with libcpio, which
   is already vendored.
+- **`NIL:` is a volume too** (manifest name `nil`, binary `aegir-fs-nil`,
+  `specs/boot.md`): a read is EOF at every path, a write is accepted and
+  dropped, an open always succeeds, and the mutating methods are refused. It
+  is a volume and not a VFS special case so redirection reaches it by path
+  like any other target; `EndCLI >NIL:` is its first use.
 - **The partition manager registers on behalf of the filesystems it spawns.**
   A dynamically-spawned filesystem is not in the manifest and cannot declare
   `needs`, so the callback is a call to the partition manager's own port —
