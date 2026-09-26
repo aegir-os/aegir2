@@ -38,12 +38,12 @@ enough to state in one file.
 - **Built-in commands are the shell's, external ones are programs.** The
   line editor, `CD`/`CurrentDir`, `Echo`, `Set`/`Get` and the environment
   family (the `ENV:` toolset, `specs/environment.md`), the alias commands,
-  `Prompt`, `Why`/`Fault`, `Eval` and `EndCLI`/`EndShell` are built in: they are
-  about the shell's own state or its line, and an external binary for each
-  would be ceremony. Everything else is a program — including `Dir`, `List`,
-  `Type`, `Date` and `Wait`, which begin as built-ins and leave with the DOS
-  toolset (`specs/dos.md`). `Quit` aborts a script, not the shell, and belongs
-  to the interpreter (`specs/dos.md`'s Later arcs).
+  `Prompt`, `Why`/`Fault`, and the interpreter's own words — `Eval`, `Execute`,
+  `Quit`, `FailAt`, `EndCLI`/`EndShell` — are built in: they are about the
+  shell's own state, its line, or a command file it is running, and an external
+  binary for each would be ceremony. Everything else is a program — including
+  `Dir`, `List`, `Type`, `Date` and `Wait`, which begin as built-ins and leave
+  with the DOS toolset (`specs/dos.md`).
 - **Commands come from `C:`, an alias of `Sys:C`.** A command name resolves
   through the namespace to its binary, which the terminal reads and hands to
   the spawner. `C:` is a **union alias** — `Sys:C` and `Home:C`, the `ENV:`
@@ -82,13 +82,16 @@ namespace, and the spawn.
 
     open a cooked console stream with the prompt
     loop:
-        line = read_line()
+        if a command file is running: line = its next executable line
+        else: line = read_line()
         if line is empty: continue
         words = split(line)
-        if words[0] is a built-in: run it
+        if words[0] is a built-in: run it (Execute pushes a frame, Quit and
+             FailAt pop one)
         else if words[0] names a directory: set the current directory
         else if words[0] resolves to a command: spawn it with the console,
-             wait for its exit, print its status if non-zero
+             wait for its exit, print its status if non-zero; a status at or
+             above the fail level aborts the running command file
         else: unknown command
 
 The prompt is the current directory plus `>` — the Amiga's prompt is the
@@ -96,6 +99,21 @@ current directory, and Aegir shows the volume-and-path form with the colon
 kept, so a login opens on `Home:>` and a directory under it is `Sys:Devs>`. It
 is drawn by the handler's line editor as the prompt it was
 opened with; after a directory change the shell updates it.
+
+### The command file
+
+`Execute NAME` reads a command file through the session's namespace and pushes
+it as a frame; the loop takes the file's next executable line before it reads
+the console, so a command the file starts completes and the file's next line
+then runs. A line whose first non-blank character is `;`, and a blank line, are
+nothing; a CRLF file reads as an LF one. A file already running is a cycle and
+is refused — the guard is detection, not a depth cap. `Eval` is the same with a
+one-line frame, so an `Eval` line that starts a program completes correctly.
+`Quit [n]` drops the innermost frame, carrying the return code `n`; `FailAt
+[n]` sets the level at or above which a command's status drops it, which the
+Amiga's default of 10 makes "a warning passes, an error aborts". The parser and
+the frame stack are a value (`aegir::script`), host-tested by
+`make check-script`.
 
 ### Resolution: `C:CommandName`
 
@@ -211,13 +229,20 @@ this arc's record of the order.
   clock, formatted UTC -- there is no timezone in the image -- and `Wait`
   sleeps on the timer, so the clock says what time it is and the timer measures
   the interval (specs/timer.md).
+- **Phase 8 — the interpreter core.** Landed. A command file is a frame: the
+  loop drains the active frames before the console, so a command a file starts
+  completes and the file resumes. `Execute`, `Eval`, `Quit` and `FailAt` are
+  the words; the parser, the cycle guard and the fail level are the
+  `aegir::script` value. The acceptance runs a system command file whose
+  built-in `Alias` is what makes the next line's `date` spawn, so the command
+  starting proves the file ran in order (`make check-script` asserts the rest).
 
 ## What this is not
 
-- **Scripts.** `Execute` and a command language (redirection, pipelines,
-  variables beyond `ENV:`, control flow) are a later arc. Tier 1 splits a
-  line into words and acts; a quoting rule for names with spaces is the
-  first thing that arrives with it.
+- **Scripts, in full.** `Execute` and its frame land (Phase 8), but redirection,
+  pipelines, `If`/`Skip` control flow, argument substitution and the process
+  words (`Run`, `NewCLI`) are later. Tier 1 splits a line into words and acts;
+  a quoting rule for names with spaces is the first thing that arrives with it.
 - **Globbing and tab completion.** Completion belongs to the handler's line
   editor, and is deferred with the rest of the editor's polish.
 - **A POSIX shell.** No `$`, no `&&`/`|`, no `exec`; Aegir is not POSIX
@@ -265,7 +290,9 @@ Phase 7's is `specs/dos.md`'s acceptance: the same run types a `makedir`, a
 resolving the session's namespace on the badge the terminal gave it -- while
 `set`/`type`/`echo` stay the shell's own words.
 
-`Date`/`Time`'s is the same run: the runner types `date` and `time` before the
-first command, and the shell reads the clock the session was granted and
-formats it (UTC). A session without a clock prints the no-clock line instead,
-so the built-in reports the absence rather than inventing a time.
+Phase 8's is the same run: the runner's first typed line ends with `execute
+Sys:S/Interpreter-Test`, a command file whose built-in `Alias x date` is what
+makes its next line's bare `x` spawn `date` -- so the `command started date`
+cue, which the next step waits on, is the proof the interpreter ran the file's
+words in order. `make check-script` asserts the frame order, the cycle guard,
+comment and blank stripping, and the fail level directly.

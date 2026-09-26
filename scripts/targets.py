@@ -458,11 +458,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # than spawned: SetEnv sets, GetEnv reads it back, UnSet removes
                 # it, and the second GetEnv says so; an alias (hi stands for
                 # echo) expands, Prompt changes the prompt, Eval runs a line,
-                # and Why explains a return code. date is the first program they
-                # queue behind.
+                # and Why explains a return code. The last line Execute's a
+                # command file (specs/shell.md): its built-in Alias makes x stand
+                # for date, and its next line spawns date -- so date starting is
+                # the proof the interpreter ran the file in order.
                 press="setenv PROBE value\ngetenv PROBE\nunset PROBE\n"
                       "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
-                      "eval echo eval-line\nwhy 10\ndate\n",
+                      "eval echo eval-line\nwhy 10\nexecute Sys:S/Interpreter-Test\n",
             ),
             QmpStep(
                 r"terminal: command started date",

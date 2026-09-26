@@ -23,6 +23,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/script/interpreter.h>
 #include <sel4/sel4.h>
 
 #include <cstdint>
@@ -109,6 +110,24 @@ std::vector<std::string> split_words(std::string const &line)
         words.push_back(current);
     }
     return words;
+}
+
+/* The first word of the rest read as a decimal, for Quit and FailAt. */
+bool parse_number(std::string const &text, uint64_t &out)
+{
+    std::vector<std::string> const words = split_words(text);
+    if (words.empty()) {
+        return false;
+    }
+    uint64_t value = 0;
+    for (char const c : words[0]) {
+        if (c < '0' || c > '9') {
+            return false;
+        }
+        value = value * 10 + static_cast<uint64_t>(c - '0');
+    }
+    out = value;
+    return true;
 }
 
 std::string join_tail(std::string const &line, std::string const &first)
@@ -203,7 +222,8 @@ public:
             aegir::debug_write("  aegir-shell: FAIL the stream would not open\n");
             std::exit(1);
         }
-        print("Aegir shell -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, EndCLI\n");
+        print("Aegir shell -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, "
+              "Execute, Quit, FailAt, EndCLI\n");
     }
 
     /* The persistent environment (specs/environment.md): the merged ENV: view
@@ -253,18 +273,37 @@ public:
                     if (status != 0) {
                         print("return code " + std::to_string(status) + "\n");
                     }
+                    /* FailAt (specs/shell.md): a return code at or above the
+                     * level aborts the running command file. */
+                    if (!frames_.empty() &&
+                        aegir::script::Frames::fails(status, frames_.fail_level())) {
+                        frames_.abort();
+                    }
                 }
             }
-            /* Begin the next prompt whenever no command runs: a read_line with
-             * no line ready begins the editor and returns empty, which is how
-             * the prompt is drawn after a command's exit. */
+            /* A running command file's next line comes before the console: a
+             * spawned command completes mid-script, and the line after it must
+             * run rather than the prompt. Begin the next prompt whenever no
+             * command runs: a read_line with no line ready begins the editor
+             * and returns empty, which is how the prompt is drawn after a
+             * command's exit. */
             if (!busy_) {
-                char line[1024];
-                uint32_t const have =
-                    aegir::console::stream_read_line(port_, line, sizeof(line));
-                if (have > 0) {
+                std::string const *line = frames_.next();
+                if (line != nullptr) {
                     answered = true;
-                    run_line(std::string(line, have));
+                    bool const spawned = run_line(*line);
+                    if (!spawned && !frames_.empty() &&
+                        aegir::script::Frames::fails(line_status_, frames_.fail_level())) {
+                        frames_.abort();
+                    }
+                } else {
+                    char buffer[1024];
+                    uint32_t const have =
+                        aegir::console::stream_read_line(port_, buffer, sizeof(buffer));
+                    if (have > 0) {
+                        answered = true;
+                        (void)run_line(std::string(buffer, have));
+                    }
                 }
             }
             if (!answered) {
@@ -547,24 +586,100 @@ private:
         print("Why: " + std::to_string(code) + " (" + explanation + ")\n");
     }
 
+    /* Eval runs a line: it is a one-line command file, pushed as a frame so a
+     * program it names completes mid-line the way a script's line does. */
     void command_eval(std::string const &arg)
     {
         if (arg.empty()) {
             print("Eval: what line?\n");
+            line_status_ = 5;
             return;
         }
-        run_line(arg);
+        (void)frames_.push(std::string{}, aegir::script::script_lines(arg));
     }
 
-    void run_line(std::string const &line)
+    /* Execute runs a command file (specs/shell.md). The file is read through
+     * the session's namespace, its executable lines become a frame, and the
+     * loop takes them from there; a file already running is a cycle and is
+     * refused rather than recursed. */
+    void command_execute(std::string const &arg)
     {
+        std::vector<std::string> const words = split_words(arg);
+        if (words.empty()) {
+            print("Execute: which command file?\n");
+            line_status_ = 10;
+            return;
+        }
+        std::string const path = resolve(words[0]);
+        std::FILE *const file = std::fopen(path.c_str(), "rb");
+        if (file == nullptr) {
+            print("Execute: " + words[0] + ": not found\n");
+            line_status_ = 10;
+            return;
+        }
+        std::string text;
+        char chunk[512];
+        std::size_t have = 0;
+        while ((have = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
+            text.append(chunk, have);
+        }
+        std::fclose(file);
+        if (!frames_.push(path, aegir::script::script_lines(text))) {
+            print("Execute: " + words[0] + ": already running\n");
+            line_status_ = 10;
+        }
+    }
+
+    /* Quit ends the current command file with the return code it is given
+     * (specs/shell.md's interpreter). From the prompt it says so rather than
+     * ending the session -- EndCLI is the session's end. */
+    void command_quit(std::string const &arg)
+    {
+        uint64_t code = 0;
+        if (!arg.empty() && !parse_number(arg, code)) {
+            print("Quit: a return code, please\n");
+            line_status_ = 5;
+            return;
+        }
+        if (!frames_.abort()) {
+            print("Quit: no command file is running\n");
+            line_status_ = 5;
+            return;
+        }
+        line_status_ = code;
+    }
+
+    /* FailAt sets the level at or above which a return code aborts a running
+     * command file; the Amiga's default is 10. No argument reports it. */
+    void command_failat(std::string const &arg)
+    {
+        if (arg.empty()) {
+            print("FailAt " + std::to_string(frames_.fail_level()) + "\n");
+            return;
+        }
+        uint64_t level = 0;
+        if (!parse_number(arg, level)) {
+            print("FailAt: a return code level, please\n");
+            line_status_ = 5;
+            return;
+        }
+        frames_.set_fail_level(level);
+    }
+
+    /* Run one line: true when it started a program (busy_ is set and the exit
+     * comes later), false when it finished here (a built-in, a directory
+     * change, an unknown name). line_status_ is the line's own return code,
+     * which the fail level checks for a built-in. */
+    bool run_line(std::string const &line)
+    {
+        line_status_ = 0;
         /* An alias stands for a line, and the Amiga expands the first word
          * again, so an alias may name another (specs/dos.md). A name seen
          * twice stops the walk, which is a cycle, not a depth limit. */
         std::string const expanded = expand_aliases(line);
         std::vector<std::string> const words = split_words(expanded);
         if (words.empty()) {
-            return;
+            return false;
         }
         std::string const command = to_lower(words[0]);
         std::string const arg = join_tail(expanded, words[0]);
@@ -587,13 +702,16 @@ private:
             {"why", &Shell::command_why},
             {"fault", &Shell::command_why},
             {"eval", &Shell::command_eval},
+            {"execute", &Shell::command_execute},
+            {"quit", &Shell::command_quit},
+            {"failat", &Shell::command_failat},
             {"endcli", &Shell::command_endcli},
             {"endshell", &Shell::command_endcli},
         };
         for (Builtin const &builtin : kBuiltins) {
             if (command == builtin.name) {
                 (this->*builtin.handler)(arg);
-                return;
+                return false;
             }
         }
 
@@ -601,7 +719,7 @@ private:
          * change into it (specs/shell.md); anything else is a program. */
         if (is_directory(resolve(words[0]))) {
             (void)change_directory(words[0]);
-            return;
+            return false;
         }
         /* A program, run by the terminal on this shell's behalf: it owns the
          * spawn authority and starts the command with this stream. The command
@@ -616,17 +734,21 @@ private:
                                        environment.data(),
                                        static_cast<uint32_t>(environment.size()))) {
             busy_ = true;
-            return;
+            return true;
         }
         print("Unknown command: " + words[0] + "\n");
+        line_status_ = 10;
+        return false;
     }
 
     aegir::ipc::Consumer port_;
     seL4_CPtr doorbell_ = 0;
     bool busy_ = false;
+    aegir::script::Frames frames_;
     std::vector<std::pair<std::string, std::string>> aliases_;
     std::string prompt_override_;
     uint64_t last_status_ = 0;
+    uint64_t line_status_ = 0;
 };
 
 }  // namespace

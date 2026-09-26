@@ -111,6 +111,11 @@ AEGIR_BFS_TREE = [
         # the Amiga's quiet close; it needs the NIL: handler (specs/boot.md).
         ("file", "Startup-Sequence",
          b"; Aegir system startup -- nothing to do yet.\nEndCLI >NIL:\n"),
+        # The interpreter's acceptance (specs/shell.md): a built-in changes the
+        # shell, and the next line only runs if the script did -- the shell
+        # expands the alias x to date, so date starting is the proof.
+        ("file", "Interpreter-Test",
+         b"; the interpreter runs a built-in, then uses it.\nAlias x date\nx\n"),
     ]),
 ]
 
