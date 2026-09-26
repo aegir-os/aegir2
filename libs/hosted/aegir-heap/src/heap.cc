@@ -748,8 +748,11 @@ long vsyscall(long sysnum, ...) noexcept
     case 16: /* SYS_fremovexattr */
         ret = files::fremovexattr(va_arg(ap, int), va_arg(ap, char const *));
         break;
-    case 113: /* SYS_clock_gettime: the clock service behind it (aegir/clock.h) */
+    case 113: /* SYS_clock_gettime: the clock and timer services behind it */
         ret = time::clock_gettime(va_arg(ap, int), va_arg(ap, void *));
+        break;
+    case 101: /* SYS_nanosleep: the timer service behind it (aegir/timer.h) */
+        ret = time::nanosleep(va_arg(ap, void const *), va_arg(ap, void *));
         break;
     case 49: /* SYS_chdir */
         ret = files::chdir(va_arg(ap, char const *));

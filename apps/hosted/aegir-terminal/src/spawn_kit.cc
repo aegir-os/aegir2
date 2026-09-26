@@ -14,6 +14,7 @@
 #include <aegir/log.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
+#include <aegir/timer.h>
 #include <aegir/trinket/application.h>
 
 namespace aegir::terminal {
@@ -97,6 +98,11 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     if (aegir::bootstrap::capability("spawn:clock.main", 16, &command_clock_slot)) {
         command_clock_port_ = static_cast<seL4_CPtr>(command_clock_slot);
     }
+    /* The timer, the interval side (specs/timer.md): optional the same way. */
+    uint64_t command_timer_slot = 0;
+    if (aegir::bootstrap::capability("spawn:timer.main", 16, &command_timer_slot)) {
+        command_timer_port_ = static_cast<seL4_CPtr>(command_timer_slot);
+    }
 
     /* The terminal's own con.stream endpoint and a fault endpoint for its
      * children, retyped from the toolkit's memory (they live as long as the
@@ -148,7 +154,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::kCNodeBits);
-    aegir::spawn::PortGrant ports[5] = {
+    aegir::spawn::PortGrant ports[6] = {
         {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
@@ -169,6 +175,12 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
         ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
                              aegir::bootstrap::kSlotFirstDeclared + port_count,
                              command_clock_port_, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+        ++port_count;
+    }
+    if (command_timer_port_ != 0) {
+        ports[port_count] = {aegir::timer::kPortName, aegir::timer::kPortNameLength,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             command_timer_port_, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
         ++port_count;
     }
     static char const kName[] = "session.shell";

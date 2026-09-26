@@ -15,11 +15,17 @@
 
 namespace aegir::heap::time {
 
-/** Answer CLOCK_REALTIME and CLOCK_MONOTONIC from the clock service
- *  (aegir/clock.h): `tp` is the caller's struct timespec, two machine longs.
- *  Returns 0, or a negative errno -- EINVAL for a clock this runtime does not
- *  serve, ENOSYS before the clock port is bound. */
+/** Answer CLOCK_REALTIME from the clock service (aegir/clock.h) and
+ *  CLOCK_MONOTONIC from the timer (aegir/timer.h): `tp` is the caller's struct
+ *  timespec, two machine longs. Returns 0, or a negative errno -- EINVAL for a
+ *  clock this runtime does not serve, ENOSYS before the port is bound. */
 long clock_gettime(int clock_id, void *tp) noexcept;
+
+/** Sleep for the timespec `request` (seconds then nanoseconds, two machine
+ *  longs), through the timer's sleep (aegir/timer.h). `remaining` is written
+ *  zero -- the wait is never interrupted here. Returns 0, or a negative errno:
+ *  EINVAL for a negative timespec, ENOSYS before the timer port is bound. */
+long nanosleep(void const *request, void *remaining) noexcept;
 
 }  // namespace aegir::heap::time
 

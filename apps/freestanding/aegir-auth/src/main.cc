@@ -55,8 +55,10 @@ aegir::mem::Account g_account{"auth", 0, 0, 0};
 seL4_CPtr g_spawn_log = 0;
 seL4_CPtr g_spawn_nmspace = 0;
 /* The clock, for the session's terminal and its commands: the DOS tools ask
- * the time through it (specs/dos.md), and the shell's Date/Time read it. */
+ * the time through it (specs/dos.md), and the shell's Date/Time read it. The
+ * timer is the interval side (specs/timer.md): the shell's Wait sleeps on it. */
 seL4_CPtr g_spawn_clock = 0;
+seL4_CPtr g_spawn_timer = 0;
 
 /* The greeter's kit (specs/console.md's login arc): the delegatable copies
  * its spawn takes, and the console caller half that is auth's own -- a login
@@ -739,6 +741,11 @@ void start_session(uint32_t user, bool bureau) noexcept
              * (specs/dos.md). */
             {"spawn:clock.main", 16, aegir::bootstrap::kSlotFirstDeclared + 9,
              g_spawn_clock, seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+            /* The timer, the interval side (specs/timer.md): the shell's Wait
+             * sleeps through it, and a command may too. Unbadged like the
+             * clock, so the terminal mints a session copy for each. */
+            {"spawn:timer.main", 16, aegir::bootstrap::kSlotFirstDeclared + 10,
+             g_spawn_timer, seL4_CapRights_new(1, 0, 0, 1), 0, 0},
         };
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
@@ -756,11 +763,20 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_request.ports = terminal_ports;
         /* The spawn kit's four entries are dead when the carve failed: the
          * count keeps them out, the terminal runs without a spawner, and it
-         * says so rather than failing to start. The clock rides last, and only
-         * when auth was given one. */
-        terminal_request.port_count = terminal_command_pool != 0
-                                          ? (g_spawn_clock != 0 ? 10 : 9)
-                                          : 4;
+         * says so rather than failing to start. The clock and timer ride last,
+         * each only when auth was given one (and the timer only when the clock
+         * is, so the count never skips a slot). */
+        uint32_t terminal_port_count = 4;
+        if (terminal_command_pool != 0) {
+            terminal_port_count = 9;
+            if (g_spawn_clock != 0) {
+                terminal_port_count = 10;
+                if (g_spawn_timer != 0) {
+                    terminal_port_count = 11;
+                }
+            }
+        }
+        terminal_request.port_count = terminal_port_count;
         terminal_request.fault_endpoint = terminal_fault;
         terminal_request.badge = terminal_badge;
         terminal_request.give_vspace = true;
@@ -1165,6 +1181,12 @@ int main(int argc, char *argv[])
     uint64_t spawn_clock_slot = 0;
     if (aegir::bootstrap::capability("spawn:clock.main", 16, &spawn_clock_slot)) {
         g_spawn_clock = static_cast<seL4_CPtr>(spawn_clock_slot);
+    }
+    /* The timer, optional the same way (specs/timer.md). Director grants this
+     * because the session.terminal entry needs timer.main. */
+    uint64_t spawn_timer_slot = 0;
+    if (aegir::bootstrap::capability("spawn:timer.main", 16, &spawn_timer_slot)) {
+        g_spawn_timer = static_cast<seL4_CPtr>(spawn_timer_slot);
     }
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);

@@ -374,5 +374,5 @@ restart   = never
 binary    = aegir-terminal
 authority = user
 account   = user
-needs     = log.main, vfs.namespace, console.gui, clock.main
+needs     = log.main, vfs.namespace, console.gui, clock.main, timer.main
 restart   = never

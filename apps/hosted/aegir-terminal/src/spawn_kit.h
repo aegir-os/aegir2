@@ -82,6 +82,11 @@ public:
      * Date/Time (specs/dos.md). Zero when auth was given no clock. */
     seL4_CPtr command_clock_port() const { return command_clock_port_; }
 
+    /* The unbadged timer the shell and each command are handed as timer.main,
+     * so the runtime's nanosleep and CLOCK_MONOTONIC answer (specs/timer.md).
+     * Zero when auth was given no timer. */
+    seL4_CPtr command_timer_port() const { return command_timer_port_; }
+
     /* The shell process: spawned once from auth's `shell-pool`, not bracketed
      * and reclaimed like a command, because it lives as long as the terminal.
      * It runs on `badge` -- the stream key its con.stream copy carries -- and
@@ -104,6 +109,7 @@ private:
     seL4_CPtr nmspace_port_ = 0;
     seL4_CPtr command_nmspace_port_ = 0;
     seL4_CPtr command_clock_port_ = 0;
+    seL4_CPtr command_timer_port_ = 0;
     seL4_CPtr asid_pool_ = 0;
     seL4_CPtr command_pool_ = 0;
     uint32_t command_pool_bits_ = 0;

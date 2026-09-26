@@ -25,6 +25,7 @@
 #include <aegir/log.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/process.h>
+#include <aegir/timer.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/line_editor.h>
 #include <aegir/trinket/terminal_view.h>
@@ -241,7 +242,7 @@ int main(int argc, char *argv[])
             argument_pointers.push_back(arg.c_str());
         }
         static std::string const kAccountText = "command";
-        aegir::spawn::PortGrant ports[5] = {
+        aegir::spawn::PortGrant ports[6] = {
             {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, spawn_kit.stream_endpoint(),
              seL4_CapRights_new(1, 1, 0, 1), kShellStream, 0},
@@ -272,6 +273,15 @@ int main(int argc, char *argv[])
             ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
                                  aegir::bootstrap::kSlotFirstDeclared + port_count,
                                  spawn_kit.command_clock_port(),
+                                 seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+            ++port_count;
+        }
+        if (spawn_kit.command_timer_port() != 0) {
+            /* The timer, the interval side: the runtime's nanosleep and
+             * CLOCK_MONOTONIC answer through it (specs/timer.md). */
+            ports[port_count] = {aegir::timer::kPortName, aegir::timer::kPortNameLength,
+                                 aegir::bootstrap::kSlotFirstDeclared + port_count,
+                                 spawn_kit.command_timer_port(),
                                  seL4_CapRights_new(1, 0, 0, 1), 0, 0};
             ++port_count;
         }

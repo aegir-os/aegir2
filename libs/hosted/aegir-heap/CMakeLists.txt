@@ -26,4 +26,4 @@ project(aegir-heap CXX)
 add_library(aegir-heap STATIC src/heap.cc src/files.cc src/time.cc)
 
 target_include_directories(aegir-heap PUBLIC include)
-target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client aegir-clock aegir-console-protocol musl_full)
+target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client aegir-clock aegir-timer-protocol aegir-console-protocol musl_full)
