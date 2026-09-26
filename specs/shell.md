@@ -70,6 +70,15 @@ enough to state in one file.
   built-in's output is the shell's own, so the shell opens the target and
   prints into it — which is what makes `EndCLI >NIL:` quiet rather than a
   visible `bye`.
+- **A line is substituted, and quoted, before it is acted on.** `$name`,
+  `${name}` and `{name}` stand for a `.KEY` parameter or an environment
+  variable, and `$0..$n` for the arguments a command file was run with; `"`
+  groups a word, so a value with a space survives as one argument. The
+  substitution is the shell's and happens before it looks for an alias, a
+  directory or a command, so a variable can name the command. A value is
+  inserted literally, never rescanned, which keeps a value that holds `$` or
+  `"` from being read again. An unmatched quote or brace is a syntax error, not
+  a silent mangling.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
   transfer, the protocol's stated property). So `printf` reaches the grid,
@@ -123,6 +132,14 @@ one-line frame, so an `Eval` line that starts a program completes correctly.
 Amiga's default of 10 makes "a warning passes, an error aborts". The parser and
 the frame stack are a value (`aegir::script`), host-tested by
 `make check-script`.
+
+A command file may begin with `.KEY`: a comma-separated declaration of names,
+`name` or `name/A` (required), whose values are the arguments the file was run
+with, in order. `Execute NAME ARG...` supplies them; `{name}` reads a declared
+name, and `$0..$n` the raw arguments with or without a declaration. A `.KEY`
+name shadows an environment variable of the same name. A declaration that does
+not match the arguments — a required name with nothing left — refuses the file
+before it runs; a line's unmatched quote or brace refuses that line.
 
 ### Resolution: `C:CommandName`
 
@@ -266,18 +283,29 @@ this arc's record of the order.
   a notification auth holds when the command file is done, and auth waits on it.
   A shell started with a command file runs that file; a shell started with none
   runs Shell-Startup, which is the interactive path above.
+- **Phase 12 — substitution and script arguments.** Landed. A line's `$name`,
+  `${name}` and `{name}` are a `.KEY` parameter or an environment variable, and
+  `$0..$n` the arguments a command file was run with; `"` groups a word. The
+  shell sends a command's words NUL-separated, so an argument a quote grouped
+  reaches the command as one (`specs/terminal.md`). A `.KEY` first line declares
+  the names the arguments bind to, and `Execute NAME ARG...` supplies them. The
+  substitution and the `.KEY` binding are `aegir::script`'s, host-tested by
+  `make check-script`.
 
 ## What this is not
 
-- **Scripts, in full.** `Execute` and its frame (Phase 8) and redirection
-  (Phase 9) land, but pipelines (`|` and `PIPE:`), `If`/`Skip` control flow,
-  argument substitution and the process words (`Run`, `NewCLI`) are later.
-  Tier 1 splits a line into words and acts;
-  a quoting rule for names with spaces is the first thing that arrives with it.
+- **Scripts, in full.** `Execute` and its frame (Phase 8), redirection
+  (Phase 9) and substitution and script arguments (Phase 12) land, but
+  pipelines (`|` and `PIPE:`), `If`/`Skip` control flow and the process words
+  (`Run`, `NewCLI`) are later. Substitution turns a line into words and acts;
+  a `*` escape for a literal quote or variable, and a full quoting rule, are
+  later.
 - **Globbing and tab completion.** Completion belongs to the handler's line
   editor, and is deferred with the rest of the editor's polish.
-- **A POSIX shell.** No `$`, no `&&`/`|`, no `exec`; Aegir is not POSIX
-  (`specs/userland.md`), and the Amiga's single command line is the model.
+- **A POSIX shell.** No POSIX expressions or operators: `$(...)`, `$?`,
+  `&&`, `|`, `exec`. Variables are the Amiga's `$name` and `{name}`, not
+  POSIX's; Aegir is not POSIX (`specs/userland.md`), and the Amiga's single
+  command line is the model.
 - **Elevation.** A `Run`-as-root path through `auth` and director is
   `specs/authority.md`'s open list, not this spec.
 - **The command set itself.** Which programs ship in `C:` is the DOS
@@ -334,3 +362,12 @@ back, so both the shell's own and a command's fd 1 are proven to reach a path;
 a `search` goes to `NIL:` and disappears; and the `list` the run types is
 spelled `l`, the alias the system's `Shell-Startup` set -- so `list` starting
 proves the shell ran its startup file before it read the console.
+
+Phase 12's is the same run: the shell Sets `prog` to `aegir-print` and runs
+`Sys:S/Subst-Test`, whose command word is `$prog`, so `aegir-print` starting
+proves the environment expanded before the command was looked up; and it runs
+`Sys:S/Params-Test named-arg`, a `.KEY` file whose line is `aegir-echo {text}
+$1`, so `aegir-echo` starting proves the declared name and the positional both
+bound to Execute's argument. The words travel NUL-separated, so the argument
+reaches the command whole. `make check-script` asserts the substitutions, the
+quote grouping and the `.KEY` binding directly.

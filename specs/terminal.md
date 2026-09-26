@@ -131,11 +131,15 @@ port does not know is answered by saying nothing.
   it with `command_status`.
 - `set_prompt`. In: the prompt as a string. A shell that changed directory
   redraws its prompt through this rather than reopening the stream.
-- `run`. In: the command line, the current directory, the shell's
-  environment, and the command's redirected standard input and output, each a
-  string (the environment is the NUL-separated `NAME=VALUE` the spawner wants;
-  a redirection is a VFS path, empty for the console stream, `specs/shell.md`).
-  Answer: one word, `1` started and `0`
+- `run`. In: the command words **NUL-separated** -- the first the command, the
+  rest its arguments, already substituted and quote-grouped by the shell
+  (`specs/shell.md`) -- the current directory, the shell's environment, and the
+  command's redirected standard input and output, each a string (the
+  environment is the NUL-separated `NAME=VALUE` the spawner wants; a
+  redirection is a VFS path, empty for the console stream, `specs/shell.md`).
+  The words are NUL-separated, not spaces: the shell owns the lexing, so an
+  argument a quote grouped reaches the command as one argument and the terminal
+  does not re-split it. Answer: one word, `1` started and `0`
   refused. The terminal holds the spawn authority, so the shell asks it to
   start the command -- with the shell's stream, so the output lands on the
   same grid -- and the environment rides in the call because the shell's is

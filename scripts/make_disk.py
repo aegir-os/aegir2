@@ -116,6 +116,16 @@ AEGIR_BFS_TREE = [
         # expands the alias x to date, so date starting is the proof.
         ("file", "Interpreter-Test",
          b"; the interpreter runs a built-in, then uses it.\nAlias x date\nx\n"),
+        # Substitution (specs/shell.md): the command word and its argument are
+        # variables the shell expands before it looks the command up, so the
+        # command starting names the variable's value.
+        ("file", "Subst-Test",
+         b"; $prog and $value are the shell's environment.\n$prog $value\n"),
+        # A .KEY script: {text} is the declared parameter and $1 the same
+        # supplied argument, so the command starting proves both bound.
+        ("file", "Params-Test",
+         b".KEY text/A\n; {text} is the .KEY parameter, $1 the argument.\n"
+         b"aegir-echo {text} $1\n"),
     ]),
 ]
 

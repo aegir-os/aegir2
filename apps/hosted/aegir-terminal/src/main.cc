@@ -68,22 +68,22 @@ void write_unsigned(uint64_t value)
     aegir::debug_write_unsigned(value);
 }
 
-std::vector<std::string> split_words(std::string const &text)
+/* The shell's command words. The shell has already substituted variables and
+ * grouped quotes, so it sends the words NUL-separated and the terminal does
+ * not re-lex them: the first word is the command, the rest its arguments
+ * (specs/shell.md). */
+std::vector<std::string> split_command_words(std::string const &text)
 {
     std::vector<std::string> words;
-    std::string current;
-    for (char const c : text) {
-        if (c == ' ' || c == '\t') {
-            if (!current.empty()) {
-                words.push_back(current);
-                current.clear();
-            }
-        } else {
-            current.push_back(c);
-        }
+    if (text.empty()) {
+        return words;
     }
-    if (!current.empty()) {
-        words.push_back(current);
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == '\0') {
+            words.push_back(text.substr(start, i - start));
+            start = i + 1;
+        }
     }
     return words;
 }
@@ -395,7 +395,7 @@ int main(int argc, char *argv[])
                     return 0;
                 }
                 std::vector<std::string> const words_of_line =
-                    split_words(std::string(line, line_length));
+                    split_command_words(std::string(line, line_length));
                 if (words_of_line.empty()) {
                     reply[0] = 0;
                     return 1;

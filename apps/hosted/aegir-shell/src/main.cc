@@ -92,35 +92,41 @@ std::string to_lower(std::string text)
     return text;
 }
 
-std::vector<std::string> split_words(std::string const &line)
+/* The words after `from`, joined with a space: a built-in that takes its
+ * argument as one string (Echo, Prompt, Set's value) wants this, now that the
+ * line arrives already split and quote-grouped (specs/shell.md). */
+std::string join_words(std::vector<std::string> const &words, std::size_t from = 0)
 {
-    std::vector<std::string> words;
-    std::string current;
-    for (char const c : line) {
-        if (c == ' ' || c == '\t') {
-            if (!current.empty()) {
-                words.push_back(current);
-                current.clear();
-            }
-        } else {
-            current.push_back(c);
+    std::string out;
+    for (std::size_t i = from; i < words.size(); ++i) {
+        if (i > from) {
+            out.push_back(' ');
         }
+        out += words[i];
     }
-    if (!current.empty()) {
-        words.push_back(current);
-    }
-    return words;
+    return out;
 }
 
-/* The first word of the rest read as a decimal, for Quit and FailAt. */
+/* The environment a line's `$name` reads: the process's own settings, which
+ * the shell loaded from ENV: at startup (specs/environment.md). */
+bool environment_lookup(std::string const &name, std::string &value)
+{
+    char const *const found = aegir::environment::getenv(name.c_str());
+    if (found == nullptr) {
+        return false;
+    }
+    value = found;
+    return true;
+}
+
+/* The first word of `text` read as a decimal, for Quit and FailAt. */
 bool parse_number(std::string const &text, uint64_t &out)
 {
-    std::vector<std::string> const words = split_words(text);
-    if (words.empty()) {
+    if (text.empty()) {
         return false;
     }
     uint64_t value = 0;
-    for (char const c : words[0]) {
+    for (char const c : text) {
         if (c < '0' || c > '9') {
             return false;
         }
@@ -166,19 +172,6 @@ Redirect split_redirect(std::vector<std::string> const &raw)
         result.words.push_back(token);
     }
     return result;
-}
-
-std::string join_tail(std::string const &line, std::string const &first)
-{
-    std::size_t const at = line.find(first);
-    if (at == std::string::npos) {
-        return {};
-    }
-    std::size_t i = at + first.size();
-    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
-        ++i;
-    }
-    return line.substr(i);
 }
 
 std::string parent_of(std::string const &path)
@@ -233,12 +226,13 @@ std::string environment_string()
 class Shell;
 struct Builtin {
     char const *name;
-    void (Shell::*handler)(std::string const &);
+    void (Shell::*handler)(std::vector<std::string> const &);
 };
 
-/* Starting a command file: it began, it is not there, or it is already
- * running (a cycle, refused rather than recursed). */
-enum class ScriptStart { Started, NotFound, Cycle };
+/* Starting a command file: it began, it is not there, it is already running
+ * (a cycle, refused rather than recursed), or its .KEY declaration does not
+ * match the arguments it was run with. */
+enum class ScriptStart { Started, NotFound, Cycle, Invalid };
 
 class Shell {
 public:
@@ -292,8 +286,11 @@ public:
     }
 
     /* Start a command file: read it through the session's namespace and push
-     * its executable lines as a frame for the loop to drain. */
-    ScriptStart start_script(std::string const &path)
+     * its executable lines as a frame for the loop to drain. A first line of
+     * `.KEY` declares the names the supplied arguments bind to; `$1..$n` are
+     * the raw arguments whether or not there is one (specs/shell.md). */
+    ScriptStart start_script(std::string const &path,
+                             std::vector<std::string> const &supplied = {})
     {
         std::FILE *const file = std::fopen(path.c_str(), "rb");
         if (file == nullptr) {
@@ -306,7 +303,21 @@ public:
             text.append(chunk, have);
         }
         std::fclose(file);
-        if (!frames_.push(path, aegir::script::script_lines(text))) {
+        std::vector<std::string> lines = aegir::script::script_lines(text);
+        aegir::script::Arguments arguments;
+        arguments.name = path;
+        arguments.positional = supplied;
+        if (!lines.empty() && aegir::script::is_key_line(lines.front())) {
+            std::vector<aegir::script::KeySymbol> keys;
+            std::string error;
+            if (!aegir::script::parse_key_list(lines.front(), keys, error) ||
+                !aegir::script::bind_keys(keys, path, supplied, arguments, error)) {
+                print("Execute: " + path + ": " + error + "\n");
+                return ScriptStart::Invalid;
+            }
+            lines.erase(lines.begin());
+        }
+        if (!frames_.push(path, std::move(lines), std::move(arguments))) {
             return ScriptStart::Cycle;
         }
         return ScriptStart::Started;
@@ -484,8 +495,9 @@ private:
         return true;
     }
 
-    void command_cd(std::string const &arg)
+    void command_cd(std::vector<std::string> const &args)
     {
+        std::string const arg = join_words(args);
         if (arg.empty()) {
             print(current_directory() + "\n");
         } else if (!change_directory(arg)) {
@@ -493,18 +505,18 @@ private:
         }
     }
 
-    void command_echo(std::string const &arg)
+    void command_echo(std::vector<std::string> const &args)
     {
-        print(arg + "\n");
+        print(join_words(args) + "\n");
     }
 
     /* EndCLI and EndShell are the same command -- EndCLI the older spelling,
      * EndShell the newer; both end this shell process (AmigaOS 3.1 reference).
      * Quit is a different thing: it aborts a script with a return code, and
      * belongs to the interpreter arc. */
-    void command_endcli(std::string const &arg)
+    void command_endcli(std::vector<std::string> const &args)
     {
-        static_cast<void>(arg);
+        static_cast<void>(args);
         print("bye\n");
         (void)aegir::console::stream_close(port_, 0);
         /* A boot script that ends with EndCLI closes before the frame could
@@ -513,18 +525,15 @@ private:
         std::exit(0);
     }
 
-    void command_set(std::string const &arg)
+    void command_set(std::vector<std::string> const &args)
     {
-        std::size_t const space = arg.find_first_of(" \t");
-        std::string const name = space == std::string::npos ? arg : arg.substr(0, space);
-        std::string value;
-        if (space != std::string::npos) {
-            std::size_t const start = arg.find_first_not_of(" \t", space);
-            if (start != std::string::npos) {
-                value = arg.substr(start);
-            }
+        if (args.empty()) {
+            print("Set: a name and a value, please\n");
+            return;
         }
-        if (name.empty() || !aegir::environment::setenv(name.c_str(), value.c_str())) {
+        std::string const &name = args[0];
+        std::string const value = join_words(args, 1);
+        if (!aegir::environment::setenv(name.c_str(), value.c_str())) {
             print("Set: a name and a value, please\n");
             return;
         }
@@ -542,26 +551,24 @@ private:
         std::fclose(file);
     }
 
-    void command_get(std::string const &arg)
+    void command_get(std::vector<std::string> const &args)
     {
-        std::size_t const space = arg.find_first_of(" \t");
-        std::string const name = space == std::string::npos ? arg : arg.substr(0, space);
-        if (name.empty()) {
+        if (args.empty()) {
             print("Get: what variable?\n");
             return;
         }
+        std::string const &name = args[0];
         char const *const value = aegir::environment::getenv(name.c_str());
         print(name + "=" + (value != nullptr ? value : "(not set)") + "\n");
     }
 
-    void command_unset(std::string const &arg)
+    void command_unset(std::vector<std::string> const &args)
     {
-        std::size_t const space = arg.find_first_of(" \t");
-        std::string const name = space == std::string::npos ? arg : arg.substr(0, space);
-        if (name.empty()) {
+        if (args.empty()) {
             print("UnSet: what variable?\n");
             return;
         }
+        std::string const &name = args[0];
         aegir::environment::unsetenv(name.c_str());
         /* The persisted copy is the union's create target; removing it lets an
          * inherited base value show through again (specs/environment.md). */
@@ -570,13 +577,12 @@ private:
 
     /* An alias stands for a line, expanded until the first word is no longer
      * one: the Amiga's Alias is recursive, and a name seen twice is a cycle,
-     * not a depth the shell chose. */
-    std::string expand_aliases(std::string const &line) const
+     * not a depth the shell chose. The value is a word list, so a quoted
+     * argument it was defined with keeps its grouping (specs/shell.md). */
+    std::vector<std::string> expand_aliases(std::vector<std::string> words) const
     {
-        std::string expanded = line;
         std::vector<std::string> seen;
         for (;;) {
-            std::vector<std::string> const words = split_words(expanded);
             if (words.empty()) {
                 break;
             }
@@ -591,7 +597,7 @@ private:
             if (stop) {
                 break;
             }
-            std::string const *expansion = nullptr;
+            std::vector<std::string> const *expansion = nullptr;
             for (auto const &alias : aliases_) {
                 if (alias.first == name) {
                     expansion = &alias.second;
@@ -602,55 +608,53 @@ private:
                 break;
             }
             seen.push_back(name);
-            std::string const tail = join_tail(expanded, words[0]);
-            expanded = tail.empty() ? *expansion : *expansion + " " + tail;
+            std::vector<std::string> next = *expansion;
+            next.insert(next.end(), words.begin() + 1, words.end());
+            words = std::move(next);
         }
-        return expanded;
+        return words;
     }
 
-    void set_alias(std::string const &name, std::string const &value)
+    void set_alias(std::string const &name, std::vector<std::string> value)
     {
         for (auto &alias : aliases_) {
             if (alias.first == name) {
-                alias.second = value;
+                alias.second = std::move(value);
                 return;
             }
         }
-        aliases_.emplace_back(name, value);
+        aliases_.emplace_back(name, std::move(value));
     }
 
-    void command_alias(std::string const &arg)
+    void command_alias(std::vector<std::string> const &args)
     {
-        std::vector<std::string> const words = split_words(arg);
-        if (words.empty()) {
+        if (args.empty()) {
             for (auto const &alias : aliases_) {
-                print(alias.first + "=" + alias.second + "\n");
+                print(alias.first + "=" + join_words(alias.second) + "\n");
             }
             return;
         }
-        std::string const name = to_lower(words[0]);
-        std::string const tail = join_tail(arg, words[0]);
-        if (tail.empty()) {
+        std::string const name = to_lower(args[0]);
+        if (args.size() == 1) {
             for (auto const &alias : aliases_) {
                 if (alias.first == name) {
-                    print(name + "=" + alias.second + "\n");
+                    print(name + "=" + join_words(alias.second) + "\n");
                     return;
                 }
             }
             print("Alias: " + name + " is not defined\n");
             return;
         }
-        set_alias(name, tail);
+        set_alias(name, std::vector<std::string>(args.begin() + 1, args.end()));
     }
 
-    void command_unalias(std::string const &arg)
+    void command_unalias(std::vector<std::string> const &args)
     {
-        std::vector<std::string> const words = split_words(arg);
-        if (words.empty()) {
+        if (args.empty()) {
             print("UnAlias: what alias?\n");
             return;
         }
-        std::string const name = to_lower(words[0]);
+        std::string const name = to_lower(args[0]);
         for (auto it = aliases_.begin(); it != aliases_.end(); ++it) {
             if (it->first == name) {
                 aliases_.erase(it);
@@ -660,27 +664,19 @@ private:
         print("UnAlias: " + name + " is not defined\n");
     }
 
-    void command_prompt(std::string const &arg)
+    void command_prompt(std::vector<std::string> const &args)
     {
         /* No argument restores the directory-shaped default (specs/shell.md). */
-        prompt_override_ = arg;
+        prompt_override_ = join_words(args);
         refresh_prompt();
     }
 
-    void command_why(std::string const &arg)
+    void command_why(std::vector<std::string> const &args)
     {
         uint64_t code = last_status_;
-        if (!arg.empty()) {
+        if (!args.empty()) {
             uint64_t parsed = 0;
-            bool digits = true;
-            for (char const c : arg) {
-                if (c < '0' || c > '9') {
-                    digits = false;
-                    break;
-                }
-                parsed = parsed * 10 + static_cast<uint64_t>(c - '0');
-            }
-            if (!digits) {
+            if (!parse_number(args[0], parsed)) {
                 print("Why: a return code, please\n");
                 return;
             }
@@ -701,37 +697,42 @@ private:
 
     /* Eval runs a line: it is a one-line command file, pushed as a frame so a
      * program it names completes mid-line the way a script's line does. */
-    void command_eval(std::string const &arg)
+    void command_eval(std::vector<std::string> const &args)
     {
-        if (arg.empty()) {
+        if (args.empty()) {
             print("Eval: what line?\n");
             line_status_ = 5;
             return;
         }
-        (void)frames_.push(std::string{}, aegir::script::script_lines(arg));
+        (void)frames_.push(std::string{},
+                           aegir::script::script_lines(join_words(args)));
     }
 
     /* Execute runs a command file (specs/shell.md). The file is read through
      * the session's namespace, its executable lines become a frame, and the
      * loop takes them from there; a file already running is a cycle and is
-     * refused rather than recursed. */
-    void command_execute(std::string const &arg)
+     * refused rather than recursed. The rest of the line is the file's
+     * arguments: `$1..$n`, and the names a `.KEY` declares. */
+    void command_execute(std::vector<std::string> const &args)
     {
-        std::vector<std::string> const words = split_words(arg);
-        if (words.empty()) {
+        if (args.empty()) {
             print("Execute: which command file?\n");
             line_status_ = 10;
             return;
         }
-        std::string const path = resolve(words[0]);
-        switch (start_script(path)) {
+        std::string const path = resolve(args[0]);
+        std::vector<std::string> const supplied(args.begin() + 1, args.end());
+        switch (start_script(path, supplied)) {
         case ScriptStart::Started:
             return;
         case ScriptStart::Cycle:
-            print("Execute: " + words[0] + ": already running\n");
+            print("Execute: " + args[0] + ": already running\n");
             break;
         case ScriptStart::NotFound:
-            print("Execute: " + words[0] + ": not found\n");
+            print("Execute: " + args[0] + ": not found\n");
+            break;
+        case ScriptStart::Invalid:
+            /* start_script already said which declaration did not match. */
             break;
         }
         line_status_ = 10;
@@ -740,10 +741,10 @@ private:
     /* Quit ends the current command file with the return code it is given
      * (specs/shell.md's interpreter). From the prompt it says so rather than
      * ending the session -- EndCLI is the session's end. */
-    void command_quit(std::string const &arg)
+    void command_quit(std::vector<std::string> const &args)
     {
         uint64_t code = 0;
-        if (!arg.empty() && !parse_number(arg, code)) {
+        if (!args.empty() && !parse_number(args[0], code)) {
             print("Quit: a return code, please\n");
             line_status_ = 5;
             return;
@@ -758,14 +759,14 @@ private:
 
     /* FailAt sets the level at or above which a return code aborts a running
      * command file; the Amiga's default is 10. No argument reports it. */
-    void command_failat(std::string const &arg)
+    void command_failat(std::vector<std::string> const &args)
     {
-        if (arg.empty()) {
+        if (args.empty()) {
             print("FailAt " + std::to_string(frames_.fail_level()) + "\n");
             return;
         }
         uint64_t level = 0;
-        if (!parse_number(arg, level)) {
+        if (!parse_number(args[0], level)) {
             print("FailAt: a return code level, please\n");
             line_status_ = 5;
             return;
@@ -780,23 +781,34 @@ private:
     bool run_line(std::string const &line)
     {
         line_status_ = 0;
+        /* Substitution first, so a variable can stand for the command word or
+         * an argument, then aliases, then the redirections (specs/shell.md).
+         * The arguments of the running command file are what `$1..$n` and
+         * `{name}` read; a console line has none. */
+        aegir::script::Arguments const empty;
+        aegir::script::Arguments const *const frame_arguments =
+            frames_.current_arguments();
+        std::vector<std::string> words;
+        std::string error;
+        if (!aegir::script::substitute_words(
+                line, frame_arguments != nullptr ? *frame_arguments : empty,
+                environment_lookup, words, error)) {
+            print("Syntax error: " + error + "\n");
+            line_status_ = 10;
+            return false;
+        }
         /* An alias stands for a line, and the Amiga expands the first word
          * again, so an alias may name another (specs/dos.md). A name seen
          * twice stops the walk, which is a cycle, not a depth limit. */
-        std::string const expanded = expand_aliases(line);
-        Redirect const redirect = split_redirect(split_words(expanded));
-        std::vector<std::string> const &words = redirect.words;
-        if (words.empty()) {
+        words = expand_aliases(std::move(words));
+        Redirect const redirect = split_redirect(words);
+        std::vector<std::string> const &command_words = redirect.words;
+        if (command_words.empty()) {
             return false;
         }
-        std::string const command = to_lower(words[0]);
-        std::string arg;
-        for (std::size_t i = 1; i < words.size(); ++i) {
-            if (i > 1) {
-                arg.push_back(' ');
-            }
-            arg += words[i];
-        }
+        std::string const command = to_lower(command_words[0]);
+        std::vector<std::string> const args(command_words.begin() + 1,
+                                            command_words.end());
 
         static Builtin const kBuiltins[] = {
             {"cd", &Shell::command_cd},
@@ -835,11 +847,11 @@ private:
                         return false;
                     }
                     redirect_out_ = file;
-                    (this->*builtin.handler)(arg);
+                    (this->*builtin.handler)(args);
                     redirect_out_ = nullptr;
                     std::fclose(file);
                 } else {
-                    (this->*builtin.handler)(arg);
+                    (this->*builtin.handler)(args);
                 }
                 return false;
             }
@@ -847,24 +859,25 @@ private:
 
         /* Not a built-in: a directory typed on its own is the Amiga's implicit
          * change into it (specs/shell.md); anything else is a program. */
-        if (is_directory(resolve(words[0]))) {
-            (void)change_directory(words[0]);
+        if (is_directory(resolve(command_words[0]))) {
+            (void)change_directory(command_words[0]);
             return false;
         }
         /* A program, run by the terminal on this shell's behalf: it owns the
          * spawn authority and starts the command with this stream. The command
-         * line is the command token, lowercased (the Amiga is case-blind and
-         * C: is not, specs/dos.md), then its arguments; the redirections
-         * already left it. */
-        std::string command_line = command;
-        for (std::size_t i = 1; i < words.size(); ++i) {
-            command_line.push_back(' ');
-            command_line += words[i];
+         * word is lowercased (the Amiga is case-blind and C: is not,
+         * specs/dos.md) and the words travel NUL-separated, so an argument a
+         * quote grouped reaches the command as one argument (specs/shell.md);
+         * the redirections already left the list. */
+        std::string payload = command;
+        for (std::string const &arg : args) {
+            payload.push_back('\0');
+            payload += arg;
         }
         std::string const cwd = current_directory();
         std::string const environment = environment_string();
         if (aegir::console::stream_run(
-                port_, command_line.data(), static_cast<uint32_t>(command_line.size()),
+                port_, payload.data(), static_cast<uint32_t>(payload.size()),
                 cwd.c_str(), static_cast<uint32_t>(cwd.size()), environment.data(),
                 static_cast<uint32_t>(environment.size()), redirect.in_path.data(),
                 static_cast<uint32_t>(redirect.in_path.size()), redirect.out_path.data(),
@@ -872,7 +885,7 @@ private:
             busy_ = true;
             return true;
         }
-        print("Unknown command: " + words[0] + "\n");
+        print("Unknown command: " + command_words[0] + "\n");
         line_status_ = 10;
         return false;
     }
@@ -881,7 +894,7 @@ private:
     seL4_CPtr doorbell_ = 0;
     bool busy_ = false;
     aegir::script::Frames frames_;
-    std::vector<std::pair<std::string, std::string>> aliases_;
+    std::vector<std::pair<std::string, std::vector<std::string>>> aliases_;
     std::string prompt_override_;
     uint64_t last_status_ = 0;
     uint64_t line_status_ = 0;

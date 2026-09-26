@@ -475,8 +475,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="setenv PROBE value\ngetenv PROBE\nunset PROBE\n"
                       "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
                       "eval echo eval-line\nwhy 10\necho shell-redirect >Home:ShellOut.TXT\n"
-                      "execute Sys:S/Interpreter-Test\n",
+                      "execute Sys:S/Interpreter-Test\n"
+                      "set prog aegir-print\nset value env-substituted\n"
+                      "execute Sys:S/Subst-Test\nexecute Sys:S/Params-Test named-arg\n",
             ),
+            # Substitution (specs/shell.md): Subst-Test's command word is the
+            # variable $prog, so aegir-print starting proves the environment
+            # expanded before the lookup; Params-Test's is aegir-echo, whose
+            # argument is both the .KEY name {text} and the positional $1, so
+            # the command starting proves the two bound to Execute's argument.
+            QmpStep(r"terminal: command started aegir-print"),
+            QmpStep(r"terminal: command started aegir-echo"),
             QmpStep(
                 r"terminal: command started date",
                 events=TERMINAL_CLICK,

@@ -149,10 +149,12 @@ inline bool stream_set_prompt(aegir::ipc::Consumer const &port, char const *prom
     return answer.error == 0;
 }
 
-/** Ask the terminal to run `line` with `cwd` and the NUL-separated `environment`
- *  (the shell's, sent so the command inherits it), redirecting the command's
- *  standard input and output to `std_in`/`std_out` (empty for the console
- *  stream; specs/shell.md). True when it started. */
+/** Ask the terminal to run `line` -- the command words NUL-separated, the
+ *  first the command and the rest its arguments, already substituted and
+ *  quote-grouped by the shell (specs/shell.md) -- with `cwd` and the
+ *  NUL-separated `environment` (the shell's, sent so the command inherits it),
+ *  redirecting the command's standard input and output to `std_in`/`std_out`
+ *  (empty for the console stream; specs/shell.md). True when it started. */
 inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
                        uint32_t line_length, char const *cwd, uint32_t cwd_length,
                        char const *environment, uint32_t environment_length,
