@@ -779,7 +779,13 @@ and answers "who owns this device?" for everyone else.
   directly (there is no bus row for a device with no id). The first is the
   **clock**: the goldfish RTC at `0x101000`, whose 64-bit nanosecond register is
   served as `clock.main` (`aegir/clock.h`), and the hosted runtime answers
-  `clock_gettime` through it (`specs/fat.md`'s Times, `specs/cxx.md`).
+  `clock_gettime` through it (`specs/fat.md`'s Times, `specs/cxx.md`). The
+  interval timer is a separate port (`specs/timer.md`): this machine has no
+  timer device a service may own -- the kernel keeps the CLINT -- so
+  `timer.main` is backed by the RTC's alarm and interrupt (irq 11), the device
+  manager granting the timer its frame and issuing that interrupt while
+  `clock.main` keeps a frame copy. A platform with a real timer device backs
+  the port with that device instead.
 - **done**: each driver's interrupt. IRQControl custody moved to the device manager
   (a copy derives to a null cap, so it *moved* -- specs/authority.md records the
   kernel lines); the handler is minted at the binding, paired with a notification and

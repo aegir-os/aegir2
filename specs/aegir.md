@@ -29,6 +29,8 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/director.md` — the root task: the services it starts, the authority it
   hands out, and how it spawns a process.
 - `specs/services.md` — services, ports, the flat initrd and the boot manifest.
+- `specs/timer.md` — the interval timer: monotonic time and sleep, apart from
+  the wall clock.
 - `specs/authority.md` — identity, the two classes of authority, the right to
   spawn, and accounts.
 - `specs/vfs.md` — the namespace, the volume protocol, and capabilities over
