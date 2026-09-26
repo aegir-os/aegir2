@@ -22,7 +22,11 @@ constexpr uint64_t kPage = 1ull << seL4_PageBits;
  * CSpace size is layout, not a default: a service that itself spawns addresses
  * its own CNode through it, so it lives with the other block layout constants in
  * aegir/bootstrap.h (kCNodeBits). */
-constexpr unsigned kDefaultStackPages = 2; /* 8 KiB, the floor a service is given */
+/* 64 KiB: a hosted C++ program runs libc++ and std::filesystem on its stack,
+ * and 8 KiB -- the floor this used to be -- overflowed on a line with a stat
+ * in it (the shell, specs/shell.md). A service that knows it needs more says
+ * so with `stack_kib`; this is the floor, not a ceiling. */
+constexpr unsigned kDefaultStackPages = 16;
 /* The bootstrap block fills the page it is mapped as: what a process is given
  * is part of who it is, and a service with many grants -- the partition
  * manager carries a window's frame per page -- is not a smaller kind of
