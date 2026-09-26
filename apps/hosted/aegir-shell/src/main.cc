@@ -23,6 +23,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/script/condition.h>
 #include <aegir/script/interpreter.h>
 #include <sel4/sel4.h>
 
@@ -393,6 +394,12 @@ public:
                 if (line != nullptr) {
                     answered = true;
                     bool const spawned = run_line(*line);
+                    /* A line that finished here is the last return code for
+                     * the If condition words (WARN/ERROR/FAIL), the same as a
+                     * spawned command's exit is (specs/shell.md). */
+                    if (!spawned) {
+                        last_status_ = line_status_;
+                    }
                     if (!spawned && !frames_.empty() &&
                         aegir::script::Frames::fails(line_status_, frames_.fail_level())) {
                         frames_.abort();
@@ -763,6 +770,103 @@ private:
         frames_.set_fail_level(level);
     }
 
+    /* Evaluate an If condition. EXISTS is the session's filesystem, and the
+     * return-code words are the Amiga's thresholds; a comparison is
+     * aegir::script's (specs/shell.md). */
+    bool condition_holds(aegir::script::Condition const &condition)
+    {
+        bool value = false;
+        switch (condition.kind) {
+        case aegir::script::Condition::Kind::Exists: {
+            std::error_code error;
+            value =
+                std::filesystem::exists(resolve(condition.path), error) && !error;
+            break;
+        }
+        case aegir::script::Condition::Kind::Warn:
+            value = last_status_ >= 5;
+            break;
+        case aegir::script::Condition::Kind::Error:
+            value = last_status_ >= 10;
+            break;
+        case aegir::script::Condition::Kind::Fail:
+            value = last_status_ >= 20;
+            break;
+        case aegir::script::Condition::Kind::Compare:
+            value = aegir::script::compare_strings(condition.op, condition.lhs,
+                                                   condition.rhs);
+            break;
+        }
+        return condition.negate ? !value : value;
+    }
+
+    /* Lab marks a line a Skip can name; reached on its own it does nothing. The
+     * name is literal -- a Skip finds the label in the file's text, which the
+     * control-word intercept guarantees is not a substituted word. */
+    void command_lab(std::string const &rest)
+    {
+        if (rest.empty()) {
+            print("Lab: a label name, please\n");
+            line_status_ = 10;
+        }
+    }
+
+    /* Skip moves the running command file to the line after its label. */
+    void command_skip(std::string const &rest)
+    {
+        std::string name;
+        std::string extra;
+        split_word(rest, name, extra);
+        if (name.empty()) {
+            print("Skip: a label name, please\n");
+            line_status_ = 10;
+            return;
+        }
+        if (!frames_.jump_to_label(name)) {
+            print("Skip: no label " + name + "\n");
+            line_status_ = 10;
+        }
+    }
+
+    /* If runs the then-body when the condition holds and steps to the matching
+     * Else or EndIf when it does not. The condition is substituted first, so a
+     * variable can be an operand; a condition that will not parse is an error
+     * and steps past the whole block. */
+    void command_if(std::string const &rest)
+    {
+        std::vector<std::string> words;
+        std::string error;
+        aegir::script::Arguments const empty;
+        aegir::script::Arguments const *const arguments = frames_.current_arguments();
+        bool parsed = aegir::script::substitute_words(
+            rest, arguments != nullptr ? *arguments : empty, environment_lookup,
+            words, error);
+        aegir::script::Condition condition;
+        if (parsed) {
+            parsed = aegir::script::parse_condition(words, condition, error);
+        }
+        if (!parsed) {
+            print("If: " + error + "\n");
+            line_status_ = 10;
+            (void)frames_.skip_to_endif();
+            return;
+        }
+        if (!condition_holds(condition) && !frames_.skip_to_else_or_endif()) {
+            print("If: no EndIf\n");
+            line_status_ = 20;
+        }
+    }
+
+    /* Else reached while running means the If was true, so its else body must
+     * not run: step past the matching EndIf. */
+    void command_else()
+    {
+        if (!frames_.skip_to_endif()) {
+            print("Else: no EndIf\n");
+            line_status_ = 20;
+        }
+    }
+
     /* Run one line: true when it started a program (busy_ is set and the exit
      * comes later), false when it finished here (a built-in, a directory
      * change, an unknown name). line_status_ is the line's own return code,
@@ -770,6 +874,27 @@ private:
     bool run_line(std::string const &line)
     {
         line_status_ = 0;
+        /* Control flow is structural: its word is read from the line as it was
+         * written, before aliases or substitution, so the shape a Skip walks
+         * and an If matches is the shape the file has (specs/shell.md). An If's
+         * condition is substituted inside the handler; a label is literal. */
+        std::string control_first;
+        std::string control_rest;
+        split_word(line, control_first, control_rest);
+        std::string const control = aegir::script::control_word(line);
+        if (!control.empty()) {
+            if (control == "lab") {
+                command_lab(control_rest);
+            } else if (control == "skip") {
+                command_skip(control_rest);
+            } else if (control == "if") {
+                command_if(control_rest);
+            } else if (control == "else") {
+                command_else();
+            }
+            /* EndIf is where a block ends and does nothing itself. */
+            return false;
+        }
         /* An alias is folded in first, as raw text, so a variable in its value
          * expands at use, not at definition (expand_aliases, specs/shell.md).
          * `Alias` then takes the rest of the line raw, because that value must

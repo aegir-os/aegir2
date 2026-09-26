@@ -83,6 +83,20 @@ enough to state in one file.
   because the alias walk has already run. A value is inserted literally, never
   rescanned, which keeps a value that holds `$` or `"` from being read again.
   An unmatched quote or brace is a syntax error, not a silent mangling.
+- **Control flow is the file's own text.** `Lab NAME` marks a line and `Skip
+  NAME` continues at the line after it, searched over the whole file, so a skip
+  goes back as well as forward. `If CONDITION` runs its then-body when the
+  condition holds and otherwise moves to the matching `Else`, or past the
+  matching `EndIf` when there is none; an `Else` reached while running moves
+  past its `EndIf`. A condition is `EXISTS <path>`, the return-code words
+  `WARN`, `ERROR` or `FAIL` (at or above 5, 10 and 20, the Amiga's thresholds),
+  or a two-operand comparison under `EQ`, `NE`, `GT`, `GE`, `LT` or `LE`, each
+  allowed behind `NOT`. A comparison is numeric when both operands are decimal
+  and case-blind and lexicographic otherwise. The control word is read from the
+  line as it was written, before aliases or substitution, so it must be literal
+  -- a variable or an alias cannot make an `If` -- while a condition's operands
+  *are* substituted, so a variable can be one. Blocks are matched by nesting,
+  so a nested `If`/`Else`/`EndIf` is stepped over whole.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
   transfer, the protocol's stated property). So `printf` reaches the grid,
@@ -144,6 +158,17 @@ name, and `$0..$n` the raw arguments with or without a declaration. A `.KEY`
 name shadows an environment variable of the same name. A declaration that does
 not match the arguments — a required name with nothing left — refuses the file
 before it runs; a line's unmatched quote or brace refuses that line.
+
+A command file's control words are structural. `Lab NAME` marks a line for
+`Skip NAME`, which continues after it; `If`, `Else` and `EndIf` bracket a
+conditional body, matched by nesting, and the condition is evaluated with the
+line substituted. The words are read from the file's own text — its first word,
+case-blind — so an alias or a variable cannot produce one, and a label a `Skip`
+names is found by the same reading. The jumps and the block matching are
+`aegir::script`'s, and the condition's parse is too
+(`aegir/script/condition.h`), both host-tested by `make check-script`; the two
+things that are not pure — whether a path exists, and the last return code —
+are the shell's.
 
 ### Resolution: `C:CommandName`
 
@@ -295,12 +320,20 @@ this arc's record of the order.
   the names the arguments bind to, and `Execute NAME ARG...` supplies them. The
   substitution and the `.KEY` binding are `aegir::script`'s, host-tested by
   `make check-script`.
+- **Phase 13 — control flow.** Landed. `Lab`/`Label` and `Skip` are a label
+  jump over the file; `If`/`Else`/`EndIf` are a nested block whose condition is
+  `EXISTS`, a return-code word (`WARN`/`ERROR`/`FAIL`) or a two-operand
+  comparison, behind an optional `NOT`. The control word is read from the
+  file's own text, before alias or substitution, so it is literal; the
+  condition's operands are substituted. The jumps and the block matching are
+  `aegir::script`'s and the condition's parse is, host-tested by
+  `make check-script`.
 
 ## What this is not
 
 - **Scripts, in full.** `Execute` and its frame (Phase 8), redirection
-  (Phase 9) and substitution and script arguments (Phase 12) land, but
-  pipelines (`|` and `PIPE:`), `If`/`Skip` control flow and the process words
+  (Phase 9), substitution and script arguments (Phase 12) and control flow
+  (Phase 13) land, but pipelines (`|` and `PIPE:`) and the process words
   (`Run`, `NewCLI`) are later. Substitution turns a line into words and acts;
   a `*` escape for a literal quote or variable, and a full quoting rule, are
   later.
@@ -353,12 +386,15 @@ Phase 7's is `specs/dos.md`'s acceptance: the same run types a `makedir`, a
 resolving the session's namespace on the badge the terminal gave it -- while
 `set`/`type`/`echo` stay the shell's own words.
 
-Phase 8's is the same run: the runner's first typed line ends with `execute
-Sys:S/Interpreter-Test`, a command file whose built-in `Alias x date` is what
-makes its next line's bare `x` spawn `date` -- so the `command started date`
-cue, which the next step waits on, is the proof the interpreter ran the file's
-  words in order. `make check-script` asserts the frame order, the cycle guard,
-  comment and blank stripping, and the fail level directly.
+Phase 8's is the same run: a typed line runs `execute Sys:S/Interpreter-Test`,
+around the two command files before it and cued by the command each starts --
+so the runner never types while the guest is starting an image, whose
+eight-deep input queue would drop a key and mangle a line. The file's built-in
+`Alias x date` is what makes its next line's bare `x` spawn `date`, so the
+`command started date` cue, which the next step waits on, is the proof the
+interpreter ran the file's words in order. `make check-script` asserts the
+frame order, the cycle guard, comment and blank stripping, and the fail level
+directly.
 
 Phase 9 and 10's are the same run: a built-in `echo` and a `dir` are redirected
 to files (the `dir` one to `Home:DosTest/DIR.TXT`) and a `type` reads them
@@ -375,3 +411,13 @@ $1`, so `aegir-echo` starting proves the declared name and the positional both
 bound to Execute's argument. The words travel NUL-separated, so the argument
 reaches the command whole. `make check-script` asserts the substitutions, the
 quote grouping and the `.KEY` binding directly.
+
+Phase 13's is the same run, typed after the DOS sequence rather than in the
+opening press: the runner runs `Sys:S/Control-Test`, whose `If EXISTS`, `If NOT
+EXISTS`, an `If $ctl GT 4` and a case-blind `If abc EQ ABC` each take their
+branch and whose `Skip tail` jumps over a line, before its last line
+`aegir-echo 42` runs. Every branch a correct run must not take exits at or
+above the fail level, so the file would drop there instead of going on, and the
+terminal's `command exited 42` cue -- a code no other command gives -- is the
+proof. `make check-script` asserts the label and block jumps, the condition
+parse and the comparison directly.

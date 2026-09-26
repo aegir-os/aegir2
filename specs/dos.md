@@ -112,16 +112,17 @@ free-space and mtime-write in the filesystem interface.
 state (the current directory, the environment, the alias table, the prompt) or
 is part of its language: `CD`/`CurrentDir`, `Echo`, `Set`/`Get`,
 `SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`, `Alias`/`UnAlias`, `Prompt`,
-`Why`/`Fault`, and the interpreter's own words `Eval`, `Execute`, `Quit`,
-`FailAt`, `EndCLI`/`EndShell`. `Date`, `Wait` and the rest are programs in
+`Why`/`Fault`, the interpreter's own words `Eval`, `Execute`, `Quit`,
+`FailAt`, `EndCLI`/`EndShell`, and the control words `Lab`/`Label`, `Skip`,
+`If`, `Else`, `EndIf`. `Date`, `Wait` and the rest are programs in
 `C:`. `Quit` aborts a *script* with a return code -- it is the interpreter's
 (`specs/shell.md`), not a shell exit, so `EndCLI`/`EndShell` is how a session
 ends.
 
-**Later arcs.** The rest of scripting (`Ask`, `If`/`Else`/`EndIf`,
-`Skip`/`Label`/`EndSkip`, `Run`, `IconX`) needs the rest of the interpreter;
-its core -- `Execute`, `Quit`, `FailAt` -- landed with `specs/shell.md`'s
-Phase 8. `Status` needs a process registry. The GUI, printer, font, serial,
+**Later arcs.** The rest of scripting (`Ask`, `Run`, `IconX`) needs the rest
+of the interpreter; its core -- `Execute`, `Quit`, `FailAt` -- landed with
+`specs/shell.md`'s Phase 8, and `If`/`Else`/`EndIf` and `Skip`/`Label` with
+Phase 13. `Status` needs a process registry. The GUI, printer, font, serial,
 disk and firmware commands are their own arcs or out of scope.
 
 ## The shape
@@ -285,9 +286,9 @@ to a line.
 
 ## What this is not
 
-- **Scripts, in full.** `Execute` and its frame landed (`specs/shell.md`'s
-  Phase 8); redirection, pipelines and control flow are the rest of the
-  interpreter (`specs/shell.md`'s What this is not).
+- **Scripts, in full.** `Execute` and its frame, substitution and control flow
+  landed (`specs/shell.md`'s Phases 8, 12 and 13); pipelines and the process
+  words are the rest of the interpreter (`specs/shell.md`'s What this is not).
 - **A POSIX toolset.** The commands are AmigaDOS's, with the Amiga's arguments
   and return codes, not `cp`/`ls`/`rm` with GNU options.
 - **The GUI, the printers, the disks.** The Workbench commands, the printer

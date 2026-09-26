@@ -467,25 +467,41 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # than spawned: SetEnv sets, GetEnv reads it back, UnSet removes
                 # it, and the second GetEnv says so; an alias (hi stands for
                 # echo) expands, Prompt changes the prompt, Eval runs a line,
-                # and Why explains a return code. The last two lines test the
-                # shell's own redirection (`echo ... >file`) and the interpreter:
-                # Execute's command file has a built-in Alias that makes x stand
-                # for date, and its next line spawns date -- so date starting is
-                # the proof the interpreter ran the file in order.
+                # and Why explains a return code. The redirection (`echo ...
+                # >file`) and the first command file come last. The command
+                # files are typed one per step, cued by the command the one
+                # before it starts, because a press sent while the guest is
+                # starting an image fills its eight-deep input queue and drops
+                # keys -- and a dropped key mangles the line.
                 press="setenv PROBE value\necho \"quoted $PROBE\"\ngetenv PROBE\nunset PROBE\n"
                       "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
                       "eval echo eval-line\nwhy 10\necho shell-redirect >Home:ShellOut.TXT\n"
-                      "execute Sys:S/Interpreter-Test\n"
                       "set prog aegir-print\nset value env-substituted\n"
-                      "execute Sys:S/Subst-Test\nexecute Sys:S/Params-Test named-arg\n",
+                      "execute Sys:S/Subst-Test\n",
             ),
             # Substitution (specs/shell.md): Subst-Test's command word is the
             # variable $prog, so aegir-print starting proves the environment
             # expanded before the lookup; Params-Test's is aegir-echo, whose
             # argument is both the .KEY name {text} and the positional $1, so
             # the command starting proves the two bound to Execute's argument.
-            QmpStep(r"terminal: command started aegir-print"),
-            QmpStep(r"terminal: command started aegir-echo"),
+            QmpStep(
+                r"terminal: command started aegir-print",
+                press="execute Sys:S/Params-Test named-arg\n",
+            ),
+            QmpStep(
+                r"terminal: command started aegir-echo",
+                # Interpreter-Test last: its file's built-in Alias makes x stand
+                # for date, and date starting is the proof the interpreter ran
+                # the file in order.
+                press="execute Sys:S/Interpreter-Test\n",
+            ),
+            # Control flow (specs/shell.md): Control-Test's only reachable last
+            # line is aegir-echo 42, so this is a cue no other command gives.
+            # Every branch a correct run must not take exits at or above the
+            # fail level, which drops the file there rather than going on, so a
+            # `command exited 42` means If/Else/EndIf, the condition words and
+            # the Skip all chose the path they should.
+            QmpStep(r"terminal: command exited 42"),
             QmpStep(
                 r"terminal: command started date",
                 events=TERMINAL_CLICK,
@@ -626,6 +642,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
+                # Control flow (specs/shell.md): the last command has failed and
+                # the console is idle, so the runner now runs Control-Test, whose
+                # If/Else/EndIf and Skip are the next cue. It is typed here, not
+                # in the big opening press, because a press longer than the
+                # keyboard's queue drops keys and mangles a line.
+                press="execute Sys:S/Control-Test\n",
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across

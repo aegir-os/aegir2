@@ -126,6 +126,28 @@ AEGIR_BFS_TREE = [
         ("file", "Params-Test",
          b".KEY text/A\n; {text} is the .KEY parameter, $1 the argument.\n"
          b"aegir-echo {text} $1\n"),
+        # Control flow (specs/shell.md): If/Else/EndIf, Lab/Skip and the
+        # condition words. A branch that must not run exits 9x, at or above the
+        # fail level, so the file drops there instead of going on; a correct run
+        # reaches only the last line, whose exit 42 is the acceptance's cue.
+        ("file", "Control-Test",
+         b"; the control words of a command file.\n"
+         b"If EXISTS Sys:S/Control-Test\n"
+         b"    ; the file exists, so the then-body runs\n"
+         b"Else\n    aegir-echo 90\nEndIf\n"
+         b"If EXISTS Sys:S/No-Such-File\n    aegir-echo 91\n"
+         b"Else\n    ; a missing path is false, so the else-body runs\nEndIf\n"
+         b"If NOT EXISTS Sys:S/No-Such-File\n"
+         b"    ; NOT makes a missing path true\n"
+         b"Else\n    aegir-echo 92\nEndIf\n"
+         b"Set ctl 5\nIf $ctl GT 4\n"
+         b"    ; a variable operand and a numeric comparison\n"
+         b"Else\n    aegir-echo 93\nEndIf\n"
+         b"If abc EQ ABC\n"
+         b"    ; the comparison is case-blind\n"
+         b"Else\n    aegir-echo 94\nEndIf\n"
+         b"Skip tail\n    aegir-echo 95\nLab tail\n"
+         b"aegir-echo 42\n"),
     ]),
 ]
 
