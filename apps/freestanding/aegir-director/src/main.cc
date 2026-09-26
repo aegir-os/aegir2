@@ -258,6 +258,24 @@ PlatformEntry const *platform_at(PlatformEntry const *list, uint32_t count,
     return nullptr;
 }
 
+/* A copy of a device frame cap, made before any service maps it: one frame cap
+ * pins to the VSpace it is first mapped into, so a second service that maps the
+ * same device needs its own copy, and a copy taken before the first mapping
+ * carries no ASID yet (kernel/src/arch/riscv/kernel/vspace.c:869-878). Zero
+ * when the copy fails. */
+seL4_CPtr copy_device_frame(aegir::mem::Allocator &allocator, seL4_CPtr frame) noexcept
+{
+    seL4_CPtr const slot = allocator.alloc_slot();
+    if (slot == 0 ||
+        seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, slot,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        frame, aegir::bootstrap::kCNodeBits, seL4_AllRights) !=
+            seL4_NoError) {
+        return 0;
+    }
+    return slot;
+}
+
 /** Take the frame of each platform device a service claims by compatible.
  *  Only claimed devices are reached: a window is taken up to the device's
  *  page from the device untyped that covers it, and a device no service names
@@ -330,7 +348,8 @@ unsigned survey_claimed_platform_devices(seL4_BootInfo const *bootinfo,
                 aegir::debug_write("\n");
                 if (*device_count < capacity) {
                     found[*device_count] = aegir::director::Device{
-                        base, 0, slot, platform[p].compatible, platform[p].compatible_length};
+                        base, 0, slot, platform[p].compatible, platform[p].compatible_length,
+                        copy_device_frame(allocator, slot)};
                 }
                 ++(*device_count);
                 reached = true;
@@ -412,7 +431,8 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
                     aegir::debug_write("\n");
                     if (*device_count < capacity) {
                         found[*device_count] = aegir::director::Device{
-                            address, 0, slot, named->compatible, named->compatible_length};
+                            address, 0, slot, named->compatible, named->compatible_length,
+                            copy_device_frame(allocator, slot)};
                     }
                     ++(*device_count);
                 }
@@ -450,7 +470,7 @@ unsigned survey_devices(seL4_BootInfo const *bootinfo, aegir::mem::Allocator &al
              * the report that follows; the list is what a service is given. */
             if (*device_count < capacity) {
                 found[*device_count] = aegir::director::Device{address, device_id, slot,
-                                                               nullptr, 0};
+                                                               nullptr, 0, 0};
             }
             ++(*device_count);
             aegir::debug_write("  device at ");

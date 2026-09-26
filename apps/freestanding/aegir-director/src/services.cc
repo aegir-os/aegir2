@@ -60,6 +60,21 @@ bool spawn_covers(manifest::View item, manifest::View name) noexcept
     return true;
 }
 
+/** Does a platform device's `compatible` name this manifest value? The tree's
+ *  string and the manifest's are the same spelling, byte for byte. */
+bool compatible_matches(manifest::View device, Device const &candidate) noexcept
+{
+    if (candidate.compatible == nullptr || candidate.compatible_length != device.length) {
+        return false;
+    }
+    for (uint32_t i = 0; i < device.length; ++i) {
+        if (candidate.compatible[i] != device.data[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /** Call `each` with every item of a comma-separated `spawns` value, trimmed --
  *  the same shape ports.cc's split_names gives `owns` and `needs`, kept local
  *  because a spawn right is this file's business, not the port graph's. */
@@ -595,9 +610,22 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                         covered = true;
                     }
                 });
-                if (covered && manifest[j].device_id != 0) {
+                if (!covered) {
+                    continue;
+                }
+                if (manifest[j].device_id != 0) {
                     for (uint32_t d = 0; d < bus_count; ++d) {
                         if (bus[d].id == manifest[j].device_id) {
+                            ++wanted;
+                        }
+                    }
+                } else if (manifest[j].device.length != 0) {
+                    /* A platform device a spawned child claims by compatible
+                     * (the timer, specs/timer.md): the child maps it, so it is
+                     * granted the copy director made before any mapping. */
+                    for (uint32_t d = 0; d < bus_count; ++d) {
+                        if (bus[d].id == 0 &&
+                            compatible_matches(manifest[j].device, bus[d])) {
                             ++wanted;
                         }
                     }
@@ -618,15 +646,26 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                         covered = true;
                     }
                 });
-                if (!covered || child.device_id == 0) {
+                if (!covered) {
                     continue;
                 }
-                for (uint32_t d = 0; d < bus_count; ++d) {
-                    if (bus[d].id == child.device_id) {
-                        /* No break: every device the id answers to is granted,
-                         * not only the first. */
-                        device_grants[device_grant_count++] =
-                            spawn::DeviceGrant{bus[d].address, 4096u, bus[d].frame};
+                if (child.device_id != 0) {
+                    for (uint32_t d = 0; d < bus_count; ++d) {
+                        if (bus[d].id == child.device_id) {
+                            /* No break: every device the id answers to is
+                             * granted, not only the first. */
+                            device_grants[device_grant_count++] =
+                                spawn::DeviceGrant{bus[d].address, 4096u, bus[d].frame};
+                        }
+                    }
+                } else if (child.device.length != 0) {
+                    for (uint32_t d = 0; d < bus_count; ++d) {
+                        if (bus[d].id == 0 &&
+                            compatible_matches(child.device, bus[d]) &&
+                            bus[d].delegatable != 0) {
+                            device_grants[device_grant_count++] =
+                                spawn::DeviceGrant{bus[d].address, 4096u, bus[d].delegatable};
+                        }
                     }
                 }
             }

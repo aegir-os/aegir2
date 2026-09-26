@@ -76,6 +76,11 @@ struct Device {
      * into the tree blob, which outlives the boot. */
     char const *compatible;
     uint32_t compatible_length;
+    /* A copy of `frame`, made before anything maps it, for a service that
+     * spawns a child claiming this same platform device: one frame cap pins to
+     * the VSpace it is first mapped into, so a second mapper needs its own copy
+     * (specs/services.md, specs/timer.md). Zero when there is none. */
+    seL4_CPtr delegatable;
 };
 
 class Services {
