@@ -62,6 +62,14 @@ public:
     bool visible() const { return visible_; }
     void close();
 
+    // Reserve the window's backing without showing it: the app's framebuffer
+    // slice is sized from the windows that are visible, plus the ones that
+    // asked to reserve, so a window shown later -- the boot session's failure
+    // view, which is hidden until the boot fails -- still has somewhere to
+    // draw (specs/boot.md).
+    void reserve() { reserved_ = true; }
+    bool reserved() const { return reserved_; }
+
     // Ask the console to focus this window, without raising it. A client that
     // wants to start focused calls this before exec; the request is kept
     // until the window exists (specs/window-manager.md).
@@ -112,6 +120,7 @@ private:
     bool decorated_ = true;
     bool resizable_ = true;
     bool visible_ = false;
+    bool reserved_ = false;
     bool want_focus_ = false;
     Size min_size_ = {200, 150};
     Size max_size_ = {8192, 8192};

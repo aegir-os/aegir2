@@ -887,21 +887,25 @@ void start_session(uint32_t user, bool bureau) noexcept
  * a window from console.gui, a shell from the shell pool -- but its memory
  * comes from auth's own delegation, not the session pool, because it is not
  * reclaimed: on failure it stays as the read-only view (the failure arc's
- * piece). auth waits on the boot notification, which the shell signals when
- * the command file is done. */
-void start_boot_session(aegir::mem::Arena &arena) noexcept
+ * piece). auth receives the boot outcome -- the status the shell sends -- and
+ * answers true when the greeter should run, false when the boot failed and the
+ * failure view stands instead. */
+bool start_boot_session(aegir::mem::Arena &arena) noexcept
 {
     if (g_spawn_gui == 0 || g_spawn_nmspace == 0 || g_spawn_log == 0 ||
         g_asid_pool == 0 || g_binaries_bytes == 0) {
         write("      auth: no kit for the boot session -- Startup-Sequence is skipped\n");
-        return;
+        return true;
     }
     aegir::mem::Account account{"boot", 0, 0, 0};
     seL4_Error error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject,
                                                    seL4_EndpointBits, account, &error);
-    seL4_CPtr const notification = g_objects.alloc_object(
-        seL4_NotificationObject, seL4_NotificationBits, account, &error);
+    /* The boot outcome: an endpoint, not a notification, because the shell has
+     * a word to say -- 0 when Startup-Sequence finished, nonzero when it failed
+     * (specs/boot.md). auth receives it and decides whether the greeter runs. */
+    seL4_CPtr const boot_status = g_objects.alloc_object(
+        seL4_EndpointObject, seL4_EndpointBits, account, &error);
     constexpr uint32_t kTerminalUntypedBits = 22;
     uint64_t terminal_untyped_physical = 0;
     seL4_CPtr const terminal_untyped = g_objects.carve_untyped(
@@ -914,10 +918,10 @@ void start_boot_session(aegir::mem::Arena &arena) noexcept
     uint64_t shell_pool_physical = 0;
     seL4_CPtr const shell_pool = g_objects.carve_untyped(
         kShellPoolBits, account, &error, &shell_pool_physical);
-    if (fault == 0 || notification == 0 || terminal_untyped == 0 ||
+    if (fault == 0 || boot_status == 0 || terminal_untyped == 0 ||
         command_pool == 0 || shell_pool == 0) {
         write("      auth: FAIL no memory for the boot session\n");
-        return;
+        return false;
     }
 
     /* The boot session's command directory: C: -> Sys:C, the same alias a
@@ -970,8 +974,8 @@ void start_boot_session(aegir::mem::Arena &arena) noexcept
             ++port_count;
         }
     }
-    ports[port_count] = {"boot.doorbell", 13,
-                         aegir::bootstrap::kSlotFirstDeclared + port_count, notification,
+    ports[port_count] = {"boot.status", 11,
+                         aegir::bootstrap::kSlotFirstDeclared + port_count, boot_status,
                          seL4_AllRights, 0, 0};
     ++port_count;
 
@@ -988,6 +992,29 @@ void start_boot_session(aegir::mem::Arena &arena) noexcept
     request.account_length = sizeof(kAccount) - 1;
     request.cwd = kCwd;
     request.cwd_length = sizeof(kCwd) - 1;
+    /* The firmware's boot flags, for the shell the terminal starts: `aegir.fail`
+     * makes the boot sequence's failure view come up even when the sequence
+     * itself would succeed, which is how the failure path is exercised
+     * (specs/boot.md). */
+    static char const kEnvFail[] = "AEGIR_BOOTARGS=aegir.fail";
+    static char const *const kBootEnvironment[] = {kEnvFail};
+    uint32_t flags_length = 0;
+    char const *const flags = aegir::bootstrap::boot_flags(&flags_length);
+    bool force_fail = false;
+    for (uint32_t i = 0; flags != nullptr && i + 10 <= flags_length && !force_fail; ++i) {
+        static char const kFail[] = "aegir.fail";
+        bool same = true;
+        for (uint32_t j = 0; j < 10 && same; ++j) {
+            if (flags[i + j] != kFail[j]) {
+                same = false;
+            }
+        }
+        force_fail = same;
+    }
+    if (force_fail) {
+        request.environment = kBootEnvironment;
+        request.environment_count = 1;
+    }
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
     request.port_count = port_count;
@@ -1007,13 +1034,21 @@ void start_boot_session(aegir::mem::Arena &arena) noexcept
         write("      auth: FAIL spawning the boot session: ");
         write(spawner.problem());
         write("\n");
-        return;
+        return true;
     }
-    /* The script's end: the shell signals the notification (specs/boot.md). On
-     * success the script's EndCLI closes the boot window; on failure the shell
-     * stays, which is the failure arc's read-only view. */
-    seL4_Wait(notification, nullptr);
+    /* The script's end: the shell sends the outcome on `boot.status`
+     * (specs/boot.md). 0 means Startup-Sequence finished -- its EndCLI closed
+     * the boot window -- and the greeter runs; nonzero means it failed, the
+     * shell has put the read-only view up, and no greeter does. */
+    uint64_t badge = 0;
+    seL4_Recv(boot_status, &badge);
+    uint64_t const status = seL4_GetMR(0);
+    if (status != 0) {
+        write("      auth: the boot session failed -- the failure view stands\n");
+        return false;
+    }
     write("      auth: the boot session ran\n");
+    return true;
 }
 
 /* The greeter (specs/console.md's login arc): auth's face, started once the
@@ -1406,9 +1441,11 @@ int main(int argc, char *argv[])
     aegir::debug_write_unsigned(g_users);
     write(g_users == 1 ? " user, serving auth.login\n" : " users, serving auth.login\n");
     /* The system's Startup-Sequence, once, before the greeter (specs/boot.md):
-     * auth waits for the boot shell to signal the script is done. */
-    start_boot_session(arena);
-    start_greeter(arena);
+     * auth waits for the boot shell's outcome. A failure leaves the read-only
+     * view standing instead, and no greeter runs. */
+    if (start_boot_session(arena)) {
+        start_greeter(arena);
+    }
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
     for (;;) {

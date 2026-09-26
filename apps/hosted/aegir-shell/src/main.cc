@@ -402,12 +402,21 @@ public:
                     }
                     if (!spawned && !frames_.empty() &&
                         aegir::script::Frames::fails(line_status_, frames_.fail_level())) {
+                        if (booting_) {
+                            boot_failed_ = true;
+                        }
                         frames_.abort();
                     }
                 } else {
                     /* No command file left: the boot script is done, and auth
-                     * is waiting on the notification (specs/shell.md). */
+                     * is waiting on the status (specs/shell.md). */
                     boot_done();
+                    if (boot_view_) {
+                        /* The failure view is up and takes no input: idle on the
+                         * doorbell rather than read a line (specs/boot.md). */
+                        seL4_Wait(doorbell_, nullptr);
+                        continue;
+                    }
                     char buffer[1024];
                     uint32_t const have =
                         aegir::console::stream_read_line(port_, buffer, sizeof(buffer));
@@ -426,14 +435,15 @@ public:
     void set_doorbell(seL4_CPtr doorbell) { doorbell_ = doorbell; }
 
     /* The boot session signals auth when its command file is done, after which
-     * auth starts the greeter (specs/shell.md, specs/boot.md). The notification
-     * is the boot terminal's grant, passed on by name; an interactive shell has
-     * none. */
-    void set_boot_notification()
+     * auth starts the greeter (specs/shell.md, specs/boot.md). The channel is
+     * an endpoint, not a notification, because the outcome is a word: 0 when
+     * Startup-Sequence finished, nonzero when it failed. An interactive shell
+     * has none. */
+    void set_boot_status()
     {
         uint64_t slot = 0;
-        if (aegir::bootstrap::capability("boot.doorbell", 13, &slot)) {
-            boot_notification_ = static_cast<seL4_CPtr>(slot);
+        if (aegir::bootstrap::capability("boot.status", 11, &slot)) {
+            boot_status_ = static_cast<seL4_CPtr>(slot);
         }
     }
 
@@ -442,21 +452,37 @@ public:
      * the boot notification is signalled when it empties or EndCLI takes it. */
     void run_boot_script(std::string const &path)
     {
+        /* The firmware's boot flags, handed down as AEGIR_BOOTARGS: aegir.fail
+         * forces the failure view even though the sequence would succeed, which
+         * is how the failure path is exercised (specs/boot.md). */
+        char const *const bootargs = aegir::environment::getenv("AEGIR_BOOTARGS");
+        if (bootargs != nullptr && std::string(bootargs).find("fail") != std::string::npos) {
+            boot_forced_fail_ = true;
+        }
         if (start_script(path) == ScriptStart::Started) {
             booting_ = true;
         }
     }
 
 private:
-    /* The boot script has finished: wake auth once, and only once. */
+    /* The boot script has finished: report the outcome to auth once, and only
+     * once, and on failure put the read-only view up (specs/boot.md). */
     void boot_done()
     {
         if (!booting_) {
             return;
         }
         booting_ = false;
-        if (boot_notification_ != 0) {
-            seL4_Signal(boot_notification_);
+        uint64_t const status = (boot_failed_ || boot_forced_fail_) ? 10 : 0;
+        if (status != 0) {
+            /* The grid already holds what the sequence wrote; the terminal
+             * shows it and takes no more input. */
+            (void)aegir::console::stream_boot_fail(port_);
+            boot_view_ = true;
+        }
+        if (boot_status_ != 0) {
+            seL4_SetMR(0, status);
+            seL4_Send(boot_status_, seL4_MessageInfo_new(0, 0, 0, 1));
         }
     }
 
@@ -1021,10 +1047,16 @@ private:
     /* The sink a built-in's output uses while a redirected line runs, or null
      * for the console stream (specs/shell.md). */
     std::FILE *redirect_out_ = nullptr;
-    /* The boot session's notification, signalled when Startup-Sequence is done
+    /* The boot session's status endpoint, sent when Startup-Sequence is done
      * (specs/boot.md); zero for a shell that is not the boot shell. */
-    seL4_CPtr boot_notification_ = 0;
+    seL4_CPtr boot_status_ = 0;
     bool booting_ = false;
+    /* A command the boot script ran failed at or above the fail level, or the
+     * firmware's aegir.fail forced it: the outcome is a failure. */
+    bool boot_failed_ = false;
+    bool boot_forced_fail_ = false;
+    /* The failure view is up: the loop stops reading (specs/boot.md). */
+    bool boot_view_ = false;
 };
 
 }  // namespace
@@ -1062,7 +1094,7 @@ int main(int argc, char **argv)
 
     Shell shell(port);
     shell.set_doorbell(doorbell);
-    shell.set_boot_notification();
+    shell.set_boot_status();
     shell.load_environment();
     shell.start();
     /* A shell started with a command file is the boot session: it runs

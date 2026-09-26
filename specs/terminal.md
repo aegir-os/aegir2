@@ -151,6 +151,14 @@ port does not know is answered by saying nothing.
 - `size`. Out: two words, the rows then the columns of the text area, so a
   pager sizes a page to the window rather than a constant. It is the one
   attribute of the `get`/`set` family (`title`, later color) that has landed.
+- `boot_fail`. In: nothing. Answer: one word, `1` when the stream is a boot
+  session's and the view is up, `0` otherwise. The boot shell sends it once,
+  after it has reported the failure to auth, and then stops reading
+  (`specs/boot.md`): the terminal shows its window and takes no more input, so
+  the grid holds what the sequence wrote. The window's backing was reserved at
+  start, because the toolkit sizes an app's framebuffer slice from the windows
+  shown or reserved then, and a window shown later would otherwise have nowhere
+  to draw.
 
 The handler wakes a client the way the console wakes its clients: each stream
 carries the client's own doorbell -- a notification the client passes as a

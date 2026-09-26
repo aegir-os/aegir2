@@ -15,7 +15,7 @@ have to agree (specs/build.md).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -787,6 +787,55 @@ TARGETS: dict[str, Target] = {
     # The floor of the envelope: the smallest machine Aegir supports, and where
     # capacity problems are meant to show up first.
     "aegir": _aegir(2048, 1, "aegir"),
+    # The boot failure view (specs/boot.md): the same machine, booted with
+    # aegir.fail on the firmware's command line, so the boot session's sequence
+    # is forced to fail and auth leaves the read-only view standing instead of
+    # starting the greeter. The two cues are the proof; the success target is
+    # what proves the other path.
+    "aegir-fail": replace(
+        _aegir(2048, 1, "aegir"),
+        name="aegir-fail",
+        description="Aegir's boot failure view, forced with -append aegir.fail",
+        # The failure view is the marker, not AEGIR_BOOT_OK: on this boot the
+        # director's boot wait is paced by the test bed, which the acceptance
+        # does not drive through its whole sequence (no greeter runs), so the
+        # marker that matters is the view coming up.
+        marker="terminal: boot failed, the view is up",
+        qemu_args=_aegir(2048, 1, "aegir").qemu_args + ("-append aegir.fail",),
+        qmp_steps=(
+            QmpStep(r"auth: the boot session failed -- the failure view stands"),
+            QmpStep(r"terminal: boot failed, the view is up"),
+            # The test bed paces itself through the console's channel and will
+            # not report ready until its first click is answered, which the
+            # director's boot waits on -- so the click is here too, though the
+            # rest of the acceptance's steps are not (no greeter runs).
+            QmpStep(
+                r"test: the console's channel -- a click, please",
+                events=(
+                    {"type": "rel", "data": {"axis": "x", "value": -376}},
+                    {"type": "rel", "data": {"axis": "y", "value": -186}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The failure view's window is created at run time, so the console
+            # has a frame or two of compositing to do; this cue is a later one,
+            # so the screendump sees the window rather than the frame before it.
+            QmpStep(
+                r"test: the click focused the window",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The boot session's failure view: its window is up where the
+                # session terminal's would be, its grid grey, with the console's
+                # blue backdrop still around it.
+                pixels=(
+                    ("gpu0", 60, 200, 204, 204, 204),
+                    ("gpu0", 500, 300, 204, 204, 204),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+            ),
+        ),
+    ),
     # The rest of the QEMU matrix we care about, at the floor's memory and at the
     # upper end of the expected range.
     "aegir-2g-smp2": _aegir(2048, 2, "aegir-2g-smp2"),

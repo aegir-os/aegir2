@@ -308,8 +308,10 @@ this arc's record of the order.
   which waits for the re-login arc.
 - **Phase 11 — the boot session.** `specs/boot.md`: the system's
   `Sys:S/Startup-Sequence` is system-only, runs once before the greeter, and is
-  run by a `system.boot` terminal and shell that auth spawns; the shell signals
-  a notification auth holds when the command file is done, and auth waits on it.
+  run by a `system.boot` terminal and shell that auth spawns; the shell sends
+  auth the outcome on an endpoint when the command file is done — 0 success,
+  nonzero failure — and auth waits on it, starting the greeter only on success
+  and leaving the read-only failure view standing otherwise.
   A shell started with a command file runs that file; a shell started with none
   runs Shell-Startup, which is the interactive path above.
 - **Phase 12 — substitution and script arguments.** Landed. A line's `$name`,

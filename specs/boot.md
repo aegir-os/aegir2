@@ -1,10 +1,11 @@
 # boot: Startup-Sequence, and the boot session
 
-Status: the boot session's success path is implemented (2026-09). This spec is
-the boot arc's — the system's startup command file, the session that runs it,
-and (in the next slice) the read-only view a failed boot leaves and the rescue
-shell behind a boot flag. `specs/shell.md` is the command line that runs it;
-this file is the boot's own shape.
+Status: the boot session's success and failure paths are implemented (2026-09).
+This spec is the boot arc's — the system's startup command file, the session
+that runs it, the read-only view a failed boot leaves, and the boot flag that
+forces one. The rescue shell the flag will also select is the next slice.
+`specs/shell.md` is the command line that runs it; this file is the boot's own
+shape.
 
 An Amiga boots by running a command file: the first file on the boot disk,
 `S:startup-sequence`, is handed to the Shell, which runs it. Aegir does the
@@ -30,19 +31,25 @@ system authority and runs once, and a user's shell startup is the user's own
   Shell-Startup instead (`specs/shell.md`). Its memory is auth's own
   delegation, not the session pool, because it is not reclaimed: a failed boot
   leaves it standing (below).
-- **The shell signals when the script is done, and auth waits.** The boot
-  terminal is granted a notification (`boot.doorbell`) it passes to its shell;
-  the shell signals it when the command file's frame empties or `EndCLI` takes
-  it. `auth` waits on it and only then starts the greeter. A script that never
-  ends would hold the boot, which is the same wait a service's ready is.
+- **The shell reports the outcome, and auth waits.** The boot terminal is
+  granted an endpoint (`boot.status`) it passes to its shell; the shell sends
+  one word when the command file's frame empties or `EndCLI` takes it — 0 when
+  Startup-Sequence finished, nonzero when a command failed at or above the fail
+  level or the firmware forced a failure. `auth` receives it and starts the
+  greeter only on success. A script that never ends would hold the boot, which
+  is the same wait a service's ready is.
 - **The quiet default is `EndCLI >NIL:`.** `NIL:` is a volume
   (`specs/vfs.md`), so the sequence's close is silent with no special case, and
   the boot window never appears unless the script writes.
-- **The boot session's window is hidden until it has output.** The console
-  shows a window only on its first damage (`specs/console.md`), and the boot
-  terminal does not show its window at all: a quiet sequence leaves no window,
-  and `>NIL:` keeps it that way. The visible failure view — the one that comes
-  up when the sequence fails — is the next slice's.
+- **The boot session's window is hidden until the sequence fails.** A quiet
+  sequence leaves no window, and `>NIL:` keeps it that way. When the sequence
+  fails, the shell reports the outcome and asks the terminal for the read-only
+  failure view: the terminal shows its window — its backing was reserved at
+  start, because the toolkit sizes an app's slice from the windows shown or
+  reserved then — and takes no more input, so the grid holds what the sequence
+  wrote and nothing else. On success the script's `EndCLI >NIL:` closes the
+  window and auth starts the greeter; on failure the view stands and no greeter
+  runs.
 - **`C:` is bound for the boot badge; `Sys:` is waited for.** A command in the
   sequence resolves through `C:` (`Sys:C`, `specs/dos.md`), which auth binds
   for the boot badge. `Sys:` is a filesystem's to register and comes up after
@@ -50,14 +57,17 @@ system authority and runs once, and a user's shell startup is the user's own
   the user database's resolve does.
 - **The firmware's boot flags are the device tree's `/chosen/bootargs`.** The
   bootloader's command line is where a boot's mode is named — `aegir.fail`
-  forces the failure view, `aegir.rescue` the writable rescue shell. Director
-  reads the one property from the device tree it already owns and hands the
-  string to auth through the bootstrap block's `Boot` entry; auth is the
-  service that starts the boot session and decides what a failed boot does.
-  The elfloader is told to use the bootloader's tree rather than one baked into
-  its CPIO (`ElfloaderIncludeDtb` off): the baked-in tree carries no `bootargs`,
-  and the option's own comment — "in case bootloader doesn't provide one" — is
-  not what its code does.
+  forces the failure view, and the rescue shell the next slice adds will be
+  `aegir.rescue`. Director reads the one property from the device tree it
+  already owns and hands the string to auth through the bootstrap block's
+  `Boot` entry; auth is the service that starts the boot session and decides
+  what a failed boot does. Auth passes `aegir.fail` on as the boot terminal's
+  environment (`AEGIR_BOOTARGS`), which its shell reads and obeys by reporting a
+  failure even though the sequence succeeded — so the failure path is reachable
+  on a machine whose sequence is fine. The elfloader is told to use the
+  bootloader's tree rather than one baked into its CPIO (`ElfloaderIncludeDtb`
+  off): the baked-in tree carries no `bootargs`, and the option's own comment —
+  "in case bootloader doesn't provide one" — is not what its code does.
 
 ## The boot session
 
@@ -65,28 +75,24 @@ system authority and runs once, and a user's shell startup is the user's own
         read the database
         wait for Sys:C, bind C: for the boot badge
         spawn the system.boot terminal (console.gui, namespace, shell kit,
-            boot.doorbell) with cwd Sys:
-        wait on boot.doorbell
-        start the greeter
+            boot.status, AEGIR_BOOTARGS) with cwd Sys:
+        receive the outcome on boot.status: 0 runs the greeter, nonzero does not
     terminal (system.boot):
         spawn the shell with argv[1] = Sys:S/Startup-Sequence, and pass
-            boot.doorbell
+            boot.status
     shell:
-        run the command file
-        signal boot.doorbell when its frame empties or EndCLI takes it
+        run the command file; on failure (or aegir.fail) ask the terminal for
+            the read-only failure view
+        send the outcome on boot.status when its frame empties or EndCLI takes it
 
 ## What this is not yet
 
-- **The failure view.** A sequence that fails leaves the shell standing, but
-  today its window stays hidden rather than becoming the read-only view of the
-  buffered output the failure arc will make it. That needs the boot log buffer
-  (the terminal's scrollback, or one of its own) and a read-only state that
-  takes no input.
 - **Rescue mode.** A failed boot presents the output and no input by default;
-  a kernel-command-line flag turns the same session into a full writable rescue
-  shell. The flag's source is plumbed — director reads `/chosen/bootargs` and
-  hands it to auth (`Boot`, above) — but the view itself is the piece after
-  this one. This is auth's and director's concern, not the shell's.
+  the flag turns the same session into a full writable rescue shell. The flag's
+  source is plumbed — director reads `/chosen/bootargs` and hands it to auth
+  (`Boot`, above), and auth passes `aegir.fail` to the shell — but the writable
+  mode itself is the piece after this one. This is auth's and director's
+  concern, not the shell's.
 - **Headless operation.** The boot session assumes a console to give the
   terminal a window (even a hidden one). A server with no display is a later
   arc.
@@ -94,8 +100,20 @@ system authority and runs once, and a user's shell startup is the user's own
 ## Acceptance
 
 The runner waits on `auth: the boot session ran` — auth's line after the boot
-notification — so it proves both the system terminal and shell spawned and the
+outcome — so it proves both the system terminal and shell spawned and the
 handshake fired, which only happens once `Sys:S/Startup-Sequence` has been read
 and its frame drained. The boot window is hidden throughout, so it does not
 disturb the acceptance's window pixel checks; the `NIL:` registration and the
 redirection acceptance are `specs/shell.md`'s.
+
+The failure path is a second target, `aegir-fail` (`make run
+TARGET=aegir-fail`): the same machine booted with `-append aegir.fail`, so auth
+passes `aegir.fail` to the boot shell, which reports a failure although
+Startup-Sequence succeeds. The runner waits on `terminal: boot failed, the view
+is up` — the marker for this target, because the director's boot wait is paced
+by the test bed and no greeter runs — and on `auth: the boot session failed --
+the failure view stands`, and a screendump of the console's head shows the boot
+window up, its grid grey where the session terminal's would be, the blue
+backdrop still around it. Both cues together prove the shell reported a
+failure, auth left the view standing instead of starting the greeter, and the
+window came up.

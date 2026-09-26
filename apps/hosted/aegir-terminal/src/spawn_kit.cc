@@ -10,6 +10,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
+#include <aegir/environment.h>
 #include <aegir/log.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
@@ -105,9 +106,9 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     /* The boot session's doorbell (specs/boot.md): auth grants it only to the
      * boot terminal, which passes it on to the shell. Its presence is what
      * makes this terminal the boot session's. */
-    uint64_t boot_notification_slot = 0;
-    if (aegir::bootstrap::capability("boot.doorbell", 13, &boot_notification_slot)) {
-        boot_notification_ = static_cast<seL4_CPtr>(boot_notification_slot);
+    uint64_t boot_status_slot = 0;
+    if (aegir::bootstrap::capability("boot.status", 11, &boot_status_slot)) {
+        boot_status_ = static_cast<seL4_CPtr>(boot_status_slot);
     }
 
     /* The terminal's own con.stream endpoint and a fault endpoint for its
@@ -178,13 +179,12 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
          seL4_AllRights, 0, shell_pool_bits_},
     };
     uint32_t port_count = 4;
-    /* The boot session's doorbell (specs/boot.md): the shell signals it when
-     * Startup-Sequence is done, and auth waits on it before the greeter. Only
-     * the boot terminal has one. */
-    if (boot_notification_ != 0) {
-        ports[port_count] = {"boot.doorbell", 13,
+    /* The boot session's status endpoint (specs/boot.md): the shell sends the
+     * outcome here and auth receives it. Only the boot terminal has one. */
+    if (boot_status_ != 0) {
+        ports[port_count] = {"boot.status", 11,
                              aegir::bootstrap::kSlotFirstDeclared + port_count,
-                             boot_notification_, seL4_AllRights, 0, 0};
+                             boot_status_, seL4_AllRights, 0, 0};
         ++port_count;
     }
     static char const kName[] = "session.shell";
@@ -202,6 +202,14 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
      * an interactive shell is started with none. */
     request.arguments = arguments;
     request.argument_count = argument_count;
+    /* The terminal's own environment rides to the shell: the boot flags auth
+     * set as AEGIR_BOOTARGS are how the shell learns to force the failure view
+     * (specs/boot.md). */
+    request.environment = aegir::environment::environ();
+    request.environment_count = 0;
+    while (request.environment[request.environment_count] != nullptr) {
+        ++request.environment_count;
+    }
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
     request.port_count = port_count;

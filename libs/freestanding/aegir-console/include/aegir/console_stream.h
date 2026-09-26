@@ -110,6 +110,13 @@ constexpr uint32_t kStreamMethodCommandStatus = 9;
  *  pager can size a page to the window rather than a constant. */
 constexpr uint32_t kStreamMethodSize = 10;
 
+/** The boot session's Startup-Sequence failed (specs/boot.md): present the
+ *  read-only failure view. In: nothing. Answer: one word, 1 when the stream is
+ *  a boot session's and the view is up, 0 otherwise. The shell sends it once,
+ *  after it has reported the status to auth, and then stops reading; the
+ *  terminal shows the window and takes no more input. */
+constexpr uint32_t kStreamMethodBootFail = 11;
+
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws
  *  itself (specs/terminal.md). */

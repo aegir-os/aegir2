@@ -145,7 +145,7 @@ bool Application::start_console() {
      * backdrop is two. */
     uint64_t bytes = aegir::console::kEventRingBytes;
     for (Window* win : windows_) {
-        if (win->visible()) bytes += win->backing_bytes();
+        if (win->visible() || win->reserved()) bytes += win->backing_bytes();
     }
     uint64_t const frame_bytes = 1ull << seL4_LargePageBits;
     bytes = (bytes + frame_bytes - 1) & ~(frame_bytes - 1);

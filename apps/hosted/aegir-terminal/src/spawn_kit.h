@@ -97,11 +97,11 @@ public:
                      uint32_t cwd_length, uint64_t badge, char const *const *arguments,
                      uint32_t argument_count);
 
-    /* The boot session's doorbell, when this terminal is the boot session's
-     * (auth grants it as `boot.doorbell`): the shell signals it when
-     * Startup-Sequence is done (specs/boot.md). Zero for an interactive
-     * terminal. */
-    seL4_CPtr boot_notification() const { return boot_notification_; }
+    /* The boot session's status endpoint, when this terminal is the boot
+     * session's (auth grants it as `boot.status`): the shell sends the outcome
+     * -- 0 success, nonzero failure -- and auth receives it (specs/boot.md).
+     * Zero for an interactive terminal. */
+    seL4_CPtr boot_status() const { return boot_status_; }
 
 private:
     void reclaim();
@@ -119,7 +119,7 @@ private:
     seL4_CPtr command_nmspace_port_ = 0;
     seL4_CPtr command_clock_port_ = 0;
     seL4_CPtr command_timer_port_ = 0;
-    seL4_CPtr boot_notification_ = 0;
+    seL4_CPtr boot_status_ = 0;
     seL4_CPtr asid_pool_ = 0;
     seL4_CPtr command_pool_ = 0;
     uint32_t command_pool_bits_ = 0;

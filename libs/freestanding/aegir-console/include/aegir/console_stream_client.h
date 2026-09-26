@@ -233,6 +233,17 @@ inline bool stream_size(aegir::ipc::Consumer const &port, uint32_t *rows,
     return true;
 }
 
+/** Present the read-only failure view of a boot session whose sequence failed
+ *  (specs/boot.md). True when the terminal took it. The shell sends this once,
+ *  after reporting the status to auth, and then stops reading. */
+inline bool stream_boot_fail(aegir::ipc::Consumer const &port) noexcept
+{
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodBootFail, nullptr, 0, in, 1);
+    return answer.error == 0 && answer.count == 1 && in[0] == 1;
+}
+
 }  // namespace aegir::console
 
 #endif  // AEGIR_CONSOLE_STREAM_CLIENT_H

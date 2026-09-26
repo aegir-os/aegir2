@@ -150,7 +150,16 @@ int main(int argc, char *argv[])
      * after the terminal says it is ready, so a key that arrives before its
      * editor exists waits here and is replayed (on_poll). */
     std::vector<KeyEvent> pending_keys;
-    terminal->on_key = [&server, &pending_keys](KeyEvent const &event) {
+    /* The boot session's failure view (specs/boot.md): once the shell has said
+     * the sequence failed, the window is up and takes no input. The cue is
+     * printed on the next poll, after the window has repainted, so a screendump
+     * cued by it sees the view rather than the frame before it. */
+    bool read_only = false;
+    bool announce_view = false;
+    terminal->on_key = [&server, &pending_keys, &read_only](KeyEvent const &event) {
+        if (read_only) {
+            return false;
+        }
         LineEditor *const editor = server.editor(kShellStream);
         bool const ready =
             editor != nullptr && (editor->editing() || server.in_command(kShellStream));
@@ -350,6 +359,20 @@ int main(int argc, char *argv[])
              * command's redirected input and output (five strings, packed in
              * that order; specs/shell.md). The terminal holds the spawn
              * authority, so it starts the command here. */
+            if (method == aegir::console::kStreamMethodBootFail) {
+                if (capacity < 1) {
+                    return 0;
+                }
+                /* The boot sequence failed (specs/boot.md): the read-only
+                 * failure view. The grid already holds what the sequence
+                 * wrote; show the window and take no more input. */
+                read_only = true;
+                window.show();
+                window.request_focus();
+                announce_view = true;
+                reply[0] = 1;
+                return 1;
+            }
             if (method == aegir::console::kStreamMethodRun) {
                 if (capacity < 1) {
                     return 0;
@@ -469,11 +492,17 @@ int main(int argc, char *argv[])
 
     window.set_content(std::move(view));
     window.set_focus(terminal);
-    if (spawn_kit.boot_notification() == 0) {
+    if (spawn_kit.boot_status() == 0) {
         /* The terminal starts focused, so the acceptance's typed line reaches
          * it without a click that would race the demo's. */
         window.request_focus();
         window.show();
+    } else {
+        /* The boot session's failure view (specs/boot.md): the window is hidden
+         * until the boot fails, but its backing is reserved now, because the
+         * slice is sized from the windows shown or reserved at start and a
+         * window shown later would otherwise have nowhere to draw. */
+        window.reserve();
     }
     /* The boot session's window is not shown (specs/boot.md): Startup-Sequence
      * is quiet by default, and its window comes up only when it has output --
@@ -483,6 +512,10 @@ int main(int argc, char *argv[])
     /* The shell opens its stream a moment after the terminal is up; keys that
      * arrived first are replayed once its editor is there. */
     app.on_poll = [&]() {
+        if (announce_view) {
+            announce_view = false;
+            write("  terminal: boot failed, the view is up\n");
+        }
         if (pending_keys.empty()) {
             return;
         }
@@ -500,7 +533,7 @@ int main(int argc, char *argv[])
     app.on_started = [&]() {
         /* The boot session says so, so its ready line is not the session
          * terminal's cue (specs/boot.md). */
-        bool const boot = spawn_kit.boot_notification() != 0;
+        bool const boot = spawn_kit.boot_status() != 0;
         write(boot ? "  terminal: boot ready\n" : "  terminal: ready\n");
         if (kit) {
             std::error_code cwd_error;
