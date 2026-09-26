@@ -538,7 +538,13 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
         give_slot(slot);
         return -EISDIR;
     }
-    return install(slot, target, 0, false, true, false);
+    /* A read open takes a read handle, so the runtime's reads resolve the
+     * path once. A filesystem that does not serve read handles answers zero,
+     * and the fd falls back to path reads (volume::kMethodReadHandle is
+     * optional; the write side is not). */
+    uint64_t const handle =
+        volume.open(target.rest, target.rest_length, aegir::volume::kOpenRead);
+    return install(slot, target, handle, false, true, false);
 }
 
 /* The redirected standard streams (specs/shell.md): a read open refuses a name
@@ -561,7 +567,7 @@ long close(int fd) noexcept
     if (entry == nullptr) {
         return -EBADF;
     }
-    if (entry->writable && entry->handle != 0) {
+    if (entry->handle != 0) {
         aegir::vfs::Volume(entry->volume).close(entry->handle);
     }
     give_slot(entry->volume);
@@ -584,9 +590,18 @@ long read(int fd, void *buffer, size_t count) noexcept
         /* `bytes.data` points into the Volume, so it must outlive the copy. */
         aegir::vfs::Volume volume(entry->volume);
         aegir::vfs::Volume::Bytes bytes{};
-        if (!volume.read(entry->path, entry->path_length, entry->offset, count - total,
-                         bytes) ||
-            bytes.count == 0) {
+        bool ok = false;
+        if (entry->handle != 0) {
+            ok = volume.read_handle(entry->handle, entry->offset, count - total, bytes);
+        }
+        if (!ok) {
+            /* No handle, or a filesystem that does not serve one: the path
+             * read is the fallback, and the only shape a read-only volume
+             * that predates handles would answer. */
+            ok = volume.read(entry->path, entry->path_length, entry->offset,
+                             count - total, bytes);
+        }
+        if (!ok || bytes.count == 0) {
             break;
         }
         for (uint64_t i = 0; i < bytes.count; ++i) {

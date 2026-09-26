@@ -100,6 +100,12 @@ uint64_t now_seconds() noexcept
     return reply.error == 0 && reply.count >= 1 ? answer[0] : 0;
 }
 
+/* Handle kinds: a write handle a plain open makes, a read handle a read open
+ * makes. They differ only in which methods accept them -- read-handle takes
+ * both, because an O_RDWR fd's reads name the same handle its writes do. */
+constexpr uint8_t kHandleFile = 0;
+constexpr uint8_t kHandleRead = 1;
+
 /* One open file. The serial is the handle the client names; it is never
  * reused, so a stale handle answers "not one" rather than naming a new
  * file. The badge is whose it is: resolve minted the client's port copy
@@ -114,6 +120,7 @@ struct Handle {
     uint64_t dirent_sector; /* volume-relative */
     uint32_t dirent_index;  /* which 32-byte slot of that sector */
     uint32_t first_cluster;
+    uint8_t kind; /* kHandleFile or kHandleRead */
 };
 
 Handle *handle_lookup(uint64_t serial, uint64_t badge) noexcept
@@ -993,17 +1000,50 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         return;
     }
     uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(&handle, 1);
+        return;
+    }
+    uint64_t const flags = words[path_words];
     /* The walk ends at the directory the file lives in; the last component
      * is the file. Both flavors write: the chain helpers know which. */
     Dir dir;
     char const *last = nullptr;
     uint32_t last_length = 0;
-    if (count < path_words + 1 || !g_writable ||
-        !walk(path, path_length, false, &dir, &last, &last_length)) {
+    if (!walk(path, path_length, false, &dir, &last, &last_length)) {
         port.reply_words(&handle, 1);
         return;
     }
-    uint64_t const flags = words[path_words];
+    if ((flags & aegir::volume::kOpenRead) != 0) {
+        /* A read open: find the file once and answer a handle every read
+         * then names, so the reads scan no directory. A read-only volume
+         * serves it. */
+        aegir::fat::Dirent dirent;
+        uint64_t dirent_sector = 0;
+        uint32_t dirent_index = 0;
+        if (dir_slot(dir, last, last_length, &dirent, &dirent_sector, &dirent_index,
+                     nullptr) != Slot::Found ||
+            dirent.directory) {
+            port.reply_words(&handle, 1);
+            return;
+        }
+        Handle *row = handle_alloc(badge);
+        if (row != nullptr) {
+            row->kind = kHandleRead;
+            row->cursor = 0;
+            row->size = dirent.bytes;
+            row->dirent_sector = dirent_sector;
+            row->dirent_index = dirent_index;
+            row->first_cluster = dirent.first_cluster;
+            handle = row->serial;
+        }
+        port.reply_words(&handle, 1);
+        return;
+    }
+    if (!g_writable) {
+        port.reply_words(&handle, 1);
+        return;
+    }
 
     aegir::fat::Dirent dirent;
     uint64_t dirent_sector = 0;
@@ -1043,6 +1083,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     if (ok) {
         Handle *row = handle_alloc(badge);
         if (row != nullptr) {
+            row->kind = kHandleFile;
             row->cursor = 0;
             row->size = size;
             row->dirent_sector = dirent_sector;
@@ -1064,8 +1105,8 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     }
     Handle *handle = handle_lookup(words[0], badge);
     uint64_t const bytes = words[1];
-    if (handle == nullptr || bytes > aegir::volume::kWriteMax ||
-        count < 2 + (bytes + 7) / 8) {
+    if (handle == nullptr || handle->kind != kHandleFile ||
+        bytes > aegir::volume::kWriteMax || count < 2 + (bytes + 7) / 8) {
         port.reply_words(&written, 1);
         return;
     }
@@ -1559,35 +1600,12 @@ void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
     port.reply_words(&truncated, 1);
 }
 
-void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+/* The bytes of a read, once the dirent is known: follow the chain and pack
+ * the answer. Shared by the path read and the handle read, which differ only
+ * in how they found the dirent. */
+void serve_read(aegir::ipc::Owner &port, aegir::fat::Dirent const &dirent,
+                uint64_t offset, uint64_t wanted) noexcept
 {
-    char const *path = nullptr;
-    uint32_t path_length = 0;
-    if (count == 0 ||
-        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
-                                       &path_length)) {
-        port.reply_words(nullptr, 0);
-        return;
-    }
-    uint32_t const path_words = 1 + (path_length + 7) / 8;
-    if (count < path_words + 2) {
-        port.reply_words(nullptr, 0);
-        return;
-    }
-    uint64_t const offset = words[path_words];
-    uint64_t wanted = words[path_words + 1];
-    /* The walk ends at the directory the file lives in; the last component
-     * is the file. */
-    Dir dir;
-    char const *last = nullptr;
-    uint32_t last_length = 0;
-    aegir::fat::Dirent dirent;
-    if (!walk(path, path_length, false, &dir, &last, &last_length) ||
-        !find_in_dir(dir, last, last_length, 0, &dirent) || dirent.directory ||
-        offset > dirent.bytes) {
-        port.reply_words(nullptr, 0);
-        return;
-    }
     if (wanted > aegir::volume::kReadMax) {
         wanted = aegir::volume::kReadMax;
     }
@@ -1631,6 +1649,67 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     answer[1] = offset + filled >= dirent.bytes ? 1 : 0;
     port.reply_words(answer, aegir::volume::kReadHeaderWords +
                                  static_cast<uint32_t>((filled + 7) / 8));
+}
+
+void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 2) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const offset = words[path_words];
+    uint64_t const wanted = words[path_words + 1];
+    /* The walk ends at the directory the file lives in; the last component
+     * is the file. */
+    Dir dir;
+    char const *last = nullptr;
+    uint32_t last_length = 0;
+    aegir::fat::Dirent dirent;
+    if (!walk(path, path_length, false, &dir, &last, &last_length) ||
+        !find_in_dir(dir, last, last_length, 0, &dirent) || dirent.directory ||
+        offset > dirent.bytes) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    serve_read(port, dirent, offset, wanted);
+}
+
+/* A read through a handle from a read open: the dirent was found at open, so
+ * this reads its slot back -- one sector, not a directory scan -- and serves
+ * the bytes. A write handle answers too, because an O_RDWR fd's reads name
+ * the same handle its writes do. */
+void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                        uint64_t badge) noexcept
+{
+    if (count < 3) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t const offset = words[1];
+    uint64_t const wanted = words[2];
+    if (handle == nullptr ||
+        (handle->kind != kHandleRead && handle->kind != kHandleFile) ||
+        !read(handle->dirent_sector, 1)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::fat::Dirent dirent;
+    aegir::fat::short_dirent(g_window + handle->dirent_index * 32, &dirent);
+    if (dirent.directory || offset > dirent.bytes) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    serve_read(port, dirent, offset, wanted);
 }
 
 void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
@@ -2064,6 +2143,9 @@ int main(int argc, char *argv[])
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count);
+            break;
+        case aegir::volume::kMethodReadHandle:
+            answer_read_handle(vol, words, count, badge);
             break;
         case aegir::volume::kMethodList:
             answer_list(vol, words, count);

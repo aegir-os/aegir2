@@ -125,6 +125,16 @@ public:
     bool read(char const *path, uint32_t length, uint64_t offset, uint64_t capacity,
               Bytes &out) noexcept;
 
+    /**
+     * Read up to `capacity` bytes at `offset` through a handle from
+     * `open(path, length, volume::kOpenRead)`: the same answer as `read`, with
+     * the path resolved once at open (volume::kMethodReadHandle). A filesystem
+     * that serves path reads from a walk serves this from the handle instead,
+     * so a caller reading a file a window at a time walks the path once.
+     */
+    bool read_handle(uint64_t handle, uint64_t offset, uint64_t capacity,
+                     Bytes &out) noexcept;
+
     /** One directory entry: the name (into this Volume), its size and kind
      *  (volume::kKindFile or kKindDir). False at the end of the directory or
      *  on refusal -- the cursor is the caller's index. */

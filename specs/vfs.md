@@ -133,9 +133,13 @@ listed as one directory.
 
 ## The volume protocol
 
-What a filesystem serves on its volume port. Reads and listings are
-**stateless**: no handles, no per-client state — the shape a multi-user
-system with many concurrent readers wants.
+What a filesystem serves on its volume port. Listings are **stateless**: no
+handles, no per-client state — the shape a multi-user system with many
+concurrent readers wants. A one-shot read is stateless too, but a caller
+streaming a file opens it first (a **read handle**) and reads through that, so
+the path is walked once rather than once per window. A path read costs a
+filesystem a walk of its directories every call, and a command image is a
+thousand calls; the read handle is how the runtime's `read` avoids that.
 
 The path a method takes is the component path from above: `/` separates
 components, each a name in the directory above it, the empty path is the
@@ -147,6 +151,12 @@ second, ASCII-case-folded (specs/fat.md).
 - **read** — words: path (after the colon), offset. The walk ends at the
   file the path names. Reply: data words inline
   in the envelope, a byte count, and an end-of-file flag.
+- **read-handle** — words: a handle from an `open` with the `read` flag, an
+  offset, and a byte count. Reply: read's — data inline, a byte count, an
+  end-of-file flag. The filesystem resolved the path at open, so this read
+  walks nothing. A filesystem that does not serve it answers nothing, and the
+  runtime falls back to the path read: the read side of the protocol is
+  optional, the write side is not.
 - **list** — words: path, an index. The walk ends at the *directory* the
   path names — the empty path lists the root. Reply: one entry (name, size,
   kind), or end-of-directory. The cursor is the caller's index, the registry
@@ -163,12 +173,13 @@ program opens a file and then streams, and asking it to re-walk the path and
 name the offset on every call is an API nobody writes against twice. So the
 write side has **handles** — the only per-client state a filesystem holds:
 
-- **open** — words: path, mode flags (`create`, `truncate`). The walk ends
-  at the directory the file lives in; `create` makes it there. Reply: one
-  word, the handle — zero is the refusal (a bad path, an existing name
-  without `create`, a read-only volume). A write-open with `truncate` frees
-  the file's old chain at once: what the file was is gone the moment the
-  open answers.
+- **open** — words: path, mode flags (`read`, `create`, `truncate`). The walk
+  ends at the directory the file lives in; `create` makes it there. Reply: one
+  word, the handle — zero is the refusal (a bad path, an existing name without
+  `create`, a read-only volume, and, for `read`, a name that is not a file). A
+  read-open is served by a read-only volume — that is the read side's whole
+  point. A write-open with `truncate` frees the file's old chain at once: what
+  the file was is gone the moment the open answers.
 - **write** — words: handle, inline bytes, bounded by the envelope like a
   read's answer. The bytes land at the handle's cursor and the cursor
   advances; a write that crosses the end of the file extends it. Reply: the

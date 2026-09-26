@@ -197,6 +197,7 @@ int main(int argc, char *argv[])
             port.receive_words(words, aegir::ipc::kMaxWords, &count, nullptr);
         switch (method) {
         case aegir::volume::kMethodRead:
+        case aegir::volume::kMethodReadHandle:
             answer_read(port);
             break;
         case aegir::volume::kMethodList:

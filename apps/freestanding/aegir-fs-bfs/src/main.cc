@@ -254,10 +254,11 @@ bool may_see(uint64_t badge, aegir::bfs::Inode const &inode) noexcept
  * by the caller, which is what keeps a user out of another user's home even
  * when a file inside it is world-readable (specs/ownership.md). */
 bool walk(uint64_t badge, char const *path, uint32_t length,
-          aegir::bfs::Inode *out) noexcept
+          aegir::bfs::Inode *out, uint64_t *out_block = nullptr) noexcept
 {
     aegir::bfs::Inode inode;
-    if (!g_volume.read_inode(g_volume.root_block(), &inode)) {
+    uint64_t block = g_volume.root_block();
+    if (!g_volume.read_inode(block, &inode)) {
         return false;
     }
     uint32_t start = 0;
@@ -271,13 +272,15 @@ bool walk(uint64_t badge, char const *path, uint32_t length,
         }
         uint32_t const component = end - start;
         if (component == 0) {
-            if (!g_volume.read_inode(g_volume.to_block(inode.parent), &inode)) {
+            block = g_volume.to_block(inode.parent);
+            if (!g_volume.read_inode(block, &inode)) {
                 return false;
             }
         } else if (component == 1 && path[start] == '.') {
             /* the directory itself: nothing to do */
         } else if (component == 2 && path[start] == '.' && path[start + 1] == '.') {
-            if (!g_volume.read_inode(g_volume.to_block(inode.parent), &inode)) {
+            block = g_volume.to_block(inode.parent);
+            if (!g_volume.read_inode(block, &inode)) {
                 return false;
             }
         } else {
@@ -286,10 +289,14 @@ bool walk(uint64_t badge, char const *path, uint32_t length,
                 !g_volume.read_inode(child, &inode)) {
                 return false;
             }
+            block = child;
         }
         start = end + 1;
     }
     *out = inode;
+    if (out_block != nullptr) {
+        *out_block = block;
+    }
     return true;
 }
 
@@ -387,6 +394,16 @@ bool make_dirs(uint64_t badge, char const *path, uint32_t length) noexcept
     return true;
 }
 
+/* Handle kinds: a file handle is open for writing (the default a plain open
+ * makes), a read handle for reading, and a query handle names a query rather
+ * than a file. A read handle and a write handle differ only in which methods
+ * accept them -- read-handle takes both, because an O_RDWR fd's write handle
+ * is what its reads go through too. */
+constexpr uint8_t kHandleFile = 0;
+constexpr uint8_t kHandleQuery = 1;
+constexpr uint8_t kHandleLive = 2;
+constexpr uint8_t kHandleRead = 3;
+
 /* One open file or query. The serial is the handle the client names; it is
  * never reused. The badge is whose it is. A file's inode block is where the
  * writes land and its cursor is the byte offset; a query's text is what it
@@ -396,7 +413,7 @@ struct Handle {
     uint64_t badge;
     uint64_t inode_block;
     uint64_t cursor;
-    uint8_t kind; /* 0 file, 1 query, 2 live query */
+    uint8_t kind; /* one of the kHandle* constants above */
     uint32_t query_length;
     /* A query whose single term an index can answer walks the index rather
      * than the volume: `index_block` names the index, `index_position` is how
@@ -495,7 +512,7 @@ bool live_slot_used(uint64_t slot) noexcept
     uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
     auto *rows = reinterpret_cast<Handle *>(g_memory);
     for (uint32_t i = 0; i < capacity; ++i) {
-        if (rows[i].serial != 0 && rows[i].kind == 2 &&
+        if (rows[i].serial != 0 && rows[i].kind == kHandleLive &&
             rows[i].live_notification == slot) {
             return true;
         }
@@ -531,7 +548,7 @@ void note_change() noexcept
     uint32_t const capacity = g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
     auto *rows = reinterpret_cast<Handle *>(g_memory);
     for (uint32_t i = 0; i < capacity; ++i) {
-        if (rows[i].serial != 0 && rows[i].kind == 2 &&
+        if (rows[i].serial != 0 && rows[i].kind == kHandleLive &&
             rows[i].live_notification != 0) {
             seL4_Signal(rows[i].live_notification);
         }
@@ -551,11 +568,38 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         return;
     }
     uint32_t const path_words = 1 + (path_length + 7) / 8;
-    if (count < path_words + 1 || !g_writable) {
+    if (count < path_words + 1) {
         port.reply_words(&handle, 1);
         return;
     }
     uint64_t const flags = words[path_words];
+    if ((flags & aegir::volume::kOpenRead) != 0) {
+        /* A read open: resolve the path once and answer a handle every read
+         * then names, so the reads walk nothing. A read-only volume serves
+         * it -- that is the whole point of the read side of the protocol. */
+        aegir::bfs::Inode inode;
+        uint64_t inode_block = 0;
+        if (!walk(badge, path, path_length, &inode, &inode_block) ||
+            is_directory(inode) || !permits(badge, inode, kPermRead)) {
+            port.reply_words(&handle, 1);
+            return;
+        }
+        Handle *row = handle_alloc(badge);
+        if (row != nullptr) {
+            row->inode_block = inode_block;
+            row->cursor = 0;
+            row->kind = kHandleRead;
+            row->query_length = 0;
+            row->live_notification = 0;
+            handle = row->serial;
+        }
+        port.reply_words(&handle, 1);
+        return;
+    }
+    if (!g_writable) {
+        port.reply_words(&handle, 1);
+        return;
+    }
     uint64_t parent_block = 0;
     char const *name = nullptr;
     uint32_t name_length = 0;
@@ -603,7 +647,7 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         if (row != nullptr) {
             row->inode_block = inode_block;
             row->cursor = cursor;
-            row->kind = 0;
+            row->kind = kHandleFile;
             row->query_length = 0;
             row->live_notification = 0;
             handle = row->serial;
@@ -623,7 +667,8 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     Handle *handle = handle_lookup(words[0], badge);
     uint64_t const bytes = words[1];
     aegir::bfs::Inode inode;
-    if (handle == nullptr || !g_volume.read_inode(handle->inode_block, &inode) ||
+    if (handle == nullptr || handle->kind != kHandleFile ||
+        !g_volume.read_inode(handle->inode_block, &inode) ||
         !permits(badge, inode, kPermWrite) || bytes > aegir::volume::kWriteMax ||
         count < 2 + static_cast<uint32_t>((bytes + 7) / 8)) {
         port.reply_words(&written, 1);
@@ -790,6 +835,48 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     uint64_t wanted = words[path_words + 1];
     aegir::bfs::Inode inode;
     if (!walk(badge, path, path_length, &inode) || is_directory(inode) ||
+        !permits(badge, inode, kPermRead) ||
+        offset > static_cast<uint64_t>(inode.size)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    if (wanted > kReadMax) {
+        wanted = kReadMax;
+    }
+    uint64_t const available = static_cast<uint64_t>(inode.size) - offset;
+    uint32_t const got = static_cast<uint32_t>(wanted < available ? wanted : available);
+    uint64_t answer[aegir::volume::kReadHeaderWords + kReadMax / 8];
+    auto *bytes = reinterpret_cast<uint8_t *>(answer + aegir::volume::kReadHeaderWords);
+    if (!g_volume.read_stream(inode, offset, bytes, got)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    answer[0] = got;
+    answer[1] = offset + got >= static_cast<uint64_t>(inode.size) ? 1 : 0;
+    port.reply_words(answer,
+                     aegir::volume::kReadHeaderWords + static_cast<uint32_t>((got + 7) / 8));
+}
+
+/* A read through a handle from a read open: the inode was resolved at open,
+ * so this reads it back and serves the bytes, with no walk. A write handle
+ * answers too, because an O_RDWR fd's reads name the same handle its writes
+ * do; a query handle does not. */
+void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                        uint64_t badge) noexcept
+{
+    if (count < 3) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    if (handle == nullptr || (handle->kind != kHandleRead && handle->kind != kHandleFile)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    if (!g_volume.read_inode(handle->inode_block, &inode) || is_directory(inode) ||
         !permits(badge, inode, kPermRead) ||
         offset > static_cast<uint64_t>(inode.size)) {
         port.reply_words(nullptr, 0);
@@ -1027,7 +1114,7 @@ void answer_query_open(aegir::ipc::Owner &port, uint64_t const *words,
         port.reply_words(answer, 1);
         return;
     }
-    row->kind = 1;
+    row->kind = kHandleQuery;
     row->cursor = 1; /* the scan starts at the first block */
     row->index_block = 0;
     row->index_position = 0;
@@ -1110,7 +1197,7 @@ void answer_query_open_live(aegir::ipc::Owner &port, uint64_t const *words,
         port.reply_words(answer, 1);
         return;
     }
-    row->kind = 2;
+    row->kind = kHandleLive;
     row->cursor = 1;
     row->index_block = 0;
     row->index_position = 0;
@@ -1143,7 +1230,7 @@ void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    if (handle == nullptr || (handle->kind != 1 && handle->kind != 2)) {
+    if (handle == nullptr || (handle->kind != kHandleQuery && handle->kind != kHandleLive)) {
         port.reply_words(&status, 1);
         return;
     }
@@ -1153,7 +1240,7 @@ void answer_query_next(aegir::ipc::Owner &port, uint64_t const *words,
     }
     /* A live query has been signalled since its last read: the read starts
      * over, so the whole current set is what the client sees. */
-    if (handle->kind == 2 && handle->live_generation != g_change_generation) {
+    if (handle->kind == kHandleLive && handle->live_generation != g_change_generation) {
         handle->live_generation = g_change_generation;
         handle->cursor = 1;
         handle->index_position = 0;
@@ -1199,7 +1286,7 @@ void answer_query_close(aegir::ipc::Owner &port, uint64_t const *words,
     uint64_t closed = 0;
     if (count >= 1) {
         Handle *handle = handle_lookup(words[0], badge);
-        if (handle != nullptr && (handle->kind == 1 || handle->kind == 2)) {
+        if (handle != nullptr && (handle->kind == kHandleQuery || handle->kind == kHandleLive)) {
             handle_release_cap(handle);
             handle->serial = 0;
             closed = 1;
@@ -1820,6 +1907,9 @@ int main(int argc, char *argv[])
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodReadHandle:
+            answer_read_handle(vol, words, count, badge);
             break;
         case aegir::volume::kMethodList:
             answer_list(vol, words, count, badge);

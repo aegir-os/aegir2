@@ -246,6 +246,28 @@ bool Volume::read(char const *path, uint32_t length, uint64_t offset, uint64_t c
     return true;
 }
 
+bool Volume::read_handle(uint64_t handle, uint64_t offset, uint64_t capacity,
+                         Bytes &out) noexcept
+{
+    uint64_t const wanted = capacity < volume::kReadMax ? capacity : volume::kReadMax;
+    uint64_t request[3] = {handle, offset, wanted};
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(volume::kMethodReadHandle, request, 3, reply_,
+                         aegir::ipc::kMaxWords);
+    if (reply.error != 0 || reply.count < volume::kReadHeaderWords) {
+        return false;
+    }
+    uint64_t const count = reply_[0];
+    uint64_t const eof = reply_[1];
+    if (count > wanted || reply.count < volume::kReadHeaderWords + (count + 7) / 8) {
+        return false;
+    }
+    out.data = reinterpret_cast<char const *>(reply_ + volume::kReadHeaderWords);
+    out.count = count;
+    out.eof = eof != 0;
+    return true;
+}
+
 bool Volume::list(char const *path, uint32_t length, uint64_t index, Entry &out) noexcept
 {
     uint64_t request[nmspace::kPathMax / 8 + 1];

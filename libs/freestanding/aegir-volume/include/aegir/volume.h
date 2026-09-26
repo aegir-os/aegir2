@@ -6,11 +6,15 @@
  *
  * A volume is what a filesystem registers with the VFS (specs/vfs.md); this
  * is the wire its clients then speak, on the capability resolve handed
- * them. Reads and listings are stateless -- no handles, no per-client
- * state: the shape a system with many concurrent readers wants. Writes are
- * handles, because a usable userspace API is one: open with its mode flags,
- * write at the cursor, close. The string wire shape is the namespace
- * protocol's (aegir/nmspace.h): one shape for every string a port carries.
+ * them. Listings are stateless -- no handles, no per-client state: the shape
+ * a system with many concurrent readers wants. A one-shot read is stateless
+ * too, but a caller reading a file a window at a time opens it first
+ * (kOpenRead) and reads from the handle, so the path is resolved once
+ * rather than once per window -- a path read costs a filesystem a walk of
+ * its directories every time. Writes are handles, because a usable
+ * userspace API is one: open with its mode flags, write at the cursor,
+ * close. The string wire shape is the namespace protocol's (aegir/nmspace.h):
+ * one shape for every string a port carries.
  *
  *   - `read`: a path (everything after the volume's colon), an offset, and
  *     how many bytes the caller will take. The answer is a byte count, an
@@ -18,6 +22,9 @@
  *     from a shared window copies out inside the one call: the window's
  *     "content belongs to the most recent call" caveat never reaches the
  *     volume's clients.
+ *   - `read-handle`: a handle from an `open` with kOpenRead, an offset, and
+ *     how many bytes the caller will take. The answer is read's. The
+ *     filesystem resolved the path at open, so a read walks nothing.
  *   - `list`: a path and an index. The answer is one entry -- name, size,
  *     kind -- or nothing at the end of the directory. The cursor is the
  *     caller's index; the directory owes no stability across calls.
@@ -98,9 +105,20 @@ constexpr uint32_t kMethodRename = 10; /* in: src path words, dst path words; an
  * Answer: 1, or 0 (specs/vfs.md). */
 constexpr uint32_t kMethodTruncate = 11; /* in: path words, size; answer: 1, or 0 */
 
+/* read-handle: a handle from an `open` with kOpenRead, an offset, and how
+ * many bytes the caller will take. The answer is read's -- count, eof,
+ * bytes. The filesystem resolved the path at open, so this read walks
+ * nothing; it is the shape a caller reading a file a window at a time
+ * wants. The method numbers 12 and up are the metadata and query methods'
+ * (aegir/metadata.h), which share this port; this is the next free one. */
+constexpr uint32_t kMethodReadHandle = 23; /* in: handle, offset, max; answer: count, eof, bytes */
+
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
 constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */
+/* Open for reading: answer a read handle (kMethodReadHandle). A read-only
+ * volume serves it, and it is refused for a name that is not a file. */
+constexpr uint64_t kOpenRead = 4;
 
 /** The most data one write call carries: the envelope's words, less the
  *  handle and the count, in bytes. The same bound as a read's answer, for
