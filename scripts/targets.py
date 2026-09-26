@@ -472,7 +472,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # Execute's command file has a built-in Alias that makes x stand
                 # for date, and its next line spawns date -- so date starting is
                 # the proof the interpreter ran the file in order.
-                press="setenv PROBE value\ngetenv PROBE\nunset PROBE\n"
+                press="setenv PROBE value\necho \"quoted $PROBE\"\ngetenv PROBE\nunset PROBE\n"
                       "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
                       "eval echo eval-line\nwhy 10\necho shell-redirect >Home:ShellOut.TXT\n"
                       "execute Sys:S/Interpreter-Test\n"
