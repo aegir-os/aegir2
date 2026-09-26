@@ -296,6 +296,84 @@ void check_expand_aliases()
            "the raw value's variable reads the environment when used");
 }
 
+/* A control word is the file's own text, read before aliases or substitution:
+ * its first word, lowercased, and nothing else. */
+void check_control_word()
+{
+    expect(aegir::script::control_word("Lab foo") == "lab", "Lab is a control word");
+    expect(aegir::script::control_word("LABEL foo") == "lab", "Label is the same word");
+    expect(aegir::script::control_word("  skip done") == "skip",
+           "leading blanks are skipped");
+    expect(aegir::script::control_word("if $x EQ y") == "if", "If is a control word");
+    expect(aegir::script::control_word("ELSE") == "else", "Else is case-blind");
+    expect(aegir::script::control_word("endif") == "endif", "EndIf is a control word");
+    expect(aegir::script::control_word("echo hi").empty(), "a command is not control");
+    expect(aegir::script::control_word("iffy").empty(), "a longer word is not If");
+    expect(aegir::script::control_word("").empty(), "an empty line has no control word");
+}
+
+/* Skip moves the cursor to the line after the label it names, over the whole
+ * file, so a skip goes back as well as forward. */
+void check_jump_to_label()
+{
+    aegir::script::Frames forward;
+    (void)forward.push("S:j", parse("echo one\nlab here\necho two\nlab other\n"));
+    expect(forward.jump_to_label("here"), "a label is found");
+    std::string const *line = forward.next();
+    expect(line != nullptr && *line == "echo two", "execution resumes after the label");
+    expect(!forward.jump_to_label("missing"), "an unknown label is false");
+    expect(forward.jump_to_label("OTHER"), "the label match is case-blind");
+
+    aegir::script::Frames backward;
+    (void)backward.push("S:k", parse("lab top\necho a\nskip top\necho b\n"));
+    (void)backward.next();
+    expect(backward.jump_to_label("top"), "a backward label is found");
+    line = backward.next();
+    expect(line != nullptr && *line == "echo a", "a backward skip lands after the label");
+}
+
+/* If is matched by nesting: a false condition lands on the else body, an else
+ * reached while running lands after the matching EndIf, and a nested block is
+ * stepped over whole. */
+void check_skip_blocks()
+{
+    aegir::script::Frames to_else;
+    (void)to_else.push("S:if",
+                       parse("if x\n  echo then\nelse\n  echo else\nendif\necho after\n"));
+    std::string const *line = to_else.next();
+    expect(line != nullptr && *line == "if x", "the If line comes first");
+    expect(to_else.skip_to_else_or_endif(), "a false If finds its Else");
+    line = to_else.next();
+    expect(line != nullptr && *line == "  echo else", "the else body runs");
+    line = to_else.next();
+    expect(line != nullptr && *line == "endif", "the EndIf follows the else body");
+    line = to_else.next();
+    expect(line != nullptr && *line == "echo after", "the line after EndIf runs");
+
+    aegir::script::Frames to_end;
+    (void)to_end.push("S:t", parse("if x\n  echo then\nelse\n  echo else\nendif\n"));
+    (void)to_end.next();
+    (void)to_end.next();
+    expect(to_end.skip_to_endif(), "an Else reached skips the else body");
+    expect(to_end.next() == nullptr, "nothing follows the EndIf here");
+
+    aegir::script::Frames nested;
+    (void)nested.push("S:n", parse("if a\nif b\necho inner-then\nelse\n"
+                                   "echo inner-else\nendif\nelse\necho outer-else\n"
+                                   "endif\necho end\n"));
+    (void)nested.next();
+    expect(nested.skip_to_else_or_endif(),
+           "the outer If steps over the whole nested block");
+    std::string const *after = nested.next();
+    expect(after != nullptr && *after == "echo outer-else",
+           "the outer Else follows the nested block, not the inner one");
+
+    aegir::script::Frames unclosed;
+    (void)unclosed.push("S:u", parse("if a\necho x\n"));
+    (void)unclosed.next();
+    expect(!unclosed.skip_to_else_or_endif(), "an unclosed If is refused");
+}
+
 }  // namespace
 
 int main()
@@ -313,6 +391,9 @@ int main()
     check_substitute_errors();
     check_key_lines();
     check_expand_aliases();
+    check_control_word();
+    check_jump_to_label();
+    check_skip_blocks();
 
     std::printf("script: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

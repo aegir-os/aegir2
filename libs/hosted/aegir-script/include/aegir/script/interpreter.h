@@ -14,6 +14,12 @@
  *
  * Hosted C++ (std::string), no seL4 and no allocation policy of its own; the
  * pure parts are asserted by scripts/check_script.py.
+ *
+ * Control flow is the file's own text: `Lab`/`Label` names a line and `Skip`
+ * moves to it, while `If`/`Else`/`EndIf` are matched by nesting. The three
+ * jumps -- to a label, over a false branch, past an else -- are here, because
+ * they move a frame's cursor; the condition an `If` tests is the shell's
+ * (aegir/script/condition.h).
  */
 
 #ifndef AEGIR_SCRIPT_INTERPRETER_H
@@ -34,6 +40,13 @@ namespace aegir::script {
  *  dropped. A trailing CR is stripped, so a CRLF file reads as an LF one.
  *  A kept line is otherwise its own text. */
 std::vector<std::string> script_lines(std::string_view text);
+
+/** The line's first word, lowercased, when it is a control word -- `Lab`,
+ *  `Label` (both `"lab"`), `Skip`, `If`, `Else` or `EndIf` -- and empty
+ *  otherwise. A control word is structural: it is read from the command file's
+ *  own text, before aliases or substitution, so the shape a `Skip` walks and an
+ *  `If` matches is the shape the file was written in (specs/shell.md). */
+std::string control_word(std::string_view line);
 
 /** One active command file: its path (for the cycle guard), its cursor, and
  *  the arguments the file was run with (for `$1..$n` and `{name}`). */
@@ -61,6 +74,23 @@ public:
 
     /** The arguments of the innermost frame, or nullptr when none runs. */
     Arguments const *current_arguments() const noexcept;
+
+    /** `Skip name`: move the current file's cursor to the line after its
+     *  matching `Lab name`, searched over the whole file, so a skip goes back
+     *  as well as forward. The name is matched case-blind. False, and nothing
+     *  moves, when the file has no such label. */
+    bool jump_to_label(std::string const &name);
+
+    /** An `If` whose condition was false: move the cursor to the line after
+     *  the matching `Else`, or after the matching `EndIf` when there is none.
+     *  Nesting is honoured, so the matching word is the innermost at the same
+     *  depth. False, and nothing moves, when the `If` is unclosed. */
+    bool skip_to_else_or_endif();
+
+    /** An `Else` reached while running -- the condition was true, so the else
+     *  body must not run: move the cursor to the line after the matching
+     *  `EndIf`. False when it is unclosed. */
+    bool skip_to_endif();
 
     /** Drop the innermost frame -- Quit, or a fail-level abort. False when no
      *  command file is running. */
