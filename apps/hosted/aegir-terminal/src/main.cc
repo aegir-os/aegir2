@@ -469,10 +469,16 @@ int main(int argc, char *argv[])
 
     window.set_content(std::move(view));
     window.set_focus(terminal);
-    /* The terminal starts focused, so the acceptance's typed line reaches it
-     * without a click that would race the demo's. */
-    window.request_focus();
-    window.show();
+    if (spawn_kit.boot_notification() == 0) {
+        /* The terminal starts focused, so the acceptance's typed line reaches
+         * it without a click that would race the demo's. */
+        window.request_focus();
+        window.show();
+    }
+    /* The boot session's window is not shown (specs/boot.md): Startup-Sequence
+     * is quiet by default, and its window comes up only when it has output --
+     * the failure view's piece (the boot arc's next slice). Its stream and
+     * spawner work without a window, so a command the script runs still runs. */
 
     /* The shell opens its stream a moment after the terminal is up; keys that
      * arrived first are replayed once its editor is there. */
@@ -492,18 +498,32 @@ int main(int argc, char *argv[])
     };
 
     app.on_started = [&]() {
-        write("  terminal: ready\n");
+        /* The boot session says so, so its ready line is not the session
+         * terminal's cue (specs/boot.md). */
+        bool const boot = spawn_kit.boot_notification() != 0;
+        write(boot ? "  terminal: boot ready\n" : "  terminal: ready\n");
         if (kit) {
             std::error_code cwd_error;
             std::string const cwd = std::filesystem::current_path(cwd_error).string();
             if (!load_image("Initrd:aegir-shell")) {
                 write("  terminal: no image for the shell\n");
-            } else if (!spawn_kit.spawn_shell(image.data(), image.size(), cwd.c_str(),
-                                              static_cast<uint32_t>(cwd.size()),
-                                              kShellStream)) {
-                write("  terminal: FAIL the shell would not start\n");
             } else {
-                write("  terminal: shell started\n");
+                /* The boot session's shell is started with Startup-Sequence and
+                 * signals auth when it is done; an interactive session's shell
+                 * is started with none and runs Shell-Startup itself
+                 * (specs/shell.md, specs/boot.md). The boot terminal is the one
+                 * auth granted the boot doorbell. */
+                static char const kBootScript[] = "Sys:S/Startup-Sequence";
+                char const *arguments[1] = {kBootScript};
+                uint32_t const argument_count = boot ? 1 : 0;
+                if (!spawn_kit.spawn_shell(image.data(), image.size(), cwd.c_str(),
+                                           static_cast<uint32_t>(cwd.size()), kShellStream,
+                                           arguments, argument_count)) {
+                    write("  terminal: FAIL the shell would not start\n");
+                } else {
+                    write(boot ? "  terminal: boot shell started\n"
+                               : "  terminal: shell started\n");
+                }
             }
         }
         if (log.valid()) {

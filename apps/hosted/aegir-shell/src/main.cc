@@ -364,6 +364,9 @@ public:
                         frames_.abort();
                     }
                 } else {
+                    /* No command file left: the boot script is done, and auth
+                     * is waiting on the notification (specs/shell.md). */
+                    boot_done();
                     char buffer[1024];
                     uint32_t const have =
                         aegir::console::stream_read_line(port_, buffer, sizeof(buffer));
@@ -381,7 +384,41 @@ public:
 
     void set_doorbell(seL4_CPtr doorbell) { doorbell_ = doorbell; }
 
+    /* The boot session signals auth when its command file is done, after which
+     * auth starts the greeter (specs/shell.md, specs/boot.md). The notification
+     * is the boot terminal's grant, passed on by name; an interactive shell has
+     * none. */
+    void set_boot_notification()
+    {
+        uint64_t slot = 0;
+        if (aegir::bootstrap::capability("boot.doorbell", 13, &slot)) {
+            boot_notification_ = static_cast<seL4_CPtr>(slot);
+        }
+    }
+
+    /* Run the command file the shell was started with -- the boot session's
+     * Startup-Sequence. It is a frame like any other, and the loop drains it;
+     * the boot notification is signalled when it empties or EndCLI takes it. */
+    void run_boot_script(std::string const &path)
+    {
+        if (start_script(path) == ScriptStart::Started) {
+            booting_ = true;
+        }
+    }
+
 private:
+    /* The boot script has finished: wake auth once, and only once. */
+    void boot_done()
+    {
+        if (!booting_) {
+            return;
+        }
+        booting_ = false;
+        if (boot_notification_ != 0) {
+            seL4_Signal(boot_notification_);
+        }
+    }
+
     void print(std::string const &text)
     {
         /* A built-in's output goes to the redirection when the line gave one
@@ -470,6 +507,9 @@ private:
         static_cast<void>(arg);
         print("bye\n");
         (void)aegir::console::stream_close(port_, 0);
+        /* A boot script that ends with EndCLI closes before the frame could
+         * empty, so the notification goes now (specs/boot.md). */
+        boot_done();
         std::exit(0);
     }
 
@@ -848,15 +888,16 @@ private:
     /* The sink a built-in's output uses while a redirected line runs, or null
      * for the console stream (specs/shell.md). */
     std::FILE *redirect_out_ = nullptr;
+    /* The boot session's notification, signalled when Startup-Sequence is done
+     * (specs/boot.md); zero for a shell that is not the boot shell. */
+    seL4_CPtr boot_notification_ = 0;
+    bool booting_ = false;
 };
 
 }  // namespace
 
 int main(int argc, char **argv)
 {
-    static_cast<void>(argc);
-    static_cast<void>(argv);
-
     g_objects.adopt_nodes(g_nodes, sizeof(g_nodes));
     if (!adopt_memory()) {
         aegir::debug_write("  aegir-shell: FAIL no untyped, vspace or window\n");
@@ -888,11 +929,17 @@ int main(int argc, char **argv)
 
     Shell shell(port);
     shell.set_doorbell(doorbell);
+    shell.set_boot_notification();
     shell.load_environment();
     shell.start();
-    /* Shell-Startup, then the loop drains its frame before the console
-     * (specs/shell.md). */
-    shell.run_startup();
+    /* A shell started with a command file is the boot session: it runs
+     * Startup-Sequence and signals auth when it is done. A shell started with
+     * none is interactive, and runs Shell-Startup (specs/shell.md). */
+    if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') {
+        shell.run_boot_script(argv[1]);
+    } else {
+        shell.run_startup();
+    }
     shell.loop();
     return 0;
 }

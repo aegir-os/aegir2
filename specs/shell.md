@@ -260,6 +260,12 @@ this arc's record of the order.
   acceptance typing `l` and `list` starting is the proof the startup ran. A
   user's own `Home:S/Shell-Startup` overriding it is a new shell's to read,
   which waits for the re-login arc.
+- **Phase 11 — the boot session.** `specs/boot.md`: the system's
+  `Sys:S/Startup-Sequence` is system-only, runs once before the greeter, and is
+  run by a `system.boot` terminal and shell that auth spawns; the shell signals
+  a notification auth holds when the command file is done, and auth waits on it.
+  A shell started with a command file runs that file; a shell started with none
+  runs Shell-Startup, which is the interactive path above.
 
 ## What this is not
 

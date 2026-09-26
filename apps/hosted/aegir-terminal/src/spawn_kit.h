@@ -90,9 +90,18 @@ public:
     /* The shell process: spawned once from auth's `shell-pool`, not bracketed
      * and reclaimed like a command, because it lives as long as the terminal.
      * It runs on `badge` -- the stream key its con.stream copy carries -- and
-     * the terminal serves it like any other client. */
+     * the terminal serves it like any other client. `arguments` are what
+     * follow argv[0] (specs/environment.md): for the boot session, the command
+     * file the shell is to run. */
     bool spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
-                     uint32_t cwd_length, uint64_t badge);
+                     uint32_t cwd_length, uint64_t badge, char const *const *arguments,
+                     uint32_t argument_count);
+
+    /* The boot session's doorbell, when this terminal is the boot session's
+     * (auth grants it as `boot.doorbell`): the shell signals it when
+     * Startup-Sequence is done (specs/boot.md). Zero for an interactive
+     * terminal. */
+    seL4_CPtr boot_notification() const { return boot_notification_; }
 
 private:
     void reclaim();
@@ -110,6 +119,7 @@ private:
     seL4_CPtr command_nmspace_port_ = 0;
     seL4_CPtr command_clock_port_ = 0;
     seL4_CPtr command_timer_port_ = 0;
+    seL4_CPtr boot_notification_ = 0;
     seL4_CPtr asid_pool_ = 0;
     seL4_CPtr command_pool_ = 0;
     uint32_t command_pool_bits_ = 0;

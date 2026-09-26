@@ -251,7 +251,7 @@ authority = system
 account   = system
 owns      = auth.login
 needs     = log.main, vfs.namespace, console.gui
-spawns    = session.*, greeter
+spawns    = session.*, greeter, system.*
 # Auth's delegation holds the greeter's kit, the session pool the bureau and
 # the terminal come out of, and auth's own objects. A session's pool holds
 # both toolkit children, the terminal's command pool, and both images -- so
@@ -274,6 +274,17 @@ binary    = aegir-greeter
 authority = system
 account   = system
 needs     = console.gui, auth.login
+restart   = never
+
+# The boot session (specs/boot.md): the system's Startup-Sequence, run once
+# before the greeter. auth spawns it from the same kit a session's terminal
+# uses, on a system badge; its shell reads Sys:S/Startup-Sequence and signals
+# auth when the command file is done.
+[system.boot]
+binary    = aegir-terminal
+authority = system
+account   = system
+needs     = log.main, vfs.namespace, console.gui
 restart   = never
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static

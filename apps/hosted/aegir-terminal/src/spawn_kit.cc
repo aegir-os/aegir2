@@ -102,6 +102,14 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
         command_timer_port_ = static_cast<seL4_CPtr>(command_timer_slot);
     }
 
+    /* The boot session's doorbell (specs/boot.md): auth grants it only to the
+     * boot terminal, which passes it on to the shell. Its presence is what
+     * makes this terminal the boot session's. */
+    uint64_t boot_notification_slot = 0;
+    if (aegir::bootstrap::capability("boot.doorbell", 13, &boot_notification_slot)) {
+        boot_notification_ = static_cast<seL4_CPtr>(boot_notification_slot);
+    }
+
     /* The terminal's own con.stream endpoint and a fault endpoint for its
      * children, retyped from the toolkit's memory (they live as long as the
      * terminal, not as long as a command). */
@@ -135,7 +143,8 @@ aegir::mem::Allocator& SpawnKit::memory()
 }
 
 bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
-                           uint32_t cwd_length, uint64_t badge)
+                           uint32_t cwd_length, uint64_t badge,
+                           char const *const *arguments, uint32_t argument_count)
 {
     if (!ready_ || shell_pool_ == 0 || app_ == nullptr) {
         aegir::debug_write("  terminal: shell spawn: not ready\n");
@@ -152,7 +161,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::kCNodeBits);
-    aegir::spawn::PortGrant const ports[] = {
+    aegir::spawn::PortGrant ports[5] = {
         {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
@@ -168,7 +177,16 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
          seL4_AllRights, 0, shell_pool_bits_},
     };
-    uint32_t const port_count = 4;
+    uint32_t port_count = 4;
+    /* The boot session's doorbell (specs/boot.md): the shell signals it when
+     * Startup-Sequence is done, and auth waits on it before the greeter. Only
+     * the boot terminal has one. */
+    if (boot_notification_ != 0) {
+        ports[port_count] = {"boot.doorbell", 13,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             boot_notification_, seL4_AllRights, 0, 0};
+        ++port_count;
+    }
     static char const kName[] = "session.shell";
     static char const kAccountText[] = "shell";
     aegir::spawn::Request request{};
@@ -180,6 +198,10 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
     request.account_length = sizeof(kAccountText) - 1;
     request.cwd = cwd;
     request.cwd_length = cwd_length;
+    /* For the boot session, the command file the shell runs (specs/boot.md);
+     * an interactive shell is started with none. */
+    request.arguments = arguments;
+    request.argument_count = argument_count;
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
     request.port_count = port_count;

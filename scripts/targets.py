@@ -455,6 +455,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # disappears. Its registration is the proof the service started and
             # the VFS holds the name redirection reaches it by.
             QmpStep(r"nil: NIL: registered, serving"),
+            # The boot session (specs/boot.md): auth spawns a system terminal
+            # and shell, whose shell runs Sys:S/Startup-Sequence and signals
+            # when it is done -- so auth's line after the wait is the proof both
+            # the spawn and the handshake worked.
+            QmpStep(r"auth: the boot session ran"),
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,

@@ -79,6 +79,11 @@ bool g_greeter_up = false;
  * login handler's wait, before the reap). */
 seL4_CPtr g_greeter_supervision = 0;
 
+/* The boot session (specs/boot.md): the system's Startup-Sequence, run once
+ * before the greeter. Its badge is a system child's -- its own console slice
+ * and namespace identity. */
+constexpr uint64_t kBootBadge = 769;
+
 /* The namespace as auth speaks it, and the slot a home resolve's capability
  * lands in -- one slot, deleted after each use, so a login does not spend
  * what the next one needs. */
@@ -258,6 +263,26 @@ bool make_owned_home_subdir(aegir::ipc::Consumer const &volume,
         path[length++] = tail[i];
     }
     return make_owned_dir(volume, path, length, user);
+}
+
+/* A per-badge namespace alias (specs/vfs.md): the badge, the name and the
+ * path, replacing whatever that badge held. False when the namespace refuses. */
+bool bind_name(uint64_t badge, char const *name, uint32_t name_length, char const *path,
+               uint32_t path_length) noexcept
+{
+    uint64_t out[2 + aegir::nmspace::kNameMax / 8 + 1 +
+                 aegir::nmspace::kPathMax / 8 + 1];
+    uint64_t in[1];
+    out[0] = badge;
+    out[1] = 0; /* replace */
+    uint32_t words = 2;
+    words += aegir::nmspace::pack_string(out + words, name, name_length,
+                                         aegir::nmspace::kNameMax);
+    words += aegir::nmspace::pack_string(out + words, path, path_length,
+                                         aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const bound =
+        g_nmspace.call_words(aegir::nmspace::kMethodBind, out, words, in, 1);
+    return bound.error == 0 && bound.count == 1 && in[0] == 1;
 }
 
 /* The home arc (specs/auth.md's Homes), run after the answer and before
@@ -857,6 +882,140 @@ void start_session(uint32_t user, bool bureau) noexcept
     reclaim_session(badge, mark, scratch_mark, session_account);
 }
 
+/* The boot session (specs/boot.md): the system's Startup-Sequence, run once
+ * before the greeter, as a system badge. It is a terminal like a session's --
+ * a window from console.gui, a shell from the shell pool -- but its memory
+ * comes from auth's own delegation, not the session pool, because it is not
+ * reclaimed: on failure it stays as the read-only view (the failure arc's
+ * piece). auth waits on the boot notification, which the shell signals when
+ * the command file is done. */
+void start_boot_session(aegir::mem::Arena &arena) noexcept
+{
+    if (g_spawn_gui == 0 || g_spawn_nmspace == 0 || g_spawn_log == 0 ||
+        g_asid_pool == 0 || g_binaries_bytes == 0) {
+        write("      auth: no kit for the boot session -- Startup-Sequence is skipped\n");
+        return;
+    }
+    aegir::mem::Account account{"boot", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject,
+                                                   seL4_EndpointBits, account, &error);
+    seL4_CPtr const notification = g_objects.alloc_object(
+        seL4_NotificationObject, seL4_NotificationBits, account, &error);
+    constexpr uint32_t kTerminalUntypedBits = 22;
+    uint64_t terminal_untyped_physical = 0;
+    seL4_CPtr const terminal_untyped = g_objects.carve_untyped(
+        kTerminalUntypedBits, account, &error, &terminal_untyped_physical);
+    constexpr uint32_t kCommandPoolBits = 22;
+    uint64_t command_pool_physical = 0;
+    seL4_CPtr const command_pool = g_objects.carve_untyped(
+        kCommandPoolBits, account, &error, &command_pool_physical);
+    constexpr uint32_t kShellPoolBits = 22;
+    uint64_t shell_pool_physical = 0;
+    seL4_CPtr const shell_pool = g_objects.carve_untyped(
+        kShellPoolBits, account, &error, &shell_pool_physical);
+    if (fault == 0 || notification == 0 || terminal_untyped == 0 ||
+        command_pool == 0 || shell_pool == 0) {
+        write("      auth: FAIL no memory for the boot session\n");
+        return;
+    }
+
+    /* The boot session's command directory: C: -> Sys:C, the same alias a
+     * session gets, so a command in Startup-Sequence resolves (specs/dos.md).
+     * Sys: is the boot alias and NIL: is public, so neither needs binding.
+     * Sys: is a filesystem's to register and comes up after auth, so the bind
+     * is retried until the boot volume is there -- the same wait the user
+     * database's resolve does above. */
+    static char const kCmdSys[] = "Sys:C";
+    for (;;) {
+        if (bind_name(kBootBadge, "C", 1, kCmdSys, sizeof(kCmdSys) - 1)) {
+            break;
+        }
+        seL4_Yield();
+    }
+
+    aegir::spawn::PortGrant ports[12] = {
+        {aegir::log::kPortName, aegir::log::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared, g_spawn_log,
+         seL4_CapRights_new(1, 0, 0, 1), kBootBadge, 0},
+        {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
+         seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
+        {aegir::console::kPortName, aegir::console::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_gui,
+         seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
+        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, terminal_untyped,
+         seL4_AllRights, 0, kTerminalUntypedBits},
+        {"command-pool", 12, aegir::bootstrap::kSlotFirstDeclared + 4, command_pool,
+         seL4_AllRights, 0, kCommandPoolBits},
+        {"asid-pool", 9, aegir::bootstrap::kSlotFirstDeclared + 5, g_asid_pool,
+         seL4_AllRights, 0, 0},
+        {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
+         seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+        {"shell:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
+         g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
+        {"shell-pool", 10, aegir::bootstrap::kSlotFirstDeclared + 8, shell_pool,
+         seL4_AllRights, 0, kShellPoolBits},
+    };
+    uint32_t port_count = 9;
+    if (g_spawn_clock != 0) {
+        ports[port_count] = {"spawn:clock.main", 16,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             g_spawn_clock, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+        ++port_count;
+        if (g_spawn_timer != 0) {
+            ports[port_count] = {"spawn:timer.main", 16,
+                                 aegir::bootstrap::kSlotFirstDeclared + port_count,
+                                 g_spawn_timer, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+            ++port_count;
+        }
+    }
+    ports[port_count] = {"boot.doorbell", 13,
+                         aegir::bootstrap::kSlotFirstDeclared + port_count, notification,
+                         seL4_AllRights, 0, 0};
+    ++port_count;
+
+    static char const kName[] = "system.boot";
+    static char const kBinary[] = "aegir-terminal";
+    static char const kAccount[] = "system";
+    static char const kCwd[] = "Sys:";
+    aegir::spawn::Request request{};
+    request.name = kName;
+    request.name_length = sizeof(kName) - 1;
+    request.binary = kBinary;
+    request.binary_length = sizeof(kBinary) - 1;
+    request.account = kAccount;
+    request.account_length = sizeof(kAccount) - 1;
+    request.cwd = kCwd;
+    request.cwd_length = sizeof(kCwd) - 1;
+    request.priority = seL4_MaxPrio - 2;
+    request.ports = ports;
+    request.port_count = port_count;
+    request.fault_endpoint = fault;
+    request.badge = kBootBadge;
+    request.give_vspace = true;
+    request.untyped_physical = terminal_untyped_physical;
+    request.untyped_bits = kTerminalUntypedBits;
+
+    aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
+                                      g_binaries_bytes);
+    aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd, g_asid_pool,
+                                  static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
+                                  aegir::bootstrap::kCNodeBits);
+    aegir::spawn::Process process{};
+    if (!spawner.spawn(request, account, process)) {
+        write("      auth: FAIL spawning the boot session: ");
+        write(spawner.problem());
+        write("\n");
+        return;
+    }
+    /* The script's end: the shell signals the notification (specs/boot.md). On
+     * success the script's EndCLI closes the boot window; on failure the shell
+     * stays, which is the failure arc's read-only view. */
+    seL4_Wait(notification, nullptr);
+    write("      auth: the boot session ran\n");
+}
+
 /* The greeter (specs/console.md's login arc): auth's face, started once the
  * user database is read. Two things set it apart from a session. Its memory
  * comes from auth's own delegation, not the session pool: a login's reclaim
@@ -1246,6 +1405,9 @@ int main(int argc, char *argv[])
     write("      auth: ");
     aegir::debug_write_unsigned(g_users);
     write(g_users == 1 ? " user, serving auth.login\n" : " users, serving auth.login\n");
+    /* The system's Startup-Sequence, once, before the greeter (specs/boot.md):
+     * auth waits for the boot shell to signal the script is done. */
+    start_boot_session(arena);
     start_greeter(arena);
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
