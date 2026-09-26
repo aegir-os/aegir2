@@ -191,6 +191,10 @@ struct Request {
     uint32_t std_in_length = 0;
     char const *std_out = nullptr;
     uint32_t std_out_length = 0;
+    /* The firmware's boot flags, given to auth (specs/boot.md), or null/0 for a
+     * child that is not told them. */
+    char const *boot = nullptr;
+    uint32_t boot_length = 0;
     uint32_t priority;
     /** How many 4 KiB pages of stack the child is given. Zero takes the floor
      *  (kDefaultStackPages, 8 KiB); a process that runs the C++ standard

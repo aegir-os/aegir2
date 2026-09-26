@@ -48,17 +48,19 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
 
-    /* Thirteen fixed entries -- size, name, account, page bits, devices, device,
+    /* Fourteen fixed entries -- size, name, account, page bits, devices, device,
      * untyped, binaries, window, shared window, current directory, standard
-     * input, standard output -- then one per device capability, then one per
-     * port, because what a process is given is part of who it is. Growing the
-     * block means bumping the version rather than gambling on a layout, and
-     * `entry_count` is what makes that safe for readers that know less. */
-    uint32_t const entries = 13 + contents.device_cap_count + contents.port_count;
+     * input, standard output, boot flags -- then one per device capability, then
+     * one per port, because what a process is given is part of who it is.
+     * Growing the block means bumping the version rather than gambling on a
+     * layout, and `entry_count` is what makes that safe for readers that know
+     * less. */
+    uint32_t const entries = 14 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(contents.name_length) +
                          contents.account_length + contents.cwd_length +
-                         contents.std_in_length + contents.std_out_length;
+                         contents.std_in_length + contents.std_out_length +
+                         contents.boot_length;
     for (uint32_t i = 0; i < contents.port_count; ++i) {
         data_size += contents.ports[i].name_length;
     }
@@ -108,6 +110,14 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
     room -= contents.std_out_length;
+    uint32_t const boot_copied =
+        copy(data + contents.name_length + contents.account_length + contents.cwd_length +
+                 contents.std_in_length + contents.std_out_length,
+             contents.boot, contents.boot_length, static_cast<uint32_t>(room));
+    if (boot_copied != contents.boot_length) {
+        return nullptr;
+    }
+    room -= contents.boot_length;
 
     uint32_t const name_offset = static_cast<uint32_t>(header_size);
     uint32_t const account_offset = static_cast<uint32_t>(header_size + contents.name_length);
@@ -117,6 +127,8 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         header_size + contents.name_length + contents.account_length + contents.cwd_length);
     uint32_t const std_out_offset =
         static_cast<uint32_t>(std_in_offset + contents.std_in_length);
+    uint32_t const boot_offset =
+        static_cast<uint32_t>(std_out_offset + contents.std_out_length);
     block->entries[0] = Entry{EntryKind::Size, 0, header_size + data_size, 0, 0};
     block->entries[1] = Entry{EntryKind::Name, contents.name_length, 0, name_offset, 0};
     block->entries[2] = Entry{EntryKind::Account, contents.account_length, 0, account_offset, 0};
@@ -159,9 +171,12 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         Entry{EntryKind::StdIn, contents.std_in_length, 0, std_in_offset, 0};
     block->entries[12] =
         Entry{EntryKind::StdOut, contents.std_out_length, 0, std_out_offset, 0};
+    /* The firmware's boot flags (specs/boot.md): a string entry, empty when the
+     * child was given none. */
+    block->entries[13] = Entry{EntryKind::Boot, contents.boot_length, 0, boot_offset, 0};
 
     for (uint32_t i = 0; i < contents.device_cap_count; ++i) {
-        block->entries[13 + i] =
+        block->entries[14 + i] =
             Entry{EntryKind::DeviceCapability, contents.device_caps[i].bytes,
                   contents.device_caps[i].physical, 0,
                   static_cast<uint32_t>(contents.device_caps[i].slot)};
@@ -169,7 +184,8 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
 
     uint64_t next_offset = static_cast<uint64_t>(header_size) + contents.name_length +
                            contents.account_length + contents.cwd_length +
-                           contents.std_in_length + contents.std_out_length;
+                           contents.std_in_length + contents.std_out_length +
+                           contents.boot_length;
     for (uint32_t i = 0; i < contents.port_count; ++i) {
         uint32_t const copied = copy(data + (next_offset - header_size),
                                      contents.ports[i].name,
@@ -179,7 +195,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
             return nullptr;
         }
         room -= contents.ports[i].name_length;
-        block->entries[13 + contents.device_cap_count + i] =
+        block->entries[14 + contents.device_cap_count + i] =
             Entry{EntryKind::Capability, contents.ports[i].name_length,
                   contents.ports[i].slot, static_cast<uint32_t>(next_offset),
                   contents.ports[i].size_bits};
@@ -474,6 +490,22 @@ char const *current_dir(uint32_t *length) noexcept
 {
     uint32_t len = 0;
     char const *found = string(EntryKind::CurrentDir, &len);
+    if (found == nullptr || len == 0) {
+        if (length != nullptr) {
+            *length = 0;
+        }
+        return nullptr;
+    }
+    if (length != nullptr) {
+        *length = len;
+    }
+    return found;
+}
+
+char const *boot_flags(uint32_t *length) noexcept
+{
+    uint32_t len = 0;
+    char const *found = string(EntryKind::Boot, &len);
     if (found == nullptr || len == 0) {
         if (length != nullptr) {
             *length = 0;

@@ -296,6 +296,19 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         }
         request.priority = priority_for(entry);
         request.stack_pages = entry.stack_kib / 4u;
+        /* The firmware's boot flags go to auth, the service that starts the
+         * boot session and decides what a failed boot does (specs/boot.md). */
+        static char const kAuthBinary[] = "aegir-auth";
+        bool is_auth = entry.binary.length == sizeof(kAuthBinary) - 1;
+        for (uint32_t k = 0; is_auth && k < sizeof(kAuthBinary) - 1; ++k) {
+            if (entry.binary.data[k] != kAuthBinary[k]) {
+                is_auth = false;
+            }
+        }
+        if (is_auth) {
+            request.boot = boot_flags_;
+            request.boot_length = boot_flags_length_;
+        }
         spawn::PortGrant const *grants = graph_.grants(i);
         uint32_t grant_count = graph_.grant_count(i);
         /* Capabilities director delegates to a service go in beside the ports the

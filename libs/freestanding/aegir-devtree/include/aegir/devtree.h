@@ -71,6 +71,15 @@ public:
      *  truncated blob cannot read past its own end. */
     bool walk(Visitor &visitor) const noexcept;
 
+    /** The raw value of one property: `path` is a slash-separated node path from
+     *  the root ("/chosen"), `name` the property ("bootargs"). True and sets
+     *  `data`/`length` -- which point into the blob -- when the node and the
+     *  property are both there. False when either is absent, or when the blob is
+     *  malformed on the way to it. A node's unit address is ignored, so
+     *  "/soc/uart" finds `uart@10000000`. */
+    bool property(char const *path, char const *name, void const *&data,
+                  uint32_t &length) const noexcept;
+
     /** Where a failed walk gave up, as a byte offset into the structure block,
      *  and how big the two blocks are. Diagnostics, because a tree that cannot be
      *  read is a fact about the blob and not something a caller can repair. */

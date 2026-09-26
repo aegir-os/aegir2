@@ -292,7 +292,216 @@ bool walk_node(Cursor &cursor, uint32_t parent_address_cells, uint32_t parent_si
     }
 }
 
+/* --- a property, by node path --------------------------------------------- */
+
+/* There is no <cstring> here (specs/build.md), and a node path is the one
+ * string a caller writes by hand, so its length is counted rather than given. */
+uint32_t length_of(char const *text) noexcept
+{
+    uint32_t n = 0;
+    while (text[n] != '\0') {
+        ++n;
+    }
+    return n;
+}
+
+bool memeq(char const *a, char const *b, uint32_t n) noexcept
+{
+    for (uint32_t i = 0; i < n; ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* How many slash-separated segments a path has; leading slashes are skipped. */
+uint32_t segment_count(char const *path, uint32_t length) noexcept
+{
+    uint32_t count = 0;
+    uint32_t i = 0;
+    while (i < length) {
+        while (i < length && path[i] == '/') {
+            ++i;
+        }
+        if (i >= length) {
+            break;
+        }
+        ++count;
+        while (i < length && path[i] != '/') {
+            ++i;
+        }
+    }
+    return count;
+}
+
+/* Segment `index` (0-based), or false when the path has no such segment. */
+bool segment_at(char const *path, uint32_t length, uint32_t index, char const *&start,
+                uint32_t &size) noexcept
+{
+    uint32_t seen = 0;
+    uint32_t i = 0;
+    while (i < length) {
+        while (i < length && path[i] == '/') {
+            ++i;
+        }
+        if (i >= length) {
+            break;
+        }
+        uint32_t const begin = i;
+        while (i < length && path[i] != '/') {
+            ++i;
+        }
+        if (seen == index) {
+            start = path + begin;
+            size = i - begin;
+            return true;
+        }
+        ++seen;
+    }
+    return false;
+}
+
+/** What a property search carries: the wanted path and name, the strings block,
+ *  and where the answer lands. */
+struct PropertySearch {
+    char const *path;
+    uint32_t path_length;
+    uint32_t segments;
+    char const *name;
+    uint8_t const *strings;
+    uint32_t strings_size;
+    void const *data = nullptr;
+    uint32_t length = 0;
+    bool found = false;
+};
+
+/** Walk looking for `search.path`'s `search.name`, tracking how many leading
+ *  path segments the current node's ancestry matches. No buffer and no depth
+ *  cap: the match is a running count, so a deeper tree costs no more memory. */
+bool search_node(Cursor &cursor, uint32_t matched, PropertySearch &search) noexcept
+{
+    char const *name = "";
+    uint32_t name_length = 0;
+    if (!take_string(cursor, name, name_length)) {
+        return false;
+    }
+    /* A node's unit address is not part of its name in a path. */
+    uint32_t bare = 0;
+    while (bare < name_length && name[bare] != '@') {
+        ++bare;
+    }
+    char const *segment = nullptr;
+    uint32_t segment_length = 0;
+    uint32_t depth = 0;
+    if (segment_at(search.path, search.path_length, matched, segment, segment_length) &&
+        segment_length == bare && memeq(name, segment, bare)) {
+        depth = matched + 1;
+    } else if (segment_at(search.path, search.path_length, 0, segment, segment_length) &&
+               segment_length == bare && memeq(name, segment, bare)) {
+        /* Not the next segment, but the first: a fresh attempt from here. */
+        depth = 1;
+    }
+    bool const target = depth == search.segments;
+
+    bool have_child = false;
+    for (;;) {
+        uint32_t token = 0;
+        if (!take_u32(cursor, token)) {
+            return false;
+        }
+        if (token == kTokenEndNode) {
+            break;
+        }
+        if (token == kTokenNop) {
+            continue;
+        }
+        if (token == kTokenBeginNode) {
+            have_child = true;
+            break;
+        }
+        if (token != kTokenProp) {
+            return false;
+        }
+        Property property{};
+        if (!take_property(cursor, property)) {
+            return false;
+        }
+        if (!target) {
+            continue;
+        }
+        if (property.name_offset >= search.strings_size) {
+            return false;
+        }
+        char const *property_name =
+            reinterpret_cast<char const *>(search.strings + property.name_offset);
+        uint32_t const room = search.strings_size - property.name_offset;
+        if (equals(property_name, room, search.name)) {
+            search.data = property.data;
+            search.length = property.length;
+            search.found = true;
+            return true;
+        }
+    }
+    if (!have_child) {
+        return true;
+    }
+    if (!search_node(cursor, depth, search)) {
+        return false;
+    }
+    for (;;) {
+        if (search.found) {
+            return true;
+        }
+        uint32_t token = 0;
+        if (!take_u32(cursor, token)) {
+            return false;
+        }
+        if (token == kTokenEndNode) {
+            return true;
+        }
+        if (token == kTokenNop) {
+            continue;
+        }
+        if (token != kTokenBeginNode) {
+            return false;
+        }
+        if (!search_node(cursor, depth, search)) {
+            return false;
+        }
+    }
+}
+
 }  // namespace
+
+bool Tree::property(char const *path, char const *name, void const *&data,
+                    uint32_t &length) const noexcept
+{
+    data = nullptr;
+    length = 0;
+    if (base_ == nullptr) {
+        return false;
+    }
+    Cursor cursor{base_ + struct_offset_, base_ + struct_offset_ + struct_size_};
+    uint32_t token = 0;
+    if (!take_u32(cursor, token) || token != kTokenBeginNode) {
+        return false;
+    }
+    PropertySearch search{};
+    search.path = path;
+    search.path_length = length_of(path);
+    search.segments = segment_count(path, search.path_length);
+    search.name = name;
+    search.strings = base_ + strings_offset_;
+    search.strings_size = strings_size_;
+    if (search.segments == 0 || search_node(cursor, 0, search) == false ||
+        !search.found) {
+        return false;
+    }
+    data = search.data;
+    length = search.length;
+    return true;
+}
 
 bool Tree::adopt(void const *blob, uint64_t available) noexcept {
     if (blob == nullptr || available < kHeaderBytes) {

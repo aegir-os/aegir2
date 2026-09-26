@@ -755,6 +755,33 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
         return false;
     }
 
+    /* The firmware's command line (specs/boot.md): the device tree's
+     * `/chosen/bootargs`, handed to auth so it knows what a failed boot should
+     * do. The blob is the one the device manager owns; director reads this one
+     * property and passes the string, not the tree. */
+    char const *boot_flags = nullptr;
+    uint32_t boot_flags_length = 0;
+    if (devices != nullptr && devices_bytes != 0) {
+        aegir::devtree::Tree tree;
+        void const *flags = nullptr;
+        uint32_t length = 0;
+        if (tree.adopt(devices, devices_bytes) &&
+            tree.property("/chosen", "bootargs", flags, length)) {
+            boot_flags = static_cast<char const *>(flags);
+            boot_flags_length = length;
+            /* The property carries its NUL; the block copies bytes. */
+            while (boot_flags_length > 0 && boot_flags[boot_flags_length - 1] == '\0') {
+                --boot_flags_length;
+            }
+            if (boot_flags_length != 0) {
+                write("  boot flags: ");
+                aegir::debug_write(boot_flags, boot_flags_length);
+                write("\n");
+            }
+        }
+    }
+    services.set_boot_flags(boot_flags, boot_flags_length);
+
     /* The supervisor starts before the first service, because a service that
      * faults before anyone is listening for faults is a service whose death
      * nobody sees (specs/director.md). */

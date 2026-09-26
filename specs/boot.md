@@ -48,6 +48,16 @@ system authority and runs once, and a user's shell startup is the user's own
   for the boot badge. `Sys:` is a filesystem's to register and comes up after
   auth, so the bind is retried until the boot volume is there — the same wait
   the user database's resolve does.
+- **The firmware's boot flags are the device tree's `/chosen/bootargs`.** The
+  bootloader's command line is where a boot's mode is named — `aegir.fail`
+  forces the failure view, `aegir.rescue` the writable rescue shell. Director
+  reads the one property from the device tree it already owns and hands the
+  string to auth through the bootstrap block's `Boot` entry; auth is the
+  service that starts the boot session and decides what a failed boot does.
+  The elfloader is told to use the bootloader's tree rather than one baked into
+  its CPIO (`ElfloaderIncludeDtb` off): the baked-in tree carries no `bootargs`,
+  and the option's own comment — "in case bootloader doesn't provide one" — is
+  not what its code does.
 
 ## The boot session
 
@@ -74,9 +84,9 @@ system authority and runs once, and a user's shell startup is the user's own
   takes no input.
 - **Rescue mode.** A failed boot presents the output and no input by default;
   a kernel-command-line flag turns the same session into a full writable rescue
-  shell. The flag's source is the board's bootloader — `bootargs` in the DTB
-  `/chosen` node on the Orange Pi's u-boot; QEMU has no command line to read
-  today. This is auth's and director's concern, not the shell's.
+  shell. The flag's source is plumbed — director reads `/chosen/bootargs` and
+  hands it to auth (`Boot`, above) — but the view itself is the piece after
+  this one. This is auth's and director's concern, not the shell's.
 - **Headless operation.** The boot session assumes a console to give the
   terminal a window (even a hidden one). A server with no display is a later
   arc.

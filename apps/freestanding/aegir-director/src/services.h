@@ -106,6 +106,16 @@ public:
 
     seL4_CPtr fault_endpoint() const noexcept { return fault_endpoint_; }
 
+    /** The firmware's boot flags (specs/boot.md), read from the device tree's
+     *  `/chosen/bootargs`. They are handed to auth, the service that starts the
+     *  boot session; the pointer must outlive the boot (director's mapped blob
+     *  does). */
+    void set_boot_flags(char const *flags, uint32_t length) noexcept
+    {
+        boot_flags_ = flags;
+        boot_flags_length_ = length;
+    }
+
     /** The ports the manifest declares, for whoever wants to report them. */
     PortGraph const &graph() const noexcept { return graph_; }
 
@@ -124,6 +134,8 @@ private:
     seL4_CPtr fault_endpoint_;
     PortGraph graph_;
     spawn::Spawner spawner_;
+    char const *boot_flags_ = nullptr;
+    uint32_t boot_flags_length_ = 0;
 };
 
 }  // namespace aegir::director

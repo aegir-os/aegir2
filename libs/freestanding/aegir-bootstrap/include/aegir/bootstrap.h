@@ -87,7 +87,7 @@ constexpr uint32_t kCNodeBits = 12;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 6;
+constexpr uint32_t kVersion = 7;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -164,6 +164,12 @@ enum class EntryKind : uint32_t {
      *  0/1 there instead of the console stream. */
     StdIn = 14,
     StdOut = 15,
+    /** The boot flags the firmware's command line carried, a string entry like
+     *  `CurrentDir` (specs/boot.md). Director reads them from the device tree's
+     *  `/chosen/bootargs` and gives them to auth, which is the service that
+     *  starts the boot session; empty or absent for every other child, and when
+     *  the firmware named none. */
+    Boot = 16,
 };
 
 struct Entry {
@@ -229,6 +235,9 @@ struct Contents {
     uint32_t std_in_length;
     char const *std_out;
     uint32_t std_out_length;
+    /* The firmware's boot flags (specs/boot.md), or empty for none. */
+    char const *boot;
+    uint32_t boot_length;
     PortEntry const *ports;
     uint32_t port_count;
     uint64_t devices_address;
@@ -269,6 +278,10 @@ char const *name(uint32_t *length) noexcept;
  *  (specs/environment.md). The pointer is into the block, valid as long as the
  *  block is. */
 char const *current_dir(uint32_t *length) noexcept;
+
+/** The firmware's boot flags, or nullptr when this child was given none
+ *  (specs/boot.md). The pointer is into the block. */
+char const *boot_flags(uint32_t *length) noexcept;
 
 /** Look up one string entry by kind. The pointer is into the block, so it is
  *  valid for as long as the block is. */

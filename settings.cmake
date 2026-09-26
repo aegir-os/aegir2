@@ -55,6 +55,14 @@ set(RELEASE OFF CACHE BOOL "Performance optimised build")
 set(VERIFICATION OFF CACHE BOOL "Only verification friendly kernel features")
 ApplyCommonReleaseVerificationSettings(${RELEASE} ${VERIFICATION})
 
+# The elfloader would otherwise bake a device tree into its CPIO and prefer it
+# over the one the bootloader passes -- the option's own comment says "in case
+# bootloader doesn't provide one", but the code reads the CPIO tree first. That
+# drops the firmware's command line (/chosen/bootargs), which is where the boot
+# flags come from (specs/boot.md). Use the bootloader's tree, which QEMU and a
+# real board both provide.
+set(ElfloaderIncludeDtb OFF CACHE BOOL "Use the bootloader's device tree, not one baked into the elfloader" FORCE)
+
 set(valid_platforms ${KernelPlatform_all_strings} ${correct_platform_strings_platform_aliases})
 set_property(CACHE PLATFORM PROPERTY STRINGS ${valid_platforms})
 if(NOT "${PLATFORM}" IN_LIST valid_platforms)
