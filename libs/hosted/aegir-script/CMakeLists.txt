@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-script CXX)
 
-add_library(aegir-script STATIC src/interpreter.cc)
+add_library(aegir-script STATIC src/interpreter.cc src/substitute.cc)
 
 target_include_directories(aegir-script PUBLIC include)
 

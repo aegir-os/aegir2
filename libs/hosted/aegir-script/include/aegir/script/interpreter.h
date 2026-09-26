@@ -19,6 +19,8 @@
 #ifndef AEGIR_SCRIPT_INTERPRETER_H
 #define AEGIR_SCRIPT_INTERPRETER_H
 
+#include <aegir/script/substitute.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -33,10 +35,12 @@ namespace aegir::script {
  *  A kept line is otherwise its own text. */
 std::vector<std::string> script_lines(std::string_view text);
 
-/** One active command file: its path (for the cycle guard) and its cursor. */
+/** One active command file: its path (for the cycle guard), its cursor, and
+ *  the arguments the file was run with (for `$1..$n` and `{name}`). */
 struct Frame {
     std::string path;
     std::vector<std::string> lines;
+    Arguments arguments;
     std::size_t next = 0;
 };
 
@@ -45,13 +49,18 @@ class Frames {
 public:
     /** Push a command file. A path already active is a cycle and is refused;
      *  the guard is detection, not a depth cap. An empty path (an Eval line,
-     *  not a file) is always allowed. */
-    bool push(std::string path, std::vector<std::string> lines);
+     *  not a file) is always allowed. `arguments` are what a `.KEY` script
+     *  substitutes from. */
+    bool push(std::string path, std::vector<std::string> lines,
+              Arguments arguments = {});
 
     /** The next line to run, or nullptr when no frame has one left -- the
      *  console's turn. A frame whose cursor has reached its end is dropped on
      *  the way out. */
     std::string const *next();
+
+    /** The arguments of the innermost frame, or nullptr when none runs. */
+    Arguments const *current_arguments() const noexcept;
 
     /** Drop the innermost frame -- Quit, or a fail-level abort. False when no
      *  command file is running. */

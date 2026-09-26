@@ -46,6 +46,7 @@ def main() -> int:
             str(SCRIPT / "include"),
             str(DRIVER),
             str(SCRIPT / "src" / "interpreter.cc"),
+            str(SCRIPT / "src" / "substitute.cc"),
             "-o",
             str(binary),
         ]

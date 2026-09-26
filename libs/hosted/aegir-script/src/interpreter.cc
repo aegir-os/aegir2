@@ -52,7 +52,8 @@ std::vector<std::string> script_lines(std::string_view text)
     return lines;
 }
 
-bool Frames::push(std::string path, std::vector<std::string> lines)
+bool Frames::push(std::string path, std::vector<std::string> lines,
+                  Arguments arguments)
 {
     if (!path.empty()) {
         for (Frame const &frame : frames_) {
@@ -61,7 +62,8 @@ bool Frames::push(std::string path, std::vector<std::string> lines)
             }
         }
     }
-    frames_.push_back(Frame{std::move(path), std::move(lines), 0});
+    frames_.push_back(
+        Frame{std::move(path), std::move(lines), std::move(arguments), 0});
     return true;
 }
 
@@ -76,6 +78,11 @@ std::string const *Frames::next()
         return &frame.lines[frame.next++];
     }
     return nullptr;
+}
+
+Arguments const *Frames::current_arguments() const noexcept
+{
+    return frames_.empty() ? nullptr : &frames_.back().arguments;
 }
 
 bool Frames::abort()
