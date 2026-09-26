@@ -6,7 +6,7 @@
  *
  * The shell is a CON: client: it opens a cooked stream on the terminal's
  * con.stream, prints a prompt, reads lines, and either does something itself
- * -- CD, Dir, Type, Echo, Set, Get, Quit -- or asks the terminal to run a
+ * -- CD, Echo, Set/Get, Date/Time, Quit -- or asks the terminal to run a
  * command. The terminal owns the window and the spawn authority; the shell
  * owns the loop and the words. Its doorbell is a notification it passes on
  * open: the terminal rings it when a line is ready or a command has finished,
@@ -24,8 +24,10 @@
 #include <aegir/mem/vspace.h>
 #include <sel4/sel4.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -174,6 +176,71 @@ std::string environment_string()
         out.push_back('\0');
     }
     return out;
+}
+
+/* The clock, when the session gave the shell one: seconds since the Unix
+ * epoch, UTC. There is no timezone in the image, so UTC is the whole of the
+ * answer (specs/dos.md). */
+bool current_time(long &seconds)
+{
+    struct timespec now {};
+    if (::clock_gettime(CLOCK_REALTIME, &now) != 0) {
+        return false;
+    }
+    seconds = static_cast<long>(now.tv_sec);
+    return true;
+}
+
+/* Civil date from days since the epoch (Howard Hinnant's algorithm) rather
+ * than libc's: the runtime carries no timezone or locale tables, and the
+ * shell needs neither. 1970-01-01 was a Thursday. */
+void civil_from_days(long days, int &year, unsigned &month, unsigned &day)
+{
+    long const z = days + 719468;
+    long const era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned const doe = static_cast<unsigned>(z - era * 146097);
+    unsigned const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long const y = static_cast<long>(yoe) + era * 400;
+    unsigned const doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned const mp = (5 * doy + 2) / 153;
+    day = doy - (153 * mp + 2) / 5 + 1;
+    month = mp + (mp < 10 ? 3 : -9);
+    year = static_cast<int>(y + (month <= 2));
+}
+
+char const *const kWeekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+char const *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+std::string format_time(long seconds)
+{
+    long rem = seconds % 86400;
+    if (rem < 0) {
+        rem += 86400;
+    }
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%02ld:%02ld:%02ld", rem / 3600,
+                  (rem / 60) % 60, rem % 60);
+    return buffer;
+}
+
+std::string format_date(long seconds)
+{
+    long day = seconds / 86400;
+    long rem = seconds % 86400;
+    if (rem < 0) {
+        day -= 1;
+        rem += 86400;
+    }
+    int year = 0;
+    unsigned month = 1;
+    unsigned day_of_month = 1;
+    civil_from_days(day, year, month, day_of_month);
+    uint32_t const weekday = static_cast<uint32_t>(((day % 7) + 4 + 7) % 7);
+    char buffer[40];
+    std::snprintf(buffer, sizeof(buffer), "%s %02u-%s-%02d %s", kWeekdays[weekday],
+                  day_of_month, kMonths[month - 1], year % 100, format_time(seconds).c_str());
+    return buffer;
 }
 
 class Shell {
@@ -360,6 +427,26 @@ private:
         print(name + "=" + (value != nullptr ? value : "(not set)") + "\n");
     }
 
+    void command_time()
+    {
+        long seconds = 0;
+        if (!current_time(seconds)) {
+            print("Time: no clock\n");
+            return;
+        }
+        print(format_time(seconds) + "\n");
+    }
+
+    void command_date()
+    {
+        long seconds = 0;
+        if (!current_time(seconds)) {
+            print("Date: no clock\n");
+            return;
+        }
+        print(format_date(seconds) + "\n");
+    }
+
     void run_line(std::string const &line)
     {
         std::vector<std::string> const words = split_words(line);
@@ -381,6 +468,10 @@ private:
             command_set(arg);
         } else if (command == "get" || command == "getvar") {
             command_get(arg);
+        } else if (command == "date") {
+            command_date();
+        } else if (command == "time") {
+            command_time();
         } else if (command == "quit" || command == "endcli") {
             print("bye\n");
             (void)aegir::console::stream_close(port_, 0);

@@ -54,6 +54,9 @@ aegir::mem::Account g_account{"auth", 0, 0, 0};
  * exactly what starting a session takes. */
 seL4_CPtr g_spawn_log = 0;
 seL4_CPtr g_spawn_nmspace = 0;
+/* The clock, for the session's terminal and its commands: the DOS tools ask
+ * the time through it (specs/dos.md), and the shell's Date/Time read it. */
+seL4_CPtr g_spawn_clock = 0;
 
 /* The greeter's kit (specs/console.md's login arc): the delegatable copies
  * its spawn takes, and the console caller half that is auth's own -- a login
@@ -730,6 +733,12 @@ void start_session(uint32_t user, bool bureau) noexcept
              g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
             {"shell-pool", 10, aegir::bootstrap::kSlotFirstDeclared + 8,
              terminal_shell_pool, seL4_AllRights, 0, kTerminalShellPoolBits},
+            /* The clock, for the terminal's shell and its commands to pass on:
+             * unbadged, so the terminal can mint a session copy for each. The
+             * DOS tools and the shell's Date/Time ask the time through it
+             * (specs/dos.md). */
+            {"spawn:clock.main", 16, aegir::bootstrap::kSlotFirstDeclared + 9,
+             g_spawn_clock, seL4_CapRights_new(1, 0, 0, 1), 0, 0},
         };
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
@@ -747,8 +756,11 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_request.ports = terminal_ports;
         /* The spawn kit's four entries are dead when the carve failed: the
          * count keeps them out, the terminal runs without a spawner, and it
-         * says so rather than failing to start. */
-        terminal_request.port_count = terminal_command_pool != 0 ? 9 : 4;
+         * says so rather than failing to start. The clock rides last, and only
+         * when auth was given one. */
+        terminal_request.port_count = terminal_command_pool != 0
+                                          ? (g_spawn_clock != 0 ? 10 : 9)
+                                          : 4;
         terminal_request.fault_endpoint = terminal_fault;
         terminal_request.badge = terminal_badge;
         terminal_request.give_vspace = true;
@@ -1146,6 +1158,13 @@ int main(int argc, char *argv[])
     uint64_t spawn_bureau_menu_slot = 0;
     if (aegir::bootstrap::capability("spawn:bureau.menu", 17, &spawn_bureau_menu_slot)) {
         g_spawn_bureau_menu = static_cast<seL4_CPtr>(spawn_bureau_menu_slot);
+    }
+    /* The clock is optional too: a session without one still runs, and only
+     * the tools that ask the time report it (specs/dos.md). Director grants
+     * this because the session.terminal entry needs clock.main. */
+    uint64_t spawn_clock_slot = 0;
+    if (aegir::bootstrap::capability("spawn:clock.main", 16, &spawn_clock_slot)) {
+        g_spawn_clock = static_cast<seL4_CPtr>(spawn_clock_slot);
     }
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);

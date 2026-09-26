@@ -106,7 +106,10 @@ free-space and mtime-write in the filesystem interface.
 
 **Built-in (the shell's).** The line's own commands: `CD`/`CurrentDir`,
 `Echo`, `Set`/`Get`, `SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`, `Alias`/`UnAlias`,
-`Prompt`, `Why`/`Fault`, `Eval`, `Date`/`Time`/`Wait`, `Quit`/`EndCLI`.
+`Prompt`, `Why`/`Fault`, `Eval`, `Date`/`Time`/`Wait`, `Quit`/`EndCLI`. Landed:
+`CD`, `Echo`, `Set`/`Get`, `Date`/`Time`, `Quit`. `Wait` needs a timer or a
+sleep -- the clock says what time it is and nothing about waiting
+(`aegir/clock.h`) -- so it is the one time built-in still open.
 
 **Later arcs.** Scripting (`Ask`, `Execute`, `If`/`Else`/`EndIf`,
 `Skip`/`Label`/`EndSkip`, `FailAt`, `Run`, `IconX`) needs the interpreter.
@@ -163,7 +166,12 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   `vfs.namespace` into each command as it starts it -- a copy preserves the
   badge, so the command carries the session's identity beside `con.stream`. No
   command uses it yet; the path is proven with the first tool. The clock is
-  granted the same way, by copy, with the first tool that asks the time.
+  granted the same way, and landed with the built-ins that ask the time:
+  director grants auth `spawn:clock.main` (the manifest's `session.terminal`
+  needs it), auth hands the terminal the unbadged copy, and the terminal mints
+  one for the shell and for each command as `clock.main`, so the runtime's
+  `clock_gettime` answers. The shell's `Date`/`Time` are the first callers; the
+  tools still ask only the filesystem.
 - **Phase 2 — `aegir::args`.** The template parser and its acceptance.
 - **Phase 3 — `Sys:C` on the system volume, sized from the set.** The
   commands are built, stripped, packed into `Sys:C`, and the AEGIR partition

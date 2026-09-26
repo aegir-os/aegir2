@@ -17,6 +17,7 @@
 #include "console_stream_server.h"
 
 #include <aegir/bootstrap.h>
+#include <aegir/clock.h>
 #include <aegir/console.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
@@ -240,7 +241,7 @@ int main(int argc, char *argv[])
             argument_pointers.push_back(arg.c_str());
         }
         static std::string const kAccountText = "command";
-        aegir::spawn::PortGrant const ports[] = {
+        aegir::spawn::PortGrant ports[5] = {
             {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, spawn_kit.stream_endpoint(),
              seL4_CapRights_new(1, 1, 0, 1), kShellStream, 0},
@@ -264,6 +265,16 @@ int main(int argc, char *argv[])
              aegir::bootstrap::kSlotFirstDeclared + 3, spawn_kit.command_doorbell(),
              seL4_AllRights, 0, 0, false, true},
         };
+        uint32_t port_count = 4;
+        if (spawn_kit.command_clock_port() != 0) {
+            /* The clock, minted from the terminal's unbadged copy: the tools
+             * ask the time through the runtime's clock_gettime (specs/dos.md). */
+            ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
+                                 aegir::bootstrap::kSlotFirstDeclared + port_count,
+                                 spawn_kit.command_clock_port(),
+                                 seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+            ++port_count;
+        }
         aegir::spawn::Request request{};
         request.name = name.c_str();
         request.name_length = static_cast<uint32_t>(name.size());
@@ -281,7 +292,7 @@ int main(int argc, char *argv[])
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.priority = seL4_MaxPrio - 2;
         request.ports = ports;
-        request.port_count = 4;
+        request.port_count = port_count;
         request.fault_endpoint = spawn_kit.fault_endpoint();
         request.badge = 0x1000 + command_serial++;
         request.give_vspace = true;

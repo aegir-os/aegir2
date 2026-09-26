@@ -193,6 +193,14 @@ this arc's record of the order.
   is the placeholder, so `Home:`/`ENV:`/`C:` resolve and writes land owned by
   the session.
 
+  The clock half landed with the built-ins that ask the time: director hands
+  auth a `spawn:clock.main` (the manifest's `session.terminal` entry is what
+  declares the need), auth hands the terminal the unbadged copy, and the
+  terminal mints one for the shell and for each command as `clock.main`
+  (specs/dos.md). `Date`/`Time` read it, formatted UTC -- there is no timezone
+  in the image. `Wait` is the one still open, because the clock says what time
+  it is and nothing about waiting (`aegir/clock.h`).
+
 ## What this is not
 
 - **Scripts.** `Execute` and a command language (redirection, pipelines,
@@ -245,3 +253,8 @@ Phase 7's is `specs/dos.md`'s acceptance: the same run types a `makedir`, a
 `copy`, a `list` and a `type`, and each is a program read from `Sys:C` and
 resolving the session's namespace on the badge the terminal gave it -- while
 `set`/`type`/`echo` stay the shell's own words.
+
+`Date`/`Time`'s is the same run: the runner types `date` and `time` before the
+first command, and the shell reads the clock the session was granted and
+formats it (UTC). A session without a clock prints the no-clock line instead,
+so the built-in reports the absence rather than inventing a time.

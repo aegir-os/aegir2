@@ -8,6 +8,7 @@
 #include "spawn_kit.h"
 
 #include <aegir/bootstrap.h>
+#include <aegir/clock.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
 #include <aegir/log.h>
@@ -89,6 +90,14 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     }
     command_nmspace_port_ = static_cast<seL4_CPtr>(command_nmspace_slot);
 
+    /* The clock, when auth was given one: unbadged, so a fresh copy can be
+     * minted for the shell and each command (specs/dos.md). Optional -- a
+     * session without a clock still runs, and only the time tools report it. */
+    uint64_t command_clock_slot = 0;
+    if (aegir::bootstrap::capability("spawn:clock.main", 16, &command_clock_slot)) {
+        command_clock_port_ = static_cast<seL4_CPtr>(command_clock_slot);
+    }
+
     /* The terminal's own con.stream endpoint and a fault endpoint for its
      * children, retyped from the toolkit's memory (they live as long as the
      * terminal, not as long as a command). */
@@ -139,7 +148,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::kCNodeBits);
-    aegir::spawn::PortGrant const ports[] = {
+    aegir::spawn::PortGrant ports[5] = {
         {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
@@ -155,6 +164,13 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
          seL4_AllRights, 0, shell_pool_bits_},
     };
+    uint32_t port_count = 4;
+    if (command_clock_port_ != 0) {
+        ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             command_clock_port_, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+        ++port_count;
+    }
     static char const kName[] = "session.shell";
     static char const kAccountText[] = "shell";
     aegir::spawn::Request request{};
@@ -168,7 +184,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
     request.cwd_length = cwd_length;
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
-    request.port_count = 4;
+    request.port_count = port_count;
     request.fault_endpoint = fault_endpoint_;
     request.badge = badge;
     request.give_vspace = true;

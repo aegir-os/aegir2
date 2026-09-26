@@ -454,7 +454,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
-                press="makedir Home:DosTest Home:DosTest2\n",
+                # date and time are shell built-ins (specs/dos.md), read by the
+                # shell itself rather than spawned: they ask the clock the
+                # session was granted, so a session without one says so. The
+                # command line then queues behind them.
+                press="date\ntime\nmakedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started makedir",
