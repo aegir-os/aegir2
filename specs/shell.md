@@ -253,6 +253,13 @@ this arc's record of the order.
   command's own namespace, so a write is the session's. `<` is plumbed but
   waits for a command that reads its input (`Ask`, or `more` without a key) --
   today's commands take their files by name, not on stdin.
+- **Phase 10 — Shell-Startup.** Landed. Before the loop reads the console, the
+  shell runs `S:Shell-Startup` -- the user's file first, `Sys:S/Shell-Startup`
+  under it; the first that reads is the one that runs, and a session with
+  neither simply starts. The system's sets the alias `l` for `list`, so the
+  acceptance typing `l` and `list` starting is the proof the startup ran. A
+  user's own `Home:S/Shell-Startup` overriding it is a new shell's to read,
+  which waits for the re-login arc.
 
 ## What this is not
 
@@ -312,5 +319,12 @@ Phase 8's is the same run: the runner's first typed line ends with `execute
 Sys:S/Interpreter-Test`, a command file whose built-in `Alias x date` is what
 makes its next line's bare `x` spawn `date` -- so the `command started date`
 cue, which the next step waits on, is the proof the interpreter ran the file's
-words in order. `make check-script` asserts the frame order, the cycle guard,
-comment and blank stripping, and the fail level directly.
+  words in order. `make check-script` asserts the frame order, the cycle guard,
+  comment and blank stripping, and the fail level directly.
+
+Phase 9 and 10's are the same run: a built-in `echo` and a `dir` are redirected
+to files (the `dir` one to `Home:DosTest/DIR.TXT`) and a `type` reads them
+back, so both the shell's own and a command's fd 1 are proven to reach a path;
+a `search` goes to `NIL:` and disappears; and the `list` the run types is
+spelled `l`, the alias the system's `Shell-Startup` set -- so `list` starting
+proves the shell ran its startup file before it read the console.

@@ -236,6 +236,10 @@ struct Builtin {
     void (Shell::*handler)(std::string const &);
 };
 
+/* Starting a command file: it began, it is not there, or it is already
+ * running (a cycle, refused rather than recursed). */
+enum class ScriptStart { Started, NotFound, Cycle };
+
 class Shell {
 public:
     explicit Shell(aegir::ipc::Consumer port) : port_(port) {}
@@ -284,6 +288,42 @@ public:
             }
             std::fclose(file);
             (void)aegir::environment::setenv(name.c_str(), value.c_str());
+        }
+    }
+
+    /* Start a command file: read it through the session's namespace and push
+     * its executable lines as a frame for the loop to drain. */
+    ScriptStart start_script(std::string const &path)
+    {
+        std::FILE *const file = std::fopen(path.c_str(), "rb");
+        if (file == nullptr) {
+            return ScriptStart::NotFound;
+        }
+        std::string text;
+        char chunk[512];
+        std::size_t have = 0;
+        while ((have = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
+            text.append(chunk, have);
+        }
+        std::fclose(file);
+        if (!frames_.push(path, aegir::script::script_lines(text))) {
+            return ScriptStart::Cycle;
+        }
+        return ScriptStart::Started;
+    }
+
+    /* Shell-Startup (specs/shell.md): the shell's own startup, the user's
+     * Home:S file first and the system's under it. Run once, before the loop
+     * reads the console; the first that reads is the one that runs, and a
+     * session with neither just starts. */
+    void run_startup()
+    {
+        static char const *const kStartup[] = {"S:Shell-Startup",
+                                               "Sys:S/Shell-Startup"};
+        for (char const *candidate : kStartup) {
+            if (start_script(candidate) == ScriptStart::Started) {
+                return;
+            }
         }
     }
 
@@ -644,23 +684,17 @@ private:
             return;
         }
         std::string const path = resolve(words[0]);
-        std::FILE *const file = std::fopen(path.c_str(), "rb");
-        if (file == nullptr) {
-            print("Execute: " + words[0] + ": not found\n");
-            line_status_ = 10;
+        switch (start_script(path)) {
+        case ScriptStart::Started:
             return;
-        }
-        std::string text;
-        char chunk[512];
-        std::size_t have = 0;
-        while ((have = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
-            text.append(chunk, have);
-        }
-        std::fclose(file);
-        if (!frames_.push(path, aegir::script::script_lines(text))) {
+        case ScriptStart::Cycle:
             print("Execute: " + words[0] + ": already running\n");
-            line_status_ = 10;
+            break;
+        case ScriptStart::NotFound:
+            print("Execute: " + words[0] + ": not found\n");
+            break;
         }
+        line_status_ = 10;
     }
 
     /* Quit ends the current command file with the return code it is given
@@ -856,6 +890,9 @@ int main(int argc, char **argv)
     shell.set_doorbell(doorbell);
     shell.load_environment();
     shell.start();
+    /* Shell-Startup, then the loop drains its frame before the console
+     * (specs/shell.md). */
+    shell.run_startup();
     shell.loop();
     return 0;
 }

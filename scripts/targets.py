@@ -495,7 +495,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"terminal: command started copy",
                 events=TERMINAL_CLICK,
-                press="list Home:DosTest Home:DosTest2\n",
+                # `l` is an alias the system's Shell-Startup set (specs/shell.md,
+                # Sys:S/Shell-Startup = `alias l list`), so list starting proves
+                # the shell ran its startup file before it read the console.
+                press="l Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started list",
