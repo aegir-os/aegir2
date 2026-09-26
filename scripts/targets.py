@@ -457,8 +457,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # date and time are shell built-ins (specs/dos.md), read by the
                 # shell itself rather than spawned: they ask the clock the
                 # session was granted, so a session without one says so. The
+                # env synonyms are exercised too: SetEnv sets, GetEnv reads it
+                # back, UnSet removes it, and the second GetEnv says so. The
                 # command line then queues behind them.
-                press="date\ntime\nmakedir Home:DosTest Home:DosTest2\n",
+                press="date\ntime\nsetenv PROBE value\ngetenv PROBE\nunset PROBE\ngetenv PROBE\nmakedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started makedir",

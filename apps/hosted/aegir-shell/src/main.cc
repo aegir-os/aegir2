@@ -427,6 +427,20 @@ private:
         print(name + "=" + (value != nullptr ? value : "(not set)") + "\n");
     }
 
+    void command_unset(std::string const &arg)
+    {
+        std::size_t const space = arg.find_first_of(" \t");
+        std::string const name = space == std::string::npos ? arg : arg.substr(0, space);
+        if (name.empty()) {
+            print("UnSet: what variable?\n");
+            return;
+        }
+        aegir::environment::unsetenv(name.c_str());
+        /* The persisted copy is the union's create target; removing it lets an
+         * inherited base value show through again (specs/environment.md). */
+        std::remove(("ENV:" + name).c_str());
+    }
+
     void command_time()
     {
         long seconds = 0;
@@ -464,10 +478,12 @@ private:
             }
         } else if (command == "echo") {
             print(arg + "\n");
-        } else if (command == "set" || command == "setvar") {
+        } else if (command == "set" || command == "setvar" || command == "setenv") {
             command_set(arg);
-        } else if (command == "get" || command == "getvar") {
+        } else if (command == "get" || command == "getvar" || command == "getenv") {
             command_get(arg);
+        } else if (command == "unset" || command == "unsetenv") {
+            command_unset(arg);
         } else if (command == "date") {
             command_date();
         } else if (command == "time") {

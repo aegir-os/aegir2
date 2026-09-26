@@ -41,6 +41,10 @@ namespace {
  * the runtime's, not this state's. */
 struct State {
     std::vector<std::pair<std::string, std::string>> settings;
+    /* Names removed from the inherited frame: the frame is read-only, so an
+     * unset of an inherited variable is a tombstone here that getenv and
+     * environ both honour. */
+    std::vector<std::string> removed;
     /* The merged view `environ()` hands out: the strings and the pointer array
      * over them, rebuilt each call so the pointers stay valid. */
     std::vector<std::string> merged;
@@ -70,6 +74,11 @@ char const *getenv(char const *name) noexcept
     if (name == nullptr) {
         return nullptr;
     }
+    for (auto const &gone : state().removed) {
+        if (gone == name) {
+            return nullptr;
+        }
+    }
     for (auto const &setting : state().settings) {
         if (setting.first == name) {
             return setting.second.c_str();
@@ -94,13 +103,41 @@ bool setenv(char const *name, char const *value) noexcept
         std::strchr(name, '=') != nullptr) {
         return false;
     }
-    for (auto &setting : state().settings) {
+    State &s = state();
+    for (auto it = s.removed.begin(); it != s.removed.end(); ++it) {
+        if (*it == name) {
+            s.removed.erase(it);
+            break;
+        }
+    }
+    for (auto &setting : s.settings) {
         if (setting.first == name) {
             setting.second = value;
             return true;
         }
     }
-    state().settings.emplace_back(name, value);
+    s.settings.emplace_back(name, value);
+    return true;
+}
+
+bool unsetenv(char const *name) noexcept
+{
+    if (name == nullptr || name[0] == '\0') {
+        return false;
+    }
+    State &s = state();
+    for (auto it = s.settings.begin(); it != s.settings.end(); ++it) {
+        if (it->first == name) {
+            s.settings.erase(it);
+            break;
+        }
+    }
+    for (auto const &gone : s.removed) {
+        if (gone == name) {
+            return true;
+        }
+    }
+    s.removed.emplace_back(name);
     return true;
 }
 
@@ -120,6 +157,13 @@ char const *const *environ() noexcept
             for (auto const &setting : s.settings) {
                 if (setting.first.size() == name_length &&
                     std::memcmp(setting.first.c_str(), envp[i], name_length) == 0) {
+                    shadowed = true;
+                    break;
+                }
+            }
+            for (auto const &gone : s.removed) {
+                if (gone.size() == name_length &&
+                    std::memcmp(gone.c_str(), envp[i], name_length) == 0) {
                     shadowed = true;
                     break;
                 }

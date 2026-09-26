@@ -32,6 +32,12 @@ char const *getenv(char const *name) noexcept;
  *  or the value is null, or the name is empty or contains '='. */
 bool setenv(char const *name, char const *value) noexcept;
 
+/** Remove `name` from the process's environment: getenv then answers nullptr,
+ *  and environ() omits it even when it came from the inherited frame (the
+ *  frame is read-only, so the removal is a tombstone over it). False when the
+ *  name is null or empty. */
+bool unsetenv(char const *name) noexcept;
+
 /** The whole environment as `NAME=VALUE` strings, NUL-terminated, the
  *  process's own settings shadowing what it inherited -- what a spawner passes
  *  on (inheritance is the default, specs/environment.md). The view is this
