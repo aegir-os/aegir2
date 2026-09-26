@@ -37,11 +37,13 @@ enough to state in one file.
   give up".
 - **Built-in commands are the shell's, external ones are programs.** The
   line editor, `CD`/`CurrentDir`, `Echo`, `Set`/`Get` and the environment
-  family (the `ENV:` toolset, `specs/environment.md`), the alias commands, and
-  `Quit`/`EndCLI` are built in: they are about the shell's own state or its
-  line, and an external binary for each would be ceremony. Everything else is
-  a program — including `Dir`, `List` and `Type`, which begin as built-ins and
-  leave with the DOS toolset (`specs/dos.md`'s Phase 4).
+  family (the `ENV:` toolset, `specs/environment.md`), the alias commands,
+  `Prompt`, `Why`/`Fault`, `Eval` and `EndCLI`/`EndShell` are built in: they are
+  about the shell's own state or its line, and an external binary for each
+  would be ceremony. Everything else is a program — including `Dir`, `List`,
+  `Type`, `Date` and `Wait`, which begin as built-ins and leave with the DOS
+  toolset (`specs/dos.md`). `Quit` aborts a script, not the shell, and belongs
+  to the interpreter (`specs/dos.md`'s Later arcs).
 - **Commands come from `C:`, an alias of `Sys:C`.** A command name resolves
   through the namespace to its binary, which the terminal reads and hands to
   the spawner. `C:` is a **union alias** — `Sys:C` and `Home:C`, the `ENV:`
@@ -185,21 +187,23 @@ this arc's record of the order.
 - **Phase 7 — the DOS toolset.** `specs/dos.md`: the CLI commands as hosted
   programs in `Sys:C`, one binary each, with `ReadArgs` templates
   (`aegir::args`), and the plumbing that lets a command touch files without
-  touching the kernel — the terminal mints it a `vfs.namespace` and a
-  `clock.main`, badged with the session, beside the console stream. `Dir`,
-  `List` and `Type` leave the built-ins; the commands arrive in slices. The
+  touching the kernel — the terminal mints it a `vfs.namespace`, a `clock.main`
+  and a `timer.main`, badged with the session, beside the console stream.
+  `Dir`, `List`, `Type`, `Date` and `Wait` leave the built-ins; the commands
+  arrive in slices. The
   command-badge interim above is not this phase's: the namespace the command
   is given carries the session's identity even while the process's own badge
   is the placeholder, so `Home:`/`ENV:`/`C:` resolve and writes land owned by
   the session.
 
-  The clock half landed with the built-ins that ask the time: director hands
-  auth a `spawn:clock.main` (the manifest's `session.terminal` entry is what
-  declares the need), auth hands the terminal the unbadged copy, and the
-  terminal mints one for the shell and for each command as `clock.main`
-  (specs/dos.md). `Date`/`Time` read it, formatted UTC -- there is no timezone
-  in the image. `Wait` is the one still open, because the clock says what time
-  it is and nothing about waiting (`aegir/clock.h`).
+  The clock and timer halves landed with the programs that ask the time:
+  director hands auth `spawn:clock.main` and `spawn:timer.main` (the manifest's
+  `session.terminal` entry is what declares the need), auth hands the terminal
+  the unbadged copies, and the terminal mints one of each for every command as
+  `clock.main`/`timer.main` (specs/dos.md, specs/timer.md). `Date` reads the
+  clock, formatted UTC -- there is no timezone in the image -- and `Wait`
+  sleeps on the timer, so the clock says what time it is and the timer measures
+  the interval (specs/timer.md).
 
 ## What this is not
 

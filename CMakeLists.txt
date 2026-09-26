@@ -175,6 +175,8 @@ set(aegir_commands
   aegir-list:list
   aegir-dir:dir
   aegir-type:type
+  aegir-date:date
+  aegir-wait:wait
   aegir-search:search
   aegir-sort:sort
   aegir-join:join

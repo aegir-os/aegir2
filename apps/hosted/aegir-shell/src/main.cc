@@ -6,10 +6,10 @@
  *
  * The shell is a CON: client: it opens a cooked stream on the terminal's
  * con.stream, prints a prompt, reads lines, and either does something itself
- * -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, Date/Time, Quit -- or asks the
- * terminal to run a command. The terminal owns the window and the spawn
- * authority; the shell
- * owns the loop and the words. Its doorbell is a notification it passes on
+ * -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, EndCLI/EndShell -- or asks
+ * the terminal to run a command. The terminal owns
+ * the window and the spawn authority; the shell owns the loop and the words.
+ * Its doorbell is a notification it passes on
  * open: the terminal rings it when a line is ready or a command has finished,
  * so the shell waits instead of polling (specs/terminal.md).
  */
@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
-#include <ctime>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -180,70 +179,16 @@ std::string environment_string()
     return out;
 }
 
-/* The clock, when the session gave the shell one: seconds since the Unix
- * epoch, UTC. There is no timezone in the image, so UTC is the whole of the
- * answer (specs/dos.md). */
-bool current_time(long &seconds)
-{
-    struct timespec now {};
-    if (::clock_gettime(CLOCK_REALTIME, &now) != 0) {
-        return false;
-    }
-    seconds = static_cast<long>(now.tv_sec);
-    return true;
-}
-
-/* Civil date from days since the epoch (Howard Hinnant's algorithm) rather
- * than libc's: the runtime carries no timezone or locale tables, and the
- * shell needs neither. 1970-01-01 was a Thursday. */
-void civil_from_days(long days, int &year, unsigned &month, unsigned &day)
-{
-    long const z = days + 719468;
-    long const era = (z >= 0 ? z : z - 146096) / 146097;
-    unsigned const doe = static_cast<unsigned>(z - era * 146097);
-    unsigned const yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    long const y = static_cast<long>(yoe) + era * 400;
-    unsigned const doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    unsigned const mp = (5 * doy + 2) / 153;
-    day = doy - (153 * mp + 2) / 5 + 1;
-    month = mp + (mp < 10 ? 3 : -9);
-    year = static_cast<int>(y + (month <= 2));
-}
-
-char const *const kWeekdays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-char const *const kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
-std::string format_time(long seconds)
-{
-    long rem = seconds % 86400;
-    if (rem < 0) {
-        rem += 86400;
-    }
-    char buffer[16];
-    std::snprintf(buffer, sizeof(buffer), "%02ld:%02ld:%02ld", rem / 3600,
-                  (rem / 60) % 60, rem % 60);
-    return buffer;
-}
-
-std::string format_date(long seconds)
-{
-    long day = seconds / 86400;
-    long rem = seconds % 86400;
-    if (rem < 0) {
-        day -= 1;
-        rem += 86400;
-    }
-    int year = 0;
-    unsigned month = 1;
-    unsigned day_of_month = 1;
-    civil_from_days(day, year, month, day_of_month);
-    uint32_t const weekday = static_cast<uint32_t>(((day % 7) + 4 + 7) % 7);
-    char buffer[40];
-    std::snprintf(buffer, sizeof(buffer), "%s %02u-%s-%02d %s", kWeekdays[weekday],
-                  day_of_month, kMonths[month - 1], year % 100, format_time(seconds).c_str());
-    return buffer;
-}
+/* A built-in: the shell's own words, which it runs itself because they touch
+ * its state (the current directory, the environment, the aliases, the prompt)
+ * or are part of the command language. The table is the dispatch; a name not in
+ * it is a program, resolved from C: and started by the terminal (specs/dos.md).
+ * Several names share a handler, which is the Amiga's synonyms. */
+class Shell;
+struct Builtin {
+    char const *name;
+    void (Shell::*handler)(std::string const &);
+};
 
 class Shell {
 public:
@@ -258,7 +203,7 @@ public:
             aegir::debug_write("  aegir-shell: FAIL the stream would not open\n");
             std::exit(1);
         }
-        print("Aegir shell -- CD, Dir, Type, Echo, Quit\n");
+        print("Aegir shell -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, EndCLI\n");
     }
 
     /* The persistent environment (specs/environment.md): the merged ENV: view
@@ -388,6 +333,32 @@ private:
         }
         refresh_prompt();
         return true;
+    }
+
+    void command_cd(std::string const &arg)
+    {
+        if (arg.empty()) {
+            print(current_directory() + "\n");
+        } else if (!change_directory(arg)) {
+            print("CD: not a directory: " + arg + "\n");
+        }
+    }
+
+    void command_echo(std::string const &arg)
+    {
+        print(arg + "\n");
+    }
+
+    /* EndCLI and EndShell are the same command -- EndCLI the older spelling,
+     * EndShell the newer; both end this shell process (AmigaOS 3.1 reference).
+     * Quit is a different thing: it aborts a script with a return code, and
+     * belongs to the interpreter arc. */
+    void command_endcli(std::string const &arg)
+    {
+        static_cast<void>(arg);
+        print("bye\n");
+        (void)aegir::console::stream_close(port_, 0);
+        std::exit(0);
     }
 
     void command_set(std::string const &arg)
@@ -585,26 +556,6 @@ private:
         run_line(arg);
     }
 
-    void command_time()
-    {
-        long seconds = 0;
-        if (!current_time(seconds)) {
-            print("Time: no clock\n");
-            return;
-        }
-        print(format_time(seconds) + "\n");
-    }
-
-    void command_date()
-    {
-        long seconds = 0;
-        if (!current_time(seconds)) {
-            print("Date: no clock\n");
-            return;
-        }
-        print(format_date(seconds) + "\n");
-    }
-
     void run_line(std::string const &line)
     {
         /* An alias stands for a line, and the Amiga expands the first word
@@ -618,59 +569,56 @@ private:
         std::string const command = to_lower(words[0]);
         std::string const arg = join_tail(expanded, words[0]);
 
-        if (command == "cd" || command == "currentdir") {
-            if (arg.empty()) {
-                print(current_directory() + "\n");
-            } else if (!change_directory(arg)) {
-                print("CD: not a directory: " + arg + "\n");
-            }
-        } else if (command == "echo") {
-            print(arg + "\n");
-        } else if (command == "set" || command == "setvar" || command == "setenv") {
-            command_set(arg);
-        } else if (command == "get" || command == "getvar" || command == "getenv") {
-            command_get(arg);
-        } else if (command == "unset" || command == "unsetenv") {
-            command_unset(arg);
-        } else if (command == "alias") {
-            command_alias(arg);
-        } else if (command == "unalias") {
-            command_unalias(arg);
-        } else if (command == "prompt") {
-            command_prompt(arg);
-        } else if (command == "why" || command == "fault") {
-            command_why(arg);
-        } else if (command == "eval") {
-            command_eval(arg);
-        } else if (command == "date") {
-            command_date();
-        } else if (command == "time") {
-            command_time();
-        } else if (command == "quit" || command == "endcli") {
-            print("bye\n");
-            (void)aegir::console::stream_close(port_, 0);
-            std::exit(0);
-        } else if (is_directory(resolve(words[0]))) {
-            (void)change_directory(words[0]);
-        } else {
-            /* A program, run by the terminal on this shell's behalf: it owns
-             * the spawn authority and starts the command with this stream.
-             * The command token is lowercased first -- the Amiga is
-             * case-blind and C: is not (specs/dos.md) -- so `Copy` resolves
-             * C:copy. */
-            std::string const command_line = with_lowercased_command(expanded, words[0]);
-            std::string const cwd = current_directory();
-            std::string const environment = environment_string();
-            if (aegir::console::stream_run(port_, command_line.data(),
-                                           static_cast<uint32_t>(command_line.size()),
-                                           cwd.c_str(), static_cast<uint32_t>(cwd.size()),
-                                           environment.data(),
-                                           static_cast<uint32_t>(environment.size()))) {
-                busy_ = true;
+        static Builtin const kBuiltins[] = {
+            {"cd", &Shell::command_cd},
+            {"currentdir", &Shell::command_cd},
+            {"echo", &Shell::command_echo},
+            {"set", &Shell::command_set},
+            {"setvar", &Shell::command_set},
+            {"setenv", &Shell::command_set},
+            {"get", &Shell::command_get},
+            {"getvar", &Shell::command_get},
+            {"getenv", &Shell::command_get},
+            {"unset", &Shell::command_unset},
+            {"unsetenv", &Shell::command_unset},
+            {"alias", &Shell::command_alias},
+            {"unalias", &Shell::command_unalias},
+            {"prompt", &Shell::command_prompt},
+            {"why", &Shell::command_why},
+            {"fault", &Shell::command_why},
+            {"eval", &Shell::command_eval},
+            {"endcli", &Shell::command_endcli},
+            {"endshell", &Shell::command_endcli},
+        };
+        for (Builtin const &builtin : kBuiltins) {
+            if (command == builtin.name) {
+                (this->*builtin.handler)(arg);
                 return;
             }
-            print("Unknown command: " + words[0] + "\n");
         }
+
+        /* Not a built-in: a directory typed on its own is the Amiga's implicit
+         * change into it (specs/shell.md); anything else is a program. */
+        if (is_directory(resolve(words[0]))) {
+            (void)change_directory(words[0]);
+            return;
+        }
+        /* A program, run by the terminal on this shell's behalf: it owns the
+         * spawn authority and starts the command with this stream. The command
+         * token is lowercased first -- the Amiga is case-blind and C: is not
+         * (specs/dos.md) -- so `Copy` resolves C:copy. */
+        std::string const command_line = with_lowercased_command(expanded, words[0]);
+        std::string const cwd = current_directory();
+        std::string const environment = environment_string();
+        if (aegir::console::stream_run(port_, command_line.data(),
+                                       static_cast<uint32_t>(command_line.size()),
+                                       cwd.c_str(), static_cast<uint32_t>(cwd.size()),
+                                       environment.data(),
+                                       static_cast<uint32_t>(environment.size()))) {
+            busy_ = true;
+            return;
+        }
+        print("Unknown command: " + words[0] + "\n");
     }
 
     aegir::ipc::Consumer port_;

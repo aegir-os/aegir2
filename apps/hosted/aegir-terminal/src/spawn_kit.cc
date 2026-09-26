@@ -8,13 +8,11 @@
 #include "spawn_kit.h"
 
 #include <aegir/bootstrap.h>
-#include <aegir/clock.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
 #include <aegir/log.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
-#include <aegir/timer.h>
 #include <aegir/trinket/application.h>
 
 namespace aegir::terminal {
@@ -154,7 +152,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::kCNodeBits);
-    aegir::spawn::PortGrant ports[6] = {
+    aegir::spawn::PortGrant const ports[] = {
         {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
@@ -170,19 +168,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
          seL4_AllRights, 0, shell_pool_bits_},
     };
-    uint32_t port_count = 4;
-    if (command_clock_port_ != 0) {
-        ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
-                             aegir::bootstrap::kSlotFirstDeclared + port_count,
-                             command_clock_port_, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
-        ++port_count;
-    }
-    if (command_timer_port_ != 0) {
-        ports[port_count] = {aegir::timer::kPortName, aegir::timer::kPortNameLength,
-                             aegir::bootstrap::kSlotFirstDeclared + port_count,
-                             command_timer_port_, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
-        ++port_count;
-    }
+    uint32_t const port_count = 4;
     static char const kName[] = "session.shell";
     static char const kAccountText[] = "shell";
     aegir::spawn::Request request{};

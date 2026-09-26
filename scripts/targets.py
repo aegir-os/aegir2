@@ -444,9 +444,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # request, and each step is cued by the *name* of the command that
             # just started -- not by its exit status, which two commands can
             # share. The sequence uses the session's Home:, which it may write,
-            # and exercises the whole set: makedir, copy, list, dir, type,
-            # search, sort, join, more, rename, protect, info, which, assign,
-            # version, delete, filenote. filenote is on the public FAT16
+            # and exercises the whole set: date, wait, makedir, copy, list, dir,
+            # type, search, sort, join, more, rename, protect, info, which,
+            # assign, version, delete, filenote. filenote is on the public FAT16
             # volume, which has no attributes: it names the filesystem and
             # fails with 10 -- the error path, and a FAT volume in the
             # acceptance. version reads VER.TXT through the alias assign
@@ -454,18 +454,27 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
-                # date and time are shell built-ins (specs/dos.md), read by the
-                # shell itself rather than spawned: they ask the clock the
-                # session was granted, so a session without one says so. The
-                # env synonyms are exercised too: SetEnv sets, GetEnv reads it
-                # back, UnSet removes it, and the second GetEnv says so. Then
-                # an alias (hi stands for echo) expands, Prompt changes the
-                # prompt, Eval runs a line, and Why explains a return code. The
-                # command line then queues behind them.
-                press="date\ntime\nsetenv PROBE value\ngetenv PROBE\nunset PROBE\n"
+                # The shell's own words first, read by the shell itself rather
+                # than spawned: SetEnv sets, GetEnv reads it back, UnSet removes
+                # it, and the second GetEnv says so; an alias (hi stands for
+                # echo) expands, Prompt changes the prompt, Eval runs a line,
+                # and Why explains a return code. date is the first program they
+                # queue behind.
+                press="setenv PROBE value\ngetenv PROBE\nunset PROBE\n"
                       "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
-                      "eval echo eval-line\nwhy 10\n"
-                      "makedir Home:DosTest Home:DosTest2\n",
+                      "eval echo eval-line\nwhy 10\ndate\n",
+            ),
+            QmpStep(
+                r"terminal: command started date",
+                events=TERMINAL_CLICK,
+                # wait is a program too (C:WAIT), and with no period it waits a
+                # second (specs/dos.md).
+                press="wait\n",
+            ),
+            QmpStep(
+                r"terminal: command started wait",
+                events=TERMINAL_CLICK,
+                press="makedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started makedir",

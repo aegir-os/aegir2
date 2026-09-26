@@ -38,10 +38,11 @@ and asks no more of a command than that the port be there.
   command, and `C:Copy` is spelled `C:copy`.
 - **Built-ins are the shell's state; commands are programs.** The line editor,
   the implicit directory change, `CD`/`CurrentDir`, `Echo`, `Set`/`Get` and
-  the environment family, `Alias`/`UnAlias`, `Prompt`, `Quit`/`EndCLI` are the
-  shell's: they are about the shell's own state or its line. Everything that
-  acts on the filesystem or the machine is a program in `C:`. `Dir`, `List` and
-  `Type` move out of the built-in set with this arc.
+  the environment family, `Alias`/`UnAlias`, `Prompt`, `Why`/`Fault`, `Eval`
+  and `EndCLI`/`EndShell` are the shell's: they are about the shell's own state
+  or its line. Everything that acts on the filesystem, the machine or the clock
+  is a program in `C:`. `Dir`, `List`, `Type`, `Date` and `Wait` move out of
+  the built-in set with this arc; `Quit` is the interpreter's, not the shell's.
 - **Arguments are `ReadArgs` templates.** A command declares a template —
   `FROM/A,TO,ALL/S,DIR/S` — and `aegir::args` parses the line into named
   values. The amiga conventions are the ones adopted: `/A` an argument that
@@ -54,7 +55,8 @@ and asks no more of a command than that the port be there.
 - **A command calls no seL4.** It links the hosted runtime and the libraries
   (`std::filesystem`, `aegir::filesystem`, `aegir::environment`, `aegir::args`)
   and is given, as ports, `con.stream` (its standard input, output and error),
-  `vfs.namespace` (its files) and `clock.main` (its time). The terminal grants
+  `vfs.namespace` (its files), `clock.main` (its time) and `timer.main` (its
+  sleep, `specs/timer.md`). The terminal grants
   them at spawn; the runtime finds them by name. Where a tool would otherwise
   have to reach for a slot, the answer is a missing library, not a syscall in
   the tool — the rule this arc exists to keep.
@@ -90,6 +92,8 @@ disk utilities and the firmware tools of AmigaDOS are other arcs or none.
 | `list` | list a directory's entries in detail | `DIR/M`,`ALL/S` |
 | `dir` | list a directory's entry names | `DIR/M`,`ALL/S` |
 | `type` | display a text file | `FROM/M/A` |
+| `date` | print the date and time | `DATE` |
+| `wait` | wait for a period or until a time | `WAIT/N`,`SEC=SECS/S`,`MIN=MINS/S`,`UNTIL/K` |
 | `more` | page a text file | `FILE/A` |
 | `join` | concatenate files | `FROM/M/A`,`AS/K/A` (the Amiga's `TO` alias too) |
 | `sort` | sort a file's lines | `FROM/A`,`TO/A` |
@@ -104,19 +108,20 @@ disk utilities and the firmware tools of AmigaDOS are other arcs or none.
 `MakeLink` waits on link support in the VFS; `Avail` and `SetDate` wait on
 free-space and mtime-write in the filesystem interface.
 
-**Built-in (the shell's).** The line's own commands: `CD`/`CurrentDir`,
-`Echo`, `Set`/`Get`, `SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`, `Alias`/`UnAlias`,
-`Prompt`, `Why`/`Fault`, `Eval`, `Date`/`Time`/`Wait`, `Quit`/`EndCLI`. Landed:
-`CD`, `Echo`, `Set`/`Get` and their `SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`
-synonyms, `Alias`/`UnAlias`, `Prompt`, `Why`/`Fault`, `Eval`, `Date`/`Time`,
-`Quit`. `Wait` needs a timer or a sleep -- the clock says what time it is and
-nothing about waiting (`aegir/clock.h`) -- so it is the one time built-in still
-open.
+**Built-in (the shell's).** The line's own commands -- what needs the shell's
+state (the current directory, the environment, the alias table, the prompt) or
+is part of its language: `CD`/`CurrentDir`, `Echo`, `Set`/`Get`,
+`SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`, `Alias`/`UnAlias`, `Prompt`,
+`Why`/`Fault`, `Eval`, `EndCLI`/`EndShell`. `Date`, `Wait` and the rest are
+programs in `C:`. `Quit` aborts a
+*script* with a return code -- it is the interpreter arc's
+(`specs/shell.md`), not a shell exit, so `EndCLI`/`EndShell` is how a session
+ends and `Quit` is not implemented yet.
 
 **Later arcs.** Scripting (`Ask`, `Execute`, `If`/`Else`/`EndIf`,
-`Skip`/`Label`/`EndSkip`, `FailAt`, `Run`, `IconX`) needs the interpreter.
-`Status` needs a process registry. The GUI, printer, font, serial, disk and
-firmware commands are their own arcs or out of scope.
+`Skip`/`Label`/`EndSkip`, `FailAt`, `Run`, `Quit`, `IconX`) needs the
+interpreter. `Status` needs a process registry. The GUI, printer, font, serial,
+disk and firmware commands are their own arcs or out of scope.
 
 ## The shape
 
@@ -167,13 +172,13 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   session and terminal badges; the terminal copies its own session-badged
   `vfs.namespace` into each command as it starts it -- a copy preserves the
   badge, so the command carries the session's identity beside `con.stream`. No
-  command uses it yet; the path is proven with the first tool. The clock is
-  granted the same way, and landed with the built-ins that ask the time:
-  director grants auth `spawn:clock.main` (the manifest's `session.terminal`
-  needs it), auth hands the terminal the unbadged copy, and the terminal mints
-  one for the shell and for each command as `clock.main`, so the runtime's
-  `clock_gettime` answers. The shell's `Date`/`Time` are the first callers; the
-  tools still ask only the filesystem.
+  command uses it yet; the path is proven with the first tool. The clock and
+  timer are granted the same way: director grants auth `spawn:clock.main` and
+  `spawn:timer.main` (the manifest's `session.terminal` needs them), auth hands
+  the terminal the unbadged copies, and the terminal mints one for each command
+  as `clock.main`/`timer.main`, so the runtime's `clock_gettime` and
+  `nanosleep` answer. `Date` and `Wait` are the first callers; the file tools
+  still ask only the filesystem.
 - **Phase 2 — `aegir::args`.** The template parser and its acceptance.
 - **Phase 3 — `Sys:C` on the system volume, sized from the set.** The
   commands are built, stripped, packed into `Sys:C`, and the AEGIR partition
@@ -291,9 +296,12 @@ to a line.
 
 ## Acceptance
 
-Phase 1 and 4 together, landed: after the demo closes, the runner types a
-`makedir` that creates two directories on the session's Home, a `copy` of two
-files from `Sys:` into the first, a `list` of both, a `type` of both, a
+Phase 1 and 4 together, landed: after the demo closes, the runner types the
+shell's own words -- `SetEnv`, `GetEnv`, `UnSet`, an `Alias` that expands,
+`Prompt`, `Eval`, `Why` -- then the programs: a `date`, a `wait`, a `makedir`
+that creates two directories on the session's Home, a `copy` of two
+files from `Sys:` into the first, a `list` of both, a `dir` of one, a `type`
+of both, a
 `search` of two files for a word one holds, a `sort` into the first, a `join`
 of a file with itself `AS` a second file there, a `more` of `Sys:LONG.TXT` (a
 file longer than the window, so it pages and waits for a key), a `rename` of
