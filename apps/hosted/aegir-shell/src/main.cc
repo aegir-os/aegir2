@@ -6,8 +6,9 @@
  *
  * The shell is a CON: client: it opens a cooked stream on the terminal's
  * con.stream, prints a prompt, reads lines, and either does something itself
- * -- CD, Echo, Set/Get, Date/Time, Quit -- or asks the terminal to run a
- * command. The terminal owns the window and the spawn authority; the shell
+ * -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, Date/Time, Quit -- or asks the
+ * terminal to run a command. The terminal owns the window and the spawn
+ * authority; the shell
  * owns the loop and the words. Its doorbell is a notification it passes on
  * open: the terminal rings it when a line is ready or a command has finished,
  * so the shell waits instead of polling (specs/terminal.md).
@@ -31,6 +32,7 @@
 #include <filesystem>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -302,6 +304,7 @@ public:
                 if (aegir::console::stream_command_status(port_, &status)) {
                     busy_ = false;
                     answered = true;
+                    last_status_ = status;
                     if (status != 0) {
                         print("return code " + std::to_string(status) + "\n");
                     }
@@ -336,7 +339,8 @@ private:
 
     void refresh_prompt()
     {
-        std::string const prompt = prompt_for(current_directory());
+        std::string const prompt =
+            prompt_override_.empty() ? prompt_for(current_directory()) : prompt_override_;
         (void)aegir::console::stream_set_prompt(port_, prompt.c_str(),
                                                 static_cast<uint32_t>(prompt.size()));
     }
@@ -441,6 +445,146 @@ private:
         std::remove(("ENV:" + name).c_str());
     }
 
+    /* An alias stands for a line, expanded until the first word is no longer
+     * one: the Amiga's Alias is recursive, and a name seen twice is a cycle,
+     * not a depth the shell chose. */
+    std::string expand_aliases(std::string const &line) const
+    {
+        std::string expanded = line;
+        std::vector<std::string> seen;
+        for (;;) {
+            std::vector<std::string> const words = split_words(expanded);
+            if (words.empty()) {
+                break;
+            }
+            std::string const name = to_lower(words[0]);
+            bool stop = false;
+            for (auto const &already : seen) {
+                if (already == name) {
+                    stop = true;
+                    break;
+                }
+            }
+            if (stop) {
+                break;
+            }
+            std::string const *expansion = nullptr;
+            for (auto const &alias : aliases_) {
+                if (alias.first == name) {
+                    expansion = &alias.second;
+                    break;
+                }
+            }
+            if (expansion == nullptr) {
+                break;
+            }
+            seen.push_back(name);
+            std::string const tail = join_tail(expanded, words[0]);
+            expanded = tail.empty() ? *expansion : *expansion + " " + tail;
+        }
+        return expanded;
+    }
+
+    void set_alias(std::string const &name, std::string const &value)
+    {
+        for (auto &alias : aliases_) {
+            if (alias.first == name) {
+                alias.second = value;
+                return;
+            }
+        }
+        aliases_.emplace_back(name, value);
+    }
+
+    void command_alias(std::string const &arg)
+    {
+        std::vector<std::string> const words = split_words(arg);
+        if (words.empty()) {
+            for (auto const &alias : aliases_) {
+                print(alias.first + "=" + alias.second + "\n");
+            }
+            return;
+        }
+        std::string const name = to_lower(words[0]);
+        std::string const tail = join_tail(arg, words[0]);
+        if (tail.empty()) {
+            for (auto const &alias : aliases_) {
+                if (alias.first == name) {
+                    print(name + "=" + alias.second + "\n");
+                    return;
+                }
+            }
+            print("Alias: " + name + " is not defined\n");
+            return;
+        }
+        set_alias(name, tail);
+    }
+
+    void command_unalias(std::string const &arg)
+    {
+        std::vector<std::string> const words = split_words(arg);
+        if (words.empty()) {
+            print("UnAlias: what alias?\n");
+            return;
+        }
+        std::string const name = to_lower(words[0]);
+        for (auto it = aliases_.begin(); it != aliases_.end(); ++it) {
+            if (it->first == name) {
+                aliases_.erase(it);
+                return;
+            }
+        }
+        print("UnAlias: " + name + " is not defined\n");
+    }
+
+    void command_prompt(std::string const &arg)
+    {
+        /* No argument restores the directory-shaped default (specs/shell.md). */
+        prompt_override_ = arg;
+        refresh_prompt();
+    }
+
+    void command_why(std::string const &arg)
+    {
+        uint64_t code = last_status_;
+        if (!arg.empty()) {
+            uint64_t parsed = 0;
+            bool digits = true;
+            for (char const c : arg) {
+                if (c < '0' || c > '9') {
+                    digits = false;
+                    break;
+                }
+                parsed = parsed * 10 + static_cast<uint64_t>(c - '0');
+            }
+            if (!digits) {
+                print("Why: a return code, please\n");
+                return;
+            }
+            code = parsed;
+        }
+        char const *explanation = "a return code";
+        if (code == 0) {
+            explanation = "no error";
+        } else if (code < 10) {
+            explanation = "a warning";
+        } else if (code < 20) {
+            explanation = "an error";
+        } else if (code < 30) {
+            explanation = "a failure";
+        }
+        print("Why: " + std::to_string(code) + " (" + explanation + ")\n");
+    }
+
+    void command_eval(std::string const &arg)
+    {
+        if (arg.empty()) {
+            print("Eval: what line?\n");
+            return;
+        }
+        run_line(arg);
+    }
+
     void command_time()
     {
         long seconds = 0;
@@ -463,12 +607,16 @@ private:
 
     void run_line(std::string const &line)
     {
-        std::vector<std::string> const words = split_words(line);
+        /* An alias stands for a line, and the Amiga expands the first word
+         * again, so an alias may name another (specs/dos.md). A name seen
+         * twice stops the walk, which is a cycle, not a depth limit. */
+        std::string const expanded = expand_aliases(line);
+        std::vector<std::string> const words = split_words(expanded);
         if (words.empty()) {
             return;
         }
         std::string const command = to_lower(words[0]);
-        std::string const arg = join_tail(line, words[0]);
+        std::string const arg = join_tail(expanded, words[0]);
 
         if (command == "cd" || command == "currentdir") {
             if (arg.empty()) {
@@ -484,6 +632,16 @@ private:
             command_get(arg);
         } else if (command == "unset" || command == "unsetenv") {
             command_unset(arg);
+        } else if (command == "alias") {
+            command_alias(arg);
+        } else if (command == "unalias") {
+            command_unalias(arg);
+        } else if (command == "prompt") {
+            command_prompt(arg);
+        } else if (command == "why" || command == "fault") {
+            command_why(arg);
+        } else if (command == "eval") {
+            command_eval(arg);
         } else if (command == "date") {
             command_date();
         } else if (command == "time") {
@@ -500,7 +658,7 @@ private:
              * The command token is lowercased first -- the Amiga is
              * case-blind and C: is not (specs/dos.md) -- so `Copy` resolves
              * C:copy. */
-            std::string const command_line = with_lowercased_command(line, words[0]);
+            std::string const command_line = with_lowercased_command(expanded, words[0]);
             std::string const cwd = current_directory();
             std::string const environment = environment_string();
             if (aegir::console::stream_run(port_, command_line.data(),
@@ -518,6 +676,9 @@ private:
     aegir::ipc::Consumer port_;
     seL4_CPtr doorbell_ = 0;
     bool busy_ = false;
+    std::vector<std::pair<std::string, std::string>> aliases_;
+    std::string prompt_override_;
+    uint64_t last_status_ = 0;
 };
 
 }  // namespace

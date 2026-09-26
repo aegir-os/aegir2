@@ -458,9 +458,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # shell itself rather than spawned: they ask the clock the
                 # session was granted, so a session without one says so. The
                 # env synonyms are exercised too: SetEnv sets, GetEnv reads it
-                # back, UnSet removes it, and the second GetEnv says so. The
+                # back, UnSet removes it, and the second GetEnv says so. Then
+                # an alias (hi stands for echo) expands, Prompt changes the
+                # prompt, Eval runs a line, and Why explains a return code. The
                 # command line then queues behind them.
-                press="date\ntime\nsetenv PROBE value\ngetenv PROBE\nunset PROBE\ngetenv PROBE\nmakedir Home:DosTest Home:DosTest2\n",
+                press="date\ntime\nsetenv PROBE value\ngetenv PROBE\nunset PROBE\n"
+                      "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
+                      "eval echo eval-line\nwhy 10\n"
+                      "makedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"terminal: command started makedir",

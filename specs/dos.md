@@ -108,9 +108,10 @@ free-space and mtime-write in the filesystem interface.
 `Echo`, `Set`/`Get`, `SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`, `Alias`/`UnAlias`,
 `Prompt`, `Why`/`Fault`, `Eval`, `Date`/`Time`/`Wait`, `Quit`/`EndCLI`. Landed:
 `CD`, `Echo`, `Set`/`Get` and their `SetEnv`/`GetEnv`/`UnSet`/`UnSetEnv`
-synonyms, `Date`/`Time`, `Quit`. `Wait` needs a timer or a sleep -- the clock
-says what time it is and nothing about waiting (`aegir/clock.h`) -- so it is
-the one time built-in still open.
+synonyms, `Alias`/`UnAlias`, `Prompt`, `Why`/`Fault`, `Eval`, `Date`/`Time`,
+`Quit`. `Wait` needs a timer or a sleep -- the clock says what time it is and
+nothing about waiting (`aegir/clock.h`) -- so it is the one time built-in still
+open.
 
 **Later arcs.** Scripting (`Ask`, `Execute`, `If`/`Else`/`EndIf`,
 `Skip`/`Label`/`EndSkip`, `FailAt`, `Run`, `IconX`) needs the interpreter.
