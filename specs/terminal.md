@@ -131,13 +131,16 @@ port does not know is answered by saying nothing.
   it with `command_status`.
 - `set_prompt`. In: the prompt as a string. A shell that changed directory
   redraws its prompt through this rather than reopening the stream.
-- `run`. In: the command line, the current directory and the shell's
-  environment, each a string (the environment is the NUL-separated
-  `NAME=VALUE` the spawner wants). Answer: one word, `1` started and `0`
+- `run`. In: the command line, the current directory, the shell's
+  environment, and the command's redirected standard input and output, each a
+  string (the environment is the NUL-separated `NAME=VALUE` the spawner wants;
+  a redirection is a VFS path, empty for the console stream, `specs/shell.md`).
+  Answer: one word, `1` started and `0`
   refused. The terminal holds the spawn authority, so the shell asks it to
   start the command -- with the shell's stream, so the output lands on the
   same grid -- and the environment rides in the call because the shell's is
-  the shell's.
+  the shell's. The redirect paths ride to the child's bootstrap block, where
+  the runtime opens them and routes fd 0/1.
 - `command_status`. Answer: one word, the status, when a command has finished;
   an empty answer otherwise. Reading it clears the finished state, so the
   shell prints one `return code` line and draws the next prompt.

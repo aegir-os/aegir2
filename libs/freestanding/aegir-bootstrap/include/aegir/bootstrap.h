@@ -87,7 +87,7 @@ constexpr uint32_t kCNodeBits = 12;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 5;
+constexpr uint32_t kVersion = 6;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -157,6 +157,13 @@ enum class EntryKind : uint32_t {
      *  here: they are the startup frame's argc/argv/envp, the ABI the runtime
      *  already reads. */
     CurrentDir = 13,
+    /** The child's standard input or output, when its spawner redirected it
+     *  (specs/shell.md): a VFS path, a string entry like `CurrentDir`. Empty or
+     *  absent when the stream is the console's -- which is every process that
+     *  was not given a redirection. The runtime opens the path and routes fd
+     *  0/1 there instead of the console stream. */
+    StdIn = 14,
+    StdOut = 15,
 };
 
 struct Entry {
@@ -216,6 +223,12 @@ struct Contents {
     /* The child's current directory (specs/environment.md), or empty for none. */
     char const *cwd;
     uint32_t cwd_length;
+    /* The child's redirected standard input and output (specs/shell.md), or
+     * empty for the console stream. */
+    char const *std_in;
+    uint32_t std_in_length;
+    char const *std_out;
+    uint32_t std_out_length;
     PortEntry const *ports;
     uint32_t port_count;
     uint64_t devices_address;

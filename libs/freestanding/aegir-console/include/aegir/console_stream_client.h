@@ -150,10 +150,14 @@ inline bool stream_set_prompt(aegir::ipc::Consumer const &port, char const *prom
 }
 
 /** Ask the terminal to run `line` with `cwd` and the NUL-separated `environment`
- *  (the shell's, sent so the command inherits it). True when it started. */
+ *  (the shell's, sent so the command inherits it), redirecting the command's
+ *  standard input and output to `std_in`/`std_out` (empty for the console
+ *  stream; specs/shell.md). True when it started. */
 inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
                        uint32_t line_length, char const *cwd, uint32_t cwd_length,
-                       char const *environment, uint32_t environment_length) noexcept
+                       char const *environment, uint32_t environment_length,
+                       char const *std_in, uint32_t std_in_length, char const *std_out,
+                       uint32_t std_out_length) noexcept
 {
     uint64_t out[aegir::ipc::kMaxWords];
     uint32_t words =
@@ -173,6 +177,20 @@ inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
         return false;
     }
     words += environment_words;
+    uint32_t const in_words =
+        aegir::nmspace::pack_string(out + words, std_in, std_in_length,
+                                    aegir::nmspace::kPathMax);
+    if (in_words == 0) {
+        return false;
+    }
+    words += in_words;
+    uint32_t const out_words2 =
+        aegir::nmspace::pack_string(out + words, std_out, std_out_length,
+                                    aegir::nmspace::kPathMax);
+    if (out_words2 == 0) {
+        return false;
+    }
+    words += out_words2;
     if (words > aegir::ipc::kMaxWords) {
         return false;
     }

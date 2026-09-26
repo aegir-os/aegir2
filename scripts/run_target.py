@@ -205,7 +205,10 @@ _PRESS_QCODES = {"\t": "tab", "\n": "ret", " ": "spc", "-": "minus",
 
 # A character that needs a shift chord: QEMU's send-key holds the whole list
 # down together, so a chord is one call. Only what a step types is here.
-_PRESS_CHORDS = {":": ("shift", "semicolon")}
+# `>` and `<` are the redirection operators a shell line can carry.
+_PRESS_CHORDS = {":": ("shift", "semicolon"),
+                 ">": ("shift", "dot"),
+                 "<": ("shift", "comma")}
 
 # The keys that are not characters, spelled between angle brackets in a step's
 # `press` -- the editor's arrows and editing keys (specs/terminal.md). A token

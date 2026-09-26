@@ -61,6 +61,15 @@ enough to state in one file.
   first and falls back to `Sys:S`, with no union, so the system's scripts
   never appear in the user's listing and editing them needs elevation. Names
   are matched in the filesystem's own case — the shell does not fold them.
+- **Redirection is the shell's, and the target is a path the command is
+  given.** A line's `>` (create and cut), `>>` (append) and `<` (read) are
+  pulled off before the command word, and the target travels to the spawner
+  beside the command line; the runtime opens the path and routes the command's
+  fd 0/1 there instead of the console stream. `NIL:` is a volume like any
+  other, so `>NIL:` is silence and needs no special case (`specs/boot.md`). A
+  built-in's output is the shell's own, so the shell opens the target and
+  prints into it — which is what makes `EndCLI >NIL:` quiet rather than a
+  visible `bye`.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
   transfer, the protocol's stated property). So `printf` reaches the grid,
@@ -236,12 +245,21 @@ this arc's record of the order.
   `aegir::script` value. The acceptance runs a system command file whose
   built-in `Alias` is what makes the next line's `date` spawn, so the command
   starting proves the file ran in order (`make check-script` asserts the rest).
+- **Phase 9 — redirection and `NIL:`.** Landed. `>`, `>>` and `<` are pulled
+  off a line; a command's target travels in the `run` call and the runtime
+  routes its fd 0/1 to the path, and a built-in's output opens the target in the
+  shell itself. `NIL:` is a volume (`specs/vfs.md`), so `>NIL:` and
+  `EndCLI >NIL:` are quiet with no special case. The redirect target opens the
+  command's own namespace, so a write is the session's. `<` is plumbed but
+  waits for a command that reads its input (`Ask`, or `more` without a key) --
+  today's commands take their files by name, not on stdin.
 
 ## What this is not
 
-- **Scripts, in full.** `Execute` and its frame land (Phase 8), but redirection,
-  pipelines, `If`/`Skip` control flow, argument substitution and the process
-  words (`Run`, `NewCLI`) are later. Tier 1 splits a line into words and acts;
+- **Scripts, in full.** `Execute` and its frame (Phase 8) and redirection
+  (Phase 9) land, but pipelines (`|` and `PIPE:`), `If`/`Skip` control flow,
+  argument substitution and the process words (`Run`, `NewCLI`) are later.
+  Tier 1 splits a line into words and acts;
   a quoting rule for names with spaces is the first thing that arrives with it.
 - **Globbing and tab completion.** Completion belongs to the handler's line
   editor, and is deferred with the rest of the editor's polish.

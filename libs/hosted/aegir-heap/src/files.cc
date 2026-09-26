@@ -541,6 +541,20 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
     return install(slot, target, 0, false, true, false);
 }
 
+/* The redirected standard streams (specs/shell.md): a read open refuses a name
+ * that is not there; a write open creates it and cuts it to nothing first, the
+ * Amiga's `>` (append is the shell's `>>`, which opens without truncation --
+ * this is the one truncating form, so it is named for what it does). */
+long open_for_read(char const *path) noexcept
+{
+    return openat(AT_FDCWD, path, O_RDONLY, 0);
+}
+
+long open_for_write(char const *path) noexcept
+{
+    return openat(AT_FDCWD, path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+}
+
 long close(int fd) noexcept
 {
     Entry *entry = entry_for(fd);

@@ -462,13 +462,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # than spawned: SetEnv sets, GetEnv reads it back, UnSet removes
                 # it, and the second GetEnv says so; an alias (hi stands for
                 # echo) expands, Prompt changes the prompt, Eval runs a line,
-                # and Why explains a return code. The last line Execute's a
-                # command file (specs/shell.md): its built-in Alias makes x stand
+                # and Why explains a return code. The last two lines test the
+                # shell's own redirection (`echo ... >file`) and the interpreter:
+                # Execute's command file has a built-in Alias that makes x stand
                 # for date, and its next line spawns date -- so date starting is
                 # the proof the interpreter ran the file in order.
                 press="setenv PROBE value\ngetenv PROBE\nunset PROBE\n"
                       "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
-                      "eval echo eval-line\nwhy 10\nexecute Sys:S/Interpreter-Test\n",
+                      "eval echo eval-line\nwhy 10\necho shell-redirect >Home:ShellOut.TXT\n"
+                      "execute Sys:S/Interpreter-Test\n",
             ),
             QmpStep(
                 r"terminal: command started date",
@@ -504,20 +506,26 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # dir is List's names-only sibling (the Amiga's Dir): the same
                 # directory, without the sizes. S: is the session's script
                 # directory (specs/shell.md): auth makes Home:S and binds it,
-                # and it is empty at login.
-                press="dir Home:DosTest S:\n",
+                # and it is empty at login. The output is redirected to a file
+                # (`>`), so dir's stdout is proven to reach a path, not the grid.
+                press="dir Home:DosTest S: >Home:DosTest/DIR.TXT\n",
             ),
             QmpStep(
                 r"terminal: command started dir",
                 events=TERMINAL_CLICK,
                 # Sys:S holds the startup scripts (specs/boot.md); reading one
-                # proves the system's script directory resolves and reads.
-                press="type Sys:S/Shell-Startup Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT\n",
+                # proves the system's script directory resolves and reads. The
+                # other two are what the two redirections wrote: the shell's own
+                # `echo >file` and the command's `dir >file`.
+                press="type Sys:S/Shell-Startup Home:ShellOut.TXT Home:DosTest/AEGIR.TXT "
+                      "Home:DosTest/DIR.TXT\n",
             ),
             QmpStep(
                 r"terminal: command started type",
                 events=TERMINAL_CLICK,
-                press="search Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT disk\n",
+                # `>NIL:` is the Amiga's quiet output (specs/boot.md): search
+                # writes its matches to NIL: and they disappear.
+                press="search Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT disk >NIL:\n",
             ),
             QmpStep(
                 r"terminal: command started search",

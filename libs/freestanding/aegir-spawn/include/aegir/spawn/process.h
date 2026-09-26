@@ -183,6 +183,14 @@ struct Request {
      * null/0 for none (specs/environment.md). */
     char const *cwd = nullptr;
     uint32_t cwd_length = 0;
+    /* The child's redirected standard input and output, VFS paths, or null/0
+     * for the console stream (specs/shell.md). A spawner that redirects a
+     * command's command line sets these; the runtime opens the path and routes
+     * fd 0/1 there. */
+    char const *std_in = nullptr;
+    uint32_t std_in_length = 0;
+    char const *std_out = nullptr;
+    uint32_t std_out_length = 0;
     uint32_t priority;
     /** How many 4 KiB pages of stack the child is given. Zero takes the floor
      *  (kDefaultStackPages, 8 KiB); a process that runs the C++ standard

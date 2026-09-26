@@ -130,6 +130,44 @@ bool parse_number(std::string const &text, uint64_t &out)
     return true;
 }
 
+/* A line's redirections, pulled off before the command: the Amiga's `>` a
+ * file created and cut, `>>` a file appended, `<` a file read as input. The
+ * operator and its name are one token (`>file`) or two (`> file`), and the
+ * words that remain are the command's own (specs/shell.md). */
+struct Redirect {
+    std::vector<std::string> words;
+    std::string in_path;
+    std::string out_path;
+    bool append = false;
+};
+
+Redirect split_redirect(std::vector<std::string> const &raw)
+{
+    Redirect result;
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        std::string const &token = raw[i];
+        if (!token.empty() && (token[0] == '>' || token[0] == '<')) {
+            bool const input = token[0] == '<';
+            std::size_t const operator_length =
+                (token.size() > 1 && token[1] == '>') ? 2 : 1;
+            bool const append = operator_length == 2;
+            std::string target = token.substr(operator_length);
+            if (target.empty() && i + 1 < raw.size()) {
+                target = raw[++i];
+            }
+            if (input) {
+                result.in_path = target;
+            } else {
+                result.out_path = target;
+                result.append = append;
+            }
+            continue;
+        }
+        result.words.push_back(token);
+    }
+    return result;
+}
+
 std::string join_tail(std::string const &line, std::string const &first)
 {
     std::size_t const at = line.find(first);
@@ -141,17 +179,6 @@ std::string join_tail(std::string const &line, std::string const &first)
         ++i;
     }
     return line.substr(i);
-}
-
-/* The line with its command token lowercased: the Amiga is case-blind, C: is
- * not, and the command a typed `Copy` names is C:copy (specs/dos.md). */
-std::string with_lowercased_command(std::string const &line, std::string const &command)
-{
-    std::size_t const at = line.find(command);
-    if (at == std::string::npos) {
-        return to_lower(line);
-    }
-    return line.substr(0, at) + to_lower(command) + line.substr(at + command.size());
 }
 
 std::string parent_of(std::string const &path)
@@ -317,6 +344,12 @@ public:
 private:
     void print(std::string const &text)
     {
+        /* A built-in's output goes to the redirection when the line gave one
+         * (specs/shell.md): `EndCLI >NIL:` closes without the line showing. */
+        if (redirect_out_ != nullptr) {
+            (void)std::fwrite(text.data(), 1, text.size(), redirect_out_);
+            return;
+        }
         (void)aegir::console::stream_write(port_, text.data(),
                                            static_cast<uint32_t>(text.size()));
     }
@@ -677,12 +710,19 @@ private:
          * again, so an alias may name another (specs/dos.md). A name seen
          * twice stops the walk, which is a cycle, not a depth limit. */
         std::string const expanded = expand_aliases(line);
-        std::vector<std::string> const words = split_words(expanded);
+        Redirect const redirect = split_redirect(split_words(expanded));
+        std::vector<std::string> const &words = redirect.words;
         if (words.empty()) {
             return false;
         }
         std::string const command = to_lower(words[0]);
-        std::string const arg = join_tail(expanded, words[0]);
+        std::string arg;
+        for (std::size_t i = 1; i < words.size(); ++i) {
+            if (i > 1) {
+                arg.push_back(' ');
+            }
+            arg += words[i];
+        }
 
         static Builtin const kBuiltins[] = {
             {"cd", &Shell::command_cd},
@@ -710,7 +750,23 @@ private:
         };
         for (Builtin const &builtin : kBuiltins) {
             if (command == builtin.name) {
-                (this->*builtin.handler)(arg);
+                /* A built-in's output is the shell's own, so its redirection is
+                 * the shell's too: open the target and print into it. */
+                if (!redirect.out_path.empty()) {
+                    std::FILE *const file = std::fopen(
+                        redirect.out_path.c_str(), redirect.append ? "ab" : "wb");
+                    if (file == nullptr) {
+                        print("Cannot open " + redirect.out_path + "\n");
+                        line_status_ = 10;
+                        return false;
+                    }
+                    redirect_out_ = file;
+                    (this->*builtin.handler)(arg);
+                    redirect_out_ = nullptr;
+                    std::fclose(file);
+                } else {
+                    (this->*builtin.handler)(arg);
+                }
                 return false;
             }
         }
@@ -723,16 +779,22 @@ private:
         }
         /* A program, run by the terminal on this shell's behalf: it owns the
          * spawn authority and starts the command with this stream. The command
-         * token is lowercased first -- the Amiga is case-blind and C: is not
-         * (specs/dos.md) -- so `Copy` resolves C:copy. */
-        std::string const command_line = with_lowercased_command(expanded, words[0]);
+         * line is the command token, lowercased (the Amiga is case-blind and
+         * C: is not, specs/dos.md), then its arguments; the redirections
+         * already left it. */
+        std::string command_line = command;
+        for (std::size_t i = 1; i < words.size(); ++i) {
+            command_line.push_back(' ');
+            command_line += words[i];
+        }
         std::string const cwd = current_directory();
         std::string const environment = environment_string();
-        if (aegir::console::stream_run(port_, command_line.data(),
-                                       static_cast<uint32_t>(command_line.size()),
-                                       cwd.c_str(), static_cast<uint32_t>(cwd.size()),
-                                       environment.data(),
-                                       static_cast<uint32_t>(environment.size()))) {
+        if (aegir::console::stream_run(
+                port_, command_line.data(), static_cast<uint32_t>(command_line.size()),
+                cwd.c_str(), static_cast<uint32_t>(cwd.size()), environment.data(),
+                static_cast<uint32_t>(environment.size()), redirect.in_path.data(),
+                static_cast<uint32_t>(redirect.in_path.size()), redirect.out_path.data(),
+                static_cast<uint32_t>(redirect.out_path.size()))) {
             busy_ = true;
             return true;
         }
@@ -749,6 +811,9 @@ private:
     std::string prompt_override_;
     uint64_t last_status_ = 0;
     uint64_t line_status_ = 0;
+    /* The sink a built-in's output uses while a redirected line runs, or null
+     * for the console stream (specs/shell.md). */
+    std::FILE *redirect_out_ = nullptr;
 };
 
 }  // namespace

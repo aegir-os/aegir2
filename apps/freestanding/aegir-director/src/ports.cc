@@ -112,6 +112,12 @@ Rights rights_for(PortGraph::Name name) noexcept
     if (name_is(name, "vol.initrd", 10)) {
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
+    if (name_is(name, "vol.nil", 7)) {
+        /* NIL: mints its caller half like the initrd's, so this owner half
+         * must carry Write too or the mint is read-only and a resolved NIL:
+         * cannot be called (specs/boot.md). */
+        return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+    }
     if (name_is(name, "devmgr.registry", 15)) {
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 0, 0, 1)};
     }

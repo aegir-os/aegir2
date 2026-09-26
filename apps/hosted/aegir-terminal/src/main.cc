@@ -205,7 +205,8 @@ int main(int argc, char *argv[])
     bool command_running = false;
     auto spawn_command = [&](std::string const &name, std::vector<std::string> const &args,
                              std::string const &cwd,
-                             std::vector<char const *> const &environment) -> bool {
+                             std::vector<char const *> const &environment,
+                             std::string const &std_in, std::string const &std_out) -> bool {
         if (!kit) {
             return false;
         }
@@ -300,6 +301,13 @@ int main(int argc, char *argv[])
         request.environment_count = static_cast<uint32_t>(environment.size());
         request.cwd = cwd.c_str();
         request.cwd_length = static_cast<uint32_t>(cwd.size());
+        /* The command's redirection (specs/shell.md): the shell parsed it off
+         * the line, and the runtime routes the command's fd 0/1 to these paths
+         * instead of the console stream. Empty is the console. */
+        request.std_in = std_in.empty() ? nullptr : std_in.c_str();
+        request.std_in_length = static_cast<uint32_t>(std_in.size());
+        request.std_out = std_out.empty() ? nullptr : std_out.c_str();
+        request.std_out_length = static_cast<uint32_t>(std_out.size());
         request.priority = seL4_MaxPrio - 2;
         request.ports = ports;
         request.port_count = port_count;
@@ -338,8 +346,9 @@ int main(int argc, char *argv[])
                           seL4_Word badge, bool cap_arrived, uint64_t *reply,
                           uint32_t capacity) -> uint32_t {
             /* The shell asks the terminal to run a command: the line, the
-             * directory to run it in, and the shell's environment (three
-             * strings, packed in that order). The terminal holds the spawn
+             * directory to run it in, the shell's environment, and the
+             * command's redirected input and output (five strings, packed in
+             * that order; specs/shell.md). The terminal holds the spawn
              * authority, so it starts the command here. */
             if (method == aegir::console::kStreamMethodRun) {
                 if (capacity < 1) {
@@ -348,9 +357,13 @@ int main(int argc, char *argv[])
                 char const *line = nullptr;
                 char const *cwd = nullptr;
                 char const *environment = nullptr;
+                char const *std_in = nullptr;
+                char const *std_out = nullptr;
                 uint32_t line_length = 0;
                 uint32_t cwd_length = 0;
                 uint32_t environment_length = 0;
+                uint32_t std_in_length = 0;
+                uint32_t std_out_length = 0;
                 uint32_t at = 0;
                 if (!aegir::nmspace::unpack_string(words + at, count - at,
                                                    aegir::console::kStreamBytesMax, &line,
@@ -367,6 +380,18 @@ int main(int argc, char *argv[])
                 if (!aegir::nmspace::unpack_string(words + at, count - at,
                                                    aegir::console::kStreamBytesMax,
                                                    &environment, &environment_length)) {
+                    return 0;
+                }
+                at += packed_words(environment_length);
+                if (!aegir::nmspace::unpack_string(words + at, count - at,
+                                                   aegir::console::kStreamBytesMax, &std_in,
+                                                   &std_in_length)) {
+                    return 0;
+                }
+                at += packed_words(std_in_length);
+                if (!aegir::nmspace::unpack_string(words + at, count - at,
+                                                   aegir::console::kStreamBytesMax, &std_out,
+                                                   &std_out_length)) {
                     return 0;
                 }
                 std::vector<std::string> const words_of_line =
@@ -393,7 +418,9 @@ int main(int argc, char *argv[])
                                words_of_line[0],
                                std::vector<std::string>(words_of_line.begin() + 1,
                                                         words_of_line.end()),
-                               std::string(cwd, cwd_length), environment_pointers)
+                               std::string(cwd, cwd_length), environment_pointers,
+                               std::string(std_in, std_in_length),
+                               std::string(std_out, std_out_length))
                                ? 1
                                : 0;
                 return 1;

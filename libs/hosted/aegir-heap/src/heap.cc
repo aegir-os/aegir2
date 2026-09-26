@@ -457,12 +457,52 @@ seL4_CPtr console_doorbell() noexcept
     return doorbell;
 }
 
+/* A redirected standard stream (specs/shell.md): the spawner put a path in the
+ * bootstrap block, and the first use opens it. -1 is "no redirection" and
+ * leaves the stream the console's; a failed open returns its errno. The path is
+ * length-prefixed in the block, not NUL-terminated, so it is copied out. */
+long redirected_fd(aegir::bootstrap::EntryKind kind) noexcept
+{
+    uint32_t length = 0;
+    char const *given = aegir::bootstrap::string(kind, &length);
+    if (given == nullptr || length == 0 || length > aegir::console::kStreamBytesMax) {
+        return -1;
+    }
+    char path[aegir::console::kStreamBytesMax + 1];
+    for (uint32_t i = 0; i < length; ++i) {
+        path[i] = given[i];
+    }
+    path[length] = '\0';
+    return kind == aegir::bootstrap::EntryKind::StdIn ? files::open_for_read(path)
+                                                      : files::open_for_write(path);
+}
+
+long stdin_fd() noexcept
+{
+    static long const fd = redirected_fd(aegir::bootstrap::EntryKind::StdIn);
+    return fd;
+}
+
+long stdout_fd() noexcept
+{
+    static long const fd = redirected_fd(aegir::bootstrap::EntryKind::StdOut);
+    return fd;
+}
+
 /* SYS_write: a standard stream goes to the console stream when the process has
  * one, the debug serial otherwise; any other fd is a file the filesystem arc
  * opened. musl's stdio and the standard library's diagnostics both reach here
  * (specs/cxx.md step 5, specs/shell.md's Phase 4). */
 long sys_write(int fd, void const *buffer, size_t length) noexcept
 {
+    if (fd == 1) {
+        /* Redirected output (specs/shell.md): the spawner named a file, and the
+         * write lands there rather than on the grid. */
+        long const redirected = stdout_fd();
+        if (redirected != -1) {
+            return redirected < 0 ? redirected : files::write(redirected, buffer, length);
+        }
+    }
     if (fd == 1 || fd == 2) {
         aegir::ipc::Consumer &stream = console_stream();
         if (stream.valid()) {
@@ -499,6 +539,13 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
 long sys_read(int fd, void *buffer, size_t length) noexcept
 {
     if (fd == 0) {
+        /* Redirected input (specs/shell.md): the spawner named a file, and the
+         * read drains it to its end rather than the console's queue. A NIL:
+         * input is at its end at once, so `cmd <NIL:` reads EOF. */
+        long const redirected = stdin_fd();
+        if (redirected != -1) {
+            return redirected < 0 ? redirected : files::read(redirected, buffer, length);
+        }
         aegir::ipc::Consumer &stream = console_stream();
         if (!stream.valid()) {
             return -EBADF;
@@ -568,24 +615,16 @@ __attribute__((constructor(202))) void install_hosted_exit() noexcept
 long sys_writev(int fd, void const *iov, int count) noexcept
 {
     auto const *vectors = static_cast<struct iovec const *>(iov);
-    if (fd != 1 && fd != 2) {
-        long total = 0;
-        for (int i = 0; i < count; ++i) {
-            long const wrote = files::write(fd, vectors[i].iov_base,
-                                            vectors[i].iov_len);
-            if (wrote < 0) {
-                return total > 0 ? total : wrote;
-            }
-            total += wrote;
-            if (static_cast<size_t>(wrote) < vectors[i].iov_len) {
-                break;
-            }
-        }
-        return total;
-    }
     long total = 0;
     for (int i = 0; i < count; ++i) {
-        total += sys_write(fd, vectors[i].iov_base, vectors[i].iov_len);
+        long const wrote = sys_write(fd, vectors[i].iov_base, vectors[i].iov_len);
+        if (wrote <= 0) {
+            return total > 0 ? total : wrote;
+        }
+        total += wrote;
+        if (static_cast<size_t>(wrote) < vectors[i].iov_len) {
+            return total;
+        }
     }
     return total;
 }

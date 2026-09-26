@@ -40,6 +40,12 @@ long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept;
 long fstat(int fd, void *buffer) noexcept;
 long openat(int dfd, char const *path, int flags, int mode) noexcept;
 long close(int fd) noexcept;
+/* Open a path as a redirected standard stream (specs/shell.md): fd 0 reads it
+ * (refused when it is not there), fd 1 writes it (created and truncated).
+ * Returns the fd, or a negative errno. heap.cc owns the routing; the flags are
+ * this layer's, so the two agree on what "for reading" and "for writing" mean. */
+long open_for_read(char const *path) noexcept;
+long open_for_write(char const *path) noexcept;
 long read(int fd, void *buffer, size_t count) noexcept;
 long write(int fd, void const *buffer, size_t count) noexcept;
 long lseek(int fd, long offset, int whence) noexcept;

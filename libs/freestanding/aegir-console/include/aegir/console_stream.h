@@ -90,7 +90,9 @@ constexpr uint32_t kStreamMethodSetPrompt = 7;
 
 /** Run a command on the stream's behalf. In: the command line as a string, the
  *  current directory as a string, and the environment as a string -- the
- *  NUL-separated `NAME=VALUE` entries the spawner wants. Answer: one word, 1
+ *  NUL-separated `NAME=VALUE` entries the spawner wants -- then the command's
+ *  redirected standard input and output as two more strings, each empty for the
+ *  console stream (specs/shell.md). Answer: one word, 1
  *  started and 0 refused. The terminal owns the spawn authority and starts the
  *  command with the caller's stream, so its output lands here and its exit is
  *  read back with `command_status` (specs/shell.md's Phase 4). The environment
