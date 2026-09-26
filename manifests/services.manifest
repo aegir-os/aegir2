@@ -60,7 +60,7 @@ device_manager = true
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, rngdriver, kbddriver, gpudriver, partmgr
+spawns    = blkdriver, rngdriver, kbddriver, gpudriver, timer, partmgr
 # What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
 # framebuffers (megapages -- specs/services.md), the partition manager's
 # megabyte, the filesystem image, and the drivers' images, queues and windows.
@@ -130,6 +130,24 @@ needs     = log.main
 device_id = 16
 # One queue is 8 KiB; the command and response buffers live in its page.
 memory_kib = 8
+restart   = always
+
+# The interval timer (specs/timer.md): a monotonic clock and a sleep, apart
+# from the wall clock. On this machine it is backed by the RTC's alarm and
+# interrupt, so it shares the RTC device with clock.main; the device manager
+# binds it as a platform device (no id, the compatible alone decides) and
+# issues that interrupt. It owns timer.main, the port a client finds by name
+# through its bootstrap block, the way it finds clock.main.
+[timer]
+binary    = aegir-timer
+authority = system
+account   = system
+owns      = timer.main
+needs     = log.main
+device    = google,goldfish-rtc
+# The service's own memory: it lays out no queue, but the spawn hands every
+# child a region and a page is the floor.
+memory_kib = 4
 restart   = always
 
 # The partition manager. The device manager starts it once block drivers answer,

@@ -107,6 +107,12 @@ struct DriverRow {
     uint32_t binary_length;
     uint32_t memory_bits; /* the virtqueue it lays out */
     uint32_t window_bits; /* the shared window its port serves through */
+    /* A named port the child owns -- `timer.main` (specs/timer.md) -- when the
+     * service is found by name through the bootstrap block rather than through
+     * the registry's `open`. Null for a driver whose port the manager makes and
+     * introduces. */
+    char const *port;
+    uint32_t port_length;
 };
 
 /** A filesystem the registry knows: which GPT partition type it serves, what
@@ -570,6 +576,9 @@ int main(int argc, char *argv[])
                             } else if (aegir::descriptor::key_is(field, "window")) {
                                 row.window_bits = static_cast<uint32_t>(
                                     aegir::descriptor::number(field, &fields_ok));
+                            } else if (aegir::descriptor::key_is(field, "port")) {
+                                row.port = field.value;
+                                row.port_length = field.value_length;
                             }
                         }
                         /* A window of zero bits is a complete row, not a broken
@@ -1106,16 +1115,46 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 }
-                /* The port the driver serves: one endpoint per device, made
-                 * here because the endpoint is the spawner's to make -- the
-                 * child gets the owner half, we keep the caller half. */
-                seL4_Error port_error = seL4_NoError;
-                seL4_CPtr const block_port =
-                    g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
-                                           child_account, &port_error);
-                if (block_port == 0) {
-                    write_line("FAIL", "no memory for a driver's port");
-                    continue;
+                /* The port the child serves. A driver whose port the registry
+                 * opens gets one made here -- the endpoint is the spawner's to
+                 * make, the child the owner half and we the caller half. A
+                 * named service (the timer, specs/timer.md) is found by name
+                 * through the bootstrap instead, so its port is the graph's
+                 * `timer.main`, and director grants us the owner copy under the
+                 * `spawn:` name. */
+                seL4_CPtr driver_port = 0;
+                char const *driver_port_name = "port";
+                uint32_t driver_port_name_length = 4;
+                static char spawn_port_name[48];
+                if (driver->port != nullptr) {
+                    static char const kSpawnPrefix[] = "spawn:";
+                    if (sizeof(kSpawnPrefix) - 1 + driver->port_length > sizeof(spawn_port_name)) {
+                        write_line("FAIL", "a named port's name is too long");
+                        continue;
+                    }
+                    uint32_t at = 0;
+                    for (uint32_t c = 0; c < sizeof(kSpawnPrefix) - 1; ++c) {
+                        spawn_port_name[at++] = kSpawnPrefix[c];
+                    }
+                    for (uint32_t c = 0; c < driver->port_length; ++c) {
+                        spawn_port_name[at++] = driver->port[c];
+                    }
+                    uint64_t slot = 0;
+                    if (!aegir::bootstrap::capability(spawn_port_name, at, &slot)) {
+                        write_line("FAIL", "the named port was not given to me");
+                        continue;
+                    }
+                    driver_port = static_cast<seL4_CPtr>(slot);
+                    driver_port_name = driver->port;
+                    driver_port_name_length = driver->port_length;
+                } else {
+                    seL4_Error port_error = seL4_NoError;
+                    driver_port = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                                         child_account, &port_error);
+                    if (driver_port == 0) {
+                        write_line("FAIL", "no memory for a driver's port");
+                        continue;
+                    }
                 }
                 /* The driver's interrupt, when the tree says the device raises
                  * one: one handler cap per IRQ is all the kernel issues (a
@@ -1156,10 +1195,11 @@ int main(int argc, char *argv[])
                      aegir::bootstrap::kSlotFirstDeclared,
                      static_cast<seL4_CPtr>(log_slot), seL4_CapRights_new(1, 0, 0, 1),
                      256u + b, 0},
-                    /* The driver owns this port: it receives, so Read is the
+                    /* The child owns this port: it receives, so Read is the
                      * whole grant -- the caller half never leaves us
                      * (specs/services.md). */
-                    {"port", 4, aegir::bootstrap::kSlotFirstDeclared + 1, block_port,
+                    {driver_port_name, driver_port_name_length,
+                     aegir::bootstrap::kSlotFirstDeclared + 1, driver_port,
                      seL4_CapRights_new(0, 0, 1, 0), 0, 0},
                     /* The interrupt pair: the driver waits on the notification
                      * (Read is the whole grant) and acks on the handler after
@@ -1279,7 +1319,7 @@ int main(int argc, char *argv[])
                     aegir::debug_write(")\n");
                     continue;
                 }
-                aegir::ipc::Consumer const block_caller(block_port);
+                aegir::ipc::Consumer const block_caller(driver_port);
                 aegir::ipc::Reply const identity =
                     block_caller.call(aegir::block::kMethodIdentify, 0);
                 if (identity.error != 0 || identity.word != sizeof(aegir::block::Identify)) {
@@ -1326,12 +1366,16 @@ int main(int argc, char *argv[])
                 }
                 /* The binding is whole: port served, window checked when the
                  * driver has one. What the partition manager gets is this
-                 * list. */
-                bound[bound_count] = BoundPort{block_port, window_client,
-                                               window_pages, window_page_bits,
-                                               window_physical, binding.name,
-                                               binding.name_length, b};
-                ++bound_count;
+                 * list -- the drivers whose port the registry opens, which is
+                 * what it reads partitions through. A named-port service (the
+                 * timer) is not a storage device and is not on it. */
+                if (driver->port == nullptr) {
+                    bound[bound_count] = BoundPort{driver_port, window_client,
+                                                   window_pages, window_page_bits,
+                                                   window_physical, binding.name,
+                                                   binding.name_length, b};
+                    ++bound_count;
+                }
             }
 
             /* The partition manager, started once the drivers answer: it gets

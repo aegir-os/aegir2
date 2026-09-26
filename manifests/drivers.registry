@@ -17,6 +17,10 @@
 #   evtype      which member of the id's family the row claims, when the id
 #               is a family (key/rel/abs for id 18, told apart by the config
 #               space's EV_BITS at the probe); absent claims any kind
+#   port        the named port the child owns, for a service found by name
+#               through the bootstrap block rather than through the registry's
+#               open (the timer's timer.main, specs/timer.md); absent for a
+#               driver whose port the manager makes and introduces
 compatible=virtio,mmio id=2 prefix=blk bus=virtio binary=aegir-virtio-blk memory=14 window=16
 compatible=virtio,mmio id=4 prefix=rng bus=virtio binary=aegir-virtio-rng memory=14 window=0
 # The input family: one virtio id, three members, one driver binary each. The
@@ -32,3 +36,10 @@ compatible=virtio,mmio id=18 evtype=abs prefix=tablet bus=virtio binary=aegir-vi
 # pixel fits in 32 MiB -- and a window of 21 bits or more is carved as
 # seL4_RISCV_Mega_Page frames, not thousands of 4 KiB caps.
 compatible=virtio,mmio id=16 prefix=gpu bus=virtio binary=aegir-virtio-gpu memory=13 window=25
+# The interval timer (specs/timer.md): a platform device, so id is 0 and the
+# compatible alone decides. It owns the named port timer.main rather than one
+# the registry opens -- a client finds it by name, the way it finds clock.main
+# -- and it lays out no queue or window. On QEMU's virt machine the RTC's alarm
+# is the only interval source in userspace, so this is what backs the timer;
+# a platform with a real timer device gets its own row and driver.
+compatible=google,goldfish-rtc id=0 prefix=timer bus=rtc binary=aegir-timer memory=12 window=0 port=timer.main

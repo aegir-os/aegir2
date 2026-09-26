@@ -11,6 +11,7 @@ add_compile_options(-fno-exceptions -fno-rtti -fno-threadsafe-statics)
 
 add_subdirectory(aegir-device-manager)
 add_subdirectory(aegir-rtc)
+add_subdirectory(aegir-timer)
 add_subdirectory(aegir-virtio-blk)
 add_subdirectory(aegir-virtio-rng)
 add_subdirectory(aegir-virtio-input)

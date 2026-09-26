@@ -266,11 +266,17 @@ PlatformEntry const *platform_at(PlatformEntry const *list, uint32_t count,
 seL4_CPtr copy_device_frame(aegir::mem::Allocator &allocator, seL4_CPtr frame) noexcept
 {
     seL4_CPtr const slot = allocator.alloc_slot();
-    if (slot == 0 ||
-        seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, slot,
-                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
-                        frame, aegir::bootstrap::kCNodeBits, seL4_AllRights) !=
-            seL4_NoError) {
+    if (slot == 0) {
+        aegir::debug_write("  FAIL no slot for a device frame copy\n");
+        return 0;
+    }
+    seL4_Error const copied =
+        seL4_CNode_Copy(seL4_CapInitThreadCNode, slot, seL4_WordBits,
+                        seL4_CapInitThreadCNode, frame, seL4_WordBits, seL4_AllRights);
+    if (copied != seL4_NoError) {
+        aegir::debug_write("  FAIL a device frame could not be copied (seL4 error ");
+        aegir::debug_write_unsigned(static_cast<uint64_t>(copied));
+        aegir::debug_write(")\n");
         return 0;
     }
     return slot;

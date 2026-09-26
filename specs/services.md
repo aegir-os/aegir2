@@ -775,17 +775,20 @@ and answers "who owns this device?" for everyone else.
   `device = <compatible>`. Only a claimed device is reached: its page is taken
   from the device untyped that covers it, and every page before it is taken with
   it, so walking to a page in the middle of an untyped is a cost worth paying
-  only for a device somebody wants. Director grants the frame to the service
-  directly (there is no bus row for a device with no id). The first is the
+  only for a device somebody wants. Director grants the frame to a service it
+  starts directly (there is no bus row for a device with no id). The first is the
   **clock**: the goldfish RTC at `0x101000`, whose 64-bit nanosecond register is
   served as `clock.main` (`aegir/clock.h`), and the hosted runtime answers
   `clock_gettime` through it (`specs/fat.md`'s Times, `specs/cxx.md`). The
   interval timer is a separate port (`specs/timer.md`): this machine has no
   timer device a service may own -- the kernel keeps the CLINT -- so
-  `timer.main` is backed by the RTC's alarm and interrupt (irq 11), the device
-  manager granting the timer its frame and issuing that interrupt while
-  `clock.main` keeps a frame copy. A platform with a real timer device backs
-  the port with that device instead.
+  `timer.main` is backed by the RTC's alarm and interrupt (irq 11). The timer is
+  a child the **device manager** starts, because only it holds IRQControl:
+  director grants it the frame as a device grant -- a copy made before any
+  mapping, since `clock.main` maps the same device -- and the device manager
+  binds it by compatible and issues the interrupt, the path a virtio driver
+  takes. A platform with a real timer device backs the port with that device
+  instead.
 - **done**: each driver's interrupt. IRQControl custody moved to the device manager
   (a copy derives to a null cap, so it *moved* -- specs/authority.md records the
   kernel lines); the handler is minted at the binding, paired with a notification and
