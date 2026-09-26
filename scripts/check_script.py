@@ -3,11 +3,12 @@
 
     python3 scripts/check_script.py
 
-Compiles libs/hosted/aegir-script/src/interpreter.cc with the host compiler and
+Compiles libs/hosted/aegir-script/src with the host compiler and
 scripts/script_conformance.cc, then runs the assertions. The command-file
-parser and the frame stack are values -- no seL4, no allocation policy -- so
-comment/blank stripping, the frame order, the cycle guard and the fail level
-are asserted exactly (specs/shell.md).
+parser, the frame stack and the If condition are values -- no seL4, no
+allocation policy -- so comment/blank stripping, the frame order, the cycle
+guard, the fail level, the control-flow jumps and the condition syntax are
+asserted exactly (specs/shell.md).
 
 Host tools only (python3 and a C++ compiler); not part of any target build.
 Exit status: 0 success, 1 failure.
@@ -47,6 +48,7 @@ def main() -> int:
             str(DRIVER),
             str(SCRIPT / "src" / "interpreter.cc"),
             str(SCRIPT / "src" / "substitute.cc"),
+            str(SCRIPT / "src" / "condition.cc"),
             "-o",
             str(binary),
         ]

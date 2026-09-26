@@ -11,6 +11,7 @@
  * level are asserted exactly.
  */
 
+#include <aegir/script/condition.h>
 #include <aegir/script/interpreter.h>
 #include <aegir/script/substitute.h>
 
@@ -374,6 +375,77 @@ void check_skip_blocks()
     expect(!unclosed.skip_to_else_or_endif(), "an unclosed If is refused");
 }
 
+aegir::script::Condition condition_of(std::vector<std::string> const &words,
+                                      bool *ok = nullptr)
+{
+    aegir::script::Condition condition;
+    std::string error;
+    bool const success = aegir::script::parse_condition(words, condition, error);
+    if (ok != nullptr) {
+        *ok = success;
+    }
+    return condition;
+}
+
+/* An If condition is EXISTS, a return-code word, or a two-operand comparison,
+ * each allowed behind NOT. */
+void check_conditions()
+{
+    using aegir::script::Condition;
+    Condition const exists = condition_of({"EXISTS", "Home:foo"});
+    expect(exists.kind == Condition::Kind::Exists && exists.path == "Home:foo",
+           "EXISTS takes one path");
+    Condition const negated = condition_of({"NOT", "EXISTS", "foo"});
+    expect(negated.kind == Condition::Kind::Exists && negated.negate,
+           "NOT negates a condition");
+    expect(condition_of({"WARN"}).kind == Condition::Kind::Warn, "WARN is a condition");
+    expect(condition_of({"ERROR"}).kind == Condition::Kind::Error, "ERROR is a condition");
+    expect(condition_of({"FAIL"}).kind == Condition::Kind::Fail, "FAIL is a condition");
+
+    Condition const compared = condition_of({"$x", "GT", "5"});
+    expect(compared.kind == Condition::Kind::Compare && compared.lhs == "$x" &&
+               compared.op == aegir::script::CompareOp::Gt && compared.rhs == "5",
+           "a two-operand comparison is parsed");
+    expect(condition_of({"a", "EQ", "b"}).op == aegir::script::CompareOp::Eq, "EQ parses");
+    expect(condition_of({"a", "ne", "b"}).op == aegir::script::CompareOp::Ne,
+           "the operator is case-blind");
+    expect(condition_of({"a", "GE", "b"}).op == aegir::script::CompareOp::Ge, "GE parses");
+    expect(condition_of({"a", "LT", "b"}).op == aegir::script::CompareOp::Lt, "LT parses");
+    expect(condition_of({"a", "LE", "b"}).op == aegir::script::CompareOp::Le, "LE parses");
+
+    bool ok = true;
+    (void)condition_of({}, &ok);
+    expect(!ok, "an empty condition is refused");
+    (void)condition_of({"EXISTS"}, &ok);
+    expect(!ok, "EXISTS without a path is refused");
+    (void)condition_of({"WARN", "extra"}, &ok);
+    expect(!ok, "WARN takes nothing else");
+    (void)condition_of({"a", "XX", "b"}, &ok);
+    expect(!ok, "an unknown operator is refused");
+    (void)condition_of({"a", "GT"}, &ok);
+    expect(!ok, "a comparison needs both operands");
+}
+
+/* A comparison is numeric when both operands are decimal, and case-blind and
+ * lexicographic otherwise. */
+void check_compare()
+{
+    using aegir::script::compare_strings;
+    using aegir::script::CompareOp;
+    expect(compare_strings(CompareOp::Eq, "a", "A"), "comparison is case-blind");
+    expect(compare_strings(CompareOp::Ne, "a", "b"), "NE is inequality");
+    expect(compare_strings(CompareOp::Lt, "9", "10"),
+           "numbers compare numerically, not by their text");
+    expect(compare_strings(CompareOp::Gt, "10", "9"), "10 GT 9");
+    expect(!compare_strings(CompareOp::Gt, "9", "10"), "9 is not GT 10");
+    expect(compare_strings(CompareOp::Le, "5", "5"), "LE includes equal");
+    expect(compare_strings(CompareOp::Ge, "+5", "5"), "a sign is still a number");
+    expect(compare_strings(CompareOp::Lt, "-2", "-1"),
+           "negative numbers compare numerically");
+    expect(compare_strings(CompareOp::Gt, "b", "a"), "text compares lexically");
+    expect(!compare_strings(CompareOp::Gt, "a", "b"), "a is not GT b");
+}
+
 }  // namespace
 
 int main()
@@ -394,6 +466,8 @@ int main()
     check_control_word();
     check_jump_to_label();
     check_skip_blocks();
+    check_conditions();
+    check_compare();
 
     std::printf("script: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
