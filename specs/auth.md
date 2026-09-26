@@ -283,6 +283,13 @@ A login gives the session somewhere to be. The decisions:
   where it belongs: the session's first write into it is refused by the
   filesystem. A read-only `Sys:` is a fact, not a reason to keep a user
   out.
+- **The home also carries the session's scripts.** Once the home exists,
+  auth makes `Home:S` the user's (the same `mkdir`/`Owner`/`Protect` as the
+  environment archive, `specs/environment.md`) and binds the session's badge
+  to `S:` → `Home:S` (`specs/shell.md`). It is where a user's
+  `Shell-Startup` override lives. The system's `Sys:S` is a separate name,
+  never unioned: the system's scripts do not appear in the user's `S:`, and
+  editing them needs elevation.
 - **The smoke proves it end to end.** The session resolves
   `Home:WELCOME.TXT`, creates it, writes, closes, reads back — and
   `aegir-test`, under its own system badge, reads the same bytes back

@@ -51,7 +51,8 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   the shell's environment — and the persistent half. `auth` makes the home's
   `Prefs/Env-Archive` (owned by the user, so a write lands there) and binds
   `ENV:` for the session and terminal badges: the user's archive first (the
-  create target), the system's base appended. The system archive ships in the
+  create target), the system's base appended. The same home pass makes the
+  user's `S:` script directory (`specs/auth.md`, `specs/shell.md`). The system archive ships in the
   image (`Sys:Prefs/Env-Archive`, `exitcode` 11). The shell reads the merged
   view once at startup (`load_environment`) into `aegir::environment`, and
   `Set` writes the variable to `ENV:<name>`, which lands in the create target.

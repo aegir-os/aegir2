@@ -496,13 +496,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
                 # dir is List's names-only sibling (the Amiga's Dir): the same
-                # directory, without the sizes.
-                press="dir Home:DosTest\n",
+                # directory, without the sizes. S: is the session's script
+                # directory (specs/shell.md): auth makes Home:S and binds it,
+                # and it is empty at login.
+                press="dir Home:DosTest S:\n",
             ),
             QmpStep(
                 r"terminal: command started dir",
                 events=TERMINAL_CLICK,
-                press="type Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT\n",
+                # Sys:S holds the startup scripts (specs/boot.md); reading one
+                # proves the system's script directory resolves and reads.
+                press="type Sys:S/Shell-Startup Home:DosTest/AEGIR.TXT Home:DosTest/NESTED.TXT\n",
             ),
             QmpStep(
                 r"terminal: command started type",

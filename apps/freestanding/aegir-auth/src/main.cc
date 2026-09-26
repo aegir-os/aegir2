@@ -236,6 +236,30 @@ bool make_owned_dir(aegir::ipc::Consumer const &volume, char const *path,
            protected_.error == 0 && pin[0] == aegir::metadata::kOk;
 }
 
+/* A subdirectory under the home, made and owned: the tail is appended to the
+ * home's volume-relative path and make_owned_dir does the rest. The home's
+ * environment archive and its script directory are both made this way. The
+ * length is checked rather than assumed: the home path and the tail are each
+ * within kPathMax, their sum need not be. */
+bool make_owned_home_subdir(aegir::ipc::Consumer const &volume,
+                            char const *home_rest, uint32_t home_rest_length,
+                            char const *tail, uint32_t tail_length,
+                            uint32_t user) noexcept
+{
+    if (home_rest_length + tail_length > aegir::nmspace::kPathMax) {
+        return false;
+    }
+    char path[aegir::nmspace::kPathMax];
+    uint32_t length = 0;
+    for (uint32_t i = 0; i < home_rest_length; ++i) {
+        path[length++] = home_rest[i];
+    }
+    for (uint32_t i = 0; i < tail_length; ++i) {
+        path[length++] = tail[i];
+    }
+    return make_owned_dir(volume, path, length, user);
+}
+
 /* The home arc (specs/auth.md's Homes), run after the answer and before
  * the spawn: the row's home path is ensured -- one mkdir, the mmd shape --
  * and the session's badge is bound to Home:. The order is the point: the
@@ -279,19 +303,19 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
             /* The home's environment archive (specs/environment.md): the
              * directory ENV: unions and a Set lands in. The same ownership,
              * so only the user may write in it. */
-            if (made) {
-                char archive[aegir::nmspace::kPathMax];
-                uint32_t archive_length = rest_length;
-                for (uint32_t i = 0; i < rest_length; ++i) {
-                    archive[i] = rest[i];
-                }
-                static char const kArchiveTail[] = "/Prefs/Env-Archive";
-                for (uint32_t i = 0; i < sizeof(kArchiveTail) - 1; ++i) {
-                    archive[archive_length++] = kArchiveTail[i];
-                }
-                if (!make_owned_dir(volume, archive, archive_length, user)) {
-                    write("      auth: FAIL the environment archive would not be made\n");
-                }
+            if (made &&
+                !make_owned_home_subdir(volume, rest, rest_length,
+                                        "/Prefs/Env-Archive",
+                                        sizeof("/Prefs/Env-Archive") - 1, user)) {
+                write("      auth: FAIL the environment archive would not be made\n");
+            }
+            /* The home's script directory (specs/shell.md, specs/boot.md): the
+             * user's S:, where a Shell-Startup override lives. The same
+             * ownership, so only the user may write it. */
+            if (made &&
+                !make_owned_home_subdir(volume, rest, rest_length, "/S",
+                                        sizeof("/S") - 1, user)) {
+                write("      auth: FAIL the script directory would not be made\n");
             }
             seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
                               aegir::bootstrap::kCNodeBits);
@@ -386,6 +410,29 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
     if (env_first.error != 0 || env_first.count != 1 || env_in[0] != 1 ||
         env_second.error != 0 || env_second.count != 1 || env_in[0] != 1) {
         write("      auth: FAIL the ENV: bind was refused\n");
+    }
+
+    /* S: (specs/shell.md, specs/boot.md): the session's script directory,
+     * where the shell looks for Shell-Startup. A single-member alias of the
+     * user's Home:S, made and owned above, so a user's override is a file the
+     * user owns. The system's Sys:S is a separate name, not unioned: the
+     * system's scripts never appear in the user's S:, and editing them needs
+     * elevation. */
+    static char const kScriptHome[] = "Home:S";
+    uint64_t s_out[2 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
+    uint64_t s_in[1];
+    s_out[0] = badge;
+    s_out[1] = 0; /* replace */
+    uint32_t s_words = 2;
+    s_words += aegir::nmspace::pack_string(s_out + s_words, "S", 1,
+                                           aegir::nmspace::kNameMax);
+    s_words += aegir::nmspace::pack_string(s_out + s_words, kScriptHome,
+                                           sizeof(kScriptHome) - 1,
+                                           aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const s_bound = g_nmspace.call_words(
+        aegir::nmspace::kMethodBind, s_out, s_words, s_in, 1);
+    if (s_bound.error != 0 || s_bound.count != 1 || s_in[0] != 1) {
+        write("      auth: FAIL the S: bind was refused\n");
     }
 
     /* C: (specs/dos.md): the command directory. A single-member alias of

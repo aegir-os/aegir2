@@ -99,6 +99,19 @@ AEGIR_BFS_TREE = [
             ("file", "exitcode", b"11"),
         ]),
     ]),
+    # The system's script directory (specs/shell.md, specs/boot.md): the
+    # startup files the shell and the boot session read. The user's own S: is
+    # a home directory made at login; nothing unions the two, so the system's
+    # scripts never show in the user's listing.
+    ("dir", "S", [
+        # Every interactive shell runs this when the user's Home:S/Shell-Startup
+        # is absent (specs/shell.md).
+        ("file", "Shell-Startup", b"alias l list\n"),
+        # Run once by the system boot session, then closed. EndCLI >NIL: is
+        # the Amiga's quiet close; it needs the NIL: handler (specs/boot.md).
+        ("file", "Startup-Sequence",
+         b"; Aegir system startup -- nothing to do yet.\nEndCLI >NIL:\n"),
+    ]),
 ]
 
 # The BFS volume's tree: a known file and a directory with a nested file, so

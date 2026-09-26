@@ -54,6 +54,13 @@ enough to state in one file.
   the DOS toolset drops that lookup for the real set (`specs/dos.md`). A
   command's name is lowercased before it resolves, because a command is
   `C:copy` and the filesystem is case-sensitive.
+- **Scripts live in `S:`.** The session's `S:` is a per-badge alias of the
+  user's `Home:S`, made and bound by auth (`specs/auth.md`), and it is where
+  the shell looks for its startup file (`specs/boot.md` for the boot
+  sequence). The system's `Sys:S` is a separate name: a lookup tries `S:`
+  first and falls back to `Sys:S`, with no union, so the system's scripts
+  never appear in the user's listing and editing them needs elevation. Names
+  are matched in the filesystem's own case — the shell does not fold them.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
   transfer, the protocol's stated property). So `printf` reaches the grid,
