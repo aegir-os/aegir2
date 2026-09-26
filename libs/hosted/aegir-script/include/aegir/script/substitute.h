@@ -74,6 +74,18 @@ bool substitute_words(std::string_view line, Arguments const &arguments,
                       Lookup const &variables, std::vector<std::string> &words,
                       std::string &error);
 
+/** An alias table: name, and the raw line it stands for. */
+using AliasTable = std::vector<std::pair<std::string, std::string>>;
+
+/** Fold aliases into a line, textually: while its first word names an alias
+ *  (case-insensitively), replace that word with the alias's value and go on,
+ *  so an alias may name another. A name seen twice is a cycle and stops the
+ *  walk -- detection, not a depth cap. The values are raw: their variables are
+ *  not expanded here but when the resulting line is substituted, so a variable
+ *  in an alias expands when the alias is used, not when it was defined (the
+ *  Amiga's textual alias, specs/shell.md). */
+std::string expand_aliases(std::string_view line, AliasTable const &aliases);
+
 }  // namespace aegir::script
 
 #endif  // AEGIR_SCRIPT_SUBSTITUTE_H

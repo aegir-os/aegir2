@@ -63,6 +63,33 @@ bool equals_folded(std::string_view a, std::string_view b) noexcept
     return true;
 }
 
+/* The first word of a line and the rest after it, each as a view: the alias
+ * walk needs the raw text, not a substituted line. No quotes are honoured -- a
+ * command or an alias name is not quoted. */
+void split_word(std::string_view line, std::string_view &word,
+                std::string_view &rest) noexcept
+{
+    std::size_t start = 0;
+    while (start < line.size() && is_blank(line[start])) {
+        ++start;
+    }
+    if (start == line.size()) {
+        word = {};
+        rest = {};
+        return;
+    }
+    std::size_t end = start;
+    while (end < line.size() && !is_blank(line[end])) {
+        ++end;
+    }
+    word = line.substr(start, end - start);
+    std::size_t after = end;
+    while (after < line.size() && is_blank(line[after])) {
+        ++after;
+    }
+    rest = line.substr(after);
+}
+
 }  // namespace
 
 std::string const *Arguments::find_named(std::string_view name) const noexcept
@@ -278,6 +305,43 @@ bool substitute_words(std::string_view line, Arguments const &arguments,
         push_word();
     }
     return true;
+}
+
+std::string expand_aliases(std::string_view line, AliasTable const &aliases)
+{
+    std::string expanded(line);
+    std::vector<std::string> seen;
+    for (;;) {
+        std::string_view word;
+        std::string_view rest;
+        split_word(expanded, word, rest);
+        if (word.empty()) {
+            break;
+        }
+        bool stop = false;
+        for (std::string const &already : seen) {
+            if (equals_folded(already, word)) {
+                stop = true;
+                break;
+            }
+        }
+        if (stop) {
+            break;
+        }
+        std::string const *value = nullptr;
+        for (auto const &alias : aliases) {
+            if (equals_folded(alias.first, word)) {
+                value = &alias.second;
+                break;
+            }
+        }
+        if (value == nullptr) {
+            break;
+        }
+        seen.emplace_back(word);
+        expanded = rest.empty() ? *value : *value + " " + std::string(rest);
+    }
+    return expanded;
 }
 
 }  // namespace aegir::script

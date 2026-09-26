@@ -107,6 +107,29 @@ std::string join_words(std::vector<std::string> const &words, std::size_t from =
     return out;
 }
 
+/* The first word of `line` and the rest after it, each with its original
+ * spelling: the alias expansion and the alias definition both need the raw
+ * text, not a substituted and split line (specs/shell.md). No quotes are
+ * honoured in the split -- a command or an alias name is not quoted. */
+void split_word(std::string const &line, std::string &word, std::string &rest)
+{
+    std::size_t const start = line.find_first_not_of(" \t");
+    if (start == std::string::npos) {
+        word.clear();
+        rest.clear();
+        return;
+    }
+    std::size_t const end = line.find_first_of(" \t", start);
+    if (end == std::string::npos) {
+        word = line.substr(start);
+        rest.clear();
+        return;
+    }
+    word = line.substr(start, end - start);
+    std::size_t const rest_start = line.find_first_not_of(" \t", end);
+    rest = rest_start == std::string::npos ? std::string{} : line.substr(rest_start);
+}
+
 /* The environment a line's `$name` reads: the process's own settings, which
  * the shell loaded from ENV: at startup (specs/environment.md). */
 bool environment_lookup(std::string const &name, std::string &value)
@@ -575,47 +598,7 @@ private:
         std::remove(("ENV:" + name).c_str());
     }
 
-    /* An alias stands for a line, expanded until the first word is no longer
-     * one: the Amiga's Alias is recursive, and a name seen twice is a cycle,
-     * not a depth the shell chose. The value is a word list, so a quoted
-     * argument it was defined with keeps its grouping (specs/shell.md). */
-    std::vector<std::string> expand_aliases(std::vector<std::string> words) const
-    {
-        std::vector<std::string> seen;
-        for (;;) {
-            if (words.empty()) {
-                break;
-            }
-            std::string const name = to_lower(words[0]);
-            bool stop = false;
-            for (auto const &already : seen) {
-                if (already == name) {
-                    stop = true;
-                    break;
-                }
-            }
-            if (stop) {
-                break;
-            }
-            std::vector<std::string> const *expansion = nullptr;
-            for (auto const &alias : aliases_) {
-                if (alias.first == name) {
-                    expansion = &alias.second;
-                    break;
-                }
-            }
-            if (expansion == nullptr) {
-                break;
-            }
-            seen.push_back(name);
-            std::vector<std::string> next = *expansion;
-            next.insert(next.end(), words.begin() + 1, words.end());
-            words = std::move(next);
-        }
-        return words;
-    }
-
-    void set_alias(std::string const &name, std::vector<std::string> value)
+    void set_alias(std::string const &name, std::string value)
     {
         for (auto &alias : aliases_) {
             if (alias.first == name) {
@@ -626,26 +609,32 @@ private:
         aliases_.emplace_back(name, std::move(value));
     }
 
-    void command_alias(std::vector<std::string> const &args)
+    /* Alias's argument is raw text: the value keeps its original spelling and
+     * quoting, and is not substituted until the alias is used. `Alias` alone
+     * lists, `Alias name` reports one, `Alias name value` defines it. */
+    void command_alias(std::string const &rest)
     {
-        if (args.empty()) {
+        std::string name;
+        std::string value;
+        split_word(rest, name, value);
+        if (name.empty()) {
             for (auto const &alias : aliases_) {
-                print(alias.first + "=" + join_words(alias.second) + "\n");
+                print(alias.first + "=" + alias.second + "\n");
             }
             return;
         }
-        std::string const name = to_lower(args[0]);
-        if (args.size() == 1) {
+        name = to_lower(name);
+        if (value.empty()) {
             for (auto const &alias : aliases_) {
                 if (alias.first == name) {
-                    print(name + "=" + join_words(alias.second) + "\n");
+                    print(name + "=" + alias.second + "\n");
                     return;
                 }
             }
             print("Alias: " + name + " is not defined\n");
             return;
         }
-        set_alias(name, std::vector<std::string>(args.begin() + 1, args.end()));
+        set_alias(name, value);
     }
 
     void command_unalias(std::vector<std::string> const &args)
@@ -781,26 +770,33 @@ private:
     bool run_line(std::string const &line)
     {
         line_status_ = 0;
-        /* Substitution first, so a variable can stand for the command word or
-         * an argument, then aliases, then the redirections (specs/shell.md).
-         * The arguments of the running command file are what `$1..$n` and
-         * `{name}` read; a console line has none. */
+        /* An alias is folded in first, as raw text, so a variable in its value
+         * expands at use, not at definition (expand_aliases, specs/shell.md).
+         * `Alias` then takes the rest of the line raw, because that value must
+         * not be substituted until the alias is used; every other line is
+         * substituted here, before a command, a directory or an alias is
+         * looked for. The arguments of a running command file are what
+         * `$1..$n` and `{name}` read; a console line has none. */
+        std::string const expanded = aegir::script::expand_aliases(line, aliases_);
+        std::string first;
+        std::string rest;
+        split_word(expanded, first, rest);
+        if (to_lower(first) == "alias") {
+            command_alias(rest);
+            return false;
+        }
         aegir::script::Arguments const empty;
         aegir::script::Arguments const *const frame_arguments =
             frames_.current_arguments();
         std::vector<std::string> words;
         std::string error;
         if (!aegir::script::substitute_words(
-                line, frame_arguments != nullptr ? *frame_arguments : empty,
+                expanded, frame_arguments != nullptr ? *frame_arguments : empty,
                 environment_lookup, words, error)) {
             print("Syntax error: " + error + "\n");
             line_status_ = 10;
             return false;
         }
-        /* An alias stands for a line, and the Amiga expands the first word
-         * again, so an alias may name another (specs/dos.md). A name seen
-         * twice stops the walk, which is a cycle, not a depth limit. */
-        words = expand_aliases(std::move(words));
         Redirect const redirect = split_redirect(words);
         std::vector<std::string> const &command_words = redirect.words;
         if (command_words.empty()) {
@@ -822,7 +818,6 @@ private:
             {"getenv", &Shell::command_get},
             {"unset", &Shell::command_unset},
             {"unsetenv", &Shell::command_unset},
-            {"alias", &Shell::command_alias},
             {"unalias", &Shell::command_unalias},
             {"prompt", &Shell::command_prompt},
             {"why", &Shell::command_why},
@@ -894,7 +889,7 @@ private:
     seL4_CPtr doorbell_ = 0;
     bool busy_ = false;
     aegir::script::Frames frames_;
-    std::vector<std::pair<std::string, std::vector<std::string>>> aliases_;
+    std::vector<std::pair<std::string, std::string>> aliases_;
     std::string prompt_override_;
     uint64_t last_status_ = 0;
     uint64_t line_status_ = 0;

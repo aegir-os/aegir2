@@ -263,6 +263,39 @@ void check_key_lines()
            "a required name with nothing left is refused");
 }
 
+/* An alias is folded in textually and its value is raw: its variables expand
+ * when the alias is used, not when it was defined. The walk nests, is
+ * case-blind, and stops on a cycle. */
+void check_expand_aliases()
+{
+    aegir::script::AliasTable const aliases = {
+        {"hi", "echo hello"}, {"go", "$tool"}, {"a", "b"}, {"b", "date"}};
+    expect(aegir::script::expand_aliases("hi world", aliases) == "echo hello world",
+           "an alias is replaced, its tail kept");
+    expect(aegir::script::expand_aliases("go", aliases) == "$tool",
+           "the value is raw: its variable expands at use");
+    expect(aegir::script::expand_aliases("a", aliases) == "date", "aliases nest");
+    expect(aegir::script::expand_aliases("nope x", aliases) == "nope x",
+           "a name that is not an alias is unchanged");
+    expect(aegir::script::expand_aliases("HI", aliases) == "echo hello",
+           "the name is case-blind");
+    expect(aegir::script::expand_aliases("  hi   world", aliases) == "echo hello world",
+           "leading blanks are skipped");
+
+    aegir::script::AliasTable const cycle = {{"x", "y"}, {"y", "x"}};
+    expect(aegir::script::expand_aliases("x", cycle) == "x",
+           "a name seen twice is a cycle and stops the walk");
+
+    /* The two halves of textual-at-use: the alias keeps `$tool`, and only
+     * substitution -- at use -- reads the environment. */
+    aegir::script::Lookup const variables = lookup_of({{"tool", "aegir-echo"}});
+    aegir::script::Arguments const arguments;
+    std::vector<std::string> const words =
+        words_of(aegir::script::expand_aliases("go", aliases), arguments, variables);
+    expect(words.size() == 1 && words[0] == "aegir-echo",
+           "the raw value's variable reads the environment when used");
+}
+
 }  // namespace
 
 int main()
@@ -279,6 +312,7 @@ int main()
     check_substitute_arguments();
     check_substitute_errors();
     check_key_lines();
+    check_expand_aliases();
 
     std::printf("script: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

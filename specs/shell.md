@@ -70,15 +70,19 @@ enough to state in one file.
   built-in's output is the shell's own, so the shell opens the target and
   prints into it — which is what makes `EndCLI >NIL:` quiet rather than a
   visible `bye`.
-- **A line is substituted, and quoted, before it is acted on.** `$name`,
-  `${name}` and `{name}` stand for a `.KEY` parameter or an environment
-  variable, and `$0..$n` for the arguments a command file was run with; `"`
-  groups a word, so a value with a space survives as one argument. The
-  substitution is the shell's and happens before it looks for an alias, a
-  directory or a command, so a variable can name the command. A value is
-  inserted literally, never rescanned, which keeps a value that holds `$` or
-  `"` from being read again. An unmatched quote or brace is a syntax error, not
-  a silent mangling.
+- **Aliases are folded in first, as raw text; then a line is substituted and
+  quoted.** An alias's value is kept as the text it was defined with, and
+  folded into the line before substitution, so a variable in it expands when
+  the alias is *used*, not when it was defined -- the Amiga's textual alias.
+  The walk nests, and a name seen twice is a cycle, not a depth cap. Then
+  `$name`, `${name}` and `{name}` stand for a `.KEY` parameter or an
+  environment variable, `$0..$n` for the arguments a command file was run
+  with, and `"` groups a word, so a value with a space survives as one
+  argument. Substitution comes before the shell looks for a directory or a
+  command, so a variable can name the command; an alias name must be literal,
+  because the alias walk has already run. A value is inserted literally, never
+  rescanned, which keeps a value that holds `$` or `"` from being read again.
+  An unmatched quote or brace is a syntax error, not a silent mangling.
 - **A command inherits the console as its standard input and output.** The
   shell hands the spawned program a copy of its console stream (capability
   transfer, the protocol's stated property). So `printf` reaches the grid,
