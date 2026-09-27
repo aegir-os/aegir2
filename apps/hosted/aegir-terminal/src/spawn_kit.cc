@@ -270,13 +270,15 @@ void SpawnKit::reclaim()
     app_->scratch().rewind(scratch_mark_);
 }
 
-void SpawnKit::finish(seL4_CPtr tcb)
+void SpawnKit::finish_all(std::vector<aegir::spawn::Process> const &processes)
 {
-    /* Stop the command before its capabilities go: a running thread whose TCB
-     * is revoked is undefined. The command has already halted on its own; the
-     * suspend is what makes that certain. */
-    if (tcb != 0) {
-        seL4_TCB_Suspend(tcb);
+    /* Stop each command before its capabilities go: a running thread whose
+     * TCB is revoked is undefined. The commands have already halted on their
+     * own; the suspend is what makes that certain. */
+    for (aegir::spawn::Process const &process : processes) {
+        if (process.tcb != 0) {
+            seL4_TCB_Suspend(process.tcb);
+        }
     }
     reclaim();
 }

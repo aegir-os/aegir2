@@ -602,7 +602,22 @@ long read(int fd, void *buffer, size_t count) noexcept
                              count - total, bytes);
         }
         if (!ok || bytes.count == 0) {
-            break;
+            if (!ok) {
+                break;
+            }
+            if (bytes.eof) {
+                break;
+            }
+            /* A pipe with nothing more yet (specs/pipe.md): return what this
+             * read has, a short read -- a pipe is a stream, not a file whose
+             * full count can be waited for -- and only wait when it has
+             * nothing at all. A regular file never answers this: a read past
+             * its end sets the flag. */
+            if (total > 0) {
+                break;
+            }
+            seL4_Yield();
+            continue;
         }
         for (uint64_t i = 0; i < bytes.count; ++i) {
             bytes_out[total + i] = bytes.data[i];
@@ -631,9 +646,15 @@ long write(int fd, void const *buffer, size_t count) noexcept
                                                      : aegir::volume::kWriteMax);
         uint64_t written = 0;
         if (!aegir::vfs::Volume(entry->volume)
-                 .write(entry->handle, bytes_in + total, chunk, &written) ||
-            written == 0) {
+                 .write(entry->handle, bytes_in + total, chunk, &written)) {
             break;
+        }
+        if (written == 0) {
+            /* A full pipe (specs/pipe.md): the buffer is the grant, and a
+             * write that could not take its bytes waits for the reader to
+             * drain and asks again. */
+            seL4_Yield();
+            continue;
         }
         total += written;
     }

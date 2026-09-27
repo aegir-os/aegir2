@@ -211,7 +211,8 @@ _PRESS_CHORDS = {":": ("shift", "semicolon"),
                  ">": ("shift", "dot"),
                  "<": ("shift", "comma"),
                  "$": ("shift", "4"),
-                 "\"": ("shift", "apostrophe")}
+                 "\"": ("shift", "apostrophe"),
+                 "|": ("shift", "backslash")}
 
 # The keys that are not characters, spelled between angle brackets in a step's
 # `press` -- the editor's arrows and editing keys (specs/terminal.md). A token
@@ -293,9 +294,8 @@ def input_send_event(socket_path: Path, events: tuple[dict, ...]) -> str | None:
     registered first (ui/input.c's qemu_input_find_handler). The events are
     QMP's own InputEvent dicts ({type: abs/rel/btn, ...}). One command per
     event, at the typist's pace send_key already keeps: abs rides the
-    tablet's queue and btn the mouse's, and a burst that wakes the console
-    once for both queues is drained mouse-first whatever the send order --
-    a click meant for where the motion went lands where the pointer stood.
+    tablet's queue and btn the mouse's, and the console drains the tablet
+    before the mouse, so a click meant for where the motion went lands there.
     Returns None on success, QMP's error text when it refuses."""
     for event in events:
         answer = qmp_command(

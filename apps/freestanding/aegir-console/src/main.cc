@@ -968,7 +968,15 @@ int main(int argc, char *argv[])
              * bit": a user badge carries its class at bit 62
              * (specs/authority.md), and a session's call -- the bureau's --
              * is a call. */
-            for (uint32_t d = 0; d < 3; ++d) {
+            /* Drain in a fixed order, and the tablet before the mouse: the
+             * runner sends a click as an absolute position on the tablet and
+             * then a button on the mouse, and a burst that wakes the console
+             * once for both queues must apply the position before the button
+             * -- the other order lands the click where the pointer stood.
+             * Within one device the queue keeps its order, so a real mouse's
+             * relative motion and its button still arrive as sent. */
+            static constexpr uint32_t kDrainOrder[] = {0, 2, 1}; /* kbd, tablet, mouse */
+            for (uint32_t d : kDrainOrder) {
                 if ((badge & (1ull << (32 + d))) != 0) {
                     drain(d);
                 }

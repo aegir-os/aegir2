@@ -210,29 +210,32 @@ int main(int argc, char *argv[])
     };
 
     uint64_t command_serial = 0;
-    aegir::spawn::Process command_process{};
-    bool command_running = false;
-    auto spawn_command = [&](std::string const &name, std::vector<std::string> const &args,
-                             std::string const &cwd,
-                             std::vector<char const *> const &environment,
-                             std::string const &std_in, std::string const &std_out) -> bool {
+    uint64_t pipeline_serial = 0;
+    std::vector<aegir::spawn::Process> command_processes;
+    uint32_t command_outstanding = 0;
+    /* The stages of the line now running: >1 makes it a pipeline, which the
+     * completion cue names apart from a single command (specs/pipe.md). */
+    uint32_t command_stage_count = 0;
+    /* The commands of one line live in one bracket: begin() is the caller's
+     * (a pipeline spawns several), and spawn_one starts one stage into it. */
+    auto spawn_one = [&](std::string const &name, std::vector<std::string> const &args,
+                         std::string const &cwd,
+                         std::vector<char const *> const &environment,
+                         std::string const &std_in, std::string const &std_out) -> bool {
         if (!kit) {
             return false;
         }
         /* The image comes from C: -- the alias of Sys:C, the command set
-         * (specs/dos.md) -- through the namespace, not from a mapped initrd. */
+         * (specs/dos.md) -- through the namespace, not from a mapped initrd.
+         * The spawner copies the image into the child before it returns, so
+         * the one buffer is reused for the next stage. */
         if (!load_image("C:" + name)) {
-            write("  terminal: no image for the command\n");
+            write("  terminal: no image for the command ");
+            write(name.c_str());
+            write("\n");
             return false;
         }
 
-        /* The command pool: a fresh bracket, so this command's objects and the
-         * untyped its runtime gets are reclaimed whole when it exits
-         * (specs/shell.md's Phase 4). */
-        if (!spawn_kit.begin()) {
-            write("  terminal: FAIL the command pool would not adopt\n");
-            return false;
-        }
         aegir::mem::Account account{"command", 0, 0, 0};
         seL4_Error untyped_error = seL4_NoError;
         uint64_t command_untyped_physical = 0;
@@ -326,21 +329,110 @@ int main(int argc, char *argv[])
         request.untyped_physical = command_untyped_physical;
         request.untyped_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;
 
-        if (!spawn_kit.spawner().spawn(request, account, command_process)) {
+        aegir::spawn::Process process{};
+        if (!spawn_kit.spawner().spawn(request, account, process)) {
             write("  terminal: FAIL spawning a command: ");
             write(spawn_kit.spawner().problem());
             write("\n");
-            spawn_kit.abort();
             return false;
         }
-        command_running = true;
-        /* The command inherits the shell's stream, and from here until it
-         * exits the terminal routes the keyboard to that stream's input queue
-         * rather than the idle editor -- the command's stdin. */
-        server.begin_command(kShellStream);
+        command_processes.push_back(process);
         write("  terminal: command started ");
         write(name.c_str());
         write("\n");
+        return true;
+    };
+    /* A line's commands are done: suspend and reclaim them whole. */
+    auto finish_commands = [&]() {
+        spawn_kit.finish_all(command_processes);
+        command_processes.clear();
+        command_outstanding = 0;
+        command_stage_count = 0;
+    };
+    /* One pipeline stage on the wire: its command line and its own
+     * redirections, empty for the console or the connecting pipe. */
+    struct Stage {
+        std::string line;
+        std::string std_in;
+        std::string std_out;
+    };
+    /* Unpack the next string in the call, advancing `at`. */
+    auto read_string = [](uint64_t const *words, uint32_t count, uint32_t &at,
+                          std::string &out) -> bool {
+        char const *text = nullptr;
+        uint32_t length = 0;
+        if (!aegir::nmspace::unpack_string(words + at, count - at,
+                                           aegir::console::kStreamBytesMax, &text,
+                                           &length)) {
+            return false;
+        }
+        out.assign(text, length);
+        at += packed_words(length);
+        return true;
+    };
+    /* The pipe that connects two stages: named by the terminal, so a pipeline
+     * never depends on a name the user chose (specs/pipe.md). */
+    auto pipe_path = [](uint64_t serial, uint32_t index) {
+        return std::string("PIPE:p") + std::to_string(serial) + "_" +
+               std::to_string(index);
+    };
+    /* Spawn a line's stages in one bracket, connecting them with pipes the
+     * terminal names (specs/pipe.md); `run` is a one-stage pipeline. False
+     * when a stage would not start (the bracket is abandoned). */
+    auto spawn_stages = [&](std::vector<Stage> const &stages, std::string const &cwd,
+                            std::string const &environment) -> bool {
+        /* The environment rides as NUL-separated NAME=VALUE; the spawner wants
+         * pointers, so they point into a copy. */
+        std::vector<char> environment_buffer(environment.begin(), environment.end());
+        std::vector<char const *> environment_pointers;
+        std::size_t index = 0;
+        while (index < environment_buffer.size()) {
+            environment_pointers.push_back(&environment_buffer[index]);
+            while (index < environment_buffer.size() &&
+                   environment_buffer[index] != '\0') {
+                ++index;
+            }
+            ++index;
+        }
+        if (!spawn_kit.begin()) {
+            write("  terminal: FAIL the command pool would not adopt\n");
+            return false;
+        }
+        uint64_t const pipe_serial = ++pipeline_serial;
+        uint32_t const stage_count = static_cast<uint32_t>(stages.size());
+        /* Arm the count and the bracket before spawning: a stage can run and
+         * exit while the next is being spawned, and its exit must land in the
+         * count, not before it (specs/pipe.md). */
+        command_outstanding = stage_count;
+        command_stage_count = stage_count;
+        server.begin_command(kShellStream);
+        bool ok = true;
+        for (uint32_t i = 0; ok && i < stage_count; ++i) {
+            std::vector<std::string> const words_of_line =
+                split_command_words(stages[i].line);
+            if (words_of_line.empty()) {
+                ok = false;
+                break;
+            }
+            /* The ends keep the stage's own redirection; the middle is the
+             * pipe that connects it to its neighbour. */
+            std::string const std_in =
+                i == 0 ? stages[i].std_in : pipe_path(pipe_serial, i - 1);
+            std::string const std_out =
+                i + 1 == stage_count ? stages[i].std_out : pipe_path(pipe_serial, i);
+            ok = spawn_one(words_of_line[0],
+                           std::vector<std::string>(words_of_line.begin() + 1,
+                                                    words_of_line.end()),
+                           cwd, environment_pointers, std_in, std_out);
+        }
+        if (!ok) {
+            spawn_kit.abort();
+            command_processes.clear();
+            command_outstanding = 0;
+            command_stage_count = 0;
+            server.clear_command(kShellStream);
+            return false;
+        }
         return true;
     };
 
@@ -374,79 +466,88 @@ int main(int argc, char *argv[])
                 return 1;
             }
             if (method == aegir::console::kStreamMethodRun) {
-                if (capacity < 1) {
+                /* `run` is a one-stage pipeline (specs/shell.md): the line,
+                 * the directory, the environment, then the command's own
+                 * redirected input and output. */
+                if (capacity < 1 || count == 0) {
                     return 0;
                 }
-                char const *line = nullptr;
-                char const *cwd = nullptr;
-                char const *environment = nullptr;
-                char const *std_in = nullptr;
-                char const *std_out = nullptr;
-                uint32_t line_length = 0;
-                uint32_t cwd_length = 0;
-                uint32_t environment_length = 0;
-                uint32_t std_in_length = 0;
-                uint32_t std_out_length = 0;
                 uint32_t at = 0;
-                if (!aegir::nmspace::unpack_string(words + at, count - at,
-                                                   aegir::console::kStreamBytesMax, &line,
-                                                   &line_length)) {
+                Stage stage;
+                std::string cwd;
+                std::string environment;
+                if (!read_string(words, count, at, stage.line) ||
+                    !read_string(words, count, at, cwd) ||
+                    !read_string(words, count, at, environment) ||
+                    !read_string(words, count, at, stage.std_in) ||
+                    !read_string(words, count, at, stage.std_out)) {
                     return 0;
                 }
-                at += packed_words(line_length);
-                if (!aegir::nmspace::unpack_string(words + at, count - at,
-                                                   aegir::console::kStreamBytesMax, &cwd,
-                                                   &cwd_length)) {
+                std::vector<Stage> stages;
+                stages.push_back(std::move(stage));
+                reply[0] = spawn_stages(stages, cwd, environment) ? 1 : 0;
+                return 1;
+            }
+            if (method == aegir::console::kStreamMethodPipeline) {
+                /* A pipeline (specs/pipe.md): a stage count, each stage's line
+                 * and its own redirections, then the directory and the
+                 * environment once. The terminal names the pipes between the
+                 * stages. */
+                if (capacity < 1 || count == 0) {
                     return 0;
                 }
-                at += packed_words(cwd_length);
-                if (!aegir::nmspace::unpack_string(words + at, count - at,
-                                                   aegir::console::kStreamBytesMax,
-                                                   &environment, &environment_length)) {
-                    return 0;
-                }
-                at += packed_words(environment_length);
-                if (!aegir::nmspace::unpack_string(words + at, count - at,
-                                                   aegir::console::kStreamBytesMax, &std_in,
-                                                   &std_in_length)) {
-                    return 0;
-                }
-                at += packed_words(std_in_length);
-                if (!aegir::nmspace::unpack_string(words + at, count - at,
-                                                   aegir::console::kStreamBytesMax, &std_out,
-                                                   &std_out_length)) {
-                    return 0;
-                }
-                std::vector<std::string> const words_of_line =
-                    split_command_words(std::string(line, line_length));
-                if (words_of_line.empty()) {
+                uint32_t at = 0;
+                uint32_t const stage_count = static_cast<uint32_t>(words[at++]);
+                if (stage_count == 0 || stage_count > count) {
                     reply[0] = 0;
                     return 1;
                 }
-                /* The environment rides as NUL-separated NAME=VALUE; the
-                 * spawner wants pointers, so they point into a copy. */
-                std::vector<char> environment_buffer(environment,
-                                                     environment + environment_length);
-                std::vector<char const *> environment_pointers;
-                std::size_t index = 0;
-                while (index < environment_buffer.size()) {
-                    environment_pointers.push_back(&environment_buffer[index]);
-                    while (index < environment_buffer.size() &&
-                           environment_buffer[index] != '\0') {
-                        ++index;
+                std::vector<Stage> stages;
+                for (uint32_t i = 0; i < stage_count; ++i) {
+                    Stage stage;
+                    if (!read_string(words, count, at, stage.line) ||
+                        !read_string(words, count, at, stage.std_in) ||
+                        !read_string(words, count, at, stage.std_out)) {
+                        return 0;
                     }
-                    ++index;
+                    stages.push_back(std::move(stage));
                 }
-                reply[0] = spawn_command(
-                               words_of_line[0],
-                               std::vector<std::string>(words_of_line.begin() + 1,
-                                                        words_of_line.end()),
-                               std::string(cwd, cwd_length), environment_pointers,
-                               std::string(std_in, std_in_length),
-                               std::string(std_out, std_out_length))
-                               ? 1
-                               : 0;
+                std::string cwd;
+                std::string environment;
+                if (!read_string(words, count, at, cwd) ||
+                    !read_string(words, count, at, environment)) {
+                    return 0;
+                }
+                reply[0] = spawn_stages(stages, cwd, environment) ? 1 : 0;
                 return 1;
+            }
+
+            if (method == aegir::console::kStreamMethodCommandStatus) {
+                /* A pipeline is done only when every stage has reported; until
+                 * then there is no status to take and the stream's bracket
+                 * must not close (specs/pipe.md). */
+                if (command_outstanding != 0) {
+                    return 0;
+                }
+                uint32_t const answer =
+                    server.handle(method, words, count, badge, reply, capacity);
+                if (answer == 1) {
+                    /* The shell has taken the status, so the line's commands
+                     * are done: stop and reclaim them, so the pool goes back
+                     * whole. The status is the last stage's. A pipeline's line
+                     * is distinct so a script can wait for the whole pipeline
+                     * rather than its first stage (specs/pipe.md). */
+                    write("  terminal: command exited ");
+                    write_unsigned(reply[0]);
+                    write("\n");
+                    if (command_stage_count > 1) {
+                        write("  terminal: pipeline exited ");
+                        write_unsigned(reply[0]);
+                        write("\n");
+                    }
+                    finish_commands();
+                }
+                return answer;
             }
 
             uint32_t const answer =
@@ -462,16 +563,9 @@ int main(int argc, char *argv[])
                     server.set_doorbell(badge, slot);
                 }
             }
-            if (method == aegir::console::kStreamMethodCommandStatus && answer == 1) {
-                /* The shell has taken the command's status, so the command is
-                 * done: stop and reclaim it, so its pool goes back whole. */
-                write("  terminal: command exited ");
-                write_unsigned(reply[0]);
-                write("\n");
-                if (command_running) {
-                    spawn_kit.finish(command_process.tcb);
-                    command_running = false;
-                }
+            if (method == aegir::console::kStreamMethodExit && command_outstanding != 0) {
+                /* One stage of the running line has reported its exit. */
+                --command_outstanding;
             }
             return answer;
         };

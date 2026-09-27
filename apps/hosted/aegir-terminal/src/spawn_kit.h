@@ -25,6 +25,7 @@
 #include <sel4/sel4.h>
 
 #include <memory>
+#include <vector>
 
 namespace aegir::trinket {
 class Application;
@@ -45,11 +46,12 @@ public:
 
     bool ready() const { return ready_; }
 
-    /* Bracket a command: begin() re-adopts the pool and the reserved slots and
-     * builds a spawner; finish()/abort() suspend (when there is a command),
-     * revoke the pool, release the slots and drop the staging. */
+    /* Bracket the commands of one line: begin() re-adopts the pool and the
+     * reserved slots and builds a spawner; finish_all() suspends the commands
+     * (a pipeline may have several), revokes the pool, releases the slots and
+     * drops the staging. */
     bool begin();
-    void finish(seL4_CPtr tcb);
+    void finish_all(std::vector<aegir::spawn::Process> const &processes);
     void abort();
 
     aegir::spawn::Spawner& spawner() { return *spawner_; }

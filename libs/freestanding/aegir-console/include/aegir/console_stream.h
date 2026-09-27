@@ -117,6 +117,16 @@ constexpr uint32_t kStreamMethodSize = 10;
  *  terminal shows the window and takes no more input. */
 constexpr uint32_t kStreamMethodBootFail = 11;
 
+/** Run a pipeline on the stream's behalf (specs/pipe.md). In: a stage count,
+ *  then per stage its command line (the words NUL-separated), its redirected
+ *  input and its redirected output (strings, empty for the console or the
+ *  connecting pipe), then the current directory and the environment once --
+ *  the same strings `run` carries. Answer: one word, 1 started and 0 refused.
+ *  The terminal owns the spawn authority and starts every stage at once,
+ *  naming the pipes that connect them; the stages' exits are read back with
+ *  `command_status` once all have finished (specs/pipe.md). */
+constexpr uint32_t kStreamMethodPipeline = 12;
+
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws
  *  itself (specs/terminal.md). */

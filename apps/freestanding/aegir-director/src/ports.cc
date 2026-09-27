@@ -118,6 +118,11 @@ Rights rights_for(PortGraph::Name name) noexcept
          * cannot be called (specs/boot.md). */
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
+    if (name_is(name, "vol.pipe", 8)) {
+        /* PIPE: registers itself and mints its caller half like NIL:'s, so
+         * the owner half carries Write too (specs/pipe.md). */
+        return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+    }
     if (name_is(name, "devmgr.registry", 15)) {
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 0, 0, 1)};
     }

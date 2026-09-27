@@ -202,6 +202,65 @@ inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
     return answer.error == 0 && answer.count == 1 && in[0] == 1;
 }
 
+/** One stage of a pipeline (specs/pipe.md): the command words NUL-separated,
+ *  and the stage's own redirections, empty for the console or the connecting
+ *  pipe. The terminal fills the pipes between stages. */
+struct StreamStage {
+    char const *line;
+    uint32_t line_length;
+    char const *std_in;
+    uint32_t std_in_length;
+    char const *std_out;
+    uint32_t std_out_length;
+};
+
+/** Pack a string into `out` at `words`, refusing when it would pass the
+ *  envelope rather than overflowing the caller's array. */
+inline bool pack_stream_string(uint64_t *out, uint32_t &words, char const *text,
+                               uint32_t length) noexcept
+{
+    uint32_t const need = 1 + (length + 7) / 8;
+    if (words + need > aegir::ipc::kMaxWords) {
+        return false;
+    }
+    uint32_t const packed =
+        aegir::nmspace::pack_string(out + words, text, length, aegir::nmspace::kPathMax);
+    if (packed == 0) {
+        return false;
+    }
+    words += packed;
+    return true;
+}
+
+/** Ask the terminal to run a pipeline (specs/pipe.md): every stage at once,
+ *  connected by pipes the terminal names. `cwd` and the NUL-separated
+ *  `environment` are the shell's, sent once for the whole pipeline. True when
+ *  it started. */
+inline bool stream_pipeline(aegir::ipc::Consumer const &port,
+                            StreamStage const *stages, uint32_t stage_count,
+                            char const *cwd, uint32_t cwd_length,
+                            char const *environment, uint32_t environment_length) noexcept
+{
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words = 0;
+    out[words++] = stage_count;
+    for (uint32_t i = 0; i < stage_count; ++i) {
+        if (!pack_stream_string(out, words, stages[i].line, stages[i].line_length) ||
+            !pack_stream_string(out, words, stages[i].std_in, stages[i].std_in_length) ||
+            !pack_stream_string(out, words, stages[i].std_out, stages[i].std_out_length)) {
+            return false;
+        }
+    }
+    if (!pack_stream_string(out, words, cwd, cwd_length) ||
+        !pack_stream_string(out, words, environment, environment_length)) {
+        return false;
+    }
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer =
+        port.call_words(kStreamMethodPipeline, out, words, in, 1);
+    return answer.error == 0 && answer.count == 1 && in[0] == 1;
+}
+
 /** A finished command's status. True and fills `status` when one has finished
  *  (and clears the finished state); false when none has. */
 inline bool stream_command_status(aegir::ipc::Consumer const &port,

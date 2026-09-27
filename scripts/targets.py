@@ -627,6 +627,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"terminal: command started version",
                 events=TERMINAL_CLICK,
+                # A pipeline (specs/pipe.md): `type` reads a file and writes it
+                # to its standard output, `aegir-read` drains its standard input
+                # to the grid. The terminal starts both at once and names the
+                # pipe between them, so `aegir-read` starting proves the
+                # concurrent spawn and the connection, and the pipeline's exit
+                # (its last stage's) proves the consumer ran to its end.
+                press="type Sys:S/Shell-Startup | aegir-read\n",
+            ),
+            QmpStep(
+                r"terminal: pipeline exited",
+                events=TERMINAL_CLICK,
                 press="delete Home:DosTest Home:DosTest2 ALL\n",
             ),
             QmpStep(
@@ -667,6 +678,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1279, 799, 170, 170, 170),
                     ("gpu0", 860, 240, 170, 170, 170),
                     ("gpu0", 640, 700, 170, 170, 170),
+                    ("gpu0", 1050, 438, 102, 136, 187),
                 ),
             ),
             # The window manager's demo client (specs/window-manager.md), last

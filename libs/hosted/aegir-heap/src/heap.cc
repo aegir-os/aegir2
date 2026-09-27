@@ -53,6 +53,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
 
@@ -598,6 +599,13 @@ namespace {
 
 void hosted_exit(int code) noexcept
 {
+    /* A program that merely returned from main left its stdio buffers full:
+     * musl's own exit flushes them, but sel4runtime's path calls this
+     * callback instead (the comment above). Flush here, so a command's last
+     * output is not lost -- the bytes a pipeline's writer still held, the
+     * tail of a redirected file (specs/shell.md, specs/pipe.md). A second
+     * flush on the exit() path is a no-op. */
+    (void)fflush(nullptr);
     report_exit(code);
 }
 

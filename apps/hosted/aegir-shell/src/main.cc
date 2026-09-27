@@ -198,6 +198,24 @@ Redirect split_redirect(std::vector<std::string> const &raw)
     return result;
 }
 
+/* Split a substituted line into pipeline stages on a standalone `|` token
+ * (specs/pipe.md). A `|` that was quoted is part of a word and does not
+ * split; a standalone `|` always does, so the operator needs whitespace
+ * around it and a stage may not be empty. */
+std::vector<std::vector<std::string>> split_pipeline(
+    std::vector<std::string> const &words)
+{
+    std::vector<std::vector<std::string>> stages(1);
+    for (std::string const &word : words) {
+        if (word == "|") {
+            stages.emplace_back();
+        } else {
+            stages.back().push_back(word);
+        }
+    }
+    return stages;
+}
+
 std::string parent_of(std::string const &path)
 {
     if (path.empty() || path.back() == ':') {
@@ -465,6 +483,52 @@ public:
     }
 
 private:
+    /* The built-in table: the shell's own words, the dispatch. A name not in
+     * it is a program, resolved from C: and started by the terminal
+     * (specs/dos.md). Several names share a handler, the Amiga's synonyms. A
+     * static member so a line that must know whether a word is the shell's own
+     * before it builds a pipeline can ask (specs/pipe.md). */
+    static Builtin const *builtin_table(uint32_t &count) noexcept
+    {
+        static Builtin const kBuiltins[] = {
+            {"cd", &Shell::command_cd},
+            {"currentdir", &Shell::command_cd},
+            {"echo", &Shell::command_echo},
+            {"set", &Shell::command_set},
+            {"setvar", &Shell::command_set},
+            {"setenv", &Shell::command_set},
+            {"get", &Shell::command_get},
+            {"getvar", &Shell::command_get},
+            {"getenv", &Shell::command_get},
+            {"unset", &Shell::command_unset},
+            {"unsetenv", &Shell::command_unset},
+            {"unalias", &Shell::command_unalias},
+            {"prompt", &Shell::command_prompt},
+            {"why", &Shell::command_why},
+            {"fault", &Shell::command_why},
+            {"eval", &Shell::command_eval},
+            {"execute", &Shell::command_execute},
+            {"quit", &Shell::command_quit},
+            {"failat", &Shell::command_failat},
+            {"endcli", &Shell::command_endcli},
+            {"endshell", &Shell::command_endcli},
+        };
+        count = sizeof(kBuiltins) / sizeof(kBuiltins[0]);
+        return kBuiltins;
+    }
+
+    static bool is_builtin_name(std::string const &name)
+    {
+        uint32_t count = 0;
+        Builtin const *const table = builtin_table(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            if (name == table[i].name) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /* The boot script has finished: report the outcome to auth once, and only
      * once, and on failure put the read-only view up (specs/boot.md). */
     void boot_done()
@@ -893,6 +957,57 @@ private:
         }
     }
 
+    /* Run a pipeline: every stage a program, connected by pipes the terminal
+     * names (specs/pipe.md). A stage that is a built-in is refused -- the
+     * shell's own words are not programs the terminal can start -- and an
+     * empty stage is a syntax error. True when the terminal started it. */
+    bool run_pipeline(std::vector<std::vector<std::string>> const &stages)
+    {
+        std::vector<std::string> lines;
+        std::vector<std::string> ins;
+        std::vector<std::string> outs;
+        for (std::vector<std::string> const &stage : stages) {
+            Redirect const redirect = split_redirect(stage);
+            if (redirect.words.empty()) {
+                print("Pipe: an empty stage\n");
+                line_status_ = 10;
+                return false;
+            }
+            std::string const command = to_lower(redirect.words[0]);
+            if (is_builtin_name(command)) {
+                print("Pipe: " + redirect.words[0] + " is a built-in\n");
+                line_status_ = 10;
+                return false;
+            }
+            std::string payload = command;
+            for (std::size_t i = 1; i < redirect.words.size(); ++i) {
+                payload.push_back('\0');
+                payload += redirect.words[i];
+            }
+            lines.push_back(std::move(payload));
+            ins.push_back(redirect.in_path);
+            outs.push_back(redirect.out_path);
+        }
+        std::vector<aegir::console::StreamStage> wire;
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            wire.push_back({lines[i].data(), static_cast<uint32_t>(lines[i].size()),
+                            ins[i].data(), static_cast<uint32_t>(ins[i].size()),
+                            outs[i].data(), static_cast<uint32_t>(outs[i].size())});
+        }
+        std::string const cwd = current_directory();
+        std::string const environment = environment_string();
+        if (aegir::console::stream_pipeline(
+                port_, wire.data(), static_cast<uint32_t>(wire.size()), cwd.data(),
+                static_cast<uint32_t>(cwd.size()), environment.data(),
+                static_cast<uint32_t>(environment.size()))) {
+            busy_ = true;
+            return true;
+        }
+        print("Pipe: the terminal would not start it\n");
+        line_status_ = 10;
+        return false;
+    }
+
     /* Run one line: true when it started a program (busy_ is set and the exit
      * comes later), false when it finished here (a built-in, a directory
      * change, an unknown name). line_status_ is the line's own return code,
@@ -948,7 +1063,14 @@ private:
             line_status_ = 10;
             return false;
         }
-        Redirect const redirect = split_redirect(words);
+        /* A line with a `|` is a pipeline: its stages are programs the
+         * terminal starts at once, connected by pipes it names (specs/pipe.md).
+         * A one-stage line is the ordinary path below. */
+        std::vector<std::vector<std::string>> const stages = split_pipeline(words);
+        if (stages.size() > 1) {
+            return run_pipeline(stages);
+        }
+        Redirect const redirect = split_redirect(stages[0]);
         std::vector<std::string> const &command_words = redirect.words;
         if (command_words.empty()) {
             return false;
@@ -957,30 +1079,10 @@ private:
         std::vector<std::string> const args(command_words.begin() + 1,
                                             command_words.end());
 
-        static Builtin const kBuiltins[] = {
-            {"cd", &Shell::command_cd},
-            {"currentdir", &Shell::command_cd},
-            {"echo", &Shell::command_echo},
-            {"set", &Shell::command_set},
-            {"setvar", &Shell::command_set},
-            {"setenv", &Shell::command_set},
-            {"get", &Shell::command_get},
-            {"getvar", &Shell::command_get},
-            {"getenv", &Shell::command_get},
-            {"unset", &Shell::command_unset},
-            {"unsetenv", &Shell::command_unset},
-            {"unalias", &Shell::command_unalias},
-            {"prompt", &Shell::command_prompt},
-            {"why", &Shell::command_why},
-            {"fault", &Shell::command_why},
-            {"eval", &Shell::command_eval},
-            {"execute", &Shell::command_execute},
-            {"quit", &Shell::command_quit},
-            {"failat", &Shell::command_failat},
-            {"endcli", &Shell::command_endcli},
-            {"endshell", &Shell::command_endcli},
-        };
-        for (Builtin const &builtin : kBuiltins) {
+        uint32_t builtin_count = 0;
+        Builtin const *const kBuiltins = builtin_table(builtin_count);
+        for (uint32_t b = 0; b < builtin_count; ++b) {
+            Builtin const &builtin = kBuiltins[b];
             if (command == builtin.name) {
                 /* A built-in's output is the shell's own, so its redirection is
                  * the shell's too: open the target and print into it. */

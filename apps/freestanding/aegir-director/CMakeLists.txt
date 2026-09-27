@@ -64,6 +64,7 @@ set(aegir_initrd_binaries
     aegir-vfs
     aegir-fs-initrd
     aegir-fs-nil
+    aegir-fs-pipe
     aegir-console
     aegir-greeter
     aegir-bureau-app
@@ -93,6 +94,7 @@ set(aegir_initrd_binary_names
     "aegir-vfs"
     "aegir-fs-initrd"
     "aegir-fs-nil"
+    "aegir-fs-pipe"
     "aegir-console"
     "aegir-greeter"
     "aegir-bureau"

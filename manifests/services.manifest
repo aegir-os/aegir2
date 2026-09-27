@@ -185,8 +185,10 @@ account   = system
 owns      = vfs.namespace
 needs     = log.main
 # The registration table's backing store: the map grows until this is gone,
-# and reaching the end of it is a loud refusal, never a quiet overwrite.
-memory_kib = 16
+# and reaching the end of it is a loud refusal, never a quiet overwrite. The
+# table holds every volume and every session's bindings (Home:, ENV:, S:, C:),
+# so it carries the boot set's volumes plus a session's aliases with room.
+memory_kib = 32
 restart   = always
 
 # The initrd service serves the boot image itself as the Initrd: volume --
@@ -216,6 +218,21 @@ authority = system
 account   = system
 owns      = vol.nil
 needs     = log.main, vfs.namespace
+restart   = always
+
+# The pipe handler (specs/pipe.md): the PIPE: device, named byte pipes. A
+# volume like NIL:, so a command's redirection and the shell's `|` reach it by
+# path. Its memory is the buffers: carved into chunks, a pipe grows into it on
+# demand, and a bigger grant is more pipes and a larger ceiling for each. It
+# starts after the VFS, like the initrd and nil, so its name exists before a
+# pipeline resolves it.
+[pipe]
+binary    = aegir-fs-pipe
+authority = system
+account   = system
+owns      = vol.pipe
+needs     = log.main, vfs.namespace
+memory_kib = 1024
 restart   = always
 
 # The console owns the display and the input devices, exclusively

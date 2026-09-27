@@ -330,13 +330,20 @@ this arc's record of the order.
   condition's operands are substituted. The jumps and the block matching are
   `aegir::script`'s and the condition's parse is, host-tested by
   `make check-script`.
+- **Phase 14 — pipelines.** Landed (`specs/pipe.md`). A line's standalone
+  `|` splits it into stages; the shell sends them to the terminal, which
+  spawns every stage at once and names the `PIPE:` between each pair. The
+  pipeline's status is its last stage's, and its completion is the existing
+  `command status` call, answered only once every stage has reported. A
+  built-in stage is refused -- the shell's own words are not programs -- and
+  the pipes are the pipe service's (Phase 1 of `specs/pipe.md`).
 
 ## What this is not
 
 - **Scripts, in full.** `Execute` and its frame (Phase 8), redirection
-  (Phase 9), substitution and script arguments (Phase 12) and control flow
-  (Phase 13) land, but pipelines (`|` and `PIPE:`) and the process words
-  (`Run`, `NewCLI`) are later. Substitution turns a line into words and acts;
+  (Phase 9), substitution and script arguments (Phase 12), control flow
+  (Phase 13) and pipelines (Phase 14) land, but the process words (`Run`,
+  `NewCLI`) are later. Substitution turns a line into words and acts;
   a `*` escape for a literal quote or variable, and a full quoting rule, are
   later.
 - **Globbing and tab completion.** Completion belongs to the handler's line
@@ -423,3 +430,12 @@ above the fail level, so the file would drop there instead of going on, and the
 terminal's `command exited 42` cue -- a code no other command gives -- is the
 proof. `make check-script` asserts the label and block jumps, the condition
 parse and the comparison directly.
+
+Phase 14's is the same run, typed after the DOS sequence: the runner types
+`type Sys:S/Shell-Startup | aegir-read`. The terminal starts both at once,
+names the `PIPE:` between them, and the producer's output reaches the
+consumer's standard input, so `aegir-read` starting is the proof the
+concurrent spawn and the connection worked and its `pipeline exited` cue --
+the last stage's status -- is the proof the consumer ran to its end. The
+runner waits for that completion cue rather than the first stage's start, so
+it never types while the pipeline runs (`specs/pipe.md`).
