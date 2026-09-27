@@ -235,6 +235,31 @@ needs     = log.main, vfs.namespace
 memory_kib = 1024
 restart   = always
 
+# The memory service (specs/memory.md): one large pool, handed out as pristine
+# untyped chunks on demand, owned by the caller's badge and reclaimed together
+# when the caller releases. It maps its own -- `maps` gives it the untyped
+# whole, which is what it splits -- and its memory is the pool, most of the
+# machine: 512 MiB of the 2 GiB this target boots with. A process's ceiling is
+# its quota, not this grant.
+[memory]
+binary    = aegir-memory
+authority = system
+account   = system
+owns      = mem.main
+needs     = log.main
+maps      = true
+memory_kib = 524288
+restart   = always
+
+# The memory service's client (specs/memory.md, Phase 1): it asks for a chunk,
+# retypes a frame from it, and releases -- the protocol exercised by a caller.
+[memsmoke]
+binary    = aegir-mem-smoke
+authority = system
+account   = system
+needs     = log.main, mem.main
+restart   = never
+
 # The console owns the display and the input devices, exclusively
 # (specs/console.md): what every other process sees of the screen and the
 # keyboard is what it serves. It maps the gpu's pixel window itself --

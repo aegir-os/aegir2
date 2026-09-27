@@ -109,6 +109,12 @@ Rights rights_for(PortGraph::Name name) noexcept
          * owner half needs every right the client's callable copy does. */
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "mem.main", 8)) {
+        /* The owner's reply carries a chunk capability (specs/memory.md), so
+         * the owner half needs Grant and the caller needs GrantReply to take
+         * it -- the namespace's shape, and its reason. */
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     if (name_is(name, "vol.initrd", 10)) {
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
