@@ -351,15 +351,18 @@ maps      = true
 memory_kib = 2048
 restart   = never
 
-# The hosted C++ runtime's acceptance client (specs/cxx.md): it needs no port,
-# but it does need the untyped, the VSpace root and the window the heap is
-# carved from, so it takes the maps grant and its own memory.
+# The hosted C++ runtime's acceptance client (specs/cxx.md): it needs no port
+# of the boot set, but it does need the untyped, the VSpace root and the window
+# the heap is carved from, so it takes the maps grant and its own memory. Its
+# seed is deliberately small: the runtime's heap grows past it through mem.main
+# (specs/memory.md Phase 2), so the seed is a floor and not a ceiling.
 [cxxsmoke]
 binary    = aegir-cxx-smoke
 authority = system
 account   = boot
+needs     = mem.main
 maps      = true
-memory_kib = 4096
+memory_kib = 256
 restart   = never
 
 # The process environment's acceptance client (specs/environment.md): a spawned

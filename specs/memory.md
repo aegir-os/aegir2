@@ -1,6 +1,8 @@
 # memory: the memory service
 
-Status: decided (2026-09), first slice not yet landed. Aegir's memory is, today,
+Status: decided (2026-09); the service and the runtime's source are landed
+(phases 1-2); the spawner, the limits and `Run`/`NewCLI` are next. Aegir's
+memory is, today,
 a set of **static partitions**: director carves fixed untypeds for services,
 auth carves a fixed command pool and passes it to the terminal, and the
 terminal carves a fixed per-command untyped for each program. A program's
@@ -113,8 +115,12 @@ default, the machine).
   carving chunks on demand, and a smoke asks for a chunk, retypes a frame from
   it, and releases. The allocator grew the shared slot pool and the free hook
   this needs. No runtime change yet.
-- **Phase 2 -- the runtime's untyped source.** The allocator hook and the
-  runtime's source; a program that grows past its seed chunk runs.
+- **Phase 2 -- the runtime's untyped source.** Landed. The allocator asks a
+  registered source for another untyped when its free lists hold none, adopts
+  it and retries; aegir-heap installs the source, and the source calls
+  `mem.main`. The cxx-smoke client is spawned with a 256 KiB seed and
+  heap-allocates past it, so its pages come from the service -- every hosted
+  program given the port grows the same way.
 - **Phase 3 -- the spawner and the per-process badge.** The terminal asks the
   service for a command's chunk, badges the memory copies per process, and
   releases on exit; the command pool and background pool are retired.

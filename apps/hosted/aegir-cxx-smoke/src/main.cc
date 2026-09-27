@@ -129,6 +129,31 @@ bool adopt_memory()
     return ok;
 }
 
+/* The runtime's untyped source (specs/memory.md Phase 2): the seed the spawner
+ * hands this process is small, so a heap this size can only come from mem.main.
+ * Every page is really mapped -- SYS_mmap retypes a frame for each -- so once
+ * the seed runs out the allocator asks the service for another chunk, and the
+ * bytes written and read back prove the pages are real and not a promise. */
+bool check_growth()
+{
+    constexpr size_t kBytes = 1u << 20;
+    auto *bytes = static_cast<unsigned char *>(malloc(kBytes));
+    if (bytes == nullptr) {
+        return false;
+    }
+    for (size_t at = 0; at < kBytes; at += 4096) {
+        bytes[at] = static_cast<unsigned char>(at >> 12);
+    }
+    bool intact = true;
+    for (size_t at = 0; at < kBytes; at += 4096) {
+        if (bytes[at] != static_cast<unsigned char>(at >> 12)) {
+            intact = false;
+        }
+    }
+    free(bytes);
+    return intact;
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -152,6 +177,17 @@ int main(int argc, char *argv[])
     }
 
     int failed = aegir::cxx_smoke::run();
+
+    /* The runtime's growth (specs/memory.md Phase 2): the seed the spawner gave
+     * this process is 256 KiB, and this mallocs and touches 1 MiB, so most of
+     * the pages can only have come from mem.main. A failure here is the source
+     * not being wired, not the checks below. */
+    if (check_growth()) {
+        aegir::debug_write("  cxx-smoke: the heap grew past its seed through mem.main\n");
+    } else {
+        aegir::debug_write("  cxx-smoke: FAIL the heap would not grow past its seed\n");
+        ++failed;
+    }
 
     /* A thread in a hosted process: the primitive the test bed proves, on the
      * runtime this process actually uses. It is the floor the runtime's
