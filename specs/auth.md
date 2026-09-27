@@ -44,22 +44,23 @@ The table, in full:
 | offset | field | width |
 | --- | --- | --- |
 | 0 | magic, `"AUDB"` | 4 |
-| 4 | format version, `2` | 4 |
+| 4 | format version, `3` | 4 |
 | 8 | user count | 4 |
 | 12 | reserved, zero | 4 |
-| 16 | rows, count of them | 128 each |
+| 16 | rows, count of them | 144 each |
 
-One row: `name[24]`, `account[24]`, `secret[32]`, `home[48]` — each a
-NUL-terminated string inside its field. The widths are format decisions,
+One row: `name[24]`, `account[24]`, `secret[32]`, `class[16]`, `home[48]` — each
+a NUL-terminated string inside its field. The widths are format decisions,
 the way FAT's 8.3 is one: a name shares the system's name bound
 (`kNameMax`, `aegir/nmspace.h`), an account names what it says, a v1 plain
-secret fits 32 bytes, and a home is a full `Volume:rest` path —
-`Sys:Homes/` plus the longest name is 34, and the field rounds up with
-room for an explicit one. The version field is how the format grows; v1
-had no home, and v2 is the proof. The source row's `home=` says it,
-defaulting to `Sys:Homes/<name>` — a default FAT can carry only while the
-name is 8.3-clean, so a name that is not needs an explicit `home=`. A
-secret in the v1 table is the plain word itself (see Credentials, below).
+secret fits 32 bytes, a class names a resource-limit class (`specs/limits.md`),
+and a home is a full `Volume:rest` path — `Sys:Homes/` plus the longest name is
+34, and the field rounds up with room for an explicit one. The version field is
+how the format grows; v1 had no home, v2 added it, and v3 adds the class. The
+source row's `home=` says it, defaulting to `Sys:Homes/<name>` — a default FAT
+can carry only while the name is 8.3-clean, so a name that is not needs an
+explicit `home=`; `class=` defaults to `default`. A secret in the v1 table is
+the plain word itself (see Credentials, below).
 
 Lookup is by name, a linear scan: the table is small by definition (it is
 the list of people who may log in), and a table that grows on demand is
@@ -295,3 +296,15 @@ A login gives the session somewhere to be. The decisions:
   `aegir-test`, under its own system badge, reads the same bytes back
   through `Sys:Homes/rroland/WELCOME.TXT`. Two badges, two names, one file:
   the alias is the namespace's, not the session's imagination.
+
+## Classes
+
+A user row carries a **class** (`class=` in the source, the `class[16]` field
+in the table, `default` when absent): the named rule set the user's resource
+limits come from (`specs/limits.md`). This is FreeBSD's login-class split, and
+Aegir keeps it: the user database says *who a user is and what class they are
+in*, and the rules file (`Sys:S/limits.manifest`) says *what the class allows*.
+The user database has no limit fields of its own, so restricting one user is a
+`[user.<name>]` section, not a format change here. `auth` does not read the
+rules; the service that enforces a resource does — for memory, the memory
+service, which reads both tables at boot (`specs/memory.md`).

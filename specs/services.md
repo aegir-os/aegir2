@@ -61,7 +61,10 @@ The manifest is Aegir's service composition: what exists, what it may do, what i
 is charged to, and what it needs before it can start. It is built into director's
 image now, and will be served by a config service later, so that the service set
 can change without reimaging. One format, three roles — source of truth in the
-repo, boot input for director, and the config service's payload.
+repo, boot input for director, and the config service's payload — and the same
+format is the system's **universal configuration**: `Sys:S/limits.manifest`
+(`specs/limits.md`) is a second file of the same shape, and a service that reads
+configuration reads one syntax, not its own.
 
 ### Shape
 

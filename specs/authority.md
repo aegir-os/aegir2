@@ -232,7 +232,10 @@ What multiuser means here, concretely:
 - **Growth policy details.** The owner is the system class, declared in the
   manifest (see Accounts and accounting, above); what is open is only its shape —
   at what point a growth request must be confirmed instead of granted, and what
-  happens at that point. Either way: no hard ceiling, and no fixed per-user quota.
+  happens at that point. Either way: no hard ceiling, and no compiled-in per-user
+  quota — a limit is configuration an operator adds (`specs/limits.md`), never a
+  number in the code. The `confirm` action is the shape this item still owes;
+  `log`/`deny` already land with the memory service.
 - **May users hold device capabilities?** Decided with the console arc
   (2026-09, `specs/console.md`): **no**, for display and input -- the gpu and
   the HID devices are the console's alone, and a session holds windows and

@@ -10,8 +10,9 @@ may take most of the machine's RAM", which a terminal -- or a desktop icon --
 must.
 
 This spec is the service that fixes it: one large pool, allocations on demand,
-per-owner reclaim, and limits that are **configuration**, the way Linux's
-rlimits and cgroup limits are, not numbers in the code.
+per-owner reclaim, and limits that are **configuration** -- `specs/limits.md`,
+the system's `[section]`/`key = value` format -- so the code names no number and
+the default is the machine.
 
 ## Why not capacities
 
@@ -24,10 +25,11 @@ wrong, not the sizes: a child is handed one `untyped` at spawn and its runtime
 its ceiling is that untyped, fixed at spawn.
 
 seL4 gives per-process accounting and hard caps for free, but *which* caps is
-policy. Aegir's are configuration: an operator sets a user's (and later a
-service's) quota, and the code names no number. The user database
-(`specs/auth.md`) is where a first quota field would live; the authority model
-(`specs/authority.md`) is where enforcement sits.
+policy. Aegir's are configuration and **opt-in**: by default a process is
+bounded only by the machine, and an operator adds a rule when they want one
+(`specs/limits.md`). The user database names a user's *class*
+(`specs/auth.md`); the rules live in `Sys:S/limits.manifest`; the authority
+model (`specs/authority.md`) is why there is no cap until one is asked for.
 
 ## The service
 
@@ -55,10 +57,12 @@ copied -- `seL4_RevokeFirst`).
   with it -- and the untyped freed back to the pool. A spawner calls this for a
   child's badge when the child exits, exactly as the VFS's `reap` drops a
   badge's file handles (`specs/vfs.md`).
-- **A quota is enforced at `alloc`.** The service knows the caller's badge; a
-  user badge carries the user index (`aegir/ipc/port.h`). The user's quota is
-  read from configuration, and an allocation past it is refused (the kernel's
-  accounting is the measure; the config is the limit).
+- **Limits are enforced at `alloc`** (`specs/limits.md`). The service knows the
+  caller's badge, and a user badge carries the user index (`aegir/ipc/port.h`);
+  at boot it reads `users.db` for each user's class and `Sys:S/limits.manifest`
+  for the rules, and resolves the caller's `(resource, action)` by precedence.
+  A `deny` refuses the allocation that crosses it; a `log` records the crossing
+  and lets it through; with no rule the allocation is granted from the pool.
 
 ## The owner is the badge, minted per process
 
@@ -87,7 +91,8 @@ fixed seed:
   calls a registered source for another untyped, adopts it, and retries. The
   source is the runtime's: it calls `mem.main`'s `alloc` and returns the chunk.
 - The chunk the child is handed at spawn is its *first* chunk, not its ceiling;
-  a program that wants most of RAM asks for more and gets it, up to its quota.
+  a program that wants most of RAM asks for more and gets it, up to the machine
+  -- or the limits an operator set (`specs/limits.md`).
 
 Nothing about `mmap`/`malloc` changes at the libc edge; only where the memory
 comes from.
@@ -98,7 +103,8 @@ comes from.
 command it asks the service for a chunk owned by the command's id, retypes the
 command's objects and image frames from it, and on exit calls `release`. The
 command pool, the `background-pool`, and the per-command bracket sizes go away;
-there is no fixed bracket, and a command is bounded only by its quota.
+there is no fixed bracket, and a command is bounded only by its limits (by
+default, the machine).
 
 ## Phases
 
@@ -112,16 +118,20 @@ there is no fixed bracket, and a command is bounded only by its quota.
 - **Phase 3 -- the spawner and the per-process badge.** The terminal asks the
   service for a command's chunk, badges the memory copies per process, and
   releases on exit; the command pool and background pool are retired.
-- **Phase 4 -- quotas.** The configuration field (the user database first), the
-  enforcement at `alloc`, and a test that a quota refuses a large allocation.
-- **Phase 5 -- `Run`/`NewCLI`** (`specs/process.md` becomes this spec's tail):
-  with no per-command pool, a background command is one more process whose
-  memory is its own quota's, and `Run` is "spawn without waiting".
+- **Phase 4 -- limits.** `specs/limits.md`: the rule parser and the shipped
+  `Sys:S/limits.manifest`, the user database's `class=` field, and the
+  enforcement at `alloc`. The manifest gains `vfs.namespace`, because the
+  service reads `users.db` and `Sys:S/limits.manifest` at boot. The test proves
+  the default is unrestricted, that a `deny` refuses, and that a `log` reports.
+- **Phase 5 -- `Run`/`NewCLI`.** With no per-command pool, a background command
+  is one more process under its own limits, and `Run` is "spawn without
+  waiting".
 
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
 - **A general frame broker.** What a process gets is untyped it retypes from;
   a device's frames stay the device manager's (`specs/services.md`).
-- **A complete policy engine.** One quota per user is the first field; per
-  service, per session and soft/hard limits are later.
+- **A complete policy engine.** One resource, two actions and three subjects
+  are the first cut; per-service and per-session subjects, a growth a supervisor
+  confirms (`confirm`), and `signal`/`throttle` are later (`specs/limits.md`).
