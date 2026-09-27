@@ -54,6 +54,10 @@ aegir::mem::Account g_account{"auth", 0, 0, 0};
  * exactly what starting a session takes. */
 seL4_CPtr g_spawn_log = 0;
 seL4_CPtr g_spawn_nmspace = 0;
+/* The memory service, delegatable to the terminals (specs/memory.md Phase 3):
+ * a terminal mints a per-command copy from it, so a command's chunks are owned
+ * by its own badge and released when it exits. Unbadged like the rest. */
+seL4_CPtr g_spawn_mem = 0;
 /* The clock, for the session's terminal and its commands: the DOS tools ask
  * the time through it (specs/dos.md), and the shell's Date/Time read it. The
  * timer is the interval side (specs/timer.md): the shell's Wait sleeps on it. */
@@ -755,18 +759,11 @@ void start_session(uint32_t user, bool bureau) noexcept
             g_session_mem.carve_untyped(kTerminalUntypedBits, session_account,
                                         &terminal_untyped_error,
                                         &terminal_untyped_physical);
-        /* The command pool: the session's commands are retyped from it by the
-         * terminal itself, and a command's exit is one revoke of the pool
-         * (specs/shell.md's Phase 4). 4 MiB holds a command's objects and the
-         * 1 MiB untyped its own runtime gets, and is reclaimable each time. */
-        constexpr uint32_t kTerminalCommandPoolBits = 22;
-        seL4_Error command_pool_error = seL4_NoError;
-        uint64_t command_pool_physical = 0;
-        seL4_CPtr const terminal_command_pool =
-            g_session_mem.carve_untyped(kTerminalCommandPoolBits, session_account,
-                                        &command_pool_error, &command_pool_physical);
         /* The shell pool: the shell is its own process now, and its runtime
-         * untyped is carved once from here and never reclaimed (specs/shell.md). */
+         * untyped is carved once from here and never reclaimed (specs/shell.md).
+         * A command's memory no longer comes from a pool: the terminal asks the
+         * memory service for a chunk owned by the command's own badge
+         * (specs/memory.md Phase 3). */
         constexpr uint32_t kTerminalShellPoolBits = 22;
         seL4_Error shell_pool_error = seL4_NoError;
         uint64_t shell_pool_physical = 0;
@@ -787,14 +784,15 @@ void start_session(uint32_t user, bool bureau) noexcept
              * does: the capability entry is what adopt_memory looks up. */
             {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3,
              terminal_untyped, seL4_AllRights, 0, kTerminalUntypedBits},
-            /* The command pool (specs/shell.md): the memory the session's
-             * commands come out of, reclaimed whole when one exits, plus the
-             * ASID pool their address spaces come from and the unbadged copies
-             * their own caps are minted from. An unbadged copy is what a
-             * spawning parent needs, because a badged endpoint cap cannot be
-             * minted again (specs/authority.md). */
-            {"command-pool", 12, aegir::bootstrap::kSlotFirstDeclared + 4,
-             terminal_command_pool, seL4_AllRights, 0, kTerminalCommandPoolBits},
+            /* The memory service (specs/memory.md Phase 3): the terminal mints
+             * a copy badged for each command, so a command's chunks are owned
+             * by its own badge and released when it exits. Plus the ASID pool
+             * their address spaces come from and the unbadged copies their own
+             * caps are minted from. An unbadged copy is what a spawning parent
+             * needs, because a badged endpoint cap cannot be minted again
+             * (specs/authority.md). */
+            {"spawn:mem.main", 14, aegir::bootstrap::kSlotFirstDeclared + 4,
+             g_spawn_mem, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
             {"asid-pool", 9, aegir::bootstrap::kSlotFirstDeclared + 5, g_asid_pool,
              seL4_AllRights, 0, 0},
             {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
@@ -833,13 +831,13 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_request.cwd_length = sizeof(kHomeCwd) - 1;
         terminal_request.priority = seL4_MaxPrio - 2;
         terminal_request.ports = terminal_ports;
-        /* The spawn kit's four entries are dead when the carve failed: the
+        /* The spawn kit's entries are dead when the memory grant failed: the
          * count keeps them out, the terminal runs without a spawner, and it
          * says so rather than failing to start. The clock and timer ride last,
          * each only when auth was given one (and the timer only when the clock
          * is, so the count never skips a slot). */
         uint32_t terminal_port_count = 4;
-        if (terminal_command_pool != 0) {
+        if (g_spawn_mem != 0) {
             terminal_port_count = 9;
             if (g_spawn_clock != 0) {
                 terminal_port_count = 10;
@@ -893,7 +891,7 @@ void start_session(uint32_t user, bool bureau) noexcept
 bool start_boot_session(aegir::mem::Arena &arena) noexcept
 {
     if (g_spawn_gui == 0 || g_spawn_nmspace == 0 || g_spawn_log == 0 ||
-        g_asid_pool == 0 || g_binaries_bytes == 0) {
+        g_spawn_mem == 0 || g_asid_pool == 0 || g_binaries_bytes == 0) {
         write("      auth: no kit for the boot session -- Startup-Sequence is skipped\n");
         return true;
     }
@@ -910,16 +908,11 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     uint64_t terminal_untyped_physical = 0;
     seL4_CPtr const terminal_untyped = g_objects.carve_untyped(
         kTerminalUntypedBits, account, &error, &terminal_untyped_physical);
-    constexpr uint32_t kCommandPoolBits = 22;
-    uint64_t command_pool_physical = 0;
-    seL4_CPtr const command_pool = g_objects.carve_untyped(
-        kCommandPoolBits, account, &error, &command_pool_physical);
     constexpr uint32_t kShellPoolBits = 22;
     uint64_t shell_pool_physical = 0;
     seL4_CPtr const shell_pool = g_objects.carve_untyped(
         kShellPoolBits, account, &error, &shell_pool_physical);
-    if (fault == 0 || boot_status == 0 || terminal_untyped == 0 ||
-        command_pool == 0 || shell_pool == 0) {
+    if (fault == 0 || boot_status == 0 || terminal_untyped == 0 || shell_pool == 0) {
         write("      auth: FAIL no memory for the boot session\n");
         return false;
     }
@@ -950,8 +943,8 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
          seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, terminal_untyped,
          seL4_AllRights, 0, kTerminalUntypedBits},
-        {"command-pool", 12, aegir::bootstrap::kSlotFirstDeclared + 4, command_pool,
-         seL4_AllRights, 0, kCommandPoolBits},
+        {"spawn:mem.main", 14, aegir::bootstrap::kSlotFirstDeclared + 4, g_spawn_mem,
+         seL4_CapRights_new(1, 1, 0, 1), 0, 0},
         {"asid-pool", 9, aegir::bootstrap::kSlotFirstDeclared + 5, g_asid_pool,
          seL4_AllRights, 0, 0},
         {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
@@ -1415,6 +1408,14 @@ int main(int argc, char *argv[])
     uint64_t spawn_bureau_menu_slot = 0;
     if (aegir::bootstrap::capability("spawn:bureau.menu", 17, &spawn_bureau_menu_slot)) {
         g_spawn_bureau_menu = static_cast<seL4_CPtr>(spawn_bureau_menu_slot);
+    }
+    /* The memory service, for the terminals to hand their commands
+     * (specs/memory.md Phase 3). Director grants it because the terminal
+     * entries need mem.main; a boot without it runs commands on their seed
+     * only, which the terminal reports rather than failing. */
+    uint64_t spawn_mem_slot = 0;
+    if (aegir::bootstrap::capability("spawn:mem.main", 14, &spawn_mem_slot)) {
+        g_spawn_mem = static_cast<seL4_CPtr>(spawn_mem_slot);
     }
     /* The clock is optional too: a session without one still runs, and only
      * the tools that ask the time report it (specs/dos.md). Director grants

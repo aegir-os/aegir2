@@ -1,8 +1,8 @@
 # memory: the memory service
 
-Status: decided (2026-09); the service and the runtime's source are landed
-(phases 1-2); the spawner, the limits and `Run`/`NewCLI` are next. Aegir's
-memory is, today,
+Status: decided (2026-09); the service, the runtime's source and the
+per-process spawner are landed (phases 1-3); the limits and `Run`/`NewCLI`
+are next. Aegir's memory is, today,
 a set of **static partitions**: director carves fixed untypeds for services,
 auth carves a fixed command pool and passes it to the terminal, and the
 terminal carves a fixed per-command untyped for each program. A program's
@@ -121,9 +121,11 @@ default, the machine).
   `mem.main`. The cxx-smoke client is spawned with a 256 KiB seed and
   heap-allocates past it, so its pages come from the service -- every hosted
   program given the port grows the same way.
-- **Phase 3 -- the spawner and the per-process badge.** The terminal asks the
-  service for a command's chunk, badges the memory copies per process, and
-  releases on exit; the command pool and background pool are retired.
+- **Phase 3 -- the spawner and the per-process badge.** Landed. The terminal
+  mints a `mem.main` copy badged for each command, so the command's objects,
+  image frames and runtime growth are all owned by its id and come back in one
+  `release`; the command pool is gone. Auth hands the terminal the delegatable
+  copy instead of carving a pool.
 - **Phase 4 -- limits.** `specs/limits.md`: the rule parser and the shipped
   `Sys:S/limits.manifest`, the user database's `class=` field, and the
   enforcement at `alloc`. The manifest gains `vfs.namespace`, because the

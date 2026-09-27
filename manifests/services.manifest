@@ -296,8 +296,9 @@ needs     = log.main, vfs.namespace, console.gui
 spawns    = session.*, greeter, system.*
 # Auth's delegation holds the greeter's kit, the session pool the bureau and
 # the terminal come out of, and auth's own objects. A session's pool holds
-# both toolkit children, the terminal's command pool, and both images -- so
-# the pool is 16 MiB and auth's delegation 32.
+# both toolkit children, the terminal's own untyped and the shell pool -- a
+# command's memory is the memory service's now (specs/memory.md), not a pool
+# here -- so the pool is 16 MiB and auth's delegation 32.
 delegate_mib = 32
 # Its stack: the default 8 KiB was already close, and the session start --
 # ensure_home's path buffers, the spawn's own frames -- tipped it over into a
@@ -326,7 +327,7 @@ restart   = never
 binary    = aegir-terminal
 authority = system
 account   = system
-needs     = log.main, vfs.namespace, console.gui
+needs     = log.main, vfs.namespace, console.gui, mem.main
 restart   = never
 
 # The spawn smoke client. It proves the C++ path end to end (ABI, static
@@ -443,5 +444,5 @@ restart   = never
 binary    = aegir-terminal
 authority = user
 account   = user
-needs     = log.main, vfs.namespace, console.gui, clock.main, timer.main
+needs     = log.main, vfs.namespace, console.gui, clock.main, timer.main, mem.main
 restart   = never

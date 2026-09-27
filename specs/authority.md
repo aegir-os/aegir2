@@ -492,17 +492,19 @@ portable one, and a driver that finds no pair polls.
   case -- it starts commands it cannot name in advance -- and it still is not
   handed the initrd: the shell reads the one command's bytes from `Initrd:`
   through the namespace and passes `binary_image` (specs/shell.md).
-- A session's terminal is delegated a **4 MiB command pool** and a copy of
+- A session's terminal is delegated a copy of **mem.main** and a copy of
   auth's ASID pool, and auth's delegation is **32 MiB** with a **16 MiB**
-  session pool (specs/auth.md). The terminal adopts the pool into an allocator
-  of its own, over a CSpace sub-range the toolkit reserves, so a command's
-  exit is one revoke and one slot release -- a long-lived spawner reclaims
-  where a shared allocator could not (specs/shell.md's Phase 4). The window is
-  still the toolkit's: a process has one VSpace root.
+  session pool (specs/auth.md). The terminal mints a mem.main copy badged for
+  each command, so the command's chunks -- its objects, image frames and
+  runtime growth alike -- are owned by its own id and come back in one
+  `release` (specs/memory.md Phase 3). The command's CSpace comes from a
+  sub-range the toolkit reserves, so a long-lived spawner reclaims where a
+  shared allocator could not (specs/shell.md's Phase 4). The window is still
+  the toolkit's: a process has one VSpace root.
 - The terminal is also delegated a **4 MiB shell pool**: the shell is its own
   process now, spawned once from that pool and never reclaimed, so its memory
-  is separate from the command pool's (specs/shell.md's Phase 6). The terminal
-  keeps the command pool and starts the shell's commands on its request.
+  is separate from the commands' (specs/shell.md's Phase 6). The terminal
+  starts the shell's commands on its request.
 - Badges for a service's spawned children count from **256** for the device manager's
   (the low badges are director's boot set), from **512** for the partition
   manager's, and from **768** for auth's -- the greeter is auth's system child

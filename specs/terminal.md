@@ -190,7 +190,7 @@ commands) and the terminal's own key path, which reaches the same stream
 directly because a process cannot call its own endpoint. The terminal also
 owns the shell's spawn: `SpawnKit::spawn_shell` starts `aegir-shell` once from
 auth's `shell-pool`, and the shell's `run` calls come back to the terminal,
-which holds the command pool.
+which spawns each command on a mem.main copy badged for it (specs/memory.md).
 
 ### The terminal's window and render
 

@@ -23,6 +23,7 @@
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/memory.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/process.h>
 #include <aegir/timer.h>
@@ -236,6 +237,15 @@ int main(int argc, char *argv[])
             return false;
         }
 
+        /* The command's id: its stream badge and, now, its memory owner
+         * (specs/memory.md Phase 3). Its chunks are owned by this badge, so
+         * one release on exit takes its whole life back. */
+        uint64_t const command_badge = 0x1000 + command_serial++;
+        if (!spawn_kit.begin_command(command_badge)) {
+            write("  terminal: FAIL no memory copy for the command\n");
+            spawn_kit.abort();
+            return false;
+        }
         aegir::mem::Account account{"command", 0, 0, 0};
         seL4_Error untyped_error = seL4_NoError;
         uint64_t command_untyped_physical = 0;
@@ -255,7 +265,7 @@ int main(int argc, char *argv[])
             argument_pointers.push_back(arg.c_str());
         }
         static std::string const kAccountText = "command";
-        aegir::spawn::PortGrant ports[6] = {
+        aegir::spawn::PortGrant ports[7] = {
             {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
              aegir::bootstrap::kSlotFirstDeclared, spawn_kit.stream_endpoint(),
              seL4_CapRights_new(1, 1, 0, 1), kShellStream, 0},
@@ -278,8 +288,15 @@ int main(int argc, char *argv[])
             {aegir::console::kDoorbellName, aegir::console::kDoorbellNameLength,
              aegir::bootstrap::kSlotFirstDeclared + 3, spawn_kit.command_doorbell(),
              seL4_AllRights, 0, 0, false, true},
+            /* The memory service, as the copy of the command's own badged cap:
+             * the child's runtime grows through mem.main within the ownership
+             * the terminal's copy has, and copied rather than minted because
+             * the badge is already on it (specs/memory.md Phase 3). */
+            {aegir::memory::kPortName, aegir::memory::kPortNameLength,
+             aegir::bootstrap::kSlotFirstDeclared + 4, spawn_kit.command_mem(),
+             seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true},
         };
-        uint32_t port_count = 4;
+        uint32_t port_count = 5;
         if (spawn_kit.command_clock_port() != 0) {
             /* The clock, minted from the terminal's unbadged copy: the tools
              * ask the time through the runtime's clock_gettime (specs/dos.md). */
@@ -324,7 +341,7 @@ int main(int argc, char *argv[])
         request.ports = ports;
         request.port_count = port_count;
         request.fault_endpoint = spawn_kit.fault_endpoint();
-        request.badge = 0x1000 + command_serial++;
+        request.badge = command_badge;
         request.give_vspace = true;
         request.untyped_physical = command_untyped_physical;
         request.untyped_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;

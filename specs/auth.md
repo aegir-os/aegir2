@@ -205,10 +205,10 @@ A successful login starts a session. The decisions, taken 2026-09:
   commands.** A session runs user processes as ordinary use
   (`specs/authority.md`), and the terminal is the process that does: it
   holds the current directory and parses the line, so only it can build the
-  request. Auth hands it a 4 MiB **command pool** -- the commands are retyped
-  from it, and a command's exit is one revoke of the pool, so a long-lived
-  terminal reclaims each command whole (specs/shell.md's Phase 4) -- a copy of
-  auth's ASID pool, and the unbadged `spawn:log.main` and
+  request. Auth hands it a copy of `mem.main` -- the terminal mints a copy
+  badged for each command, so the command's chunks are owned by its own id and
+  come back in one `release` (specs/memory.md Phase 3), where a pool was one
+  revoke -- a copy of auth's ASID pool, and the unbadged `spawn:log.main` and
   `spawn:vfs.namespace` copies its commands' own caps are minted from (an
   unbadged copy, because a badged endpoint cap cannot be minted again). The
   terminal's own toolkit untyped is 4 MiB: its heap holds the image of a

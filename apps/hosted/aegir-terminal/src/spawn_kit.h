@@ -35,9 +35,10 @@ namespace aegir::terminal {
 
 class SpawnKit {
 public:
-    /* The untyped a command's own runtime is given: its heap and page tables
-     * are retyped from it, and it is carved from the command pool so the
-     * command's exit reclaims it. */
+    /* The untyped a command's own runtime is given at spawn: its heap and page
+     * tables are retyped from it, and it is the command's *first* chunk, not
+     * its ceiling -- the runtime asks mem.main for more as it grows
+     * (specs/memory.md). */
     static constexpr uint32_t kCommandUntypedBits = 20; /* 1 MiB */
 
     /* Adopt the delegated kit. False when a grant is missing or an endpoint
@@ -46,18 +47,30 @@ public:
 
     bool ready() const { return ready_; }
 
-    /* Bracket the commands of one line: begin() re-adopts the pool and the
-     * reserved slots and builds a spawner; finish_all() suspends the commands
-     * (a pipeline may have several), revokes the pool, releases the slots and
-     * drops the staging. */
+    /* Bracket the commands of one line: begin() re-adopts the reserved slots
+     * and builds a spawner; begin_command() mints the memory copy a command's
+     * chunks are owned by, called once per stage before it is spawned;
+     * finish_all() suspends the commands (a pipeline may have several),
+     * releases each command's memory back to the service, releases the slots
+     * and drops the staging. */
     bool begin();
+    bool begin_command(uint64_t badge);
     void finish_all(std::vector<aegir::spawn::Process> const &processes);
     void abort();
 
     aegir::spawn::Spawner& spawner() { return *spawner_; }
-    /* The allocator over the command pool: a command's own runtime untyped is
-     * carved from it, so the command's exit reclaims that too. */
+    /* The allocator over the command chunks: the spawner's objects and a
+     * command's seed are retyped from it, and its untyped source is mem.main
+     * (specs/memory.md). */
     aegir::mem::Allocator& memory();
+
+    /* The unbadged mem.main copy, for the terminal's release calls. */
+    seL4_CPtr mem_port() const { return mem_port_; }
+    /* The current command's memory copy: minted from mem_port_ and badged with
+     * the command's id, so the service records its chunks as that command's.
+     * A copy of it goes to the command, so its own runtime grows within the
+     * same ownership. */
+    seL4_CPtr command_mem() const { return command_mem_; }
 
     /* The endpoint the terminal serves con.stream on; a command gets a caller
      * copy of it, badged with the stream it shares. */
@@ -123,8 +136,13 @@ private:
     seL4_CPtr command_timer_port_ = 0;
     seL4_CPtr boot_status_ = 0;
     seL4_CPtr asid_pool_ = 0;
-    seL4_CPtr command_pool_ = 0;
-    uint32_t command_pool_bits_ = 0;
+    /* The unbadged mem.main copy, and the per-command copy minted from it
+     * (specs/memory.md Phase 3). The command copy lives in one slot, re-minted
+     * for each stage; command_badges_ is what reclaim releases. */
+    seL4_CPtr mem_port_ = 0;
+    seL4_CPtr command_mem_ = 0;
+    bool command_mem_live_ = false;
+    std::vector<uint64_t> command_badges_;
     seL4_CPtr shell_pool_ = 0;
     uint32_t shell_pool_bits_ = 0;
     uintptr_t scratch_mark_ = 0;
