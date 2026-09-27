@@ -4,10 +4,11 @@ the service (specs/auth.md).
 
 Usage: make_users.py <source> <output>
 
-The source is one row per user, `name=.. secret=.. account=.. home=..`
-(account defaults to the name, home to `Sys:Homes/<name>`), `#` comments and
-blank lines skipped. The output is the table auth parses directly: a 16-byte
-header, then 128-byte rows of NUL-terminated fields.
+The source is one row per user, `name=.. secret=.. account=.. home=.. class=..`
+(account defaults to the name, home to `Sys:Homes/<name>`, class to
+`default`), `#` comments and blank lines skipped. The output is a v3 table auth
+and the memory service parse directly: a 16-byte header, then 144-byte rows of
+NUL-terminated fields (specs/auth.md).
 """
 
 import argparse
@@ -16,10 +17,11 @@ import sys
 from pathlib import Path
 
 MAGIC = b"AUDB"
-VERSION = 2
+VERSION = 3
 NAME_BYTES = 24
 ACCOUNT_BYTES = 24
 SECRET_BYTES = 32
+CLASS_BYTES = 16
 HOME_BYTES = 48
 
 
@@ -52,11 +54,13 @@ def main() -> int:
             return 1
         account = fields.get("account", fields["name"])
         home = fields.get("home", f"Sys:Homes/{fields['name']}")
+        klass = fields.get("class", "default")
         try:
             rows.append(
                 field(fields["name"], NAME_BYTES, "the name", number)
                 + field(account, ACCOUNT_BYTES, "the account", number)
                 + field(fields["secret"], SECRET_BYTES, "the secret", number)
+                + field(klass, CLASS_BYTES, "the class", number)
                 + field(home, HOME_BYTES, "the home", number)
             )
         except ValueError as problem:

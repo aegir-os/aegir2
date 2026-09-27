@@ -107,6 +107,20 @@ AEGIR_BFS_TREE = [
         # Every interactive shell runs this when the user's Home:S/Shell-Startup
         # is absent (specs/shell.md).
         ("file", "Shell-Startup", b"alias l list\n"),
+        # Resource limits, opt-in (specs/limits.md): the shipped file is
+        # comments plus the commented-out default example, so out of the box
+        # it restricts nothing. An operator edits it without reimaging.
+        ("file", "limits.manifest",
+         b"# Sys:S/limits.manifest -- resource limits, opt-in (specs/limits.md).\n"
+         b"#\n"
+         b"# With no matching rule a user may use as much memory as the pool holds:\n"
+         b"# the limit is the machine. A rule adds visibility (log) or a backstop\n"
+         b"# (deny). A rule is <resource>_<action> = amount, in a subject's section.\n"
+         b"# Subjects are the default, a class, or a user; a user's class comes from\n"
+         b"# the user database (specs/auth.md), and a user: section overrides its class.\n"
+         b"\n"
+         b"[default]\n"
+         b"# memory_log = 64M\n"),
         # Run once by the system boot session, then closed. EndCLI >NIL: is
         # the Amiga's quiet close; it needs the NIL: handler (specs/boot.md).
         ("file", "Startup-Sequence",
