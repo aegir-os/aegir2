@@ -192,6 +192,27 @@ void check_problems()
     expect_problem("memory_log = 1M\n", 1, "a key before any section is a problem");
 }
 
+/* The enforcement decision: no rule never crosses, exactly the amount does
+ * not, and one byte over does. */
+void check_crosses()
+{
+    Amount const none{false, 0};
+    expect(!aegir::limits::crosses(none, 1ull << 30, 1ull << 30), "no rule never crosses");
+
+    Amount const limit{true, 4ull << 20};
+    expect(!aegir::limits::crosses(limit, 2ull << 20, 2ull << 20),
+           "exactly the limit does not cross");
+    expect(aegir::limits::crosses(limit, 2ull << 20, (2ull << 20) + 1),
+           "one byte over the limit crosses");
+    expect(aegir::limits::crosses(limit, 4ull << 20, 1),
+           "an allocation from an at-limit subject crosses");
+    expect(!aegir::limits::crosses(limit, 1ull << 20, 1ull << 20),
+           "below the limit does not cross");
+    /* A want that would wrap is a crossing, not a grant. */
+    expect(aegir::limits::crosses(limit, UINT64_MAX, 1),
+           "a wrapping total crosses");
+}
+
 }  // namespace
 
 int main()
@@ -203,6 +224,7 @@ int main()
     check_user_inherits_class();
     check_amounts();
     check_problems();
+    check_crosses();
 
     std::printf("limits: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

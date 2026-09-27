@@ -240,13 +240,15 @@ restart   = always
 # when the caller releases. It maps its own -- `maps` gives it the untyped
 # whole, which is what it carves -- and `memory = rest` gives it the untypeds
 # the boot did not spend: the pool is the host's memory, not a constant. A
-# process's ceiling is its quota, not this grant.
+# process's ceiling is the limits of specs/limits.md, not this grant: it reads
+# the user database and Sys:S/limits.manifest through the namespace at boot
+# and refuses or reports a user's crossing at alloc.
 [memory]
 binary    = aegir-memory
 authority = system
 account   = system
 owns      = mem.main
-needs     = log.main
+needs     = log.main, vfs.namespace
 maps      = true
 memory    = rest
 restart   = always

@@ -422,9 +422,10 @@ preserves that badge, so a command is handed the same identity the shell has
 terminal must know -- the copy carries what the terminal's own cap carried. The
 clock arrives the same way when the tools that need it do. The command's runtime
 finds the port by name (`aegir-heap/src/files.cc`, `time.cc`) and the command
-names no slot. (The process's *own* badge is a separate placeholder until the
-bootstrap block carries it, `specs/shell.md`; the ports a command is given carry
-the session's identity either way.)
+names no slot. (The process's *own* badge was a placeholder until the bootstrap
+block carried it, which landed with memory's Phase 4 -- specs/shell.md,
+specs/memory.md; the ports a command is given carry the session's identity
+either way.)
 ### A frame cap serves one address space; the copies come first
 
 A frame's *first* mapping pins it: the mapped ASID and address are written into the

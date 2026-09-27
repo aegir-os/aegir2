@@ -45,6 +45,13 @@ struct Amount {
     uint64_t bytes;
 };
 
+/** Whether a subject holding `committed` bytes, asking for `want` more, crosses
+ *  `amount`: the allocation that pushes it over. False when no rule is set, and
+ *  false at exactly the amount -- the limit is the largest allowed total, not
+ *  the first refused one. The service's `alloc` is the caller: a deny refuses
+ *  the allocation this is true for, and a log records it (specs/limits.md). */
+bool crosses(Amount amount, uint64_t committed, uint64_t want) noexcept;
+
 class Limits {
 public:
     struct Problem {

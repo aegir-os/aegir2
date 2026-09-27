@@ -1,11 +1,11 @@
 # limits: resource limits, configuration
 
-Status: decided (2026-09), first implementation with the memory service's Phase 4.
-Aegir's processes are bounded by **the machine** by default: nothing limits how
-much of memory a user's programs may use until an operator says so. This spec is
-that "says so" -- the configuration, the subjects it applies to, and the
-precedence -- so that restricting a user is a deployment decision, not a number
-someone guessed when the system was built.
+Status: decided (2026-09); implemented with the memory service's Phase 4
+(specs/memory.md). Aegir's processes are bounded by **the machine** by default:
+nothing limits how much of memory a user's programs may use until an operator
+says so. This spec is that "says so" -- the configuration, the subjects it
+applies to, and the precedence -- so that restricting a user is a deployment
+decision, not a number someone guessed when the system was built.
 
 It generalizes: memory is the first resource, because the memory service
 (`specs/memory.md`) is where the first chokepoint is, but the shape covers any

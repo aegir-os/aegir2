@@ -1,8 +1,8 @@
 # memory: the memory service
 
-Status: decided (2026-09); the service, the runtime's source and the
-per-process spawner are landed (phases 1-3); the limits and `Run`/`NewCLI`
-are next. Aegir's memory is, today,
+Status: decided (2026-09); the service, the runtime's source, the per-process
+spawner and the limits are landed (phases 1-4); `Run`/`NewCLI` is next.
+Aegir's memory is, today,
 a set of **static partitions**: director carves fixed untypeds for services,
 auth carves a fixed command pool and passes it to the terminal, and the
 terminal carves a fixed per-command untyped for each program. A program's
@@ -126,11 +126,16 @@ default, the machine).
   image frames and runtime growth are all owned by its id and come back in one
   `release`; the command pool is gone. Auth hands the terminal the delegatable
   copy instead of carving a pool.
-- **Phase 4 -- limits.** `specs/limits.md`: the rule parser and the shipped
-  `Sys:S/limits.manifest`, the user database's `class=` field, and the
-  enforcement at `alloc`. The manifest gains `vfs.namespace`, because the
-  service reads `users.db` and `Sys:S/limits.manifest` at boot. The test proves
-  the default is unrestricted, that a `deny` refuses, and that a `log` reports.
+- **Phase 4 -- limits.** Landed. `specs/limits.md`: the rule parser
+  (`aegir-limits`, host-tested), the shipped `Sys:S/limits.manifest`, the user
+  database's `class=` field (AUDB v3), and the enforcement at `alloc`. The
+  service's manifest gains `vfs.namespace`, and it reads `Initrd:users.db` and
+  `Sys:S/limits.manifest` at boot, resolving each user's `(memory, log)` and
+  `(memory, deny)` once. The temporary command badge is gone with it: the
+  process's own badge rides in the bootstrap block, so a session terminal mints
+  its commands' memory as user badges and limits apply. The default is
+  unrestricted; a `deny` refuses the chunk that crosses it and a `log` reports
+  it.
 - **Phase 5 -- `Run`/`NewCLI`.** With no per-command pool, a background command
   is one more process under its own limits, and `Run` is "spawn without
   waiting".

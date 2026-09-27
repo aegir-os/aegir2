@@ -236,7 +236,8 @@ this arc's record of the order.
   in a loop lets the terminal run between asks, and a read that waits for
   input is the later method (`specs/terminal.md`). Two
   interims remain from Phase 3: a command's badge is still a placeholder (the
-  session's user badge needs the process's own badge in the bootstrap block),
+  session's user badge needs the process's own badge in the bootstrap block,
+  which landed with memory's Phase 4, specs/memory.md),
   and a command holds the console stream and its runtime untyped, no namespace
   or log.
 - **Phase 5 — the DOS toolset.** `Set`/`SetVar` and `Get`/`GetVar` over
@@ -263,7 +264,8 @@ this arc's record of the order.
   otherwise delay the cue past the demo's zoom. The line editor, the history
   and the grid stay the terminal's; only the words moved. Two interims from
   Phase 3 remain: the command badge is still a placeholder, and a command holds
-  only the console stream and its runtime untyped.
+  only the console stream and its runtime untyped. (The badge landed with
+  memory's Phase 4, specs/memory.md.)
 - **Phase 7 — the DOS toolset.** `specs/dos.md`: the CLI commands as hosted
   programs in `Sys:C`, one binary each, with `ReadArgs` templates
   (`aegir::args`), and the plumbing that lets a command touch files without

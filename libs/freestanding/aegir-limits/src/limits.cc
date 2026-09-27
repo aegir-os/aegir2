@@ -342,4 +342,15 @@ Amount Limits::resolve(View user, View klass, Resource resource, Action action) 
     return best;
 }
 
+bool crosses(Amount amount, uint64_t committed, uint64_t want) noexcept
+{
+    if (!amount.set) {
+        return false;
+    }
+    if (want > UINT64_MAX - committed) {
+        return true;
+    }
+    return committed + want > amount.bytes;
+}
+
 }  // namespace aegir::limits
