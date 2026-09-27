@@ -290,6 +290,34 @@ unsigned Allocator::largest_free_bits() const noexcept
 
 bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 {
+    if (refill_inner(device, size_bits)) {
+        return true;
+    }
+    /* The free lists hold nothing at any size. Ask the source for another
+     * untyped, adopt it, and search again (specs/memory.md). Device memory has
+     * no source: it comes from the bootinfo or nowhere. */
+    if (device || !grow_from_source()) {
+        return false;
+    }
+    return refill_inner(device, size_bits);
+}
+
+bool Allocator::grow_from_source() noexcept
+{
+    if (untyped_source_ == nullptr) {
+        return false;
+    }
+    seL4_Word size_bits = 0;
+    uint64_t physical = 0;
+    seL4_CPtr const cap = untyped_source_(untyped_context_, &size_bits, &physical);
+    if (cap == 0 || size_bits == 0) {
+        return false;
+    }
+    return adopt_untyped(cap, size_bits, physical);
+}
+
+bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
+{
     Node **const lists = this->lists(device);
     /* A listed piece is supposed to be whole. If one is not -- it cannot yield
      * a child -- it leaves the list and the loop looks for the next piece,
@@ -303,7 +331,7 @@ bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
         if (size_bits + 1 >= seL4_WordBits) {
             return false;
         }
-        if (!refill(device, size_bits + 1)) {
+        if (!refill_inner(device, size_bits + 1)) {
             return false;
         }
         Node *const parent = lists[size_bits + 1];

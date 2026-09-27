@@ -43,6 +43,8 @@
 #include <aegir/debug.h>
 #include <aegir/console_stream.h>
 #include <aegir/console_stream_client.h>
+#include <aegir/ipc/port.h>
+#include <aegir/memory.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/thread.h>
@@ -161,6 +163,54 @@ bool map_page(uintptr_t address) noexcept
     return g_scratch->map_at(address, frame);
 }
 
+/* The memory service, found once by name through the bootstrap block, the way
+ * the console stream and the clock are (specs/memory.md). A process not given
+ * the port has an invalid consumer, and its heap is bounded by its seed as
+ * before. */
+aegir::ipc::Consumer &memory_port() noexcept
+{
+    static aegir::ipc::Consumer const service = aegir::ipc::Consumer::find(
+        aegir::memory::kPortName, aegir::memory::kPortNameLength);
+    return const_cast<aegir::ipc::Consumer &>(service);
+}
+
+/* The allocator's untyped source (specs/memory.md): ask mem.main for a chunk
+ * and hand the capability back for the allocator to adopt. The chunk is a
+ * pristine untyped -- nothing derived from it -- so the heap can retype its
+ * next page, page table or mmap from it. The capability rides the reply into
+ * the scratch receive slot and is moved into a slot of the allocator's own,
+ * because it must stay addressable for every object retyped from it later. */
+seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
+                                 uint64_t *paddr) noexcept
+{
+    auto *const allocator = static_cast<aegir::mem::Allocator *>(context);
+    aegir::ipc::Consumer &service = memory_port();
+    if (allocator == nullptr || !service.valid()) {
+        return 0;
+    }
+    uint64_t const request = aegir::memory::kChunkBits;
+    uint64_t answer[1] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply = service.call_transfer(
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        return 0;
+    }
+    seL4_CPtr const slot = allocator->alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        /* The chunk is still in the scratch receive slot; drop it, or the next
+         * transfer is refused an occupied slot. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::kCNodeBits);
+        return 0;
+    }
+    *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
+                                                         : aegir::memory::kChunkBits);
+    *paddr = 0;
+    return slot;
+}
+
 /* Give the process musl's TLS. musl's __init_libc rewrites the raw auxv into a
  * flat array indexed by tag before handing it to __init_tls
  * (projects/musl/src/env/__libc_start_main.c:25-29), and a hosted Aegir
@@ -250,6 +300,11 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     }
     g_allocator = &allocator;
     g_scratch = &scratch;
+
+    /* The untyped source (specs/memory.md): when the seed the process was
+     * handed runs out, the allocator asks mem.main for another chunk. A
+     * process not given the port keeps the seed as its ceiling. */
+    allocator.set_untyped_source(runtime_untyped_source, &allocator);
 
     /* The file layer's capability slots come from the same allocator. */
     files::adopt(allocator);

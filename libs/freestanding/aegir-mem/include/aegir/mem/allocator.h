@@ -202,6 +202,25 @@ public:
     }
 
     /**
+     * Where another untyped comes from when the free lists hold none
+     * (specs/memory.md): the runtime's growth. The source is called with the
+     * context given here and returns a capability to adopt, its size in bits
+     * through `*size_bits`, and its physical base through `*paddr` (zero when
+     * the giver did not say). Zero means the source has nothing, and the
+     * allocation fails as it did before.
+     *
+     * A source is asked at most once per allocation, and the piece it answers
+     * with is adopted before the search is retried -- so the shape is
+     * "refill, source, refill", not a loop the source can never satisfy.
+     */
+    using UntypedSource = seL4_CPtr (*)(void *context, seL4_Word *size_bits, uint64_t *paddr);
+    void set_untyped_source(UntypedSource source, void *context) noexcept
+    {
+        untyped_source_ = source;
+        untyped_context_ = context;
+    }
+
+    /**
      * The radix of this process's own CNode, for the slot operations that
      * address a *slot* rather than the node: `free_piece` deletes a capability
      * at this depth, and a service -- whose retype depth is zero, the node
@@ -309,8 +328,19 @@ private:
     Node **lists(bool device) noexcept { return device ? dev_heads_ : heads_; }
 
     /** Make sure `size_bits` has a free piece, splitting a larger one into two
-     *  equal buddies until it does (allocman's `_refill_pool`). */
+     *  equal buddies until it does (allocman's `_refill_pool`). This is the
+     *  whole search: when it finds nothing it returns false, and `refill` --
+     *  its one caller's public face -- asks the untyped source and tries
+     *  again. */
+    bool refill_inner(bool device, seL4_Word size_bits) noexcept;
+
+    /** Make sure `size_bits` has a free piece, asking the registered source
+     *  for another untyped when the free lists hold none (specs/memory.md). */
     bool refill(bool device, seL4_Word size_bits) noexcept;
+
+    /** Ask `untyped_source_` for a piece and adopt it, false when there is no
+     *  source or it answers nothing. */
+    bool grow_from_source() noexcept;
 
     /** Unlink a free piece and mark it allocated, or nullptr when none. */
     Node *take(bool device, seL4_Word size_bits) noexcept;
@@ -354,6 +384,11 @@ private:
     bool growing_;
     NodeSource node_source_;
     void *node_context_;
+    /* The untyped source (specs/memory.md): called when the free lists hold no
+     * piece at the size wanted, so growth is not bounded by what the process
+     * was handed at spawn. */
+    UntypedSource untyped_source_ = nullptr;
+    void *untyped_context_ = nullptr;
     /* A small built-in region, so an allocator whose caller does not adopt one
      * still works; a caller that knows its grant adopts a bigger one and/or a
      * source, and this is not touched. It is a floor, not the size. */
