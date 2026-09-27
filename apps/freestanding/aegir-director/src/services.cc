@@ -325,7 +325,46 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         uint32_t memory_bits = 0;
         seL4_CPtr memory_cap = 0;
         seL4_CPtr memory_frame = 0;
-        if (entry.memory_kib > 0) {
+        if (entry.memory_rest) {
+            /* The memory service takes the untypeds the boot did not spend: the
+             * largest free piece, less what the services after it still need
+             * (specs/memory.md). The pool's size is the machine's, not a
+             * constant, so more RAM is more pool with no manifest edit. */
+            uint64_t reserve = 0;
+            for (uint32_t later = step + 1; later < manifest.size(); ++later) {
+                manifest::Entry const &other = manifest[graph_.order()[later]];
+                if (other.memory_kib > 0) {
+                    uint32_t bits = 10;
+                    while ((1u << (bits - 10)) < other.memory_kib) {
+                        ++bits;
+                    }
+                    reserve += 1ull << bits;
+                }
+                if (other.spawns.length > 0) {
+                    uint32_t bits = 22;
+                    while ((1u << (bits - 20)) < other.delegate_mib) {
+                        ++bits;
+                    }
+                    reserve += 1ull << bits;
+                }
+            }
+            uint32_t const largest = allocator_.largest_free_bits();
+            memory_bits = largest;
+            while (memory_bits > 10 && (1ull << memory_bits) + reserve > (1ull << largest)) {
+                --memory_bits;
+            }
+            if (memory_bits <= 10) {
+                boot.problem = "no pool left after the boot set took its memory";
+                return;
+            }
+            seL4_Error pool_error = seL4_NoError;
+            memory_cap = allocator_.carve_untyped(memory_bits, account, &pool_error,
+                                                  &memory_physical);
+            if (memory_cap == 0) {
+                boot.problem = "the memory pool could not be carved";
+                return;
+            }
+        } else if (entry.memory_kib > 0) {
             memory_bits = 10;
             while ((1u << (memory_bits - 10)) < entry.memory_kib) {
                 ++memory_bits;

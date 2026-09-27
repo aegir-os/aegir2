@@ -193,6 +193,9 @@ void Allocator::unlink(Node *node) noexcept
 
 seL4_CPtr Allocator::alloc_slot() noexcept
 {
+    if (slot_pool_ != nullptr) {
+        return slot_pool_->alloc(slot_owner_);
+    }
     if (slots_next_ >= slots_end_) {
         return 0;
     }
@@ -202,6 +205,10 @@ seL4_CPtr Allocator::alloc_slot() noexcept
 
 void Allocator::slot_failed(seL4_CPtr slot) noexcept
 {
+    if (slot_pool_ != nullptr) {
+        slot_pool_->free(slot, slot_owner_);
+        return;
+    }
     if (slots_next_ != 0 && slot + 1 == slots_next_) {
         --slots_next_;
         --slots_used_;
@@ -210,9 +217,19 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
 
 void Allocator::slot_release(seL4_CPtr mark) noexcept
 {
+    if (slot_pool_ != nullptr) {
+        return;
+    }
     if (mark >= slots_first_ && mark <= slots_next_) {
         slots_used_ -= static_cast<unsigned>(slots_next_ - mark);
         slots_next_ = mark;
+    }
+}
+
+void Allocator::free_slot(seL4_CPtr slot) noexcept
+{
+    if (slot_pool_ != nullptr) {
+        slot_pool_->free(slot, slot_owner_);
     }
 }
 
@@ -406,8 +423,17 @@ void Allocator::free_piece(Node *node) noexcept
         Node *const sibling = node->sibling;
         Node *const parent = node->parent;
         unlink(sibling);
-        seL4_CNode_Delete(seL4_CapInitThreadCNode, node->cap, cnode_depth_);
-        seL4_CNode_Delete(seL4_CapInitThreadCNode, sibling->cap, cnode_depth_);
+        /* Deleting a *slot* addresses it at the CNode's radix, not the
+         * retype's node depth: a service retypes at depth zero but deletes at
+         * its CNode's size (specs/memory.md). */
+        seL4_Word const del_depth =
+            cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, node->cap, del_depth);
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, sibling->cap, del_depth);
+        /* The caps are gone, so their slots are free again -- and a pool that
+         * remembers owners must be told (specs/memory.md). */
+        free_slot(node->cap);
+        free_slot(sibling->cap);
         free_node(sibling);
         free_node(node);
         free_piece(parent);

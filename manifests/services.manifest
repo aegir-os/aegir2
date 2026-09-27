@@ -235,12 +235,12 @@ needs     = log.main, vfs.namespace
 memory_kib = 1024
 restart   = always
 
-# The memory service (specs/memory.md): one large pool, handed out as pristine
+# The memory service (specs/memory.md): one pool, handed out as pristine
 # untyped chunks on demand, owned by the caller's badge and reclaimed together
 # when the caller releases. It maps its own -- `maps` gives it the untyped
-# whole, which is what it splits -- and its memory is the pool, most of the
-# machine: 512 MiB of the 2 GiB this target boots with. A process's ceiling is
-# its quota, not this grant.
+# whole, which is what it carves -- and `memory = rest` gives it the untypeds
+# the boot did not spend: the pool is the host's memory, not a constant. A
+# process's ceiling is its quota, not this grant.
 [memory]
 binary    = aegir-memory
 authority = system
@@ -248,7 +248,7 @@ account   = system
 owns      = mem.main
 needs     = log.main
 maps      = true
-memory_kib = 524288
+memory    = rest
 restart   = always
 
 # The memory service's client (specs/memory.md, Phase 1): it asks for a chunk,

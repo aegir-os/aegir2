@@ -368,6 +368,22 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             return false;
         }
 
+        if (equals(key, "memory")) {
+            if (memory_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            memory_seen = true;
+            if (equals(value, "rest")) {
+                current->memory_rest = true;
+                return true;
+            }
+            failure_line = number;
+            failure = "memory is `rest`, the untypeds the boot did not spend";
+            return false;
+        }
+
         if (equals(key, "memory_kib")) {
             if (memory_seen) {
                 failure_line = number;

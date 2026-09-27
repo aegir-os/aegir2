@@ -38,18 +38,23 @@ from an untyped, so a chunk is the unit that fits it, and a chunk with nothing
 derived is the one thing that can be given away (a used untyped cannot be
 copied -- `seL4_RevokeFirst`).
 
-- The pool is pre-split into fixed-size chunks (a size class, e.g. 2 MiB, the
-  granularity of growth; more classes later if a small allocation's waste
-  matters). A free list holds them.
+- The pool is **the untypeds the boot did not spend**: director, when the
+  memory service is spawned, carves the largest free piece less what the
+  services after it still need (`memory = rest` in the manifest, `services.cc`).
+  The pool is therefore the host's memory, not a constant -- more RAM is more
+  pool with no edit -- and one untyped carries it. The chunk size is a size
+  class (2 MiB, the granularity a runtime grows in; more classes later).
 - **`alloc` -- words: requested size bits. Answer: one capability, a chunk of
   that size (the largest class at or under the request), and its size in
-  words.** The service carves it from the pool and transfers it. The chunk is
-  owned by the calling capability's **badge**.
+  words.** The service **carves** the chunk from the pool then and there -- it
+  is not pre-split into capabilities -- so what the service's CSpace bounds is
+  the chunks *alive*, not the pool. The chunk is owned by the calling
+  capability's **badge**.
 - **`release` -- words: a badge. Answer: how many chunks were returned.** Every
   chunk the badge holds is revoked -- the caller's objects derived from it go
-  with it -- and returned to the free list. A spawner calls this for a child's
-  badge when the child exits, exactly as the VFS's `reap` drops a badge's file
-  handles (`specs/vfs.md`).
+  with it -- and the untyped freed back to the pool. A spawner calls this for a
+  child's badge when the child exits, exactly as the VFS's `reap` drops a
+  badge's file handles (`specs/vfs.md`).
 - **A quota is enforced at `alloc`.** The service knows the caller's badge; a
   user badge carries the user index (`aegir/ipc/port.h`). The user's quota is
   read from configuration, and an allocation past it is refused (the kernel's
@@ -97,9 +102,11 @@ there is no fixed bracket, and a command is bounded only by its quota.
 
 ## Phases
 
-- **Phase 1 -- the service and the protocol.** `memory` owns a pool delegated
-  by director, serves `alloc`/`release`, and is exercised by a smoke that asks
-  for a chunk, writes a frame through it, and releases. No runtime change yet.
+- **Phase 1 -- the service and the protocol.** Landed. `memory` takes the
+  boot's remaining untypeds (`memory = rest`), serves `alloc`/`release`
+  carving chunks on demand, and a smoke asks for a chunk, retypes a frame from
+  it, and releases. The allocator grew the shared slot pool and the free hook
+  this needs. No runtime change yet.
 - **Phase 2 -- the runtime's untyped source.** The allocator hook and the
   runtime's source; a program that grows past its seed chunk runs.
 - **Phase 3 -- the spawner and the per-process badge.** The terminal asks the

@@ -29,6 +29,8 @@
 #include <sel4/sel4.h>
 #include <stdint.h>
 
+#include <aegir/mem/slot_pool.h>
+
 namespace aegir::mem {
 
 /** What an allocation is charged to (specs/authority.md). */
@@ -188,6 +190,27 @@ public:
     void adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept;
 
     /**
+     * Draw this allocator's slots from a shared pool instead of its own
+     * cursor, owned by `owner` (specs/memory.md). An allocator that carves and
+     * frees untypeds over its life -- the memory service -- reuses slots this
+     * way; without a pool the cursor above is the whole story.
+     */
+    void adopt_slot_pool(SlotPool *pool, uint32_t owner) noexcept
+    {
+        slot_pool_ = pool;
+        slot_owner_ = owner;
+    }
+
+    /**
+     * The radix of this process's own CNode, for the slot operations that
+     * address a *slot* rather than the node: `free_piece` deletes a capability
+     * at this depth, and a service -- whose retype depth is zero, the node
+     * itself -- must say so (specs/memory.md). Director is told this by
+     * `initialise`.
+     */
+    void set_cnode_size_bits(unsigned bits) noexcept { cnode_size_bits_ = bits; }
+
+    /**
      * An ASID pool, for a process that will build address spaces of its own.
      *
      * Not `alloc_object`: the kernel makes a pool from an *untyped* rather than by
@@ -309,6 +332,11 @@ private:
      *  need: one slot is outstanding at a time. */
     void slot_failed(seL4_CPtr slot) noexcept;
 
+    /** A slot whose capability the kernel has deleted: free it in the pool when
+     *  one is adopted (specs/memory.md), and do nothing under the cursor,
+     *  where a freed slot is lost for good (specs/userland.md). */
+    void free_slot(seL4_CPtr slot) noexcept;
+
     seL4_BootInfo *bootinfo_;
     /* The node pool: regions the caller provided, linked as one free list. A
      * full pool asks `node_source_` for another region rather than failing --
@@ -340,6 +368,10 @@ private:
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;
     unsigned slots_used_;
+    /* When set, slots come from here rather than the cursor above
+     * (specs/memory.md). */
+    SlotPool *slot_pool_ = nullptr;
+    uint32_t slot_owner_ = 0;
     uint64_t normal_bytes_;
     uint64_t device_bytes_;
     uint64_t allocated_bytes_;

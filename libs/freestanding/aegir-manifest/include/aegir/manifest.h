@@ -79,6 +79,11 @@ struct Entry {
      * specs/authority.md). A power of two, because a region that is carved is a power of
      * two wide; a request that is not one is rounded up when it is parsed. */
     uint32_t memory_kib;
+    /* The service takes the untypeds the boot did not spend -- the machine's
+     * remaining memory -- instead of a `memory_kib` region. Director carves
+     * the largest free untyped and hands it over (specs/memory.md), so the
+     * pool is the host's size and no constant names it. */
+    bool memory_rest;
     /* Stack this service is given, in KiB, or zero for the floor
      * (aegir-spawn's kDefaultStackPages, 8 KiB). The C++ standard library's
      * container code is stack-hungry, so a service that runs it asks for more;
