@@ -87,7 +87,7 @@ constexpr uint32_t kCNodeBits = 12;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 7;
+constexpr uint32_t kVersion = 8;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -170,6 +170,12 @@ enum class EntryKind : uint32_t {
      *  starts the boot session; empty or absent for every other child, and when
      *  the firmware named none. */
     Boot = 16,
+    /** The child's own badge, in `number`: the identity the spawner minted for
+     *  it, which a service cannot read from the kernel. A user process reads it
+     *  to learn its user index, so its commands' memory is owned by a user
+     *  badge and limits apply (specs/shell.md, specs/memory.md). Absent when
+     *  the spawner minted none. */
+    Badge = 17,
 };
 
 struct Entry {
@@ -257,6 +263,10 @@ struct Contents {
     uint64_t shared_window_address;
     uint32_t shared_window_bytes;
     uint64_t shared_window_physical;
+    /* The child's own badge (EntryKind::Badge), so a user process can learn the
+     * user index its commands' memory is owned by (specs/memory.md). Zero when
+     * the spawner minted none. */
+    uint64_t badge;
 };
 
 /** Build a block in memory we can write: `storage` is a page that will be
@@ -325,6 +335,12 @@ bool window(uint64_t *base, uint32_t *bytes) noexcept;
  *  there is no such entry. */
 bool device_capability(uint32_t index, uint64_t *physical, uint32_t *bytes,
                        uint64_t *slot) noexcept;
+
+/** This process's own badge, when its spawner minted one (specs/memory.md): a
+ *  user process reads it to learn the user index its commands' memory is
+ *  owned by. False when the process was given none -- a boot service that
+ *  never spawns, or a spawner that minted no badge. */
+bool badge(uint64_t *out) noexcept;
 
 /** The shared window this process's service port serves through, when it has
  *  one: where it is mapped, how big it is, and its physical base. False when

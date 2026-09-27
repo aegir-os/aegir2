@@ -48,14 +48,14 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
 
-    /* Fourteen fixed entries -- size, name, account, page bits, devices, device,
+    /* Fifteen fixed entries -- size, name, account, page bits, devices, device,
      * untyped, binaries, window, shared window, current directory, standard
-     * input, standard output, boot flags -- then one per device capability, then
-     * one per port, because what a process is given is part of who it is.
-     * Growing the block means bumping the version rather than gambling on a
-     * layout, and `entry_count` is what makes that safe for readers that know
-     * less. */
-    uint32_t const entries = 14 + contents.device_cap_count + contents.port_count;
+     * input, standard output, boot flags, the child's badge -- then one per
+     * device capability, then one per port, because what a process is given is
+     * part of who it is. Growing the block means bumping the version rather
+     * than gambling on a layout, and `entry_count` is what makes that safe for
+     * readers that know less. */
+    uint32_t const entries = 15 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(contents.name_length) +
                          contents.account_length + contents.cwd_length +
@@ -174,9 +174,12 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     /* The firmware's boot flags (specs/boot.md): a string entry, empty when the
      * child was given none. */
     block->entries[13] = Entry{EntryKind::Boot, contents.boot_length, 0, boot_offset, 0};
+    /* The child's own badge (specs/memory.md): a number, absent when the
+     * spawner minted none. */
+    block->entries[14] = Entry{EntryKind::Badge, 0, contents.badge, 0, 0};
 
     for (uint32_t i = 0; i < contents.device_cap_count; ++i) {
-        block->entries[14 + i] =
+        block->entries[15 + i] =
             Entry{EntryKind::DeviceCapability, contents.device_caps[i].bytes,
                   contents.device_caps[i].physical, 0,
                   static_cast<uint32_t>(contents.device_caps[i].slot)};
@@ -195,7 +198,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
             return nullptr;
         }
         room -= contents.ports[i].name_length;
-        block->entries[14 + contents.device_cap_count + i] =
+        block->entries[15 + contents.device_cap_count + i] =
             Entry{EntryKind::Capability, contents.ports[i].name_length,
                   contents.ports[i].slot, static_cast<uint32_t>(next_offset),
                   contents.ports[i].size_bits};
@@ -516,6 +519,24 @@ char const *boot_flags(uint32_t *length) noexcept
         *length = len;
     }
     return found;
+}
+
+bool badge(uint64_t *out) noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        if (block->entries[i].kind != EntryKind::Badge || block->entries[i].number == 0) {
+            continue;
+        }
+        if (out != nullptr) {
+            *out = block->entries[i].number;
+        }
+        return true;
+    }
+    return false;
 }
 
 }  // namespace aegir::bootstrap

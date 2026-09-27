@@ -556,6 +556,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         binaries_address,   request.binaries_bytes, window_base,    kWindowBytes,
         device_cap_entries, request.device_grant_count,
         shared_window_address, request.window_bytes, request.window_physical,
+        request.badge,
     };
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");

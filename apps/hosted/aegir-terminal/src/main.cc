@@ -212,6 +212,14 @@ int main(int argc, char *argv[])
 
     uint64_t command_serial = 0;
     uint64_t pipeline_serial = 0;
+    /* This terminal's own badge (specs/shell.md's interim, now landed): a
+     * session terminal is a user process, so its commands' memory is owned by
+     * a user badge and limits apply (specs/memory.md). The boot terminal is a
+     * system process, so its commands stay unlimited like it is. */
+    uint64_t own_badge = 0;
+    if (!aegir::bootstrap::badge(&own_badge)) {
+        own_badge = 0;
+    }
     std::vector<aegir::spawn::Process> command_processes;
     uint32_t command_outstanding = 0;
     /* The stages of the line now running: >1 makes it a pipeline, which the
@@ -237,10 +245,16 @@ int main(int argc, char *argv[])
             return false;
         }
 
-        /* The command's id: its stream badge and, now, its memory owner
-         * (specs/memory.md Phase 3). Its chunks are owned by this badge, so
-         * one release on exit takes its whole life back. */
-        uint64_t const command_badge = 0x1000 + command_serial++;
+        /* The command's id: its stream badge (a key inside the terminal, not a
+         * kernel badge) and, now, its memory owner. A session terminal mints a
+         * user badge carrying its own user index, so the memory service can
+         * resolve the command's class and limits (specs/memory.md, specs/limits.md);
+         * a system terminal's commands stay system badges, unlimited. */
+        uint64_t const command_badge =
+            aegir::ipc::is_user_badge(own_badge)
+                ? aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge),
+                                              command_serial++)
+                : 0x1000 + command_serial++;
         if (!spawn_kit.begin_command(command_badge)) {
             write("  terminal: FAIL no memory copy for the command\n");
             spawn_kit.abort();
