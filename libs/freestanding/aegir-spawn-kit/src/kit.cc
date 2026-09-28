@@ -112,8 +112,12 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
               seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
     (void)put(out, capacity, n++, "shell:vfs.namespace", 19, kit.nmspace,
               seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
-    (void)put(out, capacity, n++, "shell-pool", 10, child.shell_pool, seL4_AllRights, 0,
-              child.shell_pool_bits, false, false);
+    /* A shell pool only when the child was given one: a launcher draws a
+     * nested shell's pool from mem.main on demand and has none of its own. */
+    if (child.shell_pool != 0) {
+        (void)put(out, capacity, n++, "shell-pool", 10, child.shell_pool, seL4_AllRights, 0,
+                  child.shell_pool_bits, false, false);
+    }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, "spawn:clock.main", 16, kit.clock,
                   seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
