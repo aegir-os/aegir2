@@ -89,6 +89,13 @@ struct Entry {
      * container code is stack-hungry, so a service that runs it asks for more;
      * rounded up to whole pages when parsed (specs/userland.md). */
     uint32_t stack_kib;
+    /* The service's CSpace size in slot-bits, or zero for the default
+     * (aegir-bootstrap's kCNodeBits, 4096 slots). A service that spawns large
+     * children needs one sized to what they cost: the frame capabilities that
+     * keep its children's images mapped are its own slots, so the manifest
+     * says who gets how many rather than a constant saying it for everyone
+     * (specs/authority.md). */
+    uint32_t cspace_bits;
     /* The untyped a spawning service is delegated, in MiB, or zero for the default
      * (services.cc's kDelegatedUntypedBits). Spawners' appetites diverge -- the
      * device manager holds drivers' windows and the partition manager's megabyte,

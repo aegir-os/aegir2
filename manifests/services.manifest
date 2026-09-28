@@ -301,6 +301,12 @@ spawns    = session.*, greeter, system.*
 # the session's badge (specs/memory.md, specs/auth.md's Session reclaim), so
 # there is nothing session-sized here.
 delegate_mib = 32
+# Its CSpace: a session spawns three large children -- the bureau, the terminal
+# and the session's launcher -- and each child's image is frames the spawner
+# keeps a capability for, so auth's slots are what the session's children cost
+# together. 8192 (13 bits) holds the three; 4096 held two and refused the
+# third with no slot left (specs/authority.md).
+cspace_bits = 13
 # Its stack: the default 8 KiB was already close, and the session start --
 # ensure_home's path buffers, the spawn's own frames -- tipped it over into a
 # fault once the terminal's spawn kit joined the bureau's. 32 KiB is the room

@@ -154,10 +154,19 @@ seL4_CPtr session_untyped_source(void *context, seL4_Word *size_bits,
     aegir::ipc::WordsReply const reply = service.call_transfer(
         aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
+        aegir::debug_write("      auth: session memory: mem.main refused a chunk\n");
         return 0;
     }
     seL4_CPtr const slot = allocator->alloc_slot();
-    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+    if (slot == 0) {
+        aegir::debug_write("      auth: session memory: no slot for the chunk\n");
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::cnode_bits());
+        return 0;
+    }
+    if (!aegir::ipc::take_received_cap(slot)) {
+        aegir::debug_write("      auth: session memory: the chunk cap would not move\n");
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
                           aegir::bootstrap::cnode_bits());
@@ -686,6 +695,9 @@ void start_session(uint32_t user, bool bureau) noexcept
      * a second attach, so two windows cannot share one (specs/console.md).
      * Its serial is the next. */
     uint64_t const terminal_badge = aegir::ipc::make_user_badge(user, serial + 1);
+    /* The session's launcher (specs/launch.md) is a third: it holds the spawn
+     * kit and serves launch.session. Its serial is the next. */
+    uint64_t const launcher_badge = aegir::ipc::make_user_badge(user, serial + 2);
     /* The home first: ensured and bound before the spawn, so the session
      * never sees a Home: that does not resolve (specs/auth.md's Homes). */
     ensure_home(user, badge);
@@ -733,6 +745,20 @@ void start_session(uint32_t user, bool bureau) noexcept
         reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
+    /* The launch.session endpoint (specs/launch.md): auth makes it and holds
+     * the halves -- the owner to the session's launcher, a caller to the bureau
+     * and the terminal -- so no client depends on a name the launcher chose. */
+    seL4_CPtr launch_port = 0;
+    if (bureau) {
+        seL4_Error port_error = seL4_NoError;
+        launch_port = g_session_mem.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                                 session_account, &port_error);
+        if (launch_port == 0) {
+            write("      auth: FAIL no launch endpoint for the session\n");
+            reclaim_session(badge, mark, scratch_mark, session_account);
+            return;
+        }
+    }
     /* The bureau's kit: 1 MiB of the pool -- the page tables its slice mapping
      * is retyped from, and the heap the toolkit (its screen bar and font)
      * allocates from, where the raw backdrop it replaced allocated nothing.
@@ -752,7 +778,7 @@ void start_session(uint32_t user, bool bureau) noexcept
             return;
         }
     }
-    aegir::spawn::PortGrant const ports[] = {
+    aegir::spawn::PortGrant ports[6] = {
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, g_spawn_log, seL4_CapRights_new(1, 0, 0, 1),
          badge, 0},
@@ -762,20 +788,25 @@ void start_session(uint32_t user, bool bureau) noexcept
         {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
-        /* The bureau's two extras (dead entries for the smoke -- the count
-         * says which are live): the console, with Grant, because frame and
-         * listen answers carry capabilities; and the untyped, whole. */
+        /* The bureau's extras (dead entries for the smoke -- the count says
+         * which are live): the console, with Grant, because frame and listen
+         * answers carry capabilities; and the untyped, whole. */
         {aegir::console::kPortName, aegir::console::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_gui,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, bureau_untyped,
          seL4_AllRights, 0, kBureauUntypedBits},
+        /* A caller half of the session's launcher (specs/launch.md): the
+         * bureau's Execute launches through it. auth made the endpoint above. */
+        {aegir::launch::kPortName, aegir::launch::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 4, launch_port,
+         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
         /* The bureau.menu owner half (specs/workbench.md): the bureau reads it
          * -- it receives the port's calls -- and it is unbadged, because a
          * receiver's badge never identifies it. A boot whose director made no
          * such port passes it with a null cap, which the spawner would refuse;
          * the count below keeps that entry out when there is none. */
-        {"bureau.menu", 11, aegir::bootstrap::kSlotFirstDeclared + 4,
+        {"bureau.menu", 11, aegir::bootstrap::kSlotFirstDeclared + 5,
          g_spawn_bureau_menu, seL4_CanRead, 0, 0},
     };
     static char const kSessionName[] = "session.smoke";
@@ -807,7 +838,7 @@ void start_session(uint32_t user, bool bureau) noexcept
     request.cwd_length = sizeof(kHomeCwd) - 1;
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
-    request.port_count = bureau ? (g_spawn_bureau_menu != 0 ? 5 : 4) : 2;
+    request.port_count = bureau ? (5 + (g_spawn_bureau_menu != 0 ? 1 : 0)) : 2;
     request.fault_endpoint = fault;
     request.badge = badge;
 
@@ -931,7 +962,7 @@ void start_session(uint32_t user, bool bureau) noexcept
          * a session's processes share one. Serial + 2 skips the session's own
          * badge and this terminal's. */
         char const *const terminal_badge_range =
-            badge_range_env(serial + 2, aegir::ipc::kSessionSerialStride - 2);
+            badge_range_env(serial + 3, aegir::ipc::kSessionSerialStride - 3);
         char const *const terminal_environment[1] = {terminal_badge_range};
         terminal_request.environment = terminal_environment;
         terminal_request.environment_count = 1;
@@ -952,6 +983,91 @@ void start_session(uint32_t user, bool bureau) noexcept
         }
         /* The kit's namespace copy was auth's scratch: the terminal holds its
          * own now (specs/launch.md). */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_kit_nmspace_slot,
+                          aegir::bootstrap::cnode_bits());
+
+        /* The session's launcher (specs/launch.md): one per session, holding
+         * the spawn kit and serving launch.session, whose endpoint auth made
+         * above. It draws nothing -- its runtime is for its own objects and
+         * the staging -- and it draws a nested shell's pool from mem.main on
+         * demand, so it is given no shell pool. Its namespace is badged for the
+         * session, so it and its children resolve every assign and volume the
+         * session has, whatever the session is. */
+        seL4_Error launcher_fault_error = seL4_NoError;
+        seL4_CPtr const launcher_fault = g_session_mem.alloc_object(
+            seL4_EndpointObject, seL4_EndpointBits, session_account, &launcher_fault_error);
+        constexpr uint32_t kLauncherUntypedBits = 22;
+        seL4_Error launcher_untyped_error = seL4_NoError;
+        uint64_t launcher_untyped_physical = 0;
+        seL4_CPtr const launcher_untyped = g_session_mem.carve_untyped(
+            kLauncherUntypedBits, session_account, &launcher_untyped_error,
+            &launcher_untyped_physical);
+        if (launcher_fault == 0 || launcher_untyped == 0) {
+            write("      auth: FAIL no memory for the launcher\n");
+        } else if (!mint_session_nmspace(g_kit_nmspace_slot, badge)) {
+            write("      auth: FAIL no namespace for the launcher\n");
+        } else {
+            aegir::spawn::Kit launcher_kit{};
+            launcher_kit.log = g_spawn_log;
+            launcher_kit.console_gui = g_spawn_gui;
+            launcher_kit.mem_main = g_spawn_mem;
+            launcher_kit.asid_pool = g_asid_pool;
+            launcher_kit.clock = g_spawn_clock;
+            launcher_kit.timer = g_spawn_timer;
+            launcher_kit.nmspace = g_kit_nmspace_slot;
+            aegir::spawn::Child launcher_child{};
+            launcher_child.badge = launcher_badge;
+            launcher_child.runtime = launcher_untyped;
+            launcher_child.runtime_bits = kLauncherUntypedBits;
+            launcher_child.launcher = true;
+            aegir::spawn::PortGrant launcher_ports[13];
+            uint32_t launcher_port_count = aegir::spawn::launcher_ports(
+                launcher_kit, launcher_child, launcher_ports, 13);
+            /* The endpoint's owner half: the launcher serves on it. */
+            launcher_ports[launcher_port_count] = {
+                aegir::launch::kPortName, aegir::launch::kPortNameLength,
+                aegir::bootstrap::kSlotFirstDeclared + launcher_port_count, launch_port,
+                seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+            ++launcher_port_count;
+            static char const kLauncherName[] = "session.launcher";
+            static char const kLauncherBinary[] = "aegir-launcher";
+            aegir::spawn::Request launcher_request{};
+            launcher_request.name = kLauncherName;
+            launcher_request.name_length = sizeof(kLauncherName) - 1;
+            launcher_request.binary = kLauncherBinary;
+            launcher_request.binary_length = sizeof(kLauncherBinary) - 1;
+            launcher_request.account = g_rows[user].account;
+            launcher_request.account_length =
+                field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
+            launcher_request.cwd = kHomeCwd;
+            launcher_request.cwd_length = sizeof(kHomeCwd) - 1;
+            launcher_request.priority = seL4_MaxPrio - 2;
+            launcher_request.ports = launcher_ports;
+            launcher_request.port_count = launcher_port_count;
+            launcher_request.fault_endpoint = launcher_fault;
+            launcher_request.badge = launcher_badge;
+            launcher_request.give_vspace = true;
+            /* A launcher stages images of its own (a nested terminal's is near
+             * a megabyte), so it gets the larger CSpace a spawner needs
+             * (specs/authority.md), exactly as the terminal does. */
+            launcher_request.cnode_bits = kTerminalCNodeBits;
+            launcher_request.untyped_physical = launcher_untyped_physical;
+            launcher_request.untyped_bits = kLauncherUntypedBits;
+            aegir::spawn::Process launcher_process{};
+            if (!spawner.spawn(launcher_request, session_account, launcher_process)) {
+                write("      auth: FAIL spawning the launcher: ");
+                write(spawner.problem());
+                char const *const detail = spawner.detail();
+                if (detail != nullptr && detail[0] != '\0') {
+                    write(" (");
+                    write(detail);
+                    write(")");
+                }
+                write("\n");
+            } else {
+                write("      auth: the launcher is up\n");
+            }
+        }
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_kit_nmspace_slot,
                           aegir::bootstrap::cnode_bits());
     }

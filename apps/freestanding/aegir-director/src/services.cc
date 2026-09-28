@@ -296,6 +296,10 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         }
         request.priority = priority_for(entry);
         request.stack_pages = entry.stack_kib / 4u;
+        /* The service's CSpace, when the manifest names one: a spawner whose
+         * children's images keep frames alive needs slots for them
+         * (specs/authority.md). Zero keeps the default. */
+        request.cnode_bits = entry.cspace_bits;
         /* The firmware's boot flags go to auth, the service that starts the
          * boot session and decides what a failed boot does (specs/boot.md). */
         static char const kAuthBinary[] = "aegir-auth";

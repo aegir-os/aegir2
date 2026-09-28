@@ -205,6 +205,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool device_seen = false;
     bool memory_seen = false;
     bool stack_seen = false;
+    bool cspace_seen = false;
     bool delegate_seen = false;
     bool initrd_seen = false;
     bool maps_seen = false;
@@ -255,6 +256,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             device_seen = false;
             memory_seen = false;
             stack_seen = false;
+            cspace_seen = false;
             delegate_seen = false;
             initrd_seen = false;
             maps_seen = false;
@@ -452,6 +454,39 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 return false;
             }
             current->stack_kib = (kib + 3u) & ~3u;
+            return true;
+        }
+
+        if (equals(key, "cspace_bits")) {
+            if (cspace_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            cspace_seen = true;
+            /* A decimal number of slot-bits: the CSpace is 2^bits slots. Ten
+             * (1024) is the floor the toolkit's services need, and the kernel
+             * cannot build one wider than a word. */
+            uint32_t bits = 0;
+            if (value.length == 0 || value.length > 2) {
+                failure_line = number;
+                failure = "cspace_bits is a decimal number of slot-bits";
+                return false;
+            }
+            for (uint32_t d = 0; d < value.length; ++d) {
+                if (value.data[d] < '0' || value.data[d] > '9') {
+                    failure_line = number;
+                    failure = "cspace_bits is a decimal number of slot-bits";
+                    return false;
+                }
+                bits = bits * 10 + static_cast<uint32_t>(value.data[d] - '0');
+            }
+            if (bits < 10 || bits > 30) {
+                failure_line = number;
+                failure = "cspace_bits is between 10 and 30";
+                return false;
+            }
+            current->cspace_bits = bits;
             return true;
         }
 
