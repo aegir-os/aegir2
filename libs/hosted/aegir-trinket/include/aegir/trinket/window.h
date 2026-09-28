@@ -18,6 +18,13 @@
 
 namespace aegir::trinket {
 
+/** The titlebar gadgets a decorated window may carry (specs/window-manager.md):
+ *  a mask, so a toolkit can add one without changing every call. Close sits at
+ *  the titlebar's far left; zoom and depth are right-packed, depth rightmost. */
+constexpr uint32_t kGadgetClose = 1u << 0;
+constexpr uint32_t kGadgetZoom = 1u << 1;
+constexpr uint32_t kGadgetDepth = 1u << 2;
+
 class Window {
 public:
     explicit Window(Application& app);
@@ -39,11 +46,11 @@ public:
     void set_decorated(bool decorated);  // Default true
     bool decorated() const { return decorated_; }
 
-    // Which titlebar gadgets a decorated window carries: close, zoom (toggle
-    // full screen) and depth (send to back). Depth is on by default; a client
-    // asks for the others (specs/window-manager.md). They sit at the
-    // titlebar's right, close then zoom then depth.
-    void set_gadgets(bool close, bool zoom, bool depth);
+    // Which titlebar gadgets a decorated window carries, as a mask of the
+    // kGadget* flags above. A window that asks for none is left with its
+    // default, Depth -- the one gadget every Amiga titlebar had.
+    void set_gadgets(uint32_t gadgets);
+    uint32_t gadgets() const { return gadgets_; }
 
     void set_resizable(bool resizable) { resizable_ = resizable; }
     bool resizable() const { return resizable_; }
@@ -154,10 +161,8 @@ private:
     // backing at the wrong stride.
     bool geometry_change_ = false;
 
-    // The titlebar gadgets, and the zoom's saved rectangle.
-    bool gadget_close_ = false;
-    bool gadget_zoom_ = false;
-    bool gadget_depth_ = true;
+    // The titlebar gadgets (a kGadget* mask) and the zoom's saved rectangle.
+    uint32_t gadgets_ = kGadgetDepth;
     bool zoomed_ = false;
     Rect saved_rect_;
 

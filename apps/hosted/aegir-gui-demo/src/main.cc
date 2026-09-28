@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
     Window window(app);
     window.set_title("Demo");
     window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
-    window.set_gadgets(true, true, true);
+    window.set_gadgets(kGadgetClose | kGadgetZoom | kGadgetDepth);
 
     auto terminal = std::make_unique<TerminalView>();
     terminal->set_font(app.default_font());

@@ -92,7 +92,7 @@ int main(int argc, char *argv[])
     /* Close and zoom gadgets (specs/window-manager.md), with the depth gadget a
      * decorated window carries by default. Closing the viewer exits it, so a
      * `Run view` whose window the user is done with does not linger. */
-    window.set_gadgets(true, true, true);
+    window.set_gadgets(kGadgetClose | kGadgetZoom | kGadgetDepth);
     window.on_close_requested = [&app]() { app.quit(0); };
     /* A launcher sets AEGIR_WINDOW (specs/launch.md): the specification is this
      * program's window, and the program that owns the window parses it. */

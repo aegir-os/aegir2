@@ -97,9 +97,10 @@ this arc.
   window was and the whole screen, its titlebar at the top; depth lowers the
   window to the bottom among the plain windows (the console gains `lower`).
   The titlebar elsewhere still raises: a drag or a resize brings the window
-  forward, the gadgets act deliberately. Depth is on by default; a client
-  asks for close and zoom (`set_gadgets`), because a login window should not
-  be closable and the bureau's backdrop has no titlebar at all. The bars'
+  forward, the gadgets act deliberately. Depth is on by default; a client asks
+  for close and zoom with the `kGadget*` mask (`set_gadgets`), because a login
+  window should not be closable and the bureau's backdrop has no titlebar at
+  all. The bars'
   bevels, the gadget glyphs, and the resizable-only bottom bar with its
   resize gadget are `specs/amiga-fidelity.md`; this spec is the behaviour.
 - **The WM server is deferred.** A `bureau.wm` server is policy the console

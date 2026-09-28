@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
     /* Zoom and depth, no close and no resize: a login form is not closable,
      * and it is the size it is (specs/amiga-fidelity.md). */
     window.set_resizable(false);
-    window.set_gadgets(false, true, true);
+    window.set_gadgets(kGadgetZoom | kGadgetDepth);
 
     auto panel = std::make_unique<Panel>(Panel::Style::FLAT);
     panel->set_background(theme.color(ColorRole::WINDOW_BG));

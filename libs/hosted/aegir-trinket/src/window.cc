@@ -485,10 +485,8 @@ Rect Window::frame_for(const Rect& content) const {
     return {content.x, content.y - bar, content.width, content.height + bar + bottom};
 }
 
-void Window::set_gadgets(bool close, bool zoom, bool depth) {
-    gadget_close_ = close;
-    gadget_zoom_ = zoom;
-    gadget_depth_ = depth;
+void Window::set_gadgets(uint32_t gadgets) {
+    gadgets_ = gadgets;
     repaint();
 }
 
@@ -524,13 +522,13 @@ Rect Window::resize_gadget_rect() const {
 
 int Window::gadget_at(Point p) const {
     if (!decorated_) return 0;
-    if (gadget_close_ && close_gadget_rect().contains(p)) return 1;
+    if ((gadgets_ & kGadgetClose) != 0 && close_gadget_rect().contains(p)) return 1;
     int index = 0;
-    if (gadget_depth_) {
+    if ((gadgets_ & kGadgetDepth) != 0) {
         if (gadget_rect(index).contains(p)) return 3;
         ++index;
     }
-    if (gadget_zoom_) {
+    if ((gadgets_ & kGadgetZoom) != 0) {
         if (gadget_rect(index).contains(p)) return 2;
         ++index;
     }
@@ -665,7 +663,7 @@ Rect Window::paint() {
             int const pad = theme.metric(MetricRole::TITLEBAR_PADDING_H);
             int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
             int const gap = theme.metric(MetricRole::SPACING_SMALL);
-            int const x = gadget_close_ ? pad + size + gap : pad;
+            int const x = (gadgets_ & kGadgetClose) != 0 ? pad + size + gap : pad;
             std::string const title = utf32_to_utf8(title_);
             frame_canvas.draw_text({x, (bar - font->height()) / 2}, title, font,
                                    theme.color(ColorRole::TITLEBAR_TEXT));
@@ -675,17 +673,17 @@ Rect Window::paint() {
         Color const white = theme.color(ColorRole::GADGET_WHITE);
         Color const grey = theme.color(ColorRole::GADGET_GREY);
         Color const bar_fill = theme.color(ColorRole::TITLEBAR_BG);
-        if (gadget_close_) {
+        if ((gadgets_ & kGadgetClose) != 0) {
             draw_gadget(frame_canvas, close_gadget_rect(), 1, active_, bar_fill,
                         outline, white, grey);
         }
         int index = 0;
-        if (gadget_depth_) {
+        if ((gadgets_ & kGadgetDepth) != 0) {
             draw_gadget(frame_canvas, gadget_rect(index), 3, active_, bar_fill,
                         outline, white, grey);
             ++index;
         }
-        if (gadget_zoom_) {
+        if ((gadgets_ & kGadgetZoom) != 0) {
             draw_gadget(frame_canvas, gadget_rect(index), 2, active_, bar_fill,
                         outline, white, grey);
             ++index;

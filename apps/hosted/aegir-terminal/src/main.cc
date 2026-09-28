@@ -175,7 +175,7 @@ int main(int argc, char *argv[])
      * depth gadget a decorated window carries by default. Closing the terminal
      * closes the session's console -- the shell's stream loses its owner -- so
      * it is the Amiga's `close the Shell window`, made literal. */
-    window.set_gadgets(true, true, true);
+    window.set_gadgets(kGadgetClose | kGadgetZoom | kGadgetDepth);
     window.on_close_requested = [&app]() { app.quit(0); };
     /* A launcher sets AEGIR_WINDOW (specs/launch.md): this terminal is nested,
      * and the specification is its window. The terminal owns the window, so it
