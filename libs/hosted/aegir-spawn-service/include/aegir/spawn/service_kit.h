@@ -1,23 +1,27 @@
 /*
- * The terminal's spawn kit (specs/authority.md, specs/shell.md, specs/memory.md).
+ * The spawn service's kit (specs/authority.md, specs/shell.md, specs/memory.md).
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * Auth delegates the authority to start the session's commands; the terminal
- * uses it. A process has one VSpace root, so the terminal does not adopt a
- * window of its own: its spawner stages through the toolkit's window. The
- * commands' capabilities live in a CSpace sub-range the toolkit reserves, and
- * that range is a *pool*: each command owns the slots it was built from, and
- * reaping it -- one release of its memory chunks, which deletes those
- * capabilities, then one return of its slots -- makes it whole again
- * (specs/memory.md Phase 5). That is what lets a `Run` command keep running
- * while the shell starts the next one: a background command is one more owner
- * of the pool, not a second bracket the terminal has to serialize.
+ * Auth delegates the authority to start a session's programs; one process uses
+ * it per session -- the launcher, or for the boot session the terminal itself.
+ * This is that process's side of the spawn machinery, in one place so the
+ * headless launcher and the terminal share it: the staged allocator over the
+ * command chunks, the reserved CSpace pool one owner per live command, and the
+ * reap that returns both whole (specs/memory.md Phase 5).
+ *
+ * It is deliberately toolkit-free. A hosted process has one VSpace root, and
+ * the process that spawns stages through the window it was given -- for the
+ * toolkit that is its own, for the headless launcher `g_scratch` -- so the
+ * caller hands in the allocator and scratch rather than the kit reaching for a
+ * singleton. What it does *not* build is the first-class grants of a child
+ * (aegir/spawn/kit.h does that); this owns the memory and slots a spawn runs
+ * on.
  */
 
-#ifndef AEGIR_TERMINAL_SPAWN_KIT_H
-#define AEGIR_TERMINAL_SPAWN_KIT_H
+#ifndef AEGIR_SPAWN_SERVICE_KIT_H
+#define AEGIR_SPAWN_SERVICE_KIT_H
 
 #include <aegir/ipc/port.h>
 #include <aegir/mem/allocator.h>
@@ -31,13 +35,9 @@
 #include <memory>
 #include <vector>
 
-namespace aegir::trinket {
-class Application;
-}
+namespace aegir::spawn {
 
-namespace aegir::terminal {
-
-class SpawnKit {
+class ServiceKit {
 public:
     /* The untyped a command's own runtime is given at spawn: its heap and page
      * tables are retyped from it, and it is the command's *first* chunk, not
@@ -45,9 +45,15 @@ public:
      * (specs/memory.md). */
     static constexpr uint32_t kCommandUntypedBits = 20; /* 1 MiB */
 
-    /* Adopt the delegated kit. False when a grant is missing or an endpoint
-     * cannot be made; the terminal then runs as it did before. */
-    bool adopt(aegir::trinket::Application& app);
+    /* Adopt the delegated kit, read by name from the bootstrap block.
+     * `allocator` and `scratch` are the process's own -- the toolkit's, or a
+     * headless service's `g_objects`/`g_scratch` -- and `slot_base`/
+     * `slot_count` is the CSpace range reserved for commands (the toolkit
+     * reserves everything above its own slots; a headless service reserves a
+     * range of its own). False when a grant is missing or an endpoint cannot be
+     * made; the caller then runs without a spawner. */
+    bool adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
+               uint64_t slot_base, uint32_t slot_count);
 
     bool ready() const { return ready_; }
 
@@ -77,17 +83,20 @@ public:
      * return its pool slots. `tcb` may be zero when the command never ran. */
     void reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner);
 
-    aegir::spawn::Spawner& spawner() { return *spawner_; }
+    Spawner& spawner() { return *spawner_; }
     /* The allocator over the command chunks: the spawner's objects and a
      * command's seed are retyped from it, and its untyped source is mem.main
      * (specs/memory.md). */
     aegir::mem::Allocator& memory();
 
     /* The first-class kit (specs/launch.md): the capabilities every child's
-     * grant is built from. main builds a command's, a nested terminal's and the
-     * shell's ports with aegir::spawn::command_ports / launcher_ports /
-     * shell_ports over this, so the lists live in one place. */
-    aegir::spawn::Kit const& kit() const { return kit_; }
+     * grant is built from. The caller builds a command's, a nested terminal's
+     * and the shell's ports with aegir::spawn::command_ports / launcher_ports /
+     * shell_ports over this, so the lists live in one place. It is mutable
+     * because a launcher sets `stream` per request to the caller's own.
+     */
+    Kit& kit() { return kit_; }
+    Kit const& kit() const { return kit_; }
 
     /* The current command's memory copy: minted from mem_port_ and badged with
      * the command's id, so the service records its chunks as that command's.
@@ -99,7 +108,7 @@ public:
     seL4_CPtr fault_endpoint() const { return fault_endpoint_; }
 
     /* The shell process: spawned once from auth's `shell-pool`, not pooled and
-     * reclaimed like a command, because it lives as long as the terminal. It
+     * reclaimed like a command, because it lives as long as its terminal. It
      * runs on `badge` -- the stream key its con.stream copy carries -- and the
      * terminal serves it like any other client. `arguments` are what follow
      * argv[0] (specs/environment.md): for the boot session, the command file
@@ -108,20 +117,22 @@ public:
                      uint32_t cwd_length, uint64_t badge, char const *const *arguments,
                      uint32_t argument_count);
 
-    /* The launcher kit a nested terminal is built from (specs/launch.md): the
-     * unbadged console.gui it mints the child's own from. Its memory comes
-     * from mem.main on demand, under the terminal's badge, not from a pool. */
-    bool can_launch() const { return spawn_console_gui_ != 0; }
+    /* The launcher kit a child is built from: true when an unbadged console.gui
+     * was delegated, so a nested terminal can mint its own. */
+    bool can_launch() const { return kit_.console_gui != 0; }
 
-    /* The boot session's status endpoint, when this terminal is the boot
+    /* The boot session's status endpoint, when this process is the boot
      * session's (auth grants it as `boot.status`): the shell sends the outcome
      * -- 0 success, nonzero failure -- and auth receives it (specs/boot.md).
-     * Zero for an interactive terminal. */
+     * Zero for an interactive session. */
     seL4_CPtr boot_status() const { return boot_status_; }
 
 private:
-    aegir::trinket::Application* app_ = nullptr;
-    aegir::mem::Account account_{"terminal-spawn", 0, 0, 0};
+    aegir::mem::Allocator *allocator_ = nullptr;
+    aegir::mem::Scratch *scratch_ = nullptr;
+    uint64_t slot_base_ = 0;
+    uint32_t slot_count_ = 0;
+    aegir::mem::Account account_{"spawn-service", 0, 0, 0};
     std::unique_ptr<aegir::mem::Arena> arena_;
     std::unique_ptr<aegir::spawn::Initrd> initrd_;
     std::unique_ptr<aegir::spawn::Spawner> spawner_;
@@ -146,9 +157,6 @@ private:
     seL4_CPtr mem_port_ = 0;
     seL4_CPtr command_mem_ = 0;
     bool command_mem_live_ = false;
-    /* The launcher kit (specs/launch.md): the unbadged console.gui a nested
-     * terminal's own is minted from. */
-    seL4_CPtr spawn_console_gui_ = 0;
     /* The first-class kit every child's grant is built from (specs/launch.md). */
     aegir::spawn::Kit kit_{};
     seL4_CPtr shell_pool_ = 0;
@@ -158,6 +166,6 @@ private:
     bool ready_ = false;
 };
 
-}  // namespace aegir::terminal
+}  // namespace aegir::spawn
 
-#endif  // AEGIR_TERMINAL_SPAWN_KIT_H
+#endif  // AEGIR_SPAWN_SERVICE_KIT_H

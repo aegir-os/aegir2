@@ -13,7 +13,6 @@
  * (specs/terminal.md, specs/shell.md, specs/authority.md).
  */
 
-#include "spawn_kit.h"
 #include "console_stream_server.h"
 
 #include <aegir/bootstrap.h>
@@ -28,6 +27,7 @@
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/process.h>
+#include <aegir/spawn/service_kit.h>
 #include <aegir/timer.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/line_editor.h>
@@ -152,8 +152,9 @@ int main(int argc, char *argv[])
     /* The authority to start the session's commands and its shell
      * (specs/authority.md, specs/shell.md): auth delegates it, the terminal
      * adopts it. A failure here leaves the window but no command line. */
-    aegir::terminal::SpawnKit spawn_kit;
-    bool const kit = spawn_kit.adopt(app);
+    aegir::spawn::ServiceKit spawn_kit;
+    bool const kit = spawn_kit.adopt(app.allocator(), app.scratch(), app.spawn_slot_base(),
+                                    app.spawn_slot_count());
     if (kit) {
         write("  terminal: spawn kit ready\n");
     } else {
@@ -387,7 +388,7 @@ int main(int argc, char *argv[])
         seL4_Error untyped_error = seL4_NoError;
         uint64_t command_untyped_physical = 0;
         seL4_CPtr const command_untyped = spawn_kit.memory().carve_untyped(
-            aegir::terminal::SpawnKit::kCommandUntypedBits, account, &untyped_error,
+            aegir::spawn::ServiceKit::kCommandUntypedBits, account, &untyped_error,
             &command_untyped_physical);
         if (command_untyped == 0) {
             write("  terminal: FAIL no untyped for the command's runtime\n");
@@ -409,7 +410,7 @@ int main(int argc, char *argv[])
         aegir::spawn::Child child{};
         child.badge = command_badge;
         child.runtime = command_untyped;
-        child.runtime_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;
+        child.runtime_bits = aegir::spawn::ServiceKit::kCommandUntypedBits;
         child.mem = spawn_kit.command_mem();
         child.stream_badge = kShellStream;
         aegir::spawn::PortGrant ports[8];
@@ -444,7 +445,7 @@ int main(int argc, char *argv[])
         request.badge = command_badge;
         request.give_vspace = true;
         request.untyped_physical = command_untyped_physical;
-        request.untyped_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;
+        request.untyped_bits = aegir::spawn::ServiceKit::kCommandUntypedBits;
         /* The launch request's stack ask (specs/launch.md): zero is the
          * spawner's default, which is what a command gets unless the launcher
          * was asked for more. */

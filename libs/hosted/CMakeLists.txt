@@ -10,6 +10,7 @@
 add_subdirectory(aegir-heap)
 add_subdirectory(aegir-environment)
 add_subdirectory(aegir-launch)
+add_subdirectory(aegir-spawn-service)
 add_subdirectory(aegir-script)
 add_subdirectory(aegir-command)
 add_subdirectory(aegir-cxxabi-shim)
