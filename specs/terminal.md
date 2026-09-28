@@ -8,12 +8,16 @@ delegates, and a command resolved to `Initrd:`, spawned out of a reclaimable
 pool, printed to the grid, and reported through the runtime that routes its
 fd 1/2 and its exit to the stream. fd 0 is the stream's queued input: while a
 command runs the terminal routes the keyboard to the stream rather than the
-idle editor, and the command's `read` drains it (`aegir-read`). The handler
-also rings a client's doorbell -- a notification passed at `open` -- when there
-is something to read, so a client can wait instead of poll. The shell is its
+idle editor, and the command's `read` drains it (`aegir-read`). A `read` with
+nothing queued *holds its reply* (`specs/signal.md`) and is answered when bytes
+arrive, so a client waits inside the call rather than polling, and the held read
+is what marks the stream as the one the keyboard belongs to. The shell announces
+each line with `line` -- its stage count -- before the first command starts, so
+the terminal keeps the bracket and the `pipeline exited` cue. The shell is its
 own process now (`aegir-shell`): the terminal spawns it once from a pool of its
-own, it opens a cooked stream with a doorbell, runs the built-ins, and asks the
-terminal to run a command (the terminal holds the spawn authority). This is the
+own, it opens a cooked stream, runs the built-ins, and asks the
+terminal to run a command (the terminal holds the spawn authority today;
+`specs/signal.md`'s Phase 3 moves it to the session's launcher). This is the
 spec
 the terminal arc lands under —the Amiga `CON:` handler and the text surface
 the shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
@@ -113,13 +117,19 @@ port does not know is answered by saying nothing.
   written, less than asked the refusal.
 - `read`. In: the most bytes the caller can take (or no word for the
   envelope's bound), so a one-byte key read drains no more than the key. Out:
-  bytes, or an empty answer when nothing is queued. The bytes are queued by the
-  handler as keys arrive -- while a *command* runs on the stream, every key is
-  a byte on its input queue rather than a keystroke for the idle editor
-  (`specs/shell.md`'s Phase 4, design A: the command inherits the shell's
-  stream and reads it raw). A client with no doorbell polls and asks again; a
-  *command* has one (below) and the read parks on it, so a pager waits for a
-  key without a poll loop.
+  bytes, or an empty answer when nothing is queued and the caller will not
+  wait. With nothing queued the handler *holds the reply* and answers when a
+  key arrives (`specs/signal.md`), so a pager waits for a key without a poll
+  loop, and the held read marks the stream as the keyboard's reader. The bytes
+  are queued by the handler as keys arrive -- while a *command* runs on the
+  stream, every key is a byte on its input queue rather than a keystroke for the
+  idle editor (`specs/shell.md`'s Phase 4, design A: the command inherits the
+  shell's stream and reads it raw).
+- `line`. In: one word, the stage count of the line the shell is about to run.
+  The shell announces it before the first command starts, so the terminal --
+  which no longer spawns the line -- knows how many stages to wait for and
+  reports `pipeline exited` apart from `command exited` (`specs/pipe.md`).
+  Reply: nothing.
 - `read_line`. In: nothing. Out: one line, when the line editor has one; an
   empty reply otherwise. This is the cooked call; the shell loops on it. A
   cooked read begins the line editor if it is idle.
@@ -128,8 +138,8 @@ port does not know is answered by saying nothing.
   forgets the line it was holding.
 - `exit`. In: the status a *command* finished with. The stream stays open --
   it is the shell's, and a command inherited a copy -- so this is distinct
-  from `close`. The handler records it and rings the doorbell; the shell reads
-  it with `command_status`.
+  from `close`. The handler records it, which answers a held `command_status`;
+  the shell reads it with `command_status`.
 - `set_prompt`. In: the prompt as a string. A shell that changed directory
   redraws its prompt through this rather than reopening the stream.
 - `command_status`. Answer: one word, the status, when a command has finished;

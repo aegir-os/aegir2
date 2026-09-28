@@ -62,6 +62,13 @@ A launch request is the spawn `Request` (specs/services.md) plus the things a
   parses. A program launched by bare name uses its own default; the field is
   what a `NEWSHELL WINDOW=` (and, later, a desktop icon) rides to name the
   window it wants;
+- **the caller's console stream**, when it has one: the request's one
+  capability, and the only one it carries (`specs/signal.md` -- a message
+  carries one capability, so nothing can ride beside it). A command the launcher
+  starts writes where its caller does, and its readiness is the stream's own (a
+  held `read`), so no notification travels with the request. A caller with no
+  stream sends none, and the launcher gives the command a stream of its own -- a
+  read-only output view (`specs/console.md`'s viewer shape);
 - **who asked**: the caller's badge, which the launcher records for ownership
   and checks its policy against.
 

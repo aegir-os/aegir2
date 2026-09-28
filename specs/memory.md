@@ -62,7 +62,9 @@ copied -- `seL4_RevokeFirst`).
   chunk the badge holds is revoked -- the caller's objects derived from it go
   with it -- and the untyped freed back to the pool. A spawner calls this for a
   child's badge when the child exits, exactly as the VFS's `reap` drops a
-  badge's file handles (`specs/vfs.md`).
+  badge's file handles (`specs/vfs.md`). A caller that would rather not retry
+  `alloc` may be handed a context to wait on instead (`specs/signal.md`,
+  Phase 4).
 - **Limits are enforced at `alloc`** (`specs/limits.md`). The service knows the
   caller's badge, and a user badge carries the user index (`aegir/ipc/port.h`);
   at boot it reads `users.db` for each user's class and `Sys:S/limits.manifest`

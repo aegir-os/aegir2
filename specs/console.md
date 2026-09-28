@@ -105,7 +105,10 @@ port and every window's endpoint, and a client thread waits on one
 notification where it could not wait on many endpoints. Events are tagged
 with their window's id instead. The envelope is the input driver's packed
 word (`libs/aegir-input`), and a full ring drops — console never blocks on
-a client that stopped reading.
+a client that stopped reading. This is the first instance of the readiness
+primitive (`specs/signal.md`): what console does here by hand, its `listen`
+handing a client a channel and its driver `subscribe` handing a minted
+notification, becomes that library's `Receiver` and `Context`.
 
 Console's own side of the devices is the same bound-notification shape the
 drivers wait on their interrupts with: the input protocol's `subscribe`
