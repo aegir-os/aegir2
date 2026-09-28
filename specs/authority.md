@@ -81,9 +81,12 @@ they are:
   brief ("the device manager should launch block drivers") taken literally — the
   service that knows *what* should exist is the service that creates it.
 - **Users spawn user processes.** A session is created with user authority, a pool
-  and an account, and a terminal, bureau or launcher starts processes from it
-  without asking anyone. Everything a session spawns has at most the session's
-  authority, and is charged to the user's account.
+  and an account, and **one launcher** per session fulfills its launches: the
+  terminal, the bureau, a dock and desktop icons are its clients, each sending
+  the program, the kind and its own context (specs/launch.md). The caller's
+  badge is who asked, and the launcher bounds which badges may launch which
+  kinds. Everything a session launches has at most the session's authority, and
+  is charged to the user's account.
 - **Elevation is the only user→system path.** A sudo-like tool asks `auth`, which
   does the credential check, and director, which owns system authority, to run the
   requested program — or to start the named manifest entry — with system
