@@ -296,11 +296,10 @@ account   = system
 owns      = auth.login
 needs     = log.main, vfs.namespace, console.gui
 spawns    = session.*, greeter, system.*
-# Auth's delegation holds the greeter's kit, the session pool the bureau and
-# the terminal come out of, and auth's own objects. A session's pool holds
-# both toolkit children, the terminal's own untyped and the shell pool -- a
-# command's memory is the memory service's now (specs/memory.md), not a pool
-# here -- so the pool is 16 MiB and auth's delegation 32.
+# Auth's delegation holds the greeter's kit and auth's own objects. A session
+# has no pool: its memory comes from the memory service on demand, charged to
+# the session's badge (specs/memory.md, specs/auth.md's Session reclaim), so
+# there is nothing session-sized here.
 delegate_mib = 32
 # Its stack: the default 8 KiB was already close, and the session start --
 # ensure_home's path buffers, the spawn's own frames -- tipped it over into a

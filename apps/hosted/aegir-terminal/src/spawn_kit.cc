@@ -32,9 +32,11 @@ aegir::mem::Allocator g_command_mem(nullptr);
 
 /* The command allocator's node pool: the toolkit's window wires its own
  * allocator's pool, so a second allocator brings its own region. A command's
- * spawn splits a few hundred pieces; 64 KiB is well beyond that and lives in
- * BSS. Reset() rebuilds it each command, so it never accumulates. */
-alignas(64) unsigned char g_command_nodes[64 * 1024];
+ * spawn splits a few hundred pieces; a nested terminal's image is far larger
+ * (its segments near a megabyte, so hundreds of frames), so this is sized for
+ * that, not a command's handful. Reset() rebuilds it each spawn, so it never
+ * accumulates. */
+alignas(64) unsigned char g_command_nodes[256 * 1024];
 
 /* The current command's badged mem.main copy, which the untyped source calls
  * with. It is set by begin_command and cleared by end_staging. */
@@ -68,7 +70,7 @@ seL4_CPtr command_untyped_source(void *context, seL4_Word *size_bits,
          * transfer is refused an occupied slot. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
-                          aegir::bootstrap::kCNodeBits);
+                          aegir::bootstrap::cnode_bits());
         return 0;
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
@@ -188,8 +190,17 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
      * because the pool is the slot source. */
     g_command_mem.adopt_slots(0, 0, 0);
     g_command_mem.adopt_slot_pool(&slot_pool_, 0);
-    g_command_mem.set_cnode_size_bits(aegir::bootstrap::kCNodeBits);
+    g_command_mem.set_cnode_size_bits(aegir::bootstrap::cnode_bits());
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
+
+    /* The launcher kit (specs/launch.md): the unbadged console.gui a nested
+     * terminal's own is minted from. Its memory comes from mem.main on
+     * demand, so there is no pool here to size. Optional -- a terminal auth
+     * delegated no launcher kit still runs and refuses a launching launch. */
+    uint64_t spawn_gui_slot = 0;
+    if (aegir::bootstrap::capability("spawn:console.gui", 17, &spawn_gui_slot)) {
+        spawn_console_gui_ = static_cast<seL4_CPtr>(spawn_gui_slot);
+    }
 
     /* The spawner insists on an Initrd it never reads when an image is given:
      * the shell hands the one command's bytes as `binary_image`
@@ -222,7 +233,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
     aegir::spawn::Spawner spawner(app_->allocator(), app_->scratch(), arena, initrd,
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
     aegir::spawn::PortGrant ports[6] = {
         {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
@@ -314,7 +325,7 @@ bool SpawnKit::begin(uint32_t owner)
      * reset, so live commands' slots stay marked and are handed to nobody. */
     g_command_mem.reset();
     g_command_mem.adopt_slot_pool(&slot_pool_, owner);
-    g_command_mem.set_cnode_size_bits(aegir::bootstrap::kCNodeBits);
+    g_command_mem.set_cnode_size_bits(aegir::bootstrap::cnode_bits());
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
     g_command_mem_call = 0;
     /* The staging mark is the window position before the *first* still-live
@@ -328,7 +339,7 @@ bool SpawnKit::begin(uint32_t owner)
     spawner_ = std::make_unique<aegir::spawn::Spawner>(
         g_command_mem, app_->scratch(), *arena_, *initrd_, asid_pool_,
         static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-        aegir::bootstrap::kCNodeBits);
+        aegir::bootstrap::cnode_bits());
     return true;
 }
 
@@ -351,12 +362,12 @@ bool SpawnKit::begin_command(uint64_t badge)
     }
     if (command_mem_live_) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, command_mem_,
-                          aegir::bootstrap::kCNodeBits);
+                          aegir::bootstrap::cnode_bits());
         command_mem_live_ = false;
     }
     seL4_Error const minted = seL4_CNode_Mint(
-        aegir::bootstrap::kSlotOwnCNode, command_mem_, aegir::bootstrap::kCNodeBits,
-        aegir::bootstrap::kSlotOwnCNode, mem_port_, aegir::bootstrap::kCNodeBits,
+        aegir::bootstrap::kSlotOwnCNode, command_mem_, aegir::bootstrap::cnode_bits(),
+        aegir::bootstrap::kSlotOwnCNode, mem_port_, aegir::bootstrap::cnode_bits(),
         seL4_CapRights_new(1, 1, 0, 1), badge);
     if (minted != seL4_NoError) {
         return false;
@@ -377,7 +388,7 @@ void SpawnKit::end_staging()
      * only rewind_staging returns the window once they are gone. */
     if (command_mem_live_) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, command_mem_,
-                          aegir::bootstrap::kCNodeBits);
+                          aegir::bootstrap::cnode_bits());
         command_mem_live_ = false;
     }
 }

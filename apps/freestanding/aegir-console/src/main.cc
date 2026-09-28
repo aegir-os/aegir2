@@ -766,7 +766,7 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0);
+    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -880,9 +880,9 @@ int main(int argc, char *argv[])
              * number so the loop can tell a wakeup from a call. */
             if (mint == 0 ||
                 seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint,
-                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::cnode_bits(),
                                 aegir::bootstrap::kSlotOwnCNode, wake,
-                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::cnode_bits(),
                                 seL4_CapRights_new(0, 0, 0, 1),
                                 1ull << (32 + d)) != seL4_NoError) {
                 write_line("FAIL a device mint would not be made");
@@ -894,7 +894,7 @@ int main(int argc, char *argv[])
             aegir::ipc::WordsReply const subscribed = g_hid[d].call_transfer(
                 aegir::input::kMethodSubscribe, nullptr, 0, mint, sink, 0, &answered);
             seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint,
-                              aegir::bootstrap::kCNodeBits);
+                              aegir::bootstrap::cnode_bits());
             if (subscribed.error != 0) {
                 write_line("FAIL a device would not take the subscription");
                 seL4_Signal(aegir::bootstrap::kSlotSupervision);
@@ -1023,9 +1023,9 @@ int main(int argc, char *argv[])
                 seL4_CPtr const pristine = g_objects.alloc_slot();
                 if (frame == 0 || pristine == 0 ||
                     seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, pristine,
-                                    aegir::bootstrap::kCNodeBits,
+                                    aegir::bootstrap::cnode_bits(),
                                     aegir::bootstrap::kSlotOwnCNode, frame,
-                                    aegir::bootstrap::kCNodeBits, seL4_AllRights,
+                                    aegir::bootstrap::cnode_bits(), seL4_AllRights,
                                     0) != seL4_NoError) {
                     carved = false;
                     break;
@@ -1070,16 +1070,16 @@ int main(int argc, char *argv[])
             Slice const *slice = find_slice(badge);
             if (slice == nullptr || index >= slice->frames || mint_slot == 0 ||
                 seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::cnode_bits(),
                                 aegir::bootstrap::kSlotOwnCNode,
                                 slice->slots[slice->frames + index],
-                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::cnode_bits(),
                                 seL4_AllRights) != seL4_NoError) {
                 gui.reply(0);
             } else {
                 gui.reply_cap(nullptr, 0, mint_slot);
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
             }
         } else if (method == aegir::console::kMethodCreateWindow && length == 7) {
             uint64_t const x = static_cast<uint64_t>(seL4_GetMR(1));
@@ -1164,16 +1164,16 @@ int main(int argc, char *argv[])
             if (slice == nullptr || slice->events == 0 || slice->listening ||
                 mint_slot == 0 ||
                 seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::cnode_bits(),
                                 aegir::bootstrap::kSlotOwnCNode, slice->events,
-                                aegir::bootstrap::kCNodeBits,
+                                aegir::bootstrap::cnode_bits(),
                                 seL4_CapRights_new(0, 0, 1, 1), 0) != seL4_NoError) {
                 gui.reply(0);
             } else {
                 slice->listening = true;
                 gui.reply_cap(nullptr, 0, mint_slot);
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
             }
         } else if (method == aegir::console::kMethodDestroyWindow && length == 2) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
@@ -1243,11 +1243,11 @@ int main(int argc, char *argv[])
                 Slice *const dead = *slink;
                 *slink = dead->next;
                 seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, dead->untyped,
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                                  dead->untyped, aegir::bootstrap::kCNodeBits);
+                                  dead->untyped, aegir::bootstrap::cnode_bits());
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                                  dead->events, aegir::bootstrap::kCNodeBits);
+                                  dead->events, aegir::bootstrap::cnode_bits());
             }
             if (lost_backdrop) {
                 announce_screen_owner(0);

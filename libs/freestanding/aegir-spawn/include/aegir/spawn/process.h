@@ -196,6 +196,12 @@ struct Request {
     char const *boot = nullptr;
     uint32_t boot_length = 0;
     uint32_t priority;
+    /** The child's CSpace size in slots-bits (specs/authority.md), or zero for
+     *  the default `kCNodeBits`. A child that will spawn large children of its
+     *  own -- a launcher -- is given a larger CSpace, because staging a
+     *  near-megabyte image and mapping a multi-megabyte heap compete for the
+     *  same slots. The child learns its size from the block (bootstrap::cnode_bits). */
+    uint32_t cnode_bits = 0;
     /** How many 4 KiB pages of stack the child is given. Zero takes the floor
      *  (kDefaultStackPages, 8 KiB); a process that runs the C++ standard
      *  library asks for more, because its container code is stack-hungry and an
@@ -280,6 +286,10 @@ private:
     seL4_CPtr asid_pool_;
     seL4_CPtr source_root_;
     seL4_Word source_depth_;
+    /* The child's own CSpace size, set from the request at the start of a spawn
+     * (specs/authority.md); installs into the child address its slots at this
+     * depth. */
+    uint32_t cnode_bits_ = bootstrap::kCNodeBits;
     /* The one read-only copy of a `binaries` blob, shared by every child that
      * is given it: the frames are made on the first spawn that asks and
      * *mapped* -- not copied -- into each later one, because a copy per

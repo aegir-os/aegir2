@@ -21,6 +21,7 @@
 #include <aegir/console.h>
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
+#include <aegir/environment.h>
 #include <aegir/ipc/port.h>
 #include <aegir/launch.h>
 #include <aegir/log.h>
@@ -97,6 +98,82 @@ uint32_t packed_words(uint32_t length)
     return 1 + (length + 7) / 8;
 }
 
+/* Parse a `AEGIR_BADGE_RANGE=<base>,<size>` value (specs/launch.md). True and
+ * fills base/size when it is well formed; a malformed value is refused rather
+ * than guessed, so a terminal is never handed someone else's serials. */
+bool parse_badge_range(char const *value, uint64_t *base, uint64_t *size)
+{
+    if (value == nullptr) {
+        return false;
+    }
+    uint64_t values[2] = {0, 0};
+    uint32_t which = 0;
+    bool any_digit = false;
+    for (char const *p = value;; ++p) {
+        char const c = *p;
+        if (c >= '0' && c <= '9') {
+            values[which] = values[which] * 10 + static_cast<uint64_t>(c - '0');
+            any_digit = true;
+        } else if (c == ',' && which == 0) {
+            if (!any_digit) {
+                return false;
+            }
+            which = 1;
+            any_digit = false;
+        } else if (c == '\0') {
+            if (!any_digit || which != 1 || values[1] == 0) {
+                return false;
+            }
+            *base = values[0];
+            *size = values[1];
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+
+/* Parse the launcher's window specification `CON:x/y/w/h/title` (specs/launch.md)
+ * into a rectangle and a title. The options after the title are not read yet.
+ * False when it is malformed, and the default window then stands. */
+bool parse_window_spec(char const *spec, int *x, int *y, int *width, int *height,
+                       std::string *title)
+{
+    static char const kPrefix[] = "CON:";
+    for (uint32_t i = 0; i < sizeof(kPrefix) - 1; ++i) {
+        if (spec[i] != kPrefix[i]) {
+            return false;
+        }
+    }
+    char const *p = spec + sizeof(kPrefix) - 1;
+    int *const fields[4] = {x, y, width, height};
+    for (int f = 0; f < 4; ++f) {
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+        int value = 0;
+        while (*p >= '0' && *p <= '9') {
+            value = value * 10 + (*p - '0');
+            ++p;
+        }
+        *fields[f] = value;
+        if (f < 3) {
+            if (*p != '/') {
+                return false;
+            }
+            ++p;
+        }
+    }
+    if (*p == '/') {
+        ++p;
+        while (*p != '\0' && *p != '/') {
+            title->push_back(*p);
+            ++p;
+        }
+    }
+    return *width > 0 && *height > 0;
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -134,6 +211,27 @@ int main(int argc, char *argv[])
     Window window(app);
     window.set_title("Terminal");
     window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
+    /* A launcher sets AEGIR_WINDOW (specs/launch.md): this terminal is nested,
+     * and the specification is its window. The terminal owns the window, so it
+     * is the one that parses it; the launcher only forwards it. */
+    bool nested = false;
+    {
+        char const *const spec = aegir::environment::getenv("AEGIR_WINDOW");
+        if (spec != nullptr) {
+            nested = true;
+            std::string title;
+            int x = 0;
+            int y = 0;
+            int width = 0;
+            int height = 0;
+            if (parse_window_spec(spec, &x, &y, &width, &height, &title)) {
+                window.set_rect({x, y, width, height});
+                if (!title.empty()) {
+                    window.set_title(title.c_str());
+                }
+            }
+        }
+    }
 
     auto view = std::make_unique<TerminalView>();
     view->set_font(app.default_font());
@@ -213,6 +311,8 @@ int main(int argc, char *argv[])
 
     uint64_t command_serial = 0;
     uint64_t pipeline_serial = 0;
+    /* One owner per live command; the slot pool's 0 means free, so owners run
+     * from 1. */
     uint64_t owner_serial = 0;
     /* This terminal's own badge (specs/shell.md's interim, now landed): a
      * session terminal is a user process, so its commands' memory is owned by
@@ -222,6 +322,19 @@ int main(int argc, char *argv[])
     if (!aegir::bootstrap::badge(&own_badge)) {
         own_badge = 0;
     }
+    /* The badge range this terminal hands out (specs/launch.md): auth sets it
+     * for a session terminal, a launcher sets it for a nested one. Commands
+     * and nested terminals draw serials from it, so no two of a session's
+     * processes share one; a system terminal has none and its commands keep
+     * the small system badges. A quarter is reserved for nested terminals. */
+    uint64_t badge_base = 0;
+    uint64_t badge_size = 0;
+    bool const have_badge_range =
+        parse_badge_range(aegir::environment::getenv("AEGIR_BADGE_RANGE"), &badge_base,
+                          &badge_size);
+    uint64_t next_command = badge_base;
+    uint64_t child_count = 0;
+    uint64_t const child_size = badge_size / 4;
     /* The live commands: each owns a pool slot range (`owner`) and its memory
      * chunks (`badge`), and a background command is just another of them
      * (specs/memory.md Phase 5). A foreground line's records are reaped when
@@ -259,15 +372,27 @@ int main(int argc, char *argv[])
         }
 
         /* The command's id: its stream badge (a key inside the terminal, not a
-         * kernel badge) and, now, its memory owner. A session terminal mints a
-         * user badge carrying its own user index, so the memory service can
-         * resolve the command's class and limits (specs/memory.md, specs/limits.md);
-         * a system terminal's commands stay system badges, unlimited. */
-        uint64_t const command_badge =
-            aegir::ipc::is_user_badge(own_badge)
-                ? aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge),
-                                              command_serial++)
-                : 0x1000 + command_serial++;
+         * kernel badge) and its memory owner. A session terminal mints a user
+         * badge from the range it was granted (specs/launch.md), so the memory
+         * service resolves the command's class and limits (specs/memory.md,
+         * specs/limits.md) and a nested terminal's commands never share a
+         * serial with its parent's; a system terminal's commands stay system
+         * badges, unlimited. A range with none left refuses rather than
+         * reusing a serial. */
+        uint64_t command_badge = 0;
+        if (aegir::ipc::is_user_badge(own_badge)) {
+            uint64_t const floor = have_badge_range
+                                       ? badge_base + badge_size - 3 * child_size
+                                       : 0;
+            if (have_badge_range && next_command >= floor) {
+                write("  terminal: FAIL the badge range is spent\n");
+                return false;
+            }
+            command_badge = aegir::ipc::make_user_badge(
+                aegir::ipc::user_index(own_badge), next_command++);
+        } else {
+            command_badge = 0x1000 + command_serial++;
+        }
         uint32_t const owner = static_cast<uint32_t>(++owner_serial);
         if (!spawn_kit.begin(owner)) {
             write("  terminal: FAIL the command's staging would not begin\n");
@@ -522,6 +647,183 @@ int main(int argc, char *argv[])
         return ok;
     };
 
+    /* Launch a nested terminal (specs/launch.md's kind 3): a peer of this
+     * terminal, with its own console window, its own shell and its own badge
+     * range. The launcher hands it the kit it needs -- the unbadged console,
+     * a runtime untyped and a shell pool from the child pool, and the
+     * namespace, memory, log, ASID pool, clock and timer to stand up. False
+     * when the kit is absent or the pool or the range is spent. */
+    auto spawn_launched = [&](std::string const &program, std::string const &window) -> bool {
+        if (!kit || !spawn_kit.can_launch() || !have_badge_range) {
+            write("  terminal: no launcher kit for a nested terminal\n");
+            return false;
+        }
+        if (child_size == 0 || child_count >= 3) {
+            write("  terminal: the badge range is spent\n");
+            return false;
+        }
+        uint64_t const window_index = child_count;
+        uint64_t const child_base =
+            badge_base + badge_size - (child_count + 1) * child_size;
+        ++child_count;
+        uint64_t const child_badge =
+            aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge), child_base);
+        constexpr uint32_t kChildUntypedBits = 22;
+        if (!load_image("Initrd:" + program)) {
+            write("  terminal: no image for the nested terminal\n");
+            return false;
+        }
+        uint32_t const owner = static_cast<uint32_t>(++owner_serial);
+        /* The staging and the child's runtime are charged to this terminal's
+         * own badge, not the child's: the session's reclaim releases the
+         * terminal's badge (specs/auth.md), so a nested terminal's memory comes
+         * back at logout even though a nested terminal is never reaped. */
+        if (!spawn_kit.begin(owner) || !spawn_kit.begin_command(own_badge)) {
+            write("  terminal: FAIL the nested terminal's staging would not begin\n");
+            spawn_kit.abandon(own_badge, owner);
+            return false;
+        }
+        /* A untyped of the asked-for size from the memory service, on demand
+         * (specs/memory.md): there is no pool to size, and the session's
+         * release takes it back. */
+        auto alloc_mem = [&](uint32_t bits) -> seL4_CPtr {
+            aegir::ipc::Consumer const service(spawn_kit.command_mem());
+            uint64_t const request = bits;
+            uint64_t answer[1] = {};
+            bool cap_arrived = false;
+            aegir::ipc::WordsReply const reply = service.call_transfer(
+                aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+            if (reply.error != 0 || !cap_arrived) {
+                return 0;
+            }
+            seL4_CPtr const slot = spawn_kit.memory().alloc_slot();
+            if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                  aegir::bootstrap::kSlotReceiveCap,
+                                  aegir::bootstrap::cnode_bits());
+                return 0;
+            }
+            return slot;
+        };
+        seL4_CPtr const child_runtime = alloc_mem(kChildUntypedBits);
+        seL4_CPtr const child_shell_pool = alloc_mem(kChildUntypedBits);
+        if (child_runtime == 0 || child_shell_pool == 0) {
+            write("  terminal: FAIL no memory for the nested terminal\n");
+            spawn_kit.abandon(own_badge, owner);
+            return false;
+        }
+        aegir::spawn::PortGrant ports[14];
+        uint32_t port_count = 0;
+        auto add = [&](char const *name, uint32_t name_length, seL4_CPtr cap,
+                       seL4_CapRights_t rights, uint64_t badge, uint32_t bits, bool copy) {
+            ports[port_count] = {name, name_length,
+                                 aegir::bootstrap::kSlotFirstDeclared + port_count, cap,
+                                 rights, badge, bits, false, copy};
+            ++port_count;
+        };
+        /* The child terminal's own bootstrap names, exactly what its SpawnKit
+         * and main look up: log.main and console.gui badged with its badge, the
+         * session's namespace by copy (so Home:/ENV:/C: resolve), and the
+         * unbadged kit it hands its own commands. */
+        add(aegir::log::kPortName, aegir::log::kPortNameLength, spawn_kit.log_port(),
+            seL4_CapRights_new(1, 0, 0, 1), child_badge, 0, false);
+        add(aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
+            spawn_kit.command_nmspace_port(), seL4_CapRights_new(1, 1, 0, 1), 0, 0, true);
+        add(aegir::console::kPortName, aegir::console::kPortNameLength,
+            spawn_kit.spawn_console_gui(), seL4_CapRights_new(1, 1, 0, 1), child_badge, 0,
+            false);
+        add("untyped", 7, child_runtime, seL4_AllRights, 0, kChildUntypedBits, false);
+        add("spawn:mem.main", 14, spawn_kit.mem_port(), seL4_CapRights_new(1, 1, 0, 1), 0, 0,
+            false);
+        add("asid-pool", 9, spawn_kit.asid_pool(), seL4_AllRights, 0, 0, false);
+        add("spawn:log.main", 14, spawn_kit.log_port(), seL4_CapRights_new(1, 0, 0, 1), 0,
+            0, false);
+        add("shell:vfs.namespace", 19, spawn_kit.command_nmspace_port(),
+            seL4_CapRights_new(1, 1, 0, 1), 0, 0, true);
+        add("shell-pool", 10, child_shell_pool, seL4_AllRights, 0, kChildUntypedBits, false);
+        if (spawn_kit.command_clock_port() != 0) {
+            add(aegir::clock::kPortName, aegir::clock::kPortNameLength,
+                spawn_kit.command_clock_port(), seL4_CapRights_new(1, 0, 0, 1), 0, 0,
+                false);
+        }
+        if (spawn_kit.command_timer_port() != 0) {
+            add(aegir::timer::kPortName, aegir::timer::kPortNameLength,
+                spawn_kit.command_timer_port(), seL4_CapRights_new(1, 0, 0, 1), 0, 0,
+                false);
+        }
+        /* The child's environment: this terminal's, less the launcher entries it
+         * must not inherit, plus its own range and its window. */
+        std::vector<std::string> environment;
+        for (char const *const *e = aegir::environment::environ(); *e != nullptr; ++e) {
+            std::string const entry(*e);
+            if (entry.rfind("AEGIR_BADGE_RANGE=", 0) == 0 ||
+                entry.rfind("AEGIR_WINDOW=", 0) == 0 || entry.rfind("AEGIR_FROM=", 0) == 0) {
+                continue;
+            }
+            environment.push_back(entry);
+        }
+        environment.push_back("AEGIR_BADGE_RANGE=" + std::to_string(child_base + 1) + "," +
+                              std::to_string(child_size - 1));
+        if (!window.empty()) {
+            environment.push_back("AEGIR_WINDOW=" + window);
+        } else {
+            int const x = kWindowX + 24 * static_cast<int>(window_index);
+            int const y = kWindowY + 24 * static_cast<int>(window_index);
+            environment.push_back("AEGIR_WINDOW=CON:" + std::to_string(x) + "/" +
+                                  std::to_string(y) + "/" + std::to_string(kWindowWidth) +
+                                  "/" + std::to_string(kWindowHeight) + "/Terminal");
+        }
+        std::vector<char const *> environment_pointers;
+        environment_pointers.reserve(environment.size());
+        for (std::string const &entry : environment) {
+            environment_pointers.push_back(entry.c_str());
+        }
+        std::error_code cwd_error;
+        std::string const cwd = std::filesystem::current_path(cwd_error).string();
+        static char const kName[] = "session.terminal";
+        static char const kAccount[] = "terminal";
+        aegir::spawn::Request request{};
+        request.name = kName;
+        request.name_length = sizeof(kName) - 1;
+        request.binary_image = image.data();
+        request.binary_image_bytes = image.size();
+        request.account = kAccount;
+        request.account_length = sizeof(kAccount) - 1;
+        request.cwd = cwd.c_str();
+        request.cwd_length = static_cast<uint32_t>(cwd.size());
+        request.environment = environment_pointers.data();
+        request.environment_count = static_cast<uint32_t>(environment_pointers.size());
+        request.priority = seL4_MaxPrio - 2;
+        request.ports = ports;
+        request.port_count = port_count;
+        request.fault_endpoint = spawn_kit.fault_endpoint();
+        request.badge = child_badge;
+        request.give_vspace = true;
+        /* A peer is a launcher too, so it gets the larger CSpace (`
+         * specs/authority.md`): nesting works at any depth. */
+        request.cnode_bits = 13;
+        request.untyped_physical = 0;
+        request.untyped_bits = kChildUntypedBits;
+        aegir::mem::Account account{"terminal", 0, 0, 0};
+        aegir::spawn::Process process{};
+        if (!spawn_kit.spawner().spawn(request, account, process)) {
+            write("  terminal: FAIL spawning a nested terminal: ");
+            write(spawn_kit.spawner().problem());
+            char const *const detail = spawn_kit.spawner().detail();
+            if (detail != nullptr && detail[0] != '\0') {
+                write(" (");
+                write(detail);
+                write(")");
+            }
+            write("\n");
+            spawn_kit.abandon(own_badge, owner);
+            return false;
+        }
+        spawn_kit.end_staging();
+        write("  terminal: nested terminal started\n");
+        return true;
+    };
+
     /* The shell: its own process, spawned once from its own pool. Its
      * con.stream copy is badged with the shell's stream, and it opens the
      * stream itself -- the terminal is serving before it gets there. It is
@@ -579,11 +881,19 @@ int main(int argc, char *argv[])
                     return 0;
                 }
                 uint64_t const stack_pages = words[at++];
-                /* The search path and the window specification are Phase 3's
-                 * (a command has no window and resolves through the session's
-                 * own path); read so the wire is whole, then unused. */
                 (void)path;
-                (void)window;
+                if (kind == aegir::launch::kKindLaunching) {
+                    /* A kind-3 peer (specs/launch.md): the launcher resolves the
+                     * program from argv[0] and hands it its kit -- its own
+                     * console window, a badge range, its own shell. */
+                    std::vector<std::string> const words_of_argv =
+                        split_command_words(stage.line);
+                    std::string const program = words_of_argv.empty()
+                                                    ? std::string("aegir-terminal")
+                                                    : words_of_argv[0];
+                    reply[0] = spawn_launched(program, window) ? 1 : 0;
+                    return 1;
+                }
                 if (kind != aegir::launch::kKindCommand) {
                     reply[0] = 0;
                     return 1;
@@ -768,7 +1078,13 @@ int main(int argc, char *argv[])
         /* The boot session says so, so its ready line is not the session
          * terminal's cue (specs/boot.md). */
         bool const boot = spawn_kit.boot_status() != 0;
-        write(boot ? "  terminal: boot ready\n" : "  terminal: ready\n");
+        if (nested) {
+            /* A launcher started this terminal (specs/launch.md): its own cue,
+             * so a nested window is told apart from the session's. */
+            write("  terminal: nested ready\n");
+        } else {
+            write(boot ? "  terminal: boot ready\n" : "  terminal: ready\n");
+        }
         if (kit) {
             std::error_code cwd_error;
             std::string const cwd = std::filesystem::current_path(cwd_error).string();

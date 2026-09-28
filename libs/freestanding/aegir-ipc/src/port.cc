@@ -25,7 +25,7 @@ constexpr seL4_Word kReplyMr = 0;
 void set_receive_path() noexcept
 {
     seL4_SetCapReceivePath(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
-                           bootstrap::kCNodeBits);
+                           bootstrap::cnode_bits());
 }
 }  // namespace
 
@@ -196,9 +196,9 @@ void Owner::reply_cap(uint64_t const *words, uint32_t count, seL4_CPtr cap) noex
 
 bool take_received_cap(seL4_CPtr target) noexcept
 {
-    return seL4_CNode_Move(bootstrap::kSlotOwnCNode, target, bootstrap::kCNodeBits,
+    return seL4_CNode_Move(bootstrap::kSlotOwnCNode, target, bootstrap::cnode_bits(),
                            bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
-                           bootstrap::kCNodeBits) == seL4_NoError;
+                           bootstrap::cnode_bits()) == seL4_NoError;
 }
 
 }  // namespace aegir::ipc

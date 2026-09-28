@@ -106,7 +106,7 @@ bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
      * a child is identified to whoever it talks to, and it has to come from the
      * cap it uses rather than from anything it says about itself. */
     seL4_Error const mint_error =
-        seL4_CNode_Mint(into_cspace, slot, bootstrap::kCNodeBits, source_root_, source,
+        seL4_CNode_Mint(into_cspace, slot, cnode_bits_, source_root_, source,
                         source_depth_, rights, badge);
     if (mint_error != seL4_NoError) {
         detail_ = "installing a capability into the child's CSpace";
@@ -124,7 +124,7 @@ bool Spawner::install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr sour
      *  is install()'s: a plain slot in the destination's own-depth CNode, the
      *  caller's root and depth on the source side. */
     seL4_Error const move_error =
-        seL4_CNode_Move(into_cspace, slot, bootstrap::kCNodeBits, source_root_, source,
+        seL4_CNode_Move(into_cspace, slot, cnode_bits_, source_root_, source,
                         source_depth_);
     if (move_error != seL4_NoError) {
         detail_ = "moving a capability into the child's CSpace";
@@ -144,7 +144,7 @@ bool Spawner::install_copied(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr sou
      * install()'s. maskCapRights leaves an endpoint cap unchanged, so the
      * rights argument does not narrow what the source held. */
     seL4_Error const copy_error =
-        seL4_CNode_Copy(into_cspace, slot, bootstrap::kCNodeBits, source_root_, source,
+        seL4_CNode_Copy(into_cspace, slot, cnode_bits_, source_root_, source,
                         source_depth_, seL4_AllRights);
     if (copy_error != seL4_NoError) {
         detail_ = "copying a capability into the child's CSpace";
@@ -268,6 +268,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     problem_ = "no problem";
     detail_ = "";
     error_ = seL4_NoError;
+    cnode_bits_ = request.cnode_bits != 0 ? request.cnode_bits : bootstrap::kCNodeBits;
     char const *why = nullptr;
 
     uint64_t elf_size = 0;
@@ -292,7 +293,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * (kernel/src/object/objecttype.c:45-46) and creates the CNode with exactly
      * the number passed (":557-563"). Passing the sum asks for 32x the memory
      * and gets "Insufficient memory" for a CSpace that would have fit. */
-    process.cspace = allocator_.alloc_object(seL4_CapTableObject, bootstrap::kCNodeBits, account,
+    process.cspace = allocator_.alloc_object(seL4_CapTableObject, cnode_bits_, account,
                                              &error);
     if (process.cspace == 0) {
         return fail("no memory for the child's CSpace");
@@ -557,6 +558,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         device_cap_entries, request.device_grant_count,
         shared_window_address, request.window_bytes, request.window_physical,
         request.badge,
+        cnode_bits_,
     };
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");
@@ -710,7 +712,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * tries to name itself with a capability the kernel cannot resolve, and is
      * stopped with "cap is not a TCB" before main ever runs. */
     seL4_Word const cspace_guard =
-        seL4_CNode_CapData_new(0, seL4_WordBits - bootstrap::kCNodeBits).words[0];
+        seL4_CNode_CapData_new(0, seL4_WordBits - cnode_bits_).words[0];
     error = seL4_TCB_Configure(process.tcb, bootstrap::kSlotFaultEndpoint, process.cspace,
                                cspace_guard, vspace.root(), 0, ipc_at, ipc_frame);
     if (error != seL4_NoError) {

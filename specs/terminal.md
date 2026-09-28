@@ -185,6 +185,14 @@ auth's `shell-pool`, and the shell's `run` calls come back to the terminal as
 launch requests (`specs/launch.md`), which spawns each command on a mem.main
 copy badged for it (specs/memory.md).
 
+**The terminal is a launcher as well as a command runner.** Auth delegates it
+the launcher kit -- an unbadged `spawn:console.gui` -- so a kind-3 launch
+(`NEWSHELL`) can mint the child its own console cap, draw the child's runtime
+and shell pool from `mem.main` under the terminal's badge, hand it a reserved
+badge range, and give it the session's namespace by copy. The child is a peer
+with its own window and shell, and a larger CSpace than a command
+(specs/authority.md), so it can launch in turn.
+
 ### The terminal's window and render
 
 The terminal is a trinket client (`specs/trinket.md`): `Application`, one
@@ -267,8 +275,11 @@ does not renders as correctly-sized blanks rather than collapsing the line.
   stream without one still polls, and there is no readiness set.
 - **Selection, copy and paste.** There is no clipboard service; selecting the
   grid and copying is deferred until one exists.
-- **Multiple consoles per session, and windows other than the one.** One
-  terminal, one window, one stream per badge to start.
+- **Multiple consoles per session.** One terminal, one window, one stream per
+  badge -- but a *nested* terminal is its own process with its own window and
+  slice, launched by `NEWSHELL`/`NEWCLI` through the launcher protocol
+  (`specs/launch.md`), so a session may hold several. A second console *window
+  in one terminal process* is still not a thing.
 - **Noto fallback fonts** (declared, not loaded).
 - **Scrollback persisted across processes.** The handler holds it; closing
   the handler drops it.

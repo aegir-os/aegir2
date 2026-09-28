@@ -87,7 +87,7 @@ constexpr uint32_t kCNodeBits = 12;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 8;
+constexpr uint32_t kVersion = 9;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -176,6 +176,12 @@ enum class EntryKind : uint32_t {
      *  badge and limits apply (specs/shell.md, specs/memory.md). Absent when
      *  the spawner minted none. */
     Badge = 17,
+    /** The child's own CSpace size in slots-bits, in `number`: the radix its
+     *  own-CNode cap was built with. A process addresses its own slots at this
+     *  depth, and a spawning child may be given a larger CSpace than a command
+     *  (specs/authority.md), so it cannot be a compile-time constant. Absent
+     *  means `kCNodeBits`. */
+    CNodeBits = 18,
 };
 
 struct Entry {
@@ -267,6 +273,9 @@ struct Contents {
      * user index its commands' memory is owned by (specs/memory.md). Zero when
      * the spawner minted none. */
     uint64_t badge;
+    /* The child's own CSpace size in slots-bits (specs/authority.md): the radix
+     * its own-CNode cap is built with. Zero means kCNodeBits. */
+    uint32_t cnode_bits;
 };
 
 /** Build a block in memory we can write: `storage` is a page that will be
@@ -283,6 +292,11 @@ Block const *find() noexcept;
 
 /** The child's service name, or the empty string. */
 char const *name(uint32_t *length) noexcept;
+
+/** This process's own CSpace size in slots-bits (specs/authority.md): the
+ *  radix its own-CNode cap was built with. `kCNodeBits` when the block did not
+ *  say -- the root task, or a block from before the field. */
+uint32_t cnode_bits() noexcept;
 
 /** The child's current directory, or nullptr when it was given none
  *  (specs/environment.md). The pointer is into the block, valid as long as the

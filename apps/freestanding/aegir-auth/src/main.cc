@@ -31,6 +31,7 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/memory.h>
 #include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/initrd.h>
@@ -94,30 +95,57 @@ constexpr uint64_t kBootBadge = 769;
 aegir::ipc::Consumer g_nmspace;
 seL4_CPtr g_home_slot = 0;
 
-/* The session pool (specs/auth.md's Session reclaim): one untyped, carved
- * out of the delegation at boot and kept. A session's objects are retyped
- * from it, so an exit's one revoke frees it whole and the next login
- * reuses it -- the wait serializes sessions, so one pool is enough. Its
- * size is a starting grant: the reclaim log line says what a session
- * charged, and the grant grows when that says so. It holds the bureau's own
- * untyped besides the spawn's objects, and the bureau is a toolkit app now
- * (its heap and its font), so it is 2 MiB of the delegation. */
-constexpr uint32_t kSessionPoolBits = 24; /* 16 MiB of the delegation: two
-                                           * toolkit children (each with its
-                                           * own 1 MiB untyped and a near-
-                                           * megabyte image) and the terminal's
-                                           * 2 MiB spawn untyped -- a
-                                           * service-sized 8 MiB pool left too
-                                           * little for the terminal's own
-                                           * objects. */
-seL4_CPtr g_session_pool = 0;
-uint64_t g_session_pool_physical = 0;
-
-/* The allocator over the session pool: static, because the untyped table
- * inside one is far larger than a service's stack -- and reset each login,
- * because the revoke made the pool whole again and last session's split
- * records belong to capabilities that no longer exist. */
+/* The session allocator (specs/memory.md, specs/auth.md's Session reclaim): a
+ * session's objects and its spawn's staging are retyped from memory the
+ * memory service hands out on demand, charged to the session's badge -- there
+ * is no fixed pool to size. A login resets the allocator and points its
+ * untyped source at a mem.main copy badged for the session; the teardown is
+ * one release of that badge, which revokes every chunk it owns (the objects
+ * retyped from them go with them). */
 aegir::mem::Allocator g_session_mem(nullptr);
+
+/* Its node pool: a session's terminal image splits many pieces (the image
+ * nears a megabyte), beyond the allocator's built-in floor. Static, and reset
+ * each login. */
+alignas(64) unsigned char g_session_nodes[256 * 1024];
+
+/* The mem.main copy the session allocator asks through, badged with the
+ * session (minted per login). Zero before the first login. */
+seL4_CPtr g_session_mem_call = 0;
+
+/* The untyped source (specs/memory.md): ask mem.main for a chunk as wide as a
+ * terminal's runtime, so every carve below -- the bureau's, the terminal's
+ * runtime and shell pool -- can split from it. The chunk is owned by the
+ * session's badge. */
+constexpr uint32_t kSessionChunkBits = 22; /* 4 MiB */
+
+seL4_CPtr session_untyped_source(void *context, seL4_Word *size_bits,
+                                 uint64_t *paddr) noexcept
+{
+    auto *const allocator = static_cast<aegir::mem::Allocator *>(context);
+    if (allocator == nullptr || g_session_mem_call == 0) {
+        return 0;
+    }
+    aegir::ipc::Consumer const service(g_session_mem_call);
+    uint64_t const request = kSessionChunkBits;
+    uint64_t answer[1] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply = service.call_transfer(
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        return 0;
+    }
+    seL4_CPtr const slot = allocator->alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::cnode_bits());
+        return 0;
+    }
+    *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0] : kSessionChunkBits);
+    *paddr = 0;
+    return slot;
+}
 
 /* What a session spawn needs, kept from the bootstrap block: the initrd's
  * bytes (the binary is looked up by name), the ASID pool the address space
@@ -142,6 +170,39 @@ void write(char const *text)
 void write(char const *text, uint32_t length)
 {
     aegir::debug_write(text, length);
+}
+
+/* Render `value` in decimal into `out`, returning the bytes written (no NUL). */
+uint32_t decimal(char *out, uint64_t value) noexcept
+{
+    char reversed[20];
+    uint32_t digits = 0;
+    do {
+        reversed[digits++] = static_cast<char>('0' + (value % 10));
+        value /= 10;
+    } while (value != 0);
+    for (uint32_t i = 0; i < digits; ++i) {
+        out[i] = reversed[digits - 1 - i];
+    }
+    return digits;
+}
+
+/* The badge range a session terminal may hand out, as the environment entry
+ * the terminal reads at startup (specs/launch.md): `AEGIR_BADGE_RANGE=<base>,
+ * <size>`. A static buffer, because the spawn copies it synchronously. */
+char const *badge_range_env(uint64_t base, uint64_t size) noexcept
+{
+    static char buffer[48];
+    static char const kPrefix[] = "AEGIR_BADGE_RANGE=";
+    uint32_t at = 0;
+    for (uint32_t i = 0; i < sizeof(kPrefix) - 1; ++i) {
+        buffer[at++] = kPrefix[i];
+    }
+    at += decimal(buffer + at, base);
+    buffer[at++] = ',';
+    at += decimal(buffer + at, size);
+    buffer[at] = '\0';
+    return buffer;
 }
 
 /* One field of a row against a string on the wire: equal lengths, equal
@@ -347,7 +408,7 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
                 write("      auth: FAIL the script directory would not be made\n");
             }
             seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
-                              aegir::bootstrap::kCNodeBits);
+                              aegir::bootstrap::cnode_bits());
         }
     }
     if (!made) {
@@ -546,7 +607,7 @@ void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
         /* The resolve's cap is ours to dispose of: one slot, deleted after
          * each use, so a reclaim does not spend what the next one needs. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
-                          aegir::bootstrap::kCNodeBits);
+                          aegir::bootstrap::cnode_bits());
     }
     uint64_t const badge_word = badge;
     uint64_t uin[1];
@@ -555,16 +616,22 @@ void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
     uint64_t const unbound =
         (unbound_reply.error == 0 && unbound_reply.count == 1) ? uin[0] : 0;
 
-    /* The revoke is the memory's way back: every object the session was --
-     * CSpace, TCB, VSpace, frames, the spawn's staging -- was retyped from
-     * the pool, and with the CSpace go the minted port copies it held
-     * (specs/authority.md's retained-copy path). The kernel unmaps a mapped
+    /* The memory's way back is the memory service's: one release per badge the
+     * session used revokes every chunk that badge owns -- the session's
+     * objects, its spawn's staging, the bureau's and terminal's runtime
+     * untypeds, all retyped from those chunks -- and with them go the minted
+     * port copies in their CSpaces (specs/authority.md's retained-copy path,
+     * specs/memory.md). The terminal's own badge is released too, so a nested
+     * terminal's memory, charged there, comes back. The kernel unmaps a mapped
      * frame when the cap goes (finaliseCap), so the staging's scratch-window
-     * pages are already unmapped here; the window's cursor just needs to be
-     * told. The pool stands free whole for the next login, and the slots
-     * past the mark are empty, so the cursor returns to it. */
-    seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, g_session_pool,
-                      aegir::bootstrap::kCNodeBits);
+     * pages are already unmapped; the window's cursor just needs to be told.
+     * The slots past the mark are empty, so the cursor returns to it. */
+    aegir::ipc::Consumer const mem(g_spawn_mem);
+    uint64_t released = 0;
+    uint64_t const session_owner = badge;
+    (void)mem.call_words(aegir::memory::kMethodRelease, &session_owner, 1, &released, 1);
+    uint64_t const terminal_owner = badge + 1;
+    (void)mem.call_words(aegir::memory::kMethodRelease, &terminal_owner, 1, &released, 1);
     g_scratch.rewind(scratch_mark);
     g_objects.slot_release(mark);
     write("      auth: session reclaimed: ");
@@ -613,14 +680,28 @@ void start_session(uint32_t user, bool bureau) noexcept
      * session's own slots. */
     uintptr_t const scratch_mark = g_scratch.next();
     aegir::mem::Account session_account{"session", 0, 0, 0};
-    g_session_mem.reset();
-    if (!g_session_mem.adopt_untyped(g_session_pool, kSessionPoolBits,
-                                     g_session_pool_physical)) {
-        write("      auth: FAIL the session pool would not be adopted\n");
+    if (g_spawn_mem == 0) {
+        write("      auth: FAIL no mem.main to build the session from\n");
         reclaim_session(badge, mark, scratch_mark, session_account);
         return;
     }
+    /* The session's mem.main copy: minted fresh with this login's badge, so
+     * the memory service charges the session's every chunk to it and one
+     * release takes them all back. */
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_session_mem_call,
+                      aegir::bootstrap::cnode_bits());
+    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_session_mem_call,
+                        aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
+                        g_spawn_mem, aegir::bootstrap::cnode_bits(),
+                        seL4_CapRights_new(1, 1, 0, 1), badge) != seL4_NoError) {
+        write("      auth: FAIL the session's mem.main copy would not mint\n");
+        reclaim_session(badge, mark, scratch_mark, session_account);
+        return;
+    }
+    g_session_mem.adopt_nodes(g_session_nodes, sizeof(g_session_nodes));
+    g_session_mem.reset();
     g_session_mem.adopt_slots(mark, g_slots_end - mark, 0);
+    g_session_mem.set_untyped_source(session_untyped_source, &g_session_mem);
     aegir::mem::Arena session_arena(g_session_mem, g_scratch, session_account);
 
     seL4_Error fault_error = seL4_NoError;
@@ -716,7 +797,7 @@ void start_session(uint32_t user, bool bureau) noexcept
     aegir::spawn::Spawner spawner(g_session_mem, g_scratch, session_arena, initrd,
                                   g_asid_pool,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
     aegir::spawn::Process process{};
     if (!spawner.spawn(request, session_account, process)) {
         write("      auth: FAIL spawning the session: ");
@@ -755,6 +836,11 @@ void start_session(uint32_t user, bool bureau) noexcept
          * spawner copies it. A hosted command is near a megabyte, so the
          * bureau's 1 MiB is not enough for the terminal. */
         constexpr uint32_t kTerminalUntypedBits = 22;
+        /* Its CSpace (specs/authority.md): larger than a service's 4096 slots,
+         * because it is a launcher -- staging a nested terminal's near-megabyte
+         * image and mapping its own 8 MiB heap compete for CSpace slots in a
+         * 4096 that a plain service gets. 8192 holds both. */
+        constexpr uint32_t kTerminalCNodeBits = 13;
         seL4_CPtr const terminal_untyped =
             g_session_mem.carve_untyped(kTerminalUntypedBits, session_account,
                                         &terminal_untyped_error,
@@ -816,6 +902,11 @@ void start_session(uint32_t user, bool bureau) noexcept
              * clock, so the terminal mints a session copy for each. */
             {"spawn:timer.main", 16, aegir::bootstrap::kSlotFirstDeclared + 10,
              g_spawn_timer, seL4_CapRights_new(1, 0, 0, 1), 0, 0},
+            /* The launcher kit (specs/launch.md): an unbadged console.gui so a
+             * nested terminal can mint its own (a second attach needs a badge
+             * of its own). A dead entry when the count says so. */
+            {"spawn:console.gui", 17, aegir::bootstrap::kSlotFirstDeclared + 11,
+             g_spawn_gui, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
         };
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
@@ -843,15 +934,30 @@ void start_session(uint32_t user, bool bureau) noexcept
                 terminal_port_count = 10;
                 if (g_spawn_timer != 0) {
                     terminal_port_count = 11;
+                    /* The launcher kit rides last, after the timer, so the
+                     * slots stay contiguous whatever auth was given. */
+                    if (g_spawn_gui != 0) {
+                        terminal_port_count = 12;
+                    }
                 }
             }
         }
         terminal_request.port_count = terminal_port_count;
         terminal_request.fault_endpoint = terminal_fault;
         terminal_request.badge = terminal_badge;
+        terminal_request.cnode_bits = kTerminalCNodeBits;
         terminal_request.give_vspace = true;
         terminal_request.untyped_physical = terminal_untyped_physical;
         terminal_request.untyped_bits = kTerminalUntypedBits;
+        /* The badge range the terminal hands out (specs/launch.md): its
+         * commands and any nested terminal draw serials from it, so no two of
+         * a session's processes share one. Serial + 2 skips the session's own
+         * badge and this terminal's. */
+        char const *const terminal_badge_range =
+            badge_range_env(serial + 2, aegir::ipc::kSessionSerialStride - 2);
+        char const *const terminal_environment[1] = {terminal_badge_range};
+        terminal_request.environment = terminal_environment;
+        terminal_request.environment_count = 1;
         aegir::spawn::Process terminal_process{};
         if (terminal_fault == 0 || terminal_untyped == 0 ||
             !spawner.spawn(terminal_request, session_account, terminal_process)) {
@@ -868,7 +974,7 @@ void start_session(uint32_t user, bool bureau) noexcept
             write("      auth: the terminal is up\n");
         }
     }
-    g_serials[user] += bureau ? 2 : 1;
+    g_serials[user] += aegir::ipc::kSessionSerialStride;
 
     /* The ready, waited on the way the partition manager waits for a
      * filesystem's: a session that faults first leaves us here, which is
@@ -1021,7 +1127,7 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
                                       g_binaries_bytes);
     aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd, g_asid_pool,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
     aegir::spawn::Process process{};
     if (!spawner.spawn(request, account, process)) {
         write("      auth: FAIL spawning the boot session: ");
@@ -1117,7 +1223,7 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
                                       g_binaries_bytes);
     aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd, g_asid_pool,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::cnode_bits());
     aegir::spawn::Process process{};
     if (!spawner.spawn(request, greeter_account, process)) {
         write("      auth: FAIL spawning the greeter: ");
@@ -1212,8 +1318,8 @@ int main(int argc, char *argv[])
      * destination capability of a retype *is* the CNode
      * (kernel/src/object/untyped.c). The size is the one the spawner builds
      * (kCNodeBits in libs/aegir-spawn/src/process.cc). */
-    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0);
-    g_slots_end = 1u << aegir::bootstrap::kCNodeBits;
+    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    g_slots_end = 1u << aegir::bootstrap::cnode_bits();
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -1235,6 +1341,15 @@ int main(int argc, char *argv[])
      * deleted after each use, so a login does not spend what the next one
      * needs. */
     g_home_slot = g_objects.alloc_slot();
+    /* A slot for the session's mem.main copy (specs/auth.md's Session
+     * reclaim): minted fresh for each login's badge, below every session's
+     * mark, so it is auth's own and not part of the session's range. */
+    g_session_mem_call = g_objects.alloc_slot();
+    if (g_home_slot == 0 || g_session_mem_call == 0) {
+        write("      FAIL auth: no slot for the home or the session's mem.main\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
 
     /* Resolve Initrd:users.db, asking again until the volume exists -- the
      * volumes join the namespace while the boot set is still coming up. The
@@ -1363,16 +1478,9 @@ int main(int argc, char *argv[])
         g_serials[u] = 0;
     }
 
-    /* The session pool (specs/auth.md's Session reclaim): carved once and
-     * kept -- a session's objects are retyped from it, and an exit's one
-     * revoke frees it whole for the next login. */
-    seL4_Error pool_error = seL4_NoError;
-    g_session_pool = g_objects.carve_untyped(kSessionPoolBits, g_account, &pool_error,
-                                             &g_session_pool_physical);
-    if (g_session_pool == 0) {
-        write("      auth: FAIL no session pool -- logins will not start "
-              "sessions\n");
-    }
+    /* A session no longer has its own pool (specs/auth.md's Session reclaim):
+     * its memory comes from the memory service on demand, charged to the
+     * session's badge, so there is nothing here to size. */
 
     /* The rest of the spawn kit: the pool the sessions' address spaces come
      * from, the delegatable copies of what a session needs, and the initrd
@@ -1432,7 +1540,7 @@ int main(int argc, char *argv[])
     }
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);
-    bool const can_spawn = g_session_pool != 0 && kit_complete && initrd.valid();
+    bool const can_spawn = g_spawn_mem != 0 && kit_complete && initrd.valid();
     if (!can_spawn) {
         write("      auth: no pool, delegatable ports, or initrd -- "
               "logins will not start sessions\n");

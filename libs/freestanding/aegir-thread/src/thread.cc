@@ -145,7 +145,7 @@ bool Builder::prepare(Placement const &where, void (*entry)(void *), void *argum
      * would resolve the same slot number to a different capability
      * (aegir/bootstrap.h explains). */
     seL4_Word const cspace_guard =
-        seL4_CNode_CapData_new(0, seL4_WordBits - bootstrap::kCNodeBits).words[0];
+        seL4_CNode_CapData_new(0, seL4_WordBits - bootstrap::cnode_bits()).words[0];
     error = seL4_TCB_Configure(tcb, where.fault_endpoint, where.cspace_root, cspace_guard,
                                where.vspace_root, 0,
                                reinterpret_cast<seL4_Word>(ipc_memory), ipc_frame);

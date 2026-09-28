@@ -47,14 +47,17 @@ copied -- `seL4_RevokeFirst`).
   memory service is spawned, carves the largest free piece less what the
   services after it still need (`memory = rest` in the manifest, `services.cc`).
   The pool is therefore the host's memory, not a constant -- more RAM is more
-  pool with no edit -- and one untyped carries it. The chunk size is a size
-  class (2 MiB, the granularity a runtime grows in; more classes later).
+  pool with no edit -- and one untyped carries it. The size is the caller's: a
+  command asks for its customary 2 MiB, a terminal's runtime for 4, and the
+  pool splits to whichever it is.
 - **`alloc` -- words: requested size bits. Answer: one capability, a chunk of
-  that size (the largest class at or under the request), and its size in
-  words.** The service **carves** the chunk from the pool then and there -- it
-  is not pre-split into capabilities -- so what the service's CSpace bounds is
-  the chunks *alive*, not the pool. The chunk is owned by the calling
-  capability's **badge**.
+  that size, and its size in words.** The service **carves** the chunk from the
+  pool then and there -- it is not pre-split into capabilities -- so what the
+  service's CSpace bounds is the chunks *alive*, not the pool. The chunk is
+  owned by the calling capability's **badge**. A session's whole kit -- the
+  bureau's untyped, the terminal's runtime and shell pool, and the spawn's
+  staging -- is asked for as it is needed and charged to the session's badge,
+  so there is no pool to size and one release takes it all back.
 - **`release` -- words: a badge. Answer: how many chunks were returned.** Every
   chunk the badge holds is revoked -- the caller's objects derived from it go
   with it -- and the untyped freed back to the pool. A spawner calls this for a

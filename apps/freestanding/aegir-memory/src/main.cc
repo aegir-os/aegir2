@@ -67,14 +67,20 @@ uint32_t g_slot_owners[kMaxSlots];
 alignas(64) unsigned char g_nodes[64 * 1024];
 
 /* The chunks alive now: a cap the service keeps (to revoke), the allocator's
- * cookie for it (to free), and whose it is. Zero owner is free. */
+ * cookie for it (to free), how wide it is, and whose it is. Zero owner is
+ * free. A chunk is whatever size its owner asked for (specs/memory.md), not a
+ * fixed size, so the width has to travel with it. */
 struct Chunk {
     seL4_CPtr cap;
     void *cookie;
     uint64_t owner;
+    uint32_t bits;
 };
 constexpr uint32_t kMaxChunks = 2048;
 Chunk g_chunk[kMaxChunks];
+
+/* The pool's width in bits: the ceiling on a chunk's size. */
+uint32_t g_pool_bits = 0;
 
 /* The resolved limits (specs/limits.md): one row per user in the database,
  * indexed by the user index a badge carries, plus the committed bytes the user
@@ -103,16 +109,18 @@ uint32_t chunk_free() noexcept
 void release_chunk(uint32_t index) noexcept
 {
     uint64_t const owner = g_chunk[index].owner;
+    uint32_t const bits = g_chunk[index].bits;
     seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, g_chunk[index].cap,
                       aegir::bootstrap::kCNodeBits);
     g_chunk[index].cap = 0;
-    (void)g_pool.free_object(g_chunk[index].cookie, aegir::memory::kChunkBits);
+    (void)g_pool.free_object(g_chunk[index].cookie, bits);
     g_chunk[index].cookie = nullptr;
     g_chunk[index].owner = 0;
+    g_chunk[index].bits = 0;
     if (aegir::ipc::is_user_badge(owner) && g_committed != nullptr) {
         uint64_t const user = aegir::ipc::user_index(owner);
         if (user < g_user_count) {
-            uint64_t const bytes = 1ull << aegir::memory::kChunkBits;
+            uint64_t const bytes = 1ull << bits;
             g_committed[user] = g_committed[user] > bytes ? g_committed[user] - bytes : 0;
         }
     }
@@ -282,8 +290,9 @@ bool load_config(aegir::vfs::Namespace &space, aegir::mem::Arena &arena) noexcep
 void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                   uint64_t badge) noexcept
 {
-    uint64_t const wanted_bits = count >= 1 ? words[0] : aegir::memory::kChunkBits;
-    if (wanted_bits > aegir::memory::kChunkBits) {
+    uint64_t const wanted_bits =
+        count >= 1 && words[0] != 0 ? words[0] : aegir::memory::kChunkBits;
+    if (wanted_bits == 0 || wanted_bits > g_pool_bits) {
         port.reply_words(nullptr, 0);
         return;
     }
@@ -296,7 +305,7 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
         user = aegir::ipc::user_index(badge);
         limited = user < g_user_count && g_rules != nullptr;
     }
-    uint64_t const bytes = 1ull << aegir::memory::kChunkBits;
+    uint64_t const bytes = 1ull << wanted_bits;
     if (limited) {
         if (aegir::limits::crosses(g_rules[user].deny, g_committed[user], bytes)) {
             write("  memory: denied a chunk to user ");
@@ -322,17 +331,17 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     seL4_Error error = seL4_NoError;
     aegir::mem::Account account{"chunk", 0, 0, 0};
     void *cookie = nullptr;
-    seL4_CPtr const chunk = g_pool.carve_untyped(aegir::memory::kChunkBits, account,
-                                                 &error, nullptr, &cookie);
+    seL4_CPtr const chunk = g_pool.carve_untyped(static_cast<seL4_Word>(wanted_bits),
+                                                 account, &error, nullptr, &cookie);
     if (chunk == 0) {
         port.reply_words(nullptr, 0);
         return;
     }
-    g_chunk[index] = Chunk{chunk, cookie, badge};
+    g_chunk[index] = Chunk{chunk, cookie, badge, static_cast<uint32_t>(wanted_bits)};
     if (limited) {
         g_committed[user] += bytes;
     }
-    uint64_t answer[1] = {aegir::memory::kChunkBits};
+    uint64_t answer[1] = {wanted_bits};
     port.reply_cap(answer, 1, chunk);
 }
 
@@ -371,6 +380,7 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    g_pool_bits = pool_bits;
 
     /* The slots past the block's names are ours; the pool draws them from a
      * free list so carving and freeing chunks reuses them. */

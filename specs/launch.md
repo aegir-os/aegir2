@@ -1,10 +1,11 @@
 # launch: starting a program from a session
 
 Status: decided (2026-09). The request shape, the kinds and the authority are
-below; `Run` (kind 1, without waiting) landed as specs/memory.md Phase 5, and
-Phase 2 -- `aegir::launch` over the C runtime primitive (`aegir_spawn`), the
-generic request, and the shell routed through it -- has landed. Kinds 2 and 3
-and a standalone launcher are the next work.
+below. `Run` (kind 1) landed as specs/memory.md Phase 5; Phase 2 (`aegir::launch`
+over the runtime primitive, the shell routed through it) landed; Phase 3's
+kinds 2/3 groundwork -- the launcher kit, the reserved badge ranges, and
+`NEWSHELL`/`NEWCLI` launching a peer terminal -- has landed. `WINDOW=`/`FROM`
+arguments and a windowed non-terminal customer are the next pieces.
 
 Aegir's processes are not forked: a **spawner** creates a child out of
 authority it was delegated (specs/authority.md). That is the mechanism, and it
@@ -131,10 +132,17 @@ and a MultiView differ only in the request's kind.
   route through it, so the call site does not change when the launcher moves
   out. `argv`, `cwd`, `environment`, `path`, the redirections, the window
   specification and the stack ask all travel; the launcher fulfills kind 1.
-- **Phase 3 -- kinds 2 and 3.** The launcher hands a windowed program its
-  console and a launching program its kit; `NEWSHELL`/`NEWCLI` launch
-  `aegir-terminal`, and a windowed program of the session (a viewer) is the
-  second customer.
+- **Phase 3 -- kinds 2 and 3.** Partly landed. A kind-3 (launching) child is
+  built from the launcher kit: auth delegates the first-cut launcher, the
+  terminal, an unbadged `spawn:console.gui`, so the child mints its own and its
+  console `attach` is its own first. The launcher draws the child's runtime
+  untyped and shell pool from `mem.main` on demand under its own badge
+  (specs/memory.md), gives the child a reserved badge range so no two of a
+  session's processes share a serial, hands it the session's namespace by copy,
+  and gives it a larger CSpace (specs/authority.md) so it can launch in turn.
+  `NEWSHELL`/`NEWCLI` launch `aegir-terminal` this way, and a nested terminal
+  stands up as a peer with its own window and shell. `WINDOW=`/`FROM` and a
+  windowed non-terminal customer are the next pieces.
 - **Phase 4 -- the launchers.** The Bureau's Execute, a dock and the desktop
   icons become launcher clients, each sending its own context.
 

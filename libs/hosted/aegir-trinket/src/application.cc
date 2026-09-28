@@ -42,10 +42,20 @@ constexpr uint64_t kHeapBytes = 8ull << 20;
  * allocator owns the rest, and a command allocator owns this range so a
  * command's capabilities can be revoked and the slots released whole
  * (specs/shell.md's Phase 4). The toolkit uses a few dozen slots; the console
- * slice's frames are the biggest run. A thousand is beyond any of that. */
-constexpr uint32_t kSpawnSlotCount = 1024;
-constexpr uint64_t kSpawnSlotBase =
-    (1u << aegir::bootstrap::kCNodeBits) - kSpawnSlotCount;
+ * slice's frames are the biggest run. A thousand is beyond any of that, and
+ * the heap maps its pages from the same range, so this cannot simply grow. */
+/* The toolkit's own CSpace need: the 8 MiB heap's pages, the console slice,
+ * the font. A spawner's reserve is everything above it, so a launcher given a
+ * larger CSpace gets a larger reserve, and a plain service keeps its 1024
+ * (specs/authority.md). */
+constexpr uint64_t kToolkitSlots = 3072;
+uint64_t reserved_slot_base() noexcept {
+    return kToolkitSlots;
+}
+uint32_t reserved_slot_count() noexcept {
+    uint64_t const total = 1ull << aegir::bootstrap::cnode_bits();
+    return total > kToolkitSlots ? static_cast<uint32_t>(total - kToolkitSlots) : 0;
+}
 
 /* The mapping authority the spawn kit installs: the delegated untyped (page
  * tables and frames are retyped from it), the VSpace root, and the window of
@@ -80,7 +90,7 @@ bool adopt_memory() {
               g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
                                       untyped_bits, untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, kSpawnSlotBase - first_free, 0);
+        g_objects.adopt_slots(first_free, reserved_slot_base() - first_free, 0);
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),
                              static_cast<uintptr_t>(window_base + window_bytes),
@@ -230,7 +240,7 @@ int Application::exec() {
              * it as state to get stale). */
             seL4_SetCapReceivePath(aegir::bootstrap::kSlotOwnCNode,
                                    aegir::bootstrap::kSlotReceiveCap,
-                                   aegir::bootstrap::kCNodeBits);
+                                   aegir::bootstrap::cnode_bits());
             seL4_MessageInfo_t const info = seL4_Recv(port, &badge);
             if (seL4_MessageInfo_get_length(info) != 0) {
                 dispatch_call(info, badge);
@@ -271,9 +281,9 @@ seL4_CPtr Application::alloc_slot() {
 bool Application::mint_event_notification(seL4_CPtr target) {
     if (events_ == 0 || target == 0) return false;
     return seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, target,
-                           aegir::bootstrap::kCNodeBits,
+                           aegir::bootstrap::cnode_bits(),
                            aegir::bootstrap::kSlotOwnCNode, events_,
-                           aegir::bootstrap::kCNodeBits,
+                           aegir::bootstrap::cnode_bits(),
                            seL4_CapRights_new(0, 0, 0, 1), 0) == seL4_NoError;
 }
 
@@ -363,11 +373,11 @@ aegir::mem::Scratch& Application::scratch() {
 }
 
 uint64_t Application::spawn_slot_base() const {
-    return kSpawnSlotBase;
+    return reserved_slot_base();
 }
 
 uint32_t Application::spawn_slot_count() const {
-    return kSpawnSlotCount;
+    return reserved_slot_count();
 }
 
 uint64_t Application::claim_backing(uint64_t bytes) {    if (slice_ == nullptr || bytes == 0) return ~0ull;

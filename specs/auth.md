@@ -196,11 +196,13 @@ A successful login starts a session. The decisions, taken 2026-09:
   badge and refuses a second attach -- so a badge is a window's slice, and
   the terminal's serial is the bureau's plus one. The terminal is spawned
   second, so its window is created over the backdrop; it gets the namespace
-  and the user's Home, as the bureau does. The session pool grew from 2 to
-  16 MiB -- the two hosted images are near a megabyte each -- and the
-  console's memory grant from 16 to 64 MiB, because the console retypes each
-  client's slice from it, and a slice is the screen-bounded maximum the
-  window may resize to.
+  and the user's Home, as the bureau does, and a larger CSpace than a plain
+  service (specs/authority.md), because it is a launcher. Its memory comes from
+  `mem.main` on demand, charged to the session's badge (specs/memory.md), so
+  there is no pool to size -- the two hosted images are near a megabyte each,
+  and the grant grows with what the session actually uses. The console's memory
+  grant is 64 MiB, because the console retypes each client's slice from it, and
+  a slice is the screen-bounded maximum the window may resize to.
 - **Auth delegates the terminal's spawn kit; the terminal runs the
   commands.** A session runs user processes as ordinary use
   (`specs/authority.md`), and the terminal is the process that does: it
@@ -232,20 +234,19 @@ reclaim is exercised. The decisions:
   are one signal while sessions are short-lived. The split -- ready early,
   exit late -- lands with the supervisor-that-serves shape, when sessions
   are not.
-- **A session's memory is a pool auth retains.** The session's objects are
-  retyped from one untyped carved out of auth's delegation and kept: auth
-  holds the capability, so `seL4_CNode_Revoke` on it deletes everything the
-  session was -- its CSpace, TCB, VSpace and frames, and with the CSpace
-  the minted port copies it held (authority.md's retained-copy path,
-  extended to sessions). The pool is then free whole and the next login
-  reuses it: the wait serializes sessions, so one pool suffices, and the
-  revoke is the only free the memory needs. The pool's size is a starting
-  grant, measured from the account the session charges, not guessed.
-- **Teardown order: reap, unbind, revoke.** The badge's handles go first --
+- **A session's memory is the memory service's, charged to its badge.** A
+  session's objects and its spawn's staging are retyped from chunks `mem.main`
+  hands out on demand, owned by the session's badge -- there is no pool to size
+  and nothing to guess (specs/memory.md). Reclaim is one `release` of that
+  badge, which revokes every chunk it owns (and with the chunks the objects
+  retyped from them, the minted port copies included); the terminal's own
+  badge is released too, so a nested terminal's memory, charged there, comes
+  back.
+- **Teardown order: reap, unbind, release.** The badge's handles go first --
   one `reap` per volume the namespace names, walked through
   `count`/`describe`/`resolve`, because a handle is a filesystem's row and
   not a kernel object -- then the badge's aliases with `unbind`, then the
-  revoke. The mechanisms were landed and tested ahead of their caller
+  release. The mechanisms were landed and tested ahead of their caller
   (specs/vfs.md); this is the caller they were waiting for. The console
   arc's `reap` joins the same order where windows must go: the greeter's
   badge is reaped through `console.gui` before its login's session starts
@@ -253,10 +254,11 @@ reclaim is exercised. The decisions:
   the bureau's backdrop is the session's visible remainder, and taking it
   down is the re-login arc's.
 - **Slots come back too.** The capabilities a spawn puts in auth's own
-  CSpace die with the revoke, and the slot cursor returns to the mark the
-  login took (`slot_mark`/`slot_release`, libs/aegir-mem) -- valid exactly
-  because the revoke emptied the range. Without it the drain only moves
-  from the untyped to the CSpace, the same leak in a different hat.
+  CSpace die with the chunks they were retyped from, and the slot cursor
+  returns to the mark the login took (`slot_mark`/`slot_release`,
+  libs/aegir-mem) -- valid exactly because the release emptied the range.
+  Without it the drain only moves from the untyped to the CSpace, the same
+  leak in a different hat.
 - **The test proves the drain is closed.** Logins past what the grant could
   hold unreclaimed all succeed, and the handle a session leaves open is
   already gone when the next caller asks -- the test no longer reaps it

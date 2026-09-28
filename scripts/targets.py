@@ -670,6 +670,21 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # keyboard's queue drops keys and mangles a line.
                 press="execute Sys:S/Control-Test\n",
             ),
+            QmpStep(
+                r"terminal: command exited 42",
+                events=TERMINAL_CLICK,
+                # Newshell (specs/launch.md): the shell asks the launcher for a
+                # nested terminal -- a kind-3 launch. The launcher mints it its
+                # own console.gui (so it has its own window and slice), hands it
+                # the session's namespace and the unbadged kit it needs, carves
+                # its runtime and shell pool from the memory service under the
+                # terminal's badge, and gives it a reserved badge range, so it
+                # stands up as a peer with its own shell. It is the last thing
+                # typed here, because the new window takes the focus.
+                press="newshell\n",
+            ),
+            QmpStep(r"terminal: nested terminal started"),
+            QmpStep(r"terminal: nested ready"),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across
             # its top -- #6688bb, the Workbench menus in it -- over the

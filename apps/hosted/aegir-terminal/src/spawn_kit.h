@@ -130,6 +130,16 @@ public:
                      uint32_t cwd_length, uint64_t badge, char const *const *arguments,
                      uint32_t argument_count);
 
+    /* The launcher kit a nested terminal is built from (specs/launch.md): the
+     * unbadged console.gui it mints the child's own from. Its memory comes
+     * from mem.main on demand, under the terminal's badge, not from a pool. */
+    bool can_launch() const { return spawn_console_gui_ != 0; }
+    seL4_CPtr spawn_console_gui() const { return spawn_console_gui_; }
+
+    /* The ASID pool the launcher's children's address spaces come from
+     * (specs/launch.md): shared, because one pool holds many VSpaces. */
+    seL4_CPtr asid_pool() const { return asid_pool_; }
+
     /* The boot session's status endpoint, when this terminal is the boot
      * session's (auth grants it as `boot.status`): the shell sends the outcome
      * -- 0 success, nonzero failure -- and auth receives it (specs/boot.md).
@@ -163,6 +173,9 @@ private:
     seL4_CPtr mem_port_ = 0;
     seL4_CPtr command_mem_ = 0;
     bool command_mem_live_ = false;
+    /* The launcher kit (specs/launch.md): the unbadged console.gui a nested
+     * terminal's own is minted from. */
+    seL4_CPtr spawn_console_gui_ = 0;
     seL4_CPtr shell_pool_ = 0;
     uint32_t shell_pool_bits_ = 0;
     uintptr_t scratch_mark_ = 0;

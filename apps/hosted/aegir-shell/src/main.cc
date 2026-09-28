@@ -502,6 +502,8 @@ private:
             {"failat", &Shell::command_failat},
             {"endcli", &Shell::command_endcli},
             {"endshell", &Shell::command_endcli},
+            {"newshell", &Shell::command_newshell},
+            {"newcli", &Shell::command_newshell},
         };
         count = sizeof(kBuiltins) / sizeof(kBuiltins[0]);
         return kBuiltins;
@@ -633,6 +635,22 @@ private:
          * empty, so the notification goes now (specs/boot.md). */
         boot_done();
         std::exit(0);
+    }
+
+    /* Newshell/Newcli start another terminal in a new window, carrying this
+     * shell's context -- current directory, prompt, path, environment and
+     * stack (specs/launch.md). The launcher owns the spawn authority, so this
+     * is a launch of kind 3, the same call a MultiView or a desktop icon will
+     * make. */
+    void command_newshell(std::vector<std::string> const &args)
+    {
+        (void)args;
+        std::string const payload = "aegir-terminal";
+        if (!aegir::launch::spawn(payload.data(), static_cast<uint32_t>(payload.size()),
+                                  aegir::launch::kKindLaunching, "", 0)) {
+            print("Newshell: the launcher would not start it\n");
+            line_status_ = 10;
+        }
     }
 
     void command_set(std::vector<std::string> const &args)

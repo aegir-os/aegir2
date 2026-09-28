@@ -22,8 +22,10 @@ constexpr uint32_t kPortNameLength = 8;
 
 /** alloc: in the size the caller wants in bits; answer the chunk's size in
  *  bits and one capability, a pristine untyped of that size. The chunk is
- *  owned by the calling capability's badge. A request larger than the biggest
- *  chunk is answered with nothing. */
+ *  owned by the calling capability's badge. The size is the caller's: a
+ *  command asks for 2 MiB, a terminal's runtime for 4, and the service grows
+ *  the pool as needed. A request larger than the pool is answered with
+ *  nothing. */
 constexpr uint32_t kMethodAlloc = 1;
 
 /** release: in a badge (0 is the caller's own); answer how many chunks came
@@ -32,8 +34,9 @@ constexpr uint32_t kMethodAlloc = 1;
  *  child's badge here when the child exits. */
 constexpr uint32_t kMethodRelease = 2;
 
-/** The one chunk size class for now: 2 MiB, a large page, the granularity a
- *  program's runtime grows in (specs/memory.md). */
+/** The customary chunk size: 2 MiB, a large page, the granularity a command's
+ *  runtime grows in (specs/memory.md). It is only the default for a caller
+ *  that does not say a size, not a ceiling. */
 constexpr uint32_t kChunkBits = 21;
 constexpr uint64_t kChunkBytes = 1ull << kChunkBits;
 

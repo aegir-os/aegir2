@@ -400,7 +400,7 @@ int main(int argc, char *argv[])
              * table takes a slot per half it leaves behind, so one slot is not a
              * service's working set -- the rest of the CSpace is. The size is the
              * one the spawner builds (kCNodeBits in libs/aegir-spawn/src/process.cc). */
-            g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0);
+            g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
             seL4_Error error = seL4_NoError;
             table = g_objects.alloc_object(seL4_RISCV_PageTableObject, seL4_PageTableBits, me, &error);
             if (table == 0) {
@@ -510,7 +510,7 @@ int main(int argc, char *argv[])
             aegir::spawn::Spawner spawner(g_objects, g_scratch, arena, initrd,
                                           static_cast<seL4_CPtr>(pool_slot),
                                           static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                          aegir::bootstrap::kCNodeBits);
+                                          aegir::bootstrap::cnode_bits());
 
             /* The registry, parsed from the file the initrd carries: the map is
              * the join of the tree with *this* table, and the table is data, so
@@ -1096,9 +1096,9 @@ int main(int argc, char *argv[])
                         seL4_CPtr const slot = g_objects.alloc_slot();
                         if (slot == 0 ||
                             seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
-                                            aegir::bootstrap::kCNodeBits,
+                                            aegir::bootstrap::cnode_bits(),
                                             aegir::bootstrap::kSlotOwnCNode, window_frame + p,
-                                            aegir::bootstrap::kCNodeBits, seL4_AllRights,
+                                            aegir::bootstrap::cnode_bits(), seL4_AllRights,
                                             0) != seL4_NoError) {
                             return 0;
                         }
@@ -1174,7 +1174,7 @@ int main(int argc, char *argv[])
                             : seL4_IRQControl_Get(
                                   static_cast<seL4_IRQControl>(irqcontrol_slot),
                                   binding.irq, aegir::bootstrap::kSlotOwnCNode,
-                                  irq_handler, aegir::bootstrap::kCNodeBits);
+                                  irq_handler, aegir::bootstrap::cnode_bits());
                     seL4_Error notify_error = seL4_NoError;
                     irq_notification =
                         g_objects.alloc_object(seL4_NotificationObject,
@@ -1657,9 +1657,9 @@ int main(int argc, char *argv[])
                             }
                             if (port == 0 || mint_slot == 0 ||
                                 seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                                aegir::bootstrap::kCNodeBits,
+                                                aegir::bootstrap::cnode_bits(),
                                                 aegir::bootstrap::kSlotOwnCNode, port,
-                                                aegir::bootstrap::kCNodeBits,
+                                                aegir::bootstrap::cnode_bits(),
                                                 /* Grant: the input protocol's
                                                  * subscribe rides a capability
                                                  * on the call (aegir/input.h),
@@ -1673,7 +1673,7 @@ int main(int argc, char *argv[])
                                 /* The kernel transferred a copy; ours leaves,
                                  * and the slot answers the next open. */
                                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                                  aegir::bootstrap::kCNodeBits);
+                                                  aegir::bootstrap::cnode_bits());
                             }
                         } else if (method == aegir::registry::kMethodWindow &&
                                    length == 2 &&
@@ -1724,15 +1724,15 @@ int main(int argc, char *argv[])
                             }
                             if (pristine == 0 || mint_slot == 0 ||
                                 seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                                aegir::bootstrap::kCNodeBits,
+                                                aegir::bootstrap::cnode_bits(),
                                                 aegir::bootstrap::kSlotOwnCNode, pristine,
-                                                aegir::bootstrap::kCNodeBits,
+                                                aegir::bootstrap::cnode_bits(),
                                                 seL4_AllRights) != seL4_NoError) {
                                 registry.reply(0);
                             } else {
                                 registry.reply_cap(nullptr, 0, mint_slot);
                                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
-                                                  aegir::bootstrap::kCNodeBits);
+                                                  aegir::bootstrap::cnode_bits());
                             }
                         } else {
                             /* A method we do not know, or an index past the

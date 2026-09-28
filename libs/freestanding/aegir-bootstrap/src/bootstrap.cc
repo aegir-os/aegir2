@@ -48,14 +48,14 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
 
-    /* Fifteen fixed entries -- size, name, account, page bits, devices, device,
+    /* Sixteen fixed entries -- size, name, account, page bits, devices, device,
      * untyped, binaries, window, shared window, current directory, standard
-     * input, standard output, boot flags, the child's badge -- then one per
-     * device capability, then one per port, because what a process is given is
-     * part of who it is. Growing the block means bumping the version rather
-     * than gambling on a layout, and `entry_count` is what makes that safe for
-     * readers that know less. */
-    uint32_t const entries = 15 + contents.device_cap_count + contents.port_count;
+     * input, standard output, boot flags, the child's badge, its CSpace size --
+     * then one per device capability, then one per port, because what a process
+     * is given is part of who it is. Growing the block means bumping the version
+     * rather than gambling on a layout, and `entry_count` is what makes that safe
+     * for readers that know less. */
+    uint32_t const entries = 16 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(contents.name_length) +
                          contents.account_length + contents.cwd_length +
@@ -177,9 +177,15 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     /* The child's own badge (specs/memory.md): a number, absent when the
      * spawner minted none. */
     block->entries[14] = Entry{EntryKind::Badge, 0, contents.badge, 0, 0};
+    /* The child's own CSpace size (specs/authority.md): a number, so a spawning
+     * child given a larger CSpace addresses its own slots at the right depth.
+     * Zero means the default, which is what an older writer's block means. */
+    block->entries[15] = Entry{EntryKind::CNodeBits, 0,
+                               contents.cnode_bits != 0 ? contents.cnode_bits : kCNodeBits,
+                               0, 0};
 
     for (uint32_t i = 0; i < contents.device_cap_count; ++i) {
-        block->entries[15 + i] =
+        block->entries[16 + i] =
             Entry{EntryKind::DeviceCapability, contents.device_caps[i].bytes,
                   contents.device_caps[i].physical, 0,
                   static_cast<uint32_t>(contents.device_caps[i].slot)};
@@ -198,7 +204,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
             return nullptr;
         }
         room -= contents.ports[i].name_length;
-        block->entries[15 + contents.device_cap_count + i] =
+        block->entries[16 + contents.device_cap_count + i] =
             Entry{EntryKind::Capability, contents.ports[i].name_length,
                   contents.ports[i].slot, static_cast<uint32_t>(next_offset),
                   contents.ports[i].size_bits};
@@ -487,6 +493,22 @@ char const *name(uint32_t *length) noexcept
         return "";
     }
     return found;
+}
+
+uint32_t cnode_bits() noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return kCNodeBits;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        if (block->entries[i].kind != EntryKind::CNodeBits) {
+            continue;
+        }
+        uint64_t const bits = block->entries[i].number;
+        return bits != 0 && bits <= seL4_WordBits ? static_cast<uint32_t>(bits) : kCNodeBits;
+    }
+    return kCNodeBits;
 }
 
 char const *current_dir(uint32_t *length) noexcept

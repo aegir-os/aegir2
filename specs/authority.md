@@ -110,6 +110,17 @@ that used to be director's is now distributed: what a service may spawn is
 declared in its manifest entry, and what a user may run is the session's business
 (`specs/services.md`).
 
+**A process's CSpace is part of what it is spawned with, not a constant.** Every
+process addresses its own capabilities at the depth its CNode was built with, so
+the spawn request carries the child's CSpace size and the block tells the child
+what it got (`bootstrap::cnode_bits`). A plain service gets 4096 slots; a
+*launcher* -- a process that will stage a child's image and map a
+multi-megabyte heap from the same slots -- gets a larger one, and passes a
+larger one to its own children, so nesting works at any depth. Without this a
+spawner and its heap compete for a fixed 4096 and one of them runs out; sizing
+it per role is the first-class answer, where a capacity number would only move
+the wall (`specs/launch.md`).
+
 ## Accounts and accounting
 
 An **account** is the record of what a process, a user or a service has been
