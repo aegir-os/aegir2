@@ -10,20 +10,38 @@ order.
 
 ## 1. Two allocators share one CSpace
 
-Auth owns its CSpace in `g_objects` from `first_free` upward, and hands the
+Auth owns its CSpace in `g_objects` from `first_free` upward, and handed the
 session pool in `g_session_mem` the range from `mark` (`g_objects.slot_mark()`)
-to the end -- so the two **overlap from `mark`**. It works only while auth
-allocates no slot after login, and the scratch window's page tables (which come
+to the end -- so the two **overlapped from `mark`**. It worked only while auth
+allocated no slot after login, and the scratch window's page tables (which come
 from `g_objects`) do exactly that: the third session child retyped into
 `mark` itself, where the session's own objects already sat ("Untyped Retype:
-Slot #2009 in destination window non-empty"). One CSpace wants one partition --
-the pool allocates *down* from the top, or lives in a CNode of its own.
+Slot #2009 in destination window non-empty").
 
-Behind it is a smaller defect: the scratch window's `next_` only moves on
-`rewind` (`libs/freestanding/aegir-mem/src/vspace.cc`), and `Arena`'s regions are
-never unmapped, so the window climbs with every spawn. It is not what failed
-(the window is a gigabyte and the climb is pages), but a region map that detaches
-is the right shape and belongs with the partition fix.
+Decided: the pool allocates *down* from the top and `g_objects` up from the
+bottom, into the one root CNode they already share
+(`Allocator::adopt_slots_down`). Joining the two cursors at opposite ends means a
+slot cannot be handed out twice while anything is left, and they meet only when
+the CSpace is genuinely full -- which the kernel refuses loudly ("Slot #... in
+destination window non-empty") rather than corrupting.
+
+A CNode of the pool's own was the first choice and is not available: a
+capability inside a nested CNode cannot be invoked. A child's root CNode carries
+the guard `seL4_WordBits - cnode_bits_`
+(`libs/freestanding/aegir-spawn/src/process.cc:714-715`), so guard plus radix is
+the whole word and the CPtr walk always ends in the root
+(`kernel/src/kernel/cspace.c:51`, `:126-192`). Measured: the received chunk did
+move into the pool CNode's slot 1, and the next retype -- whose service is
+`node->cap` -- resolved slot 1 as `kSlotOwnTcb` and was stopped by the kernel,
+`decodeTCBInvocation: Illegal operation`. Every cap the pool holds is invoked or
+invoked-from (an untyped to retype from, a TCB to configure, a frame to map), so
+all of them must stay in a CNode reachable from the root.
+
+Behind it is a smaller defect, still open: the scratch window's `next_` only
+moves on `rewind` (`libs/freestanding/aegir-mem/src/vspace.cc`), and `Arena`'s
+regions are never unmapped, so the window climbs with every spawn. It is not what
+failed (the window is a gigabyte and the climb is pages), but a region map that
+detaches is the right shape.
 
 ## 2. Readiness is rebuilt per service
 
