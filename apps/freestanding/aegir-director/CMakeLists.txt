@@ -75,6 +75,7 @@ set(aegir_initrd_binaries
     aegir-session-smoke
     aegir-test
     aegir-shell
+    aegir-launcher
     aegir-cxx-smoke
     aegir-env-smoke
     aegir-fs-smoke
@@ -107,6 +108,7 @@ set(aegir_initrd_binary_names
     "aegir-session-smoke"
     "aegir-test"
     "aegir-shell"
+    "aegir-launcher"
     "aegir-cxx-smoke"
     "aegir-env-smoke"
     "aegir-fs-smoke"
