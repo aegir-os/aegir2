@@ -89,6 +89,11 @@ int main(int argc, char *argv[])
     Window window(app);
     window.set_title("View");
     window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
+    /* Close and zoom gadgets (specs/window-manager.md), with the depth gadget a
+     * decorated window carries by default. Closing the viewer exits it, so a
+     * `Run view` whose window the user is done with does not linger. */
+    window.set_gadgets(true, true, true);
+    window.on_close_requested = [&app]() { app.quit(0); };
     /* A launcher sets AEGIR_WINDOW (specs/launch.md): the specification is this
      * program's window, and the program that owns the window parses it. */
     char const *const spec = aegir::environment::getenv("AEGIR_WINDOW");
