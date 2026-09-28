@@ -522,6 +522,7 @@ private:
             {"endshell", &Shell::command_endcli},
             {"newshell", &Shell::command_newshell},
             {"newcli", &Shell::command_newshell},
+            {"launch", &Shell::command_launch},
         };
         count = sizeof(kBuiltins) / sizeof(kBuiltins[0]);
         return kBuiltins;
@@ -689,6 +690,42 @@ private:
                                   aegir::launch::kKindLaunching, window.data(),
                                   static_cast<uint32_t>(window.size()))) {
             print("Newshell: the launcher would not start it\n");
+            line_status_ = 10;
+        }
+    }
+
+    /* Launch a windowed program: a program that opens its own console window,
+     * as a new process. The launcher owns the spawn authority, so this is a
+     * launch of kind 2 (specs/launch.md) -- the same call Newshell makes, with
+     * no terminal on the other side. An optional window specification
+     * (`WINDOW=<spec>`, or a bare `CON:...`) rides the request's own field for
+     * the program to parse; the rest of the words are the program and its
+     * arguments. */
+    void command_launch(std::vector<std::string> const &args)
+    {
+        std::string window;
+        std::string argv;
+        for (std::string const &arg : args) {
+            if (arg.rfind("WINDOW=", 0) == 0) {
+                window = arg.substr(7);
+            } else if (arg.rfind("CON:", 0) == 0) {
+                window = arg;
+            } else {
+                if (!argv.empty()) {
+                    argv.push_back('\0');
+                }
+                argv.append(arg);
+            }
+        }
+        if (argv.empty()) {
+            print("Launch: a program name, please\n");
+            line_status_ = 10;
+            return;
+        }
+        if (!aegir::launch::spawn(argv.data(), static_cast<uint32_t>(argv.size()),
+                                  aegir::launch::kKindWindowed, window.data(),
+                                  static_cast<uint32_t>(window.size()))) {
+            print("Launch: the launcher would not start it\n");
             line_status_ = 10;
         }
     }

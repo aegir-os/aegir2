@@ -83,6 +83,12 @@ struct Child {
  *  timer when the launcher has them. */
 uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
 
+/** A windowed program (kind 2): its own console window and identity, the
+ *  runtime its heap and page tables come from, and the session's namespace.
+ *  It does not launch, so it gets no spawn kit -- the same four grants a kind-3
+ *  peer starts with, and none of what makes a launcher. */
+uint32_t windowed_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
+
 /** A launching program (kind 3): its own console and identity, its runtime, and
  *  the unbadged sources it will hand its own children. When the launcher holds
  *  no memory service -- the degraded boot -- only the first four entries are

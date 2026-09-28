@@ -345,10 +345,11 @@ this arc's record of the order.
 
 - **Scripts, in full.** `Execute` and its frame (Phase 8), redirection
   (Phase 9), substitution and script arguments (Phase 12), control flow
-  (Phase 13) and pipelines (Phase 14) land. The process words `Run` and
-  `NewCLI`/`NewShell` are now their own spec (`specs/launch.md`): `Run` has
-  landed as the asynchronous command, and `NewCLI`/`NewShell` launch
-  `aegir-terminal` as a kind-3 peer, in its own window. Substitution turns a
+  (Phase 13) and pipelines (Phase 14) land. The process words `Run`, `Launch`
+  and `NewCLI`/`NewShell` are now their own spec (`specs/launch.md`): `Run` has
+  landed as the asynchronous command, `NewCLI`/`NewShell` launch
+  `aegir-terminal` as a kind-3 peer, in its own window, and `Launch` starts a
+  windowed program as a kind-2 child. Substitution turns a
   line into words and acts; a `*` escape for a literal quote or variable, and
   a full quoting rule, are later.
 - **Globbing and tab completion.** Completion belongs to the handler's line

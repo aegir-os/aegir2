@@ -2,11 +2,12 @@
 
 Status: decided (2026-09). The request shape, the kinds and the authority are
 below. `Run` (kind 1) landed as specs/memory.md Phase 5; Phase 2 (`aegir::launch`
-over the runtime primitive, the shell routed through it) landed; Phase 3's
-kinds 2/3 groundwork -- the launcher kit, the reserved badge ranges,
-`NEWSHELL`/`NEWCLI` launching a peer terminal, and its `WINDOW=`/`FROM`
-arguments -- has landed. A windowed non-terminal customer (kind 2) is the
-next piece.
+over the runtime primitive, the shell routed through it) landed. Phase 3 has
+landed: kinds 2 and 3 -- the launcher kit, the reserved badge ranges,
+`NEWSHELL`/`NEWCLI` launching a peer terminal with its `WINDOW=`/`FROM`
+arguments, and kind 2, a windowed program that opens its own window and does
+not launch. `aegir-view` (the MultiView shape) is the first kind-2 customer,
+started by the shell's `Launch` builtin.
 
 Aegir's processes are not forked: a **spawner** creates a child out of
 authority it was delegated (specs/authority.md). That is the mechanism, and it
@@ -133,7 +134,7 @@ and a MultiView differ only in the request's kind.
   route through it, so the call site does not change when the launcher moves
   out. `argv`, `cwd`, `environment`, `path`, the redirections, the window
   specification and the stack ask all travel; the launcher fulfills kind 1.
-- **Phase 3 -- kinds 2 and 3.** Partly landed. A kind-3 (launching) child is
+- **Phase 3 -- kinds 2 and 3.** Landed. A kind-3 (launching) child is
   built from the launcher kit: auth delegates the first-cut launcher, the
   terminal, an unbadged `spawn:console.gui`, so the child mints its own and its
   console `attach` is its own first. The launcher draws the child's runtime
@@ -142,14 +143,20 @@ and a MultiView differ only in the request's kind.
   session's processes share a serial, hands it the session's namespace by copy,
   and gives it a larger CSpace (specs/authority.md) so it can launch in turn.
   The kit itself is one module (`libs/freestanding/aegir-spawn-kit`): the
-  terminal builds its commands, its shell and a nested terminal with the same
-  three builders auth uses, so no launcher reassembles the list. `NEWSHELL`/
-  `NEWCLI` launch `aegir-terminal` this way, and a nested terminal stands up as
-  a peer with its own window and shell. Their `WINDOW=<spec>` (or a bare
-  `CON:...`) is the child's window, carried in the request's own field for the
-  child to parse; `FROM <file>` rides as the program's arguments, so the child's
-  shell runs it in place of Shell-Startup. A windowed non-terminal customer
-  (kind 2) is the next piece.
+  terminal builds its commands, its shell, a nested terminal and a windowed
+  program with the same builders auth uses, so no launcher reassembles the
+  list. `NEWSHELL`/`NEWCLI` launch `aegir-terminal` this way, and a nested
+  terminal stands up as a peer with its own window and shell; their
+  `WINDOW=<spec>` (or a bare `CON:...`) is the child's window, carried in the
+  request's own field for the child to parse, and `FROM <file>` rides as the
+  program's arguments, so the child's shell runs it in place of Shell-Startup.
+  A kind-2 child is the same without the launcher kit: `windowed_ports` hands it
+  its own console, runtime and the session's namespace, and nothing of what
+  makes a launcher -- it does not launch, so it needs no spawner. The shell's
+  `Launch` builtin makes the kind-2 request; `aegir-view` (the MultiView shape,
+  its file read through the granted namespace, its window named by
+  `AEGIR_WINDOW`) is the first customer, and it opens its own window as it
+  would under any other launcher (specs/console.md).
 - **Phase 4 -- the launchers.** The Bureau's Execute, a dock and the desktop
   icons become launcher clients, each sending its own context.
 

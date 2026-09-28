@@ -691,7 +691,39 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(r"terminal: nested ready"),
             # The FROM startup ran: the nested shell executed aegir-echo 77,
             # whose exit code is unique to this run (specs/launch.md).
-            QmpStep(r"terminal: command exited 77"),
+            QmpStep(
+                r"terminal: command exited 77",
+                # The click is in the session terminal's lower half, below the
+                # nested terminal's window (its content ends at y=392), so the
+                # launch is typed at a terminal with the launcher kit -- the
+                # nested terminal is depth one (specs/launch.md).
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 7680}},
+                    {"type": "abs", "data": {"axis": "y", "value": 19251}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                # The kind-2 windowed customer (specs/launch.md): the shell asks
+                # the launcher for a windowed program -- a viewer that opens its
+                # own console window rather than sharing the console stream. The
+                # launcher resolves it from C: (a userland program), hands it its
+                # own console.gui, runtime and the session's namespace, and names
+                # its window with AEGIR_WINDOW. It is cued here, after the whole
+                # DOS and nested-terminal sequence, so the viewer's focus does not
+                # race a press still owed to the shell.
+                press="launch WINDOW=CON:40/520/400/220/View view Sys:AEGIR.TXT\n",
+            ),
+            QmpStep(r"terminal: windowed program started view"),
+            # The viewer is up: its window is where AEGIR_WINDOW put it, its
+            # content is the Workbench grey, and the file it read through the
+            # namespace is drawn as text in its grid.
+            QmpStep(
+                r"view: ready",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 240, 700, 204, 204, 204),),
+                dark=(("gpu0", 46, 524, 300, 24, 20),),
+            ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across
             # its top -- #6688bb, the Workbench menus in it -- over the

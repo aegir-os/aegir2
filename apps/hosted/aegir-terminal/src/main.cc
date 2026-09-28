@@ -35,6 +35,7 @@
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/unicode.h>
 #include <aegir/trinket/window.h>
+#include <aegir/trinket/window_spec.h>
 #include <sel4/sel4.h>
 
 #include <cstdint>
@@ -131,47 +132,6 @@ bool parse_badge_range(char const *value, uint64_t *base, uint64_t *size)
             return false;
         }
     }
-}
-
-/* Parse the launcher's window specification `CON:x/y/w/h/title` (specs/launch.md)
- * into a rectangle and a title. The options after the title are not read yet.
- * False when it is malformed, and the default window then stands. */
-bool parse_window_spec(char const *spec, int *x, int *y, int *width, int *height,
-                       std::string *title)
-{
-    static char const kPrefix[] = "CON:";
-    for (uint32_t i = 0; i < sizeof(kPrefix) - 1; ++i) {
-        if (spec[i] != kPrefix[i]) {
-            return false;
-        }
-    }
-    char const *p = spec + sizeof(kPrefix) - 1;
-    int *const fields[4] = {x, y, width, height};
-    for (int f = 0; f < 4; ++f) {
-        if (*p < '0' || *p > '9') {
-            return false;
-        }
-        int value = 0;
-        while (*p >= '0' && *p <= '9') {
-            value = value * 10 + (*p - '0');
-            ++p;
-        }
-        *fields[f] = value;
-        if (f < 3) {
-            if (*p != '/') {
-                return false;
-            }
-            ++p;
-        }
-    }
-    if (*p == '/') {
-        ++p;
-        while (*p != '\0' && *p != '/') {
-            title->push_back(*p);
-            ++p;
-        }
-    }
-    return *width > 0 && *height > 0;
 }
 
 }  // namespace
@@ -622,6 +582,43 @@ int main(int argc, char *argv[])
         return ok;
     };
 
+    /* A untyped of the asked-for size from the memory service, on demand
+     * (specs/memory.md): there is no pool to size, and the session's release
+     * takes it back. Shared by a nested terminal (its runtime and shell pool)
+     * and a windowed program (its runtime). */
+    auto alloc_child_mem = [&](uint32_t bits) -> seL4_CPtr {
+        aegir::ipc::Consumer const service(spawn_kit.command_mem());
+        uint64_t const request = bits;
+        uint64_t answer[1] = {};
+        bool cap_arrived = false;
+        aegir::ipc::WordsReply const reply = service.call_transfer(
+            aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+        if (reply.error != 0 || !cap_arrived) {
+            return 0;
+        }
+        seL4_CPtr const slot = spawn_kit.memory().alloc_slot();
+        if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                              aegir::bootstrap::kSlotReceiveCap,
+                              aegir::bootstrap::cnode_bits());
+            return 0;
+        }
+        return slot;
+    };
+    /* Reserve the next peer badge out of the range's nested-terminal quarter
+     * (specs/launch.md): a nested terminal and a windowed program both draw
+     * here, so no two of a session's peers share a serial. False when the
+     * quarter is spent. */
+    auto reserve_child = [&](uint64_t *base, uint64_t *badge) -> bool {
+        if (child_size == 0 || child_count >= 3) {
+            return false;
+        }
+        *base = badge_base + badge_size - (child_count + 1) * child_size;
+        ++child_count;
+        *badge = aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge), *base);
+        return true;
+    };
+
     /* Launch a nested terminal (specs/launch.md's kind 3): a peer of this
      * terminal, with its own console window, its own shell and its own badge
      * range. The launcher hands it the kit it needs -- the unbadged console,
@@ -634,16 +631,13 @@ int main(int argc, char *argv[])
             write("  terminal: no launcher kit for a nested terminal\n");
             return false;
         }
-        if (child_size == 0 || child_count >= 3) {
+        uint64_t child_base = 0;
+        uint64_t child_badge = 0;
+        if (!reserve_child(&child_base, &child_badge)) {
             write("  terminal: the badge range is spent\n");
             return false;
         }
-        uint64_t const window_index = child_count;
-        uint64_t const child_base =
-            badge_base + badge_size - (child_count + 1) * child_size;
-        ++child_count;
-        uint64_t const child_badge =
-            aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge), child_base);
+        uint64_t const window_index = child_count - 1;
         constexpr uint32_t kChildUntypedBits = 22;
         if (!load_image("Initrd:" + program)) {
             write("  terminal: no image for the nested terminal\n");
@@ -659,30 +653,8 @@ int main(int argc, char *argv[])
             spawn_kit.abandon(own_badge, owner);
             return false;
         }
-        /* A untyped of the asked-for size from the memory service, on demand
-         * (specs/memory.md): there is no pool to size, and the session's
-         * release takes it back. */
-        auto alloc_mem = [&](uint32_t bits) -> seL4_CPtr {
-            aegir::ipc::Consumer const service(spawn_kit.command_mem());
-            uint64_t const request = bits;
-            uint64_t answer[1] = {};
-            bool cap_arrived = false;
-            aegir::ipc::WordsReply const reply = service.call_transfer(
-                aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
-            if (reply.error != 0 || !cap_arrived) {
-                return 0;
-            }
-            seL4_CPtr const slot = spawn_kit.memory().alloc_slot();
-            if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
-                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                                  aegir::bootstrap::kSlotReceiveCap,
-                                  aegir::bootstrap::cnode_bits());
-                return 0;
-            }
-            return slot;
-        };
-        seL4_CPtr const child_runtime = alloc_mem(kChildUntypedBits);
-        seL4_CPtr const child_shell_pool = alloc_mem(kChildUntypedBits);
+        seL4_CPtr const child_runtime = alloc_child_mem(kChildUntypedBits);
+        seL4_CPtr const child_shell_pool = alloc_child_mem(kChildUntypedBits);
         if (child_runtime == 0 || child_shell_pool == 0) {
             write("  terminal: FAIL no memory for the nested terminal\n");
             spawn_kit.abandon(own_badge, owner);
@@ -785,6 +757,133 @@ int main(int argc, char *argv[])
         return true;
     };
 
+    /* Launch a windowed program (specs/launch.md's kind 2): a program that
+     * opens its own console window and does not launch. It is handed its own
+     * console and badge, the session's namespace, and the runtime its toolkit
+     * allocates from -- and none of the launcher kit, because it starts
+     * nothing. The window the caller asked for rides in its environment as
+     * AEGIR_WINDOW; the program parses it. False when the kit is absent, the
+     * range is spent, or the image will not load. */
+    auto spawn_windowed = [&](std::string const &program, std::string const &window,
+                              std::vector<std::string> const &arguments) -> bool {
+        if (!kit || !spawn_kit.can_launch() || !have_badge_range) {
+            write("  terminal: no launcher kit for a windowed program\n");
+            return false;
+        }
+        uint64_t child_base = 0;
+        uint64_t child_badge = 0;
+        if (!reserve_child(&child_base, &child_badge)) {
+            write("  terminal: the badge range is spent\n");
+            return false;
+        }
+        constexpr uint32_t kChildUntypedBits = 22;
+        /* A windowed program is userland: it is resolved from C:, the command
+         * set, the same alias a command comes out of (specs/dos.md). */
+        if (!load_image("C:" + program)) {
+            write("  terminal: no image for the windowed program ");
+            write(program.c_str());
+            write("\n");
+            return false;
+        }
+        uint32_t const owner = static_cast<uint32_t>(++owner_serial);
+        /* The staging and the child's runtime are charged to this terminal's
+         * own badge, so the session's reclaim releases them at logout even
+         * though a windowed program is never reaped. */
+        if (!spawn_kit.begin(owner) || !spawn_kit.begin_command(own_badge)) {
+            write("  terminal: FAIL the windowed program's staging would not begin\n");
+            spawn_kit.abandon(own_badge, owner);
+            return false;
+        }
+        seL4_CPtr const child_runtime = alloc_child_mem(kChildUntypedBits);
+        if (child_runtime == 0) {
+            write("  terminal: FAIL no memory for the windowed program\n");
+            spawn_kit.abandon(own_badge, owner);
+            return false;
+        }
+        /* The windowed program's grant, from the one first-class builder
+         * (specs/launch.md): its own console and badge, the session's
+         * namespace, and the runtime its heap and page tables come from. */
+        aegir::spawn::Child child{};
+        child.badge = child_badge;
+        child.runtime = child_runtime;
+        child.runtime_bits = kChildUntypedBits;
+        aegir::spawn::PortGrant ports[4];
+        uint32_t const port_count =
+            aegir::spawn::windowed_ports(spawn_kit.kit(), child, ports, 4);
+        /* The child's environment: this terminal's, less the launcher entries
+         * it must not inherit, plus its window. It launches nothing, so it
+         * gets no badge range. */
+        std::vector<std::string> environment;
+        for (char const *const *e = aegir::environment::environ(); *e != nullptr; ++e) {
+            std::string const entry(*e);
+            if (entry.rfind("AEGIR_BADGE_RANGE=", 0) == 0 ||
+                entry.rfind("AEGIR_WINDOW=", 0) == 0 || entry.rfind("AEGIR_FROM=", 0) == 0) {
+                continue;
+            }
+            environment.push_back(entry);
+        }
+        if (!window.empty()) {
+            environment.push_back("AEGIR_WINDOW=" + window);
+        }
+        std::vector<char const *> environment_pointers;
+        environment_pointers.reserve(environment.size());
+        for (std::string const &entry : environment) {
+            environment_pointers.push_back(entry.c_str());
+        }
+        std::vector<char const *> argument_pointers;
+        argument_pointers.reserve(arguments.size());
+        for (std::string const &entry : arguments) {
+            argument_pointers.push_back(entry.c_str());
+        }
+        std::error_code cwd_error;
+        std::string const cwd = std::filesystem::current_path(cwd_error).string();
+        static char const kAccount[] = "windowed";
+        aegir::spawn::Request request{};
+        /* argv[0] is the program's name; the spawner writes it (specs/launch.md). */
+        request.name = program.c_str();
+        request.name_length = static_cast<uint32_t>(program.size());
+        request.binary_image = image.data();
+        request.binary_image_bytes = image.size();
+        request.account = kAccount;
+        request.account_length = sizeof(kAccount) - 1;
+        request.cwd = cwd.c_str();
+        request.cwd_length = static_cast<uint32_t>(cwd.size());
+        request.environment = environment_pointers.data();
+        request.environment_count = static_cast<uint32_t>(environment_pointers.size());
+        request.arguments = argument_pointers.empty() ? nullptr : argument_pointers.data();
+        request.argument_count = static_cast<uint32_t>(argument_pointers.size());
+        request.priority = seL4_MaxPrio - 2;
+        request.ports = ports;
+        request.port_count = port_count;
+        request.fault_endpoint = spawn_kit.fault_endpoint();
+        request.badge = child_badge;
+        request.give_vspace = true;
+        /* A windowed program is not a launcher, so it keeps the default CSpace
+         * (specs/authority.md). */
+        request.untyped_physical = 0;
+        request.untyped_bits = kChildUntypedBits;
+        aegir::mem::Account account{"windowed", 0, 0, 0};
+        aegir::spawn::Process process{};
+        if (!spawn_kit.spawner().spawn(request, account, process)) {
+            write("  terminal: FAIL spawning a windowed program: ");
+            write(spawn_kit.spawner().problem());
+            char const *const detail = spawn_kit.spawner().detail();
+            if (detail != nullptr && detail[0] != '\0') {
+                write(" (");
+                write(detail);
+                write(")");
+            }
+            write("\n");
+            spawn_kit.abandon(own_badge, owner);
+            return false;
+        }
+        spawn_kit.end_staging();
+        write("  terminal: windowed program started ");
+        write(program.c_str());
+        write("\n");
+        return true;
+    };
+
     /* The shell: its own process, spawned once from its own pool. Its
      * con.stream copy is badged with the shell's stream, and it opens the
      * stream itself -- the terminal is serving before it gets there. It is
@@ -817,10 +916,11 @@ int main(int argc, char *argv[])
                 /* A launch (specs/launch.md): the kind, the flags, the
                  * program's argv, the caller's context (its directory, its
                  * environment and its path), the command's redirected input
-                 * and output, a window specification and the stack ask. Phase
-                 * 2 fulfills a command; a launcher offered a kind it does not
-                 * know refuses rather than guessing. A command shares the
-                 * launcher's console stream, which is the caller's badge. */
+                 * and output, a window specification and the stack ask. The
+                 * launcher fulfills a command, a windowed program and a
+                 * launching peer; a kind it does not know refuses rather than
+                 * guessing. A command shares the launcher's console stream,
+                 * which is the caller's badge. */
                 if (capacity < 1 || count < 2) {
                     return 0;
                 }
@@ -843,6 +943,24 @@ int main(int argc, char *argv[])
                 }
                 uint64_t const stack_pages = words[at++];
                 (void)path;
+                if (kind == aegir::launch::kKindWindowed) {
+                    /* A kind-2 windowed program (specs/launch.md): the launcher
+                     * resolves the program from argv[0] and hands it its own
+                     * console window and runtime. Its window specification rides
+                     * in its environment as AEGIR_WINDOW, for the program to
+                     * parse; the words after argv[0] are its arguments. */
+                    std::vector<std::string> const words_of_argv =
+                        split_command_words(stage.line);
+                    if (words_of_argv.empty()) {
+                        reply[0] = 0;
+                        return 1;
+                    }
+                    std::string const program = words_of_argv[0];
+                    std::vector<std::string> const arguments(words_of_argv.begin() + 1,
+                                                             words_of_argv.end());
+                    reply[0] = spawn_windowed(program, window, arguments) ? 1 : 0;
+                    return 1;
+                }
                 if (kind == aegir::launch::kKindLaunching) {
                     /* A kind-3 peer (specs/launch.md): the launcher resolves the
                      * program from argv[0] and hands it its kit -- its own

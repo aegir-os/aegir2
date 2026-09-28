@@ -30,6 +30,27 @@ bool put(PortGrant *out, uint32_t capacity, uint32_t index, char const *name,
     return true;
 }
 
+/* The four grants every windowed child starts with, in order: its log, the
+ * session's namespace by copy, its own badged console.gui, and the runtime its
+ * heap and page tables come from. A kind-3 launcher appends its spawn kit; a
+ * kind-2 windowed program stops here. */
+uint32_t identity_ports(Kit const &kit, Child const &child, PortGrant *out,
+                        uint32_t capacity)
+{
+    uint32_t n = 0;
+    (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
+              kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
+    (void)put(out, capacity, n++, aegir::nmspace::kPortName,
+              aegir::nmspace::kPortNameLength, kit.nmspace, seL4_CapRights_new(1, 1, 0, 1),
+              0, 0, false, true);
+    (void)put(out, capacity, n++, aegir::console::kPortName,
+              aegir::console::kPortNameLength, kit.console_gui,
+              seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
+              child.runtime_bits, false, false);
+    return n;
+}
+
 }  // namespace
 
 uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
@@ -66,18 +87,14 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     return n;
 }
 
+uint32_t windowed_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
+{
+    return identity_ports(kit, child, out, capacity);
+}
+
 uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
 {
-    uint32_t n = 0;
-    (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
-              kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
-    (void)put(out, capacity, n++, aegir::nmspace::kPortName,
-              aegir::nmspace::kPortNameLength, kit.nmspace, seL4_CapRights_new(1, 1, 0, 1),
-              0, 0, false, true);
-    (void)put(out, capacity, n++, aegir::console::kPortName, aegir::console::kPortNameLength,
-              kit.console_gui, seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
-    (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
-              child.runtime_bits, false, false);
+    uint32_t n = identity_ports(kit, child, out, capacity);
     /* Without a memory service there is no launcher kit: the child runs and
      * says it has no spawner (auth's degraded boot). */
     if (kit.mem_main == 0) {
