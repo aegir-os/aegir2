@@ -303,6 +303,11 @@ void Application::dispatch_call(seL4_MessageInfo_t info, seL4_Word badge) {
         reply_count = on_call(method, words, arrived, badge, cap_arrived, reply,
                               aegir::ipc::kMaxWords);
     }
+    if (reply_count == kHoldReply) {
+        /* The handler holds the reply (specs/signal.md): it saved the caller's
+         * reply capability itself, and answering here would answer twice. */
+        return;
+    }
     server_.reply_words(reply, reply_count);
 }
 

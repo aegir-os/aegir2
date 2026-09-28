@@ -70,6 +70,14 @@ public:
                            seL4_Word badge, bool cap_arrived, uint64_t *reply,
                            uint32_t capacity)> on_call;
 
+    // A handler whose answer waits for the world -- a read with nothing queued
+    // yet (specs/signal.md) -- returns this instead of a reply length. The
+    // toolkit replies nothing then, because the handler has saved the caller's
+    // reply capability itself (signal::Reply_holder::save) and answers it when
+    // the world moves; any other answer, zero included, is a reply of that many
+    // words.
+    static constexpr uint32_t kHoldReply = 0xffffffffu;
+
     // Called after each drain and before the loop waits again: a client with
     // an out-of-band signal to poll (the bureau.menu doorbell) does it here.
     std::function<void()> on_poll;
