@@ -1,5 +1,6 @@
 /*
- * The terminal's spawn kit, adopted (specs/authority.md, specs/shell.md).
+ * The terminal's spawn kit, adopted (specs/authority.md, specs/shell.md,
+ * specs/memory.md).
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
@@ -22,17 +23,20 @@ namespace aegir::terminal {
 namespace {
 
 /* The allocator over the command chunks: static, like auth's session
- * allocator, because its node table is far larger than a stack. It is reset
- * for each bracket (begin); its untyped source is mem.main. */
+ * allocator, because its node table is far larger than a stack. Its untyped
+ * source is mem.main (specs/memory.md); it is reset for each command's
+ * staging, because a command's chunks are its own and the records for them
+ * are not wanted past the spawn. */
 aegir::mem::Allocator g_command_mem(nullptr);
 
 /* The command allocator's node pool: the toolkit's window wires its own
  * allocator's pool, so a second allocator brings its own region. A command's
- * spawn splits a few hundred pieces; 64 KiB is beyond that and lives in BSS. */
+ * spawn splits a few hundred pieces; 64 KiB is well beyond that and lives in
+ * BSS. Reset() rebuilds it each command, so it never accumulates. */
 alignas(64) unsigned char g_command_nodes[64 * 1024];
 
 /* The current command's badged mem.main copy, which the untyped source calls
- * with. It is set by begin_command and cleared by reclaim. */
+ * with. It is set by begin_command and cleared by end_staging. */
 seL4_CPtr g_command_mem_call = 0;
 
 /* The allocator's untyped source (specs/memory.md): ask mem.main for a chunk
@@ -82,7 +86,7 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     app_ = &app;
 
     /* The memory service, unbadged: a command's own copy is minted from it
-     * (specs/memory.md Phase 3). */
+     * (specs/memory.md). */
     uint64_t mem_slot = 0;
     if (!aegir::bootstrap::capability("spawn:mem.main", 14, &mem_slot)) {
         return false;
@@ -159,10 +163,9 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
                                                     seL4_EndpointBits, account_, &error);
     fault_endpoint_ = app.allocator().alloc_object(seL4_EndpointObject,
                                                    seL4_EndpointBits, account_, &error);
-    /* The command doorbell: the terminal rings it when a running command's
-     * stream has input, so a command's `read` parks on it (specs/terminal.md).
-     * Long-lived, like the endpoints: one notification for the one command
-     * that runs at a time. */
+    /* The command doorbell: the terminal rings it when a command's stream has
+     * input, so a command's `read` parks on it (specs/terminal.md). Long-lived,
+     * like the endpoints; every command is handed a copy. */
     command_doorbell_ = app.allocator().alloc_object(seL4_NotificationObject,
                                                      seL4_NotificationBits, account_, &error);
     if (stream_endpoint_ == 0 || fault_endpoint_ == 0 || command_doorbell_ == 0) {
@@ -170,6 +173,23 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
     }
 
     g_command_mem.adopt_nodes(g_command_nodes, sizeof(g_command_nodes));
+
+    /* The command-slot pool: the toolkit's reserved spawn range, one owner per
+     * live command (specs/memory.md Phase 5). The allocator's node pool is
+     * reset per command, but this pool is not: the slots a live command still
+     * holds stay marked. */
+    uint64_t const slot_base = app.spawn_slot_base();
+    uint32_t const slot_count = app.spawn_slot_count();
+    slot_owners_.assign(slot_count, 0);
+    slot_pool_.adopt(slot_base, slot_count, slot_owners_.data());
+    /* A service addresses its own slots at depth zero (the node itself), and
+     * the allocator has to be told (adopt_slots explains); there is no cursor
+     * because the pool is the slot source. */
+    g_command_mem.adopt_slots(0, 0, 0);
+    g_command_mem.adopt_slot_pool(&slot_pool_, 0);
+    g_command_mem.set_cnode_size_bits(aegir::bootstrap::kCNodeBits);
+    g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
+
     /* The spawner insists on an Initrd it never reads when an image is given:
      * the shell hands the one command's bytes as `binary_image`
      * (specs/shell.md). */
@@ -276,22 +296,26 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
     return true;
 }
 
-bool SpawnKit::begin()
+bool SpawnKit::begin(uint32_t owner)
 {
     if (!ready_) {
         return false;
     }
-    /* No pool to adopt: the command chunks come from mem.main as the spawner
-     * asks for them (specs/memory.md Phase 3). The source is this allocator's
-     * once, in adopt(). */
+    /* The allocator is reset per command: a command's chunks are its own, and
+     * its objects are all retyped before staging ends. The slot pool is not
+     * reset, so live commands' slots stay marked and are handed to nobody. */
     g_command_mem.reset();
-    g_command_mem.adopt_slots(app_->spawn_slot_base(), app_->spawn_slot_count(), 0);
+    g_command_mem.adopt_slot_pool(&slot_pool_, owner);
+    g_command_mem.set_cnode_size_bits(aegir::bootstrap::kCNodeBits);
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
-    command_badges_.clear();
     g_command_mem_call = 0;
-    /* The staging mark is taken here, after every permanent map the toolkit
-     * made; the reclaim rewinds to it (specs/auth.md's reclaim shape). */
-    scratch_mark_ = app_->scratch().next();
+    /* The staging mark is the window position before the *first* still-live
+     * command was staged; rewind_staging returns there once they are all gone
+     * (specs/auth.md's reclaim shape, per command). */
+    if (!staged_since_rewind_) {
+        scratch_mark_ = app_->scratch().next();
+        staged_since_rewind_ = true;
+    }
     arena_ = std::make_unique<aegir::mem::Arena>(g_command_mem, app_->scratch(), account_);
     spawner_ = std::make_unique<aegir::spawn::Spawner>(
         g_command_mem, app_->scratch(), *arena_, *initrd_, asid_pool_,
@@ -307,14 +331,15 @@ bool SpawnKit::begin_command(uint64_t badge)
     }
     /* The command's memory copy: minted from the unbadged service port with
      * the command's own id, so the service records every chunk the terminal
-     * retypes for it as that command's (specs/memory.md Phase 3). A copy of it
-     * goes to the command, so its own runtime grows within the same ownership.
-     * The slot is reused: the previous copy is dropped first. */
+     * retypes for it as that command's (specs/memory.md). A copy of it goes to
+     * the command, so its own runtime grows within the same ownership. The
+     * slot is reused: end_staging drops the previous copy. */
     if (command_mem_ == 0) {
         command_mem_ = app_->allocator().alloc_slot();
         if (command_mem_ == 0) {
             return false;
         }
+        command_mem_live_ = false;
     }
     if (command_mem_live_) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, command_mem_,
@@ -330,49 +355,59 @@ bool SpawnKit::begin_command(uint64_t badge)
     }
     command_mem_live_ = true;
     g_command_mem_call = command_mem_;
-    command_badges_.push_back(badge);
     return true;
 }
 
-void SpawnKit::reclaim()
+void SpawnKit::end_staging()
 {
     spawner_.reset();
     arena_.reset();
-    /* The memory's way back is one release per command: the service revokes
-     * every chunk the command owned, and the command's TCB, page tables and
-     * frames -- retyped from those chunks -- go with them (specs/memory.md
-     * Phase 3). The reserved slots are empty afterwards, so the cursor returns
-     * to the base. */
     g_command_mem_call = 0;
+    /* The command holds its own copy of the badged mem.main port; the
+     * terminal's is a staging cap and goes now. The window is not rewound:
+     * the staging frames are the command's memory until it is reaped, and
+     * only rewind_staging returns the window once they are gone. */
+    if (command_mem_live_) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, command_mem_,
+                          aegir::bootstrap::kCNodeBits);
+        command_mem_live_ = false;
+    }
+}
+
+void SpawnKit::abandon(uint64_t badge, uint32_t owner)
+{
+    end_staging();
+    reap(0, badge, owner);
+}
+
+void SpawnKit::rewind_staging()
+{
+    if (!staged_since_rewind_) {
+        return;
+    }
+    app_->scratch().rewind(scratch_mark_);
+    staged_since_rewind_ = false;
+}
+
+void SpawnKit::reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner)
+{
+    /* Stop the command before its capabilities go: a running thread whose TCB
+     * is revoked is undefined. It has already halted on its own; the suspend
+     * is what makes that certain. */
+    if (tcb != 0) {
+        seL4_TCB_Suspend(tcb);
+    }
+    /* The memory's way back is one release per command: the service revokes
+     * every chunk the command owned, and its TCB, page tables and frames --
+     * retyped from those chunks -- go with them (specs/memory.md). The slots
+     * are empty afterwards, so the owner's range returns whole. */
     if (mem_port_ != 0) {
         aegir::ipc::Consumer const service(mem_port_);
-        for (uint64_t badge : command_badges_) {
-            uint64_t const word = badge;
-            uint64_t released = 0;
-            (void)service.call_words(aegir::memory::kMethodRelease, &word, 1, &released, 1);
-        }
+        uint64_t const word = badge;
+        uint64_t released = 0;
+        (void)service.call_words(aegir::memory::kMethodRelease, &word, 1, &released, 1);
     }
-    command_badges_.clear();
-    g_command_mem.slot_release(app_->spawn_slot_base());
-    app_->scratch().rewind(scratch_mark_);
-}
-
-void SpawnKit::finish_all(std::vector<aegir::spawn::Process> const &processes)
-{
-    /* Stop each command before its capabilities go: a running thread whose
-     * TCB is revoked is undefined. The commands have already halted on their
-     * own; the suspend is what makes that certain. */
-    for (aegir::spawn::Process const &process : processes) {
-        if (process.tcb != 0) {
-            seL4_TCB_Suspend(process.tcb);
-        }
-    }
-    reclaim();
-}
-
-void SpawnKit::abort()
-{
-    reclaim();
+    slot_pool_.free_owner(owner);
 }
 
 }  // namespace aegir::terminal

@@ -824,6 +824,42 @@ private:
         line_status_ = 10;
     }
 
+    /* Run a command in the background (specs/shell.md's `Run`): the words
+     * after the word, with the line's redirections, handed to the terminal to
+     * start without waiting. The shell draws the next prompt while the command
+     * runs; its output shares the console unless a redirection names a file or
+     * a pipe (`Run >PIPE:name producer`). The terminal owns the spawn
+     * authority, so this is the same call the foreground path makes, with the
+     * background method (specs/terminal.md). */
+    void run_background(std::vector<std::string> const &args, Redirect const &redirect)
+    {
+        if (args.empty()) {
+            print("Run: which command?\n");
+            line_status_ = 10;
+            return;
+        }
+        /* The command word is lowercased (the Amiga is case-blind and C: is
+         * not, specs/dos.md) and the words travel NUL-separated, so an
+         * argument a quote grouped reaches the command as one argument. */
+        std::string payload = to_lower(args[0]);
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            payload.push_back('\0');
+            payload += args[i];
+        }
+        std::string const cwd = current_directory();
+        std::string const environment = environment_string();
+        if (!aegir::console::stream_run_background(
+                port_, payload.data(), static_cast<uint32_t>(payload.size()),
+                cwd.c_str(), static_cast<uint32_t>(cwd.size()), environment.data(),
+                static_cast<uint32_t>(environment.size()), redirect.in_path.data(),
+                static_cast<uint32_t>(redirect.in_path.size()),
+                redirect.out_path.data(),
+                static_cast<uint32_t>(redirect.out_path.size()))) {
+            print("Run: " + args[0] + ": not started\n");
+            line_status_ = 10;
+        }
+    }
+
     /* Quit ends the current command file with the return code it is given
      * (specs/shell.md's interpreter). From the prompt it says so rather than
      * ending the session -- EndCLI is the session's end. */
@@ -1078,6 +1114,15 @@ private:
         std::string const command = to_lower(command_words[0]);
         std::vector<std::string> const args(command_words.begin() + 1,
                                             command_words.end());
+
+        /* `Run` starts a program in the background (specs/shell.md): the
+         * words after it are the command, and the line's redirection belongs
+         * to that command, not to `Run` itself, so this is handled before the
+         * built-in redirect path. */
+        if (command == "run") {
+            run_background(args, redirect);
+            return false;
+        }
 
         uint32_t builtin_count = 0;
         Builtin const *const kBuiltins = builtin_table(builtin_count);

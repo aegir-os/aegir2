@@ -627,12 +627,16 @@ long sys_read(int fd, void *buffer, size_t length) noexcept
 
 /* The process is ending: report the status through the console stream, so the
  * shell's return-code line has its number (the interim until a status travels
- * another way), then halt. A process with no stream just halts. */
+ * another way), then halt. The command's own badge rides with it, so the
+ * terminal can tell a foreground command's exit from a background `Run`'s
+ * (specs/shell.md). A process with no stream just halts. */
 void report_exit(int status) noexcept
 {
     aegir::ipc::Consumer &stream = console_stream();
     if (stream.valid()) {
-        (void)aegir::console::stream_exit(stream, static_cast<uint64_t>(status));
+        uint64_t badge = 0;
+        (void)aegir::bootstrap::badge(&badge);
+        (void)aegir::console::stream_exit(stream, static_cast<uint64_t>(status), badge);
     }
     aegir::halt();
 }

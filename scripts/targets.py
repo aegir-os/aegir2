@@ -627,6 +627,16 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"terminal: command started version",
                 events=TERMINAL_CLICK,
+                # `Run` starts a background command (specs/shell.md): the shell
+                # does not wait, so the next step cues on the background
+                # command's own exit, which the terminal reaps without a
+                # `return code` line (specs/memory.md Phase 5). The background
+                # command is one more process under its own mem.main badge.
+                press="Run aegir-echo background\n",
+            ),
+            QmpStep(
+                r"terminal: background command exited 0",
+                events=TERMINAL_CLICK,
                 # A pipeline (specs/pipe.md): `type` reads a file and writes it
                 # to its standard output, `aegir-read` drains its standard input
                 # to the grid. The terminal starts both at once and names the

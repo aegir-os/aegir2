@@ -75,12 +75,14 @@ constexpr uint32_t kStreamMethodReadLine = 4;
  *  handler forgets the line it was holding. Answer: nothing. */
 constexpr uint32_t kStreamMethodClose = 5;
 
-/** A command's end-of-run report. In: the status it finished with. The stream
- *  stays open -- it is the shell's, and a command inherits a copy -- so this
- *  is distinct from `close`. It is the interim the spec records: a command
- *  talks through Aegir's own API until `exit()` carries the status itself
- *  (Phase 4), and this is where the shell's `return code` line gets its
- *  number. Answer: nothing. */
+/** A command's end-of-run report. In: the status it finished with, then the
+ *  command's **own badge** (specs/memory.md's per-process id, which the
+ *  bootstrap block carries and the command reads back). The badge is how the
+ *  terminal tells a background command's exit from the foreground line's: a
+ *  foreground command's status is the shell's `return code`, and a background
+ *  command (specs/shell.md's `Run`) is reaped without one. The stream stays
+ *  open -- it is the shell's, and a command inherits a copy -- so this is
+ *  distinct from `close`. Answer: nothing. */
 constexpr uint32_t kStreamMethodExit = 6;
 
 /** Change the prompt a cooked stream draws. In: the prompt as a string. A
@@ -126,6 +128,15 @@ constexpr uint32_t kStreamMethodBootFail = 11;
  *  naming the pipes that connect them; the stages' exits are read back with
  *  `command_status` once all have finished (specs/pipe.md). */
 constexpr uint32_t kStreamMethodPipeline = 12;
+
+/** Run a command in the background (specs/shell.md's `Run`): the same five
+ *  strings `run` carries, and one word back, 1 started and 0 refused. The
+ *  terminal spawns it under its own memory badge like any command, but the
+ *  shell does not wait: it draws the next prompt while the command runs, and
+ *  the command's `exit` is reaped without a `return code` line. Output shares
+ *  the console unless a redirection names a file or a pipe
+ *  (`Run >PIPE:name producer`, specs/pipe.md). */
+constexpr uint32_t kStreamMethodRunBackground = 13;
 
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws

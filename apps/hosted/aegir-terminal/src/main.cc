@@ -212,6 +212,7 @@ int main(int argc, char *argv[])
 
     uint64_t command_serial = 0;
     uint64_t pipeline_serial = 0;
+    uint64_t owner_serial = 0;
     /* This terminal's own badge (specs/shell.md's interim, now landed): a
      * session terminal is a user process, so its commands' memory is owned by
      * a user badge and limits apply (specs/memory.md). The boot terminal is a
@@ -220,17 +221,28 @@ int main(int argc, char *argv[])
     if (!aegir::bootstrap::badge(&own_badge)) {
         own_badge = 0;
     }
-    std::vector<aegir::spawn::Process> command_processes;
-    uint32_t command_outstanding = 0;
-    /* The stages of the line now running: >1 makes it a pipeline, which the
-     * completion cue names apart from a single command (specs/pipe.md). */
+    /* The live commands: each owns a pool slot range (`owner`) and its memory
+     * chunks (`badge`), and a background command is just another of them
+     * (specs/memory.md Phase 5). A foreground line's records are reaped when
+     * the shell takes its status; a background command's when its exit
+     * arrives. */
+    struct LiveCommand {
+        aegir::spawn::Process process;
+        uint64_t badge = 0;
+        uint32_t owner = 0;
+        bool foreground = false;
+    };
+    std::vector<LiveCommand> live;
+    uint32_t foreground_outstanding = 0;
+    /* The stages of the foreground line now running: >1 makes it a pipeline,
+     * which the completion cue names apart from a single command
+     * (specs/pipe.md). */
     uint32_t command_stage_count = 0;
-    /* The commands of one line live in one bracket: begin() is the caller's
-     * (a pipeline spawns several), and spawn_one starts one stage into it. */
     auto spawn_one = [&](std::string const &name, std::vector<std::string> const &args,
                          std::string const &cwd,
                          std::vector<char const *> const &environment,
-                         std::string const &std_in, std::string const &std_out) -> bool {
+                         std::string const &std_in, std::string const &std_out,
+                         bool background) -> bool {
         if (!kit) {
             return false;
         }
@@ -255,9 +267,14 @@ int main(int argc, char *argv[])
                 ? aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge),
                                               command_serial++)
                 : 0x1000 + command_serial++;
+        uint32_t const owner = static_cast<uint32_t>(++owner_serial);
+        if (!spawn_kit.begin(owner)) {
+            write("  terminal: FAIL the command's staging would not begin\n");
+            return false;
+        }
         if (!spawn_kit.begin_command(command_badge)) {
             write("  terminal: FAIL no memory copy for the command\n");
-            spawn_kit.abort();
+            spawn_kit.abandon(command_badge, owner);
             return false;
         }
         aegir::mem::Account account{"command", 0, 0, 0};
@@ -268,7 +285,7 @@ int main(int argc, char *argv[])
             &command_untyped_physical);
         if (command_untyped == 0) {
             write("  terminal: FAIL no untyped for the command's runtime\n");
-            spawn_kit.abort();
+            spawn_kit.abandon(command_badge, owner);
             return false;
         }
 
@@ -365,20 +382,56 @@ int main(int argc, char *argv[])
             write("  terminal: FAIL spawning a command: ");
             write(spawn_kit.spawner().problem());
             write("\n");
+            spawn_kit.abandon(command_badge, owner);
             return false;
         }
-        command_processes.push_back(process);
+        /* The staging is done with: the command is alive, its capabilities are
+         * in the pool owned by `owner`, and the window is free for the next
+         * command -- which is what lets a background `Run` and the foreground
+         * line coexist (specs/memory.md Phase 5). */
+        spawn_kit.end_staging();
+        live.push_back(LiveCommand{process, command_badge, owner, !background});
+        if (!background) {
+            ++foreground_outstanding;
+        }
         write("  terminal: command started ");
         write(name.c_str());
         write("\n");
         return true;
     };
-    /* A line's commands are done: suspend and reclaim them whole. */
-    auto finish_commands = [&]() {
-        spawn_kit.finish_all(command_processes);
-        command_processes.clear();
-        command_outstanding = 0;
+    /* Reap every foreground command of the line -- the shell has taken its
+     * status, or the line failed to start: suspend, release memory, return
+     * slots. Background commands are not touched (specs/shell.md's `Run`). */
+    auto finish_foreground = [&]() {
+        std::vector<LiveCommand> keep;
+        for (LiveCommand &record : live) {
+            if (record.foreground) {
+                spawn_kit.reap(record.process.tcb, record.badge, record.owner);
+            } else {
+                keep.push_back(record);
+            }
+        }
+        live.swap(keep);
+        foreground_outstanding = 0;
         command_stage_count = 0;
+        if (live.empty()) {
+            spawn_kit.rewind_staging();
+        }
+    };
+    /* A background command has exited: reap it and forget it, without a
+     * `return code` line (specs/shell.md). */
+    auto reap_background = [&](uint64_t badge) -> bool {
+        for (std::size_t i = 0; i < live.size(); ++i) {
+            if (live[i].badge == badge && !live[i].foreground) {
+                spawn_kit.reap(live[i].process.tcb, live[i].badge, live[i].owner);
+                live.erase(live.begin() + static_cast<std::ptrdiff_t>(i));
+                if (live.empty()) {
+                    spawn_kit.rewind_staging();
+                }
+                return true;
+            }
+        }
+        return false;
     };
     /* One pipeline stage on the wire: its command line and its own
      * redirections, empty for the console or the connecting pipe. */
@@ -407,11 +460,13 @@ int main(int argc, char *argv[])
         return std::string("PIPE:p") + std::to_string(serial) + "_" +
                std::to_string(index);
     };
-    /* Spawn a line's stages in one bracket, connecting them with pipes the
-     * terminal names (specs/pipe.md); `run` is a one-stage pipeline. False
-     * when a stage would not start (the bracket is abandoned). */
+    /* Spawn a line's stages, connecting them with pipes the terminal names
+     * (specs/pipe.md); `run` is a one-stage pipeline, and a `Run` is one
+     * background stage (specs/shell.md). Each command is staged and bracketed
+     * on its own, so commands are independent owners. False when a stage would
+     * not start (the line's commands are reclaimed). */
     auto spawn_stages = [&](std::vector<Stage> const &stages, std::string const &cwd,
-                            std::string const &environment) -> bool {
+                            std::string const &environment, bool background) -> bool {
         /* The environment rides as NUL-separated NAME=VALUE; the spawner wants
          * pointers, so they point into a copy. */
         std::vector<char> environment_buffer(environment.begin(), environment.end());
@@ -425,18 +480,15 @@ int main(int argc, char *argv[])
             }
             ++index;
         }
-        if (!spawn_kit.begin()) {
-            write("  terminal: FAIL the command pool would not adopt\n");
-            return false;
+        /* A background `Run` does not take the console: the shell keeps its
+         * line editor while the command runs. A command that reads the console
+         * is the foreground line's (specs/shell.md). */
+        if (!background) {
+            command_stage_count = static_cast<uint32_t>(stages.size());
+            server.begin_command(kShellStream);
         }
         uint64_t const pipe_serial = ++pipeline_serial;
         uint32_t const stage_count = static_cast<uint32_t>(stages.size());
-        /* Arm the count and the bracket before spawning: a stage can run and
-         * exit while the next is being spawned, and its exit must land in the
-         * count, not before it (specs/pipe.md). */
-        command_outstanding = stage_count;
-        command_stage_count = stage_count;
-        server.begin_command(kShellStream);
         bool ok = true;
         for (uint32_t i = 0; ok && i < stage_count; ++i) {
             std::vector<std::string> const words_of_line =
@@ -454,17 +506,13 @@ int main(int argc, char *argv[])
             ok = spawn_one(words_of_line[0],
                            std::vector<std::string>(words_of_line.begin() + 1,
                                                     words_of_line.end()),
-                           cwd, environment_pointers, std_in, std_out);
+                           cwd, environment_pointers, std_in, std_out, background);
         }
-        if (!ok) {
-            spawn_kit.abort();
-            command_processes.clear();
-            command_outstanding = 0;
-            command_stage_count = 0;
+        if (!ok && !background) {
+            finish_foreground();
             server.clear_command(kShellStream);
-            return false;
         }
-        return true;
+        return ok;
     };
 
     /* The shell: its own process, spawned once from its own pool. Its
@@ -496,10 +544,12 @@ int main(int argc, char *argv[])
                 reply[0] = 1;
                 return 1;
             }
-            if (method == aegir::console::kStreamMethodRun) {
+            if (method == aegir::console::kStreamMethodRun ||
+                method == aegir::console::kStreamMethodRunBackground) {
                 /* `run` is a one-stage pipeline (specs/shell.md): the line,
                  * the directory, the environment, then the command's own
-                 * redirected input and output. */
+                 * redirected input and output. `run_background` is `Run`: the
+                 * same call, but the shell does not wait (specs/shell.md). */
                 if (capacity < 1 || count == 0) {
                     return 0;
                 }
@@ -516,7 +566,9 @@ int main(int argc, char *argv[])
                 }
                 std::vector<Stage> stages;
                 stages.push_back(std::move(stage));
-                reply[0] = spawn_stages(stages, cwd, environment) ? 1 : 0;
+                bool const background =
+                    method == aegir::console::kStreamMethodRunBackground;
+                reply[0] = spawn_stages(stages, cwd, environment, background) ? 1 : 0;
                 return 1;
             }
             if (method == aegir::console::kStreamMethodPipeline) {
@@ -549,7 +601,7 @@ int main(int argc, char *argv[])
                     !read_string(words, count, at, environment)) {
                     return 0;
                 }
-                reply[0] = spawn_stages(stages, cwd, environment) ? 1 : 0;
+                reply[0] = spawn_stages(stages, cwd, environment, false) ? 1 : 0;
                 return 1;
             }
 
@@ -557,7 +609,7 @@ int main(int argc, char *argv[])
                 /* A pipeline is done only when every stage has reported; until
                  * then there is no status to take and the stream's bracket
                  * must not close (specs/pipe.md). */
-                if (command_outstanding != 0) {
+                if (foreground_outstanding != 0) {
                     return 0;
                 }
                 uint32_t const answer =
@@ -576,9 +628,30 @@ int main(int argc, char *argv[])
                         write_unsigned(reply[0]);
                         write("\n");
                     }
-                    finish_commands();
+                    finish_foreground();
                 }
                 return answer;
+            }
+
+            if (method == aegir::console::kStreamMethodExit) {
+                /* A command's exit carries its own badge (specs/shell.md), so
+                 * the terminal can tell a background `Run`'s exit from the
+                 * foreground line's. A background command is reaped here,
+                 * without touching the stream's status; a foreground one's
+                 * status stays for `command_status`. */
+                uint64_t const exit_badge = count >= 2 ? words[1] : 0;
+                if (exit_badge != 0 && reap_background(exit_badge)) {
+                    write("  terminal: background command exited ");
+                    write_unsigned(count >= 1 ? words[0] : 0);
+                    write("\n");
+                    return 0;
+                }
+                uint32_t const exit_answer =
+                    server.handle(method, words, count, badge, reply, capacity);
+                if (foreground_outstanding > 0) {
+                    --foreground_outstanding;
+                }
+                return exit_answer;
             }
 
             uint32_t const answer =
@@ -593,10 +666,6 @@ int main(int argc, char *argv[])
                     reply[0] == 1) {
                     server.set_doorbell(badge, slot);
                 }
-            }
-            if (method == aegir::console::kStreamMethodExit && command_outstanding != 0) {
-                /* One stage of the running line has reported its exit. */
-                --command_outstanding;
             }
             return answer;
         };

@@ -122,14 +122,17 @@ inline bool stream_close(aegir::ipc::Consumer const &port, uint64_t status) noex
     return answer.error == 0;
 }
 
-/** A command's end-of-run report: the status it finished with, without
- *  closing the stream it shares with its shell. False when refused. */
-inline bool stream_exit(aegir::ipc::Consumer const &port, uint64_t status) noexcept
+/** A command's end-of-run report: the status it finished with and its own
+ *  badge, without closing the stream it shares with its shell. The badge is
+ *  what lets the terminal tell a foreground command's exit from a background
+ *  `Run`'s (specs/shell.md). False when refused. */
+inline bool stream_exit(aegir::ipc::Consumer const &port, uint64_t status,
+                        uint64_t badge) noexcept
 {
-    uint64_t out[1] = {status};
+    uint64_t out[2] = {status, badge};
     uint64_t in[1];
     aegir::ipc::WordsReply const answer =
-        port.call_words(kStreamMethodExit, out, 1, in, 1);
+        port.call_words(kStreamMethodExit, out, 2, in, 1);
     return answer.error == 0;
 }
 
@@ -155,11 +158,12 @@ inline bool stream_set_prompt(aegir::ipc::Consumer const &port, char const *prom
  *  NUL-separated `environment` (the shell's, sent so the command inherits it),
  *  redirecting the command's standard input and output to `std_in`/`std_out`
  *  (empty for the console stream; specs/shell.md). True when it started. */
-inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
-                       uint32_t line_length, char const *cwd, uint32_t cwd_length,
-                       char const *environment, uint32_t environment_length,
-                       char const *std_in, uint32_t std_in_length, char const *std_out,
-                       uint32_t std_out_length) noexcept
+inline bool stream_run_method(aegir::ipc::Consumer const &port, uint32_t method,
+                              char const *line, uint32_t line_length, char const *cwd,
+                              uint32_t cwd_length, char const *environment,
+                              uint32_t environment_length, char const *std_in,
+                              uint32_t std_in_length, char const *std_out,
+                              uint32_t std_out_length) noexcept
 {
     uint64_t out[aegir::ipc::kMaxWords];
     uint32_t words =
@@ -197,9 +201,34 @@ inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
         return false;
     }
     uint64_t in[1];
-    aegir::ipc::WordsReply const answer =
-        port.call_words(kStreamMethodRun, out, words, in, 1);
+    aegir::ipc::WordsReply const answer = port.call_words(method, out, words, in, 1);
     return answer.error == 0 && answer.count == 1 && in[0] == 1;
+}
+
+inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
+                       uint32_t line_length, char const *cwd, uint32_t cwd_length,
+                       char const *environment, uint32_t environment_length,
+                       char const *std_in, uint32_t std_in_length, char const *std_out,
+                       uint32_t std_out_length) noexcept
+{
+    return stream_run_method(port, kStreamMethodRun, line, line_length, cwd, cwd_length,
+                             environment, environment_length, std_in, std_in_length,
+                             std_out, std_out_length);
+}
+
+/** Ask the terminal to run `line` in the background (specs/shell.md's `Run`):
+ *  the same strings `run` carries, but the shell does not wait for it. True
+ *  when it started. */
+inline bool stream_run_background(aegir::ipc::Consumer const &port, char const *line,
+                                  uint32_t line_length, char const *cwd,
+                                  uint32_t cwd_length, char const *environment,
+                                  uint32_t environment_length, char const *std_in,
+                                  uint32_t std_in_length, char const *std_out,
+                                  uint32_t std_out_length) noexcept
+{
+    return stream_run_method(port, kStreamMethodRunBackground, line, line_length, cwd,
+                             cwd_length, environment, environment_length, std_in,
+                             std_in_length, std_out, std_out_length);
 }
 
 /** One stage of a pipeline (specs/pipe.md): the command words NUL-separated,

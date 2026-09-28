@@ -75,7 +75,9 @@ int main(int argc, char **argv)
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     uint64_t const status = argc > 1 ? status_from(argv[1]) : 0;
     if (stream.valid()) {
-        (void)aegir::console::stream_exit(stream, status);
+        uint64_t badge = 0;
+        (void)aegir::bootstrap::badge(&badge);
+        (void)aegir::console::stream_exit(stream, status, badge);
     }
     aegir::halt();
     return 0;
