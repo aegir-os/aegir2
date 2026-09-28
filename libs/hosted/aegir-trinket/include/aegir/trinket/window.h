@@ -92,6 +92,10 @@ public:
     std::function<void()> on_hidden;
     std::function<void(Rect)> on_moved_resized;
     std::function<void(bool)> on_focus_changed;
+    // A key the window takes before its focused widget: a window-level
+    // shortcut -- a requester's Enter and Escape, a hotkey the console
+    // delivered to this window. Return true when it is handled.
+    std::function<bool(KeyEvent const&)> on_key;
 
     // Called by Application when focus changes
     void on_focus_gained();

@@ -267,6 +267,7 @@ void Window::dispatch_key(uint64_t event) {
         if (pressed) focus_next();
         return;
     }
+    if (on_key && on_key(key)) return;
     if (focused_ == nullptr) return;
     if (pressed) {
         focused_->dispatch_key_down(key);
