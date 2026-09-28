@@ -66,6 +66,7 @@ set(aegir_initrd_binaries
     aegir-fs-nil
     aegir-memory
     aegir-mem-smoke
+    aegir-signal-smoke
     aegir-fs-pipe
     aegir-console
     aegir-greeter
@@ -99,6 +100,7 @@ set(aegir_initrd_binary_names
     "aegir-fs-nil"
     "aegir-memory"
     "aegir-mem-smoke"
+    "aegir-signal-smoke"
     "aegir-fs-pipe"
     "aegir-console"
     "aegir-greeter"

@@ -95,16 +95,33 @@ public:
     bool init(aegir::mem::Allocator &objects, aegir::mem::Account &account, seL4_CPtr tcb,
               seL4_CPtr root, seL4_Word depth) noexcept
     {
-        root_ = root;
-        depth_ = depth;
         seL4_Error error = seL4_NoError;
-        notification_ = objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits,
-                                             account, &error);
-        if (notification_ == 0 || tcb == 0 ||
-            seL4_TCB_BindNotification(tcb, notification_) != seL4_NoError) {
-            notification_ = 0;
+        seL4_CPtr const notification = objects.alloc_object(
+            seL4_NotificationObject, seL4_NotificationBits, account, &error);
+        if (notification == 0) {
             return false;
         }
+        if (!adopt(notification, tcb, root, depth)) {
+            return false;
+        }
+        return true;
+    }
+
+    /** Adopt a notification the caller already made and bind it to `tcb`. A
+     *  service with no delegated untyped makes its own the only way it can --
+     *  retyped from a chunk `mem.main` handed it (specs/memory.md) -- and this
+     *  is the half of `init` that takes it. The root and depth address the
+     *  caller's slots, as `init`'s do. */
+    bool adopt(seL4_CPtr notification, seL4_CPtr tcb, seL4_CPtr root,
+               seL4_Word depth) noexcept
+    {
+        root_ = root;
+        depth_ = depth;
+        if (notification == 0 || tcb == 0 ||
+            seL4_TCB_BindNotification(tcb, notification) != seL4_NoError) {
+            return false;
+        }
+        notification_ = notification;
         return true;
     }
 

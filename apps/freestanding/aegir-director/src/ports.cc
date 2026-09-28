@@ -115,6 +115,13 @@ Rights rights_for(PortGraph::Name name) noexcept
          * it -- the namespace's shape, and its reason. */
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "signal.smoke", 12)) {
+        /* The owner's reply carries a context capability -- the mint the smoke
+         * client signals (specs/signal.md) -- so the halves want what
+         * mem.main's do: an owner that may Grant, and a caller whose reply
+         * capability inherits Grant. */
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     if (name_is(name, "vol.initrd", 10)) {
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }

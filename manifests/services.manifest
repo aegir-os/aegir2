@@ -262,6 +262,28 @@ account   = system
 needs     = log.main, mem.main
 restart   = never
 
+# The signal primitive's acceptance pair (specs/signal.md): one binary under two
+# names, because a held reply needs a caller blocked in a call and one process
+# cannot hold its own. `signal.smoke` serves the port with a Receiver and a
+# Reply_holder; its notification is retyped from a mem.main chunk, so it needs
+# no delegated untyped. `signal.client` proves the round trip: the server mints
+# it a context, it signals it, and its next call is held and answered from the
+# server's notification branch.
+[signal.smoke]
+binary    = aegir-signal-smoke
+authority = system
+account   = system
+owns      = signal.smoke
+needs     = log.main, mem.main
+restart   = never
+
+[signal.client]
+binary    = aegir-signal-smoke
+authority = system
+account   = system
+needs     = log.main, signal.smoke
+restart   = never
+
 # The console owns the display and the input devices, exclusively
 # (specs/console.md): what every other process sees of the screen and the
 # keyboard is what it serves. It maps the gpu's pixel window itself --
