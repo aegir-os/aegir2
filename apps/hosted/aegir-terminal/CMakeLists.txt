@@ -29,7 +29,7 @@ if(AEGIR_TOOLKIT)
     aegir-terminal-app PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-trinket aegir-runtime
                               aegir-bootstrap aegir-ipc aegir-log aegir-console-protocol
                               aegir-launch-protocol aegir-mem aegir-environment aegir-spawn
-                              aegir-heap sel4 sel4runtime
+                              aegir-spawn-kit aegir-heap sel4 sel4runtime
   )
 else()
   # No toolkit yet: a placeholder keeps director's manifest validation

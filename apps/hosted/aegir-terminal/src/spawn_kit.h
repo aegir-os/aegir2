@@ -24,6 +24,7 @@
 #include <aegir/mem/arena.h>
 #include <aegir/mem/slot_pool.h>
 #include <aegir/spawn/initrd.h>
+#include <aegir/spawn/kit.h>
 #include <aegir/spawn/process.h>
 #include <sel4/sel4.h>
 
@@ -82,43 +83,20 @@ public:
      * (specs/memory.md). */
     aegir::mem::Allocator& memory();
 
-    /* The unbadged mem.main copy, for the terminal's release calls. */
-    seL4_CPtr mem_port() const { return mem_port_; }
+    /* The first-class kit (specs/launch.md): the capabilities every child's
+     * grant is built from. main builds a command's, a nested terminal's and the
+     * shell's ports with aegir::spawn::command_ports / launcher_ports /
+     * shell_ports over this, so the lists live in one place. */
+    aegir::spawn::Kit const& kit() const { return kit_; }
+
     /* The current command's memory copy: minted from mem_port_ and badged with
      * the command's id, so the service records its chunks as that command's.
      * A copy of it goes to the command, so its own runtime grows within the
      * same ownership. Dropped by end_staging. */
     seL4_CPtr command_mem() const { return command_mem_; }
 
-    /* The endpoint the terminal serves con.stream on; a command gets a caller
-     * copy of it, badged with the stream it shares. */
-    seL4_CPtr stream_endpoint() const { return stream_endpoint_; }
     /* Where a command's faults arrive. Tier 1 does not read it. */
     seL4_CPtr fault_endpoint() const { return fault_endpoint_; }
-    /* The unbadged copies a command's own caps are minted from. */
-    seL4_CPtr log_port() const { return log_port_; }
-    seL4_CPtr nmspace_port() const { return nmspace_port_; }
-    /* The terminal's own badged namespace, which a command is handed by *copy*
-     * (specs/dos.md): it carries the session's identity, so a command resolves
-     * Home:/ENV:/C: and its writes are owned by the session, without a command
-     * naming a slot or the terminal knowing a badge value. */
-    seL4_CPtr command_nmspace_port() const { return command_nmspace_port_; }
-
-    /* The notification the terminal rings when a running command's stream has
-     * input, so a command's `read` can park instead of poll (specs/terminal.md).
-     * One for the terminal: every command is handed a copy, and a ring wakes
-     * whichever of them is parked. */
-    seL4_CPtr command_doorbell() const { return command_doorbell_; }
-
-    /* The unbadged clock the shell and each command are handed as clock.main,
-     * so the runtime's clock_gettime answers for the DOS tools and the shell's
-     * Date/Time (specs/dos.md). Zero when auth was given no clock. */
-    seL4_CPtr command_clock_port() const { return command_clock_port_; }
-
-    /* The unbadged timer the shell and each command are handed as timer.main,
-     * so the runtime's nanosleep and CLOCK_MONOTONIC answer (specs/timer.md).
-     * Zero when auth was given no timer. */
-    seL4_CPtr command_timer_port() const { return command_timer_port_; }
 
     /* The shell process: spawned once from auth's `shell-pool`, not pooled and
      * reclaimed like a command, because it lives as long as the terminal. It
@@ -134,11 +112,6 @@ public:
      * unbadged console.gui it mints the child's own from. Its memory comes
      * from mem.main on demand, under the terminal's badge, not from a pool. */
     bool can_launch() const { return spawn_console_gui_ != 0; }
-    seL4_CPtr spawn_console_gui() const { return spawn_console_gui_; }
-
-    /* The ASID pool the launcher's children's address spaces come from
-     * (specs/launch.md): shared, because one pool holds many VSpaces. */
-    seL4_CPtr asid_pool() const { return asid_pool_; }
 
     /* The boot session's status endpoint, when this terminal is the boot
      * session's (auth grants it as `boot.status`): the shell sends the outcome
@@ -176,6 +149,8 @@ private:
     /* The launcher kit (specs/launch.md): the unbadged console.gui a nested
      * terminal's own is minted from. */
     seL4_CPtr spawn_console_gui_ = 0;
+    /* The first-class kit every child's grant is built from (specs/launch.md). */
+    aegir::spawn::Kit kit_{};
     seL4_CPtr shell_pool_ = 0;
     uint32_t shell_pool_bits_ = 0;
     uintptr_t scratch_mark_ = 0;

@@ -436,56 +436,17 @@ int main(int argc, char *argv[])
             argument_pointers.push_back(arg.c_str());
         }
         static std::string const kAccountText = "command";
-        aegir::spawn::PortGrant ports[7] = {
-            {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
-             aegir::bootstrap::kSlotFirstDeclared, spawn_kit.stream_endpoint(),
-             seL4_CapRights_new(1, 1, 0, 1), kShellStream, 0},
-            /* The command's own runtime kit: the untyped its heap and page
-             * tables come from, and (below) its own VSpace root and window. */
-            {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 1, command_untyped,
-             seL4_AllRights, 0, aegir::terminal::SpawnKit::kCommandUntypedBits},
-            /* The namespace the command needs, copied from the terminal's own
-             * badged cap: the copy keeps the session's identity, so the command
-             * resolves Home:/ENV:/C: and its writes are owned by the session
-             * (specs/dos.md). Copied, not minted: a badged endpoint cap cannot
-             * be minted again (specs/authority.md). */
-            {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
-             aegir::bootstrap::kSlotFirstDeclared + 2, spawn_kit.command_nmspace_port(),
-             seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true},
-            /* The command's console doorbell: the notification the terminal
-             * rings when this command's stream has input, so the command's
-             * `read` parks on it (specs/terminal.md). A second entry in the
-             * stream's set, beside the shell's own. */
-            {aegir::console::kDoorbellName, aegir::console::kDoorbellNameLength,
-             aegir::bootstrap::kSlotFirstDeclared + 3, spawn_kit.command_doorbell(),
-             seL4_AllRights, 0, 0, false, true},
-            /* The memory service, as the copy of the command's own badged cap:
-             * the child's runtime grows through mem.main within the ownership
-             * the terminal's copy has, and copied rather than minted because
-             * the badge is already on it (specs/memory.md Phase 3). */
-            {aegir::memory::kPortName, aegir::memory::kPortNameLength,
-             aegir::bootstrap::kSlotFirstDeclared + 4, spawn_kit.command_mem(),
-             seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true},
-        };
-        uint32_t port_count = 5;
-        if (spawn_kit.command_clock_port() != 0) {
-            /* The clock, minted from the terminal's unbadged copy: the tools
-             * ask the time through the runtime's clock_gettime (specs/dos.md). */
-            ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
-                                 aegir::bootstrap::kSlotFirstDeclared + port_count,
-                                 spawn_kit.command_clock_port(),
-                                 seL4_CapRights_new(1, 0, 0, 1), 0, 0};
-            ++port_count;
-        }
-        if (spawn_kit.command_timer_port() != 0) {
-            /* The timer, the interval side: the runtime's nanosleep and
-             * CLOCK_MONOTONIC answer through it (specs/timer.md). */
-            ports[port_count] = {aegir::timer::kPortName, aegir::timer::kPortNameLength,
-                                 aegir::bootstrap::kSlotFirstDeclared + port_count,
-                                 spawn_kit.command_timer_port(),
-                                 seL4_CapRights_new(1, 0, 0, 1), 0, 0};
-            ++port_count;
-        }
+        /* The command's kit, from the one first-class builder (specs/launch.md):
+         * the launcher's stream, its runtime, the session's namespace by copy,
+         * the doorbell, its own memory copy, and the clock and timer. */
+        aegir::spawn::Child child{};
+        child.runtime = command_untyped;
+        child.runtime_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;
+        child.mem = spawn_kit.command_mem();
+        child.stream_badge = kShellStream;
+        aegir::spawn::PortGrant ports[7];
+        uint32_t const port_count =
+            aegir::spawn::command_ports(spawn_kit.kit(), child, ports, 7);
         aegir::spawn::Request request{};
         request.name = name.c_str();
         request.name_length = static_cast<uint32_t>(name.size());
@@ -727,45 +688,20 @@ int main(int argc, char *argv[])
             spawn_kit.abandon(own_badge, owner);
             return false;
         }
-        aegir::spawn::PortGrant ports[14];
-        uint32_t port_count = 0;
-        auto add = [&](char const *name, uint32_t name_length, seL4_CPtr cap,
-                       seL4_CapRights_t rights, uint64_t badge, uint32_t bits, bool copy) {
-            ports[port_count] = {name, name_length,
-                                 aegir::bootstrap::kSlotFirstDeclared + port_count, cap,
-                                 rights, badge, bits, false, copy};
-            ++port_count;
-        };
-        /* The child terminal's own bootstrap names, exactly what its SpawnKit
-         * and main look up: log.main and console.gui badged with its badge, the
-         * session's namespace by copy (so Home:/ENV:/C: resolve), and the
-         * unbadged kit it hands its own commands. */
-        add(aegir::log::kPortName, aegir::log::kPortNameLength, spawn_kit.log_port(),
-            seL4_CapRights_new(1, 0, 0, 1), child_badge, 0, false);
-        add(aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
-            spawn_kit.command_nmspace_port(), seL4_CapRights_new(1, 1, 0, 1), 0, 0, true);
-        add(aegir::console::kPortName, aegir::console::kPortNameLength,
-            spawn_kit.spawn_console_gui(), seL4_CapRights_new(1, 1, 0, 1), child_badge, 0,
-            false);
-        add("untyped", 7, child_runtime, seL4_AllRights, 0, kChildUntypedBits, false);
-        add("spawn:mem.main", 14, spawn_kit.mem_port(), seL4_CapRights_new(1, 1, 0, 1), 0, 0,
-            false);
-        add("asid-pool", 9, spawn_kit.asid_pool(), seL4_AllRights, 0, 0, false);
-        add("spawn:log.main", 14, spawn_kit.log_port(), seL4_CapRights_new(1, 0, 0, 1), 0,
-            0, false);
-        add("shell:vfs.namespace", 19, spawn_kit.command_nmspace_port(),
-            seL4_CapRights_new(1, 1, 0, 1), 0, 0, true);
-        add("shell-pool", 10, child_shell_pool, seL4_AllRights, 0, kChildUntypedBits, false);
-        if (spawn_kit.command_clock_port() != 0) {
-            add(aegir::clock::kPortName, aegir::clock::kPortNameLength,
-                spawn_kit.command_clock_port(), seL4_CapRights_new(1, 0, 0, 1), 0, 0,
-                false);
-        }
-        if (spawn_kit.command_timer_port() != 0) {
-            add(aegir::timer::kPortName, aegir::timer::kPortNameLength,
-                spawn_kit.command_timer_port(), seL4_CapRights_new(1, 0, 0, 1), 0, 0,
-                false);
-        }
+        /* The nested terminal's kit, from the one first-class builder
+         * (specs/launch.md): its own console and badge, its runtime, and the
+         * unbadged sources it hands its own commands. It is not a launcher of
+         * launchers -- depth one -- so it gets no spawn:console.gui yet. */
+        aegir::spawn::Child child{};
+        child.badge = child_badge;
+        child.runtime = child_runtime;
+        child.runtime_bits = kChildUntypedBits;
+        child.shell_pool = child_shell_pool;
+        child.shell_pool_bits = kChildUntypedBits;
+        child.launcher = false;
+        aegir::spawn::PortGrant ports[12];
+        uint32_t const port_count =
+            aegir::spawn::launcher_ports(spawn_kit.kit(), child, ports, 12);
         /* The child's environment: this terminal's, less the launcher entries it
          * must not inherit, plus its own range and its window. */
         std::vector<std::string> environment;
@@ -855,7 +791,7 @@ int main(int argc, char *argv[])
      * spawned in on_started, after the ready cue, so the cue is not delayed by
      * the spawn (the acceptance types at it before the demo's zoom). */
     if (kit) {
-        app.serve(aegir::ipc::Owner(spawn_kit.stream_endpoint()));
+        app.serve(aegir::ipc::Owner(spawn_kit.kit().stream));
         app.on_call = [&](uint32_t method, uint64_t const *words, uint32_t count,
                           seL4_Word badge, bool cap_arrived, uint64_t *reply,
                           uint32_t capacity) -> uint32_t {
@@ -1058,8 +994,8 @@ int main(int argc, char *argv[])
             if (slot != 0) {
                 seL4_Signal(slot);
             }
-            if (kit && server.in_command(caller) && spawn_kit.command_doorbell() != 0) {
-                seL4_Signal(spawn_kit.command_doorbell());
+            if (kit && server.in_command(caller) && spawn_kit.kit().doorbell != 0) {
+                seL4_Signal(spawn_kit.kit().doorbell);
             }
         };
     }

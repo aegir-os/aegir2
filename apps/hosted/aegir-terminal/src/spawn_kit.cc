@@ -206,6 +206,21 @@ bool SpawnKit::adopt(aegir::trinket::Application& app)
      * the shell hands the one command's bytes as `binary_image`
      * (specs/shell.md). */
     initrd_ = std::make_unique<aegir::spawn::Initrd>(nullptr, 0);
+    /* The kit every child's grant is built from (specs/launch.md): the
+     * delegates above and the endpoints made here, in the one struct the
+     * builders read. */
+    kit_.log = log_port_;
+    kit_.console_gui = spawn_console_gui_;
+    kit_.mem_main = mem_port_;
+    kit_.asid_pool = asid_pool_;
+    kit_.clock = command_clock_port_;
+    kit_.timer = command_timer_port_;
+    kit_.nmspace = command_nmspace_port_;
+    kit_.shell_nmspace = nmspace_port_;
+    kit_.stream = stream_endpoint_;
+    kit_.launch = stream_endpoint_;
+    kit_.doorbell = command_doorbell_;
+    kit_.boot_status = boot_status_;
     ready_ = true;
     return true;
 }
@@ -234,35 +249,18 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::cnode_bits());
-    aegir::spawn::PortGrant ports[6] = {
-        {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
-         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
-        {aegir::log::kPortName, aegir::log::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared + 1, log_port_,
-         seL4_CapRights_new(1, 0, 0, 1), 0, 0},
-        /* The shell's namespace is moved, not minted: it already carries the
-         * terminal's badge, and a badged cap cannot be minted again. The shell
-         * is spawned once, so the one move is the one use (specs/shell.md). */
-        {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared + 2, nmspace_port_,
-         seL4_CapRights_new(1, 1, 0, 1), 0, 0, true},
-        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
-         seL4_AllRights, 0, shell_pool_bits_},
-        /* The launcher port (specs/launch.md): the terminal serves it for the
-         * first cut, so the shell's copy is another badged cap on the same
-         * endpoint. The shell launches through it, and the call site does not
-         * change when the launcher moves out. */
-        {aegir::launch::kPortName, aegir::launch::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared + 4, stream_endpoint_,
-         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
-    };
-    uint32_t port_count = 5;
+    aegir::spawn::Child child{};
+    child.badge = badge;
+    child.runtime = shell_pool_;
+    child.runtime_bits = shell_pool_bits_;
+    aegir::spawn::PortGrant ports[6];
+    uint32_t port_count = aegir::spawn::shell_ports(kit_, child, ports, 6);
     /* The boot session's status endpoint (specs/boot.md): the shell sends the
-     * outcome here and auth receives it. Only the boot terminal has one. */
+     * outcome here and auth receives it. Only the boot terminal has one, and it
+     * is not part of the kit a launched program gets, so it is appended. */
     if (boot_status_ != 0) {
         ports[port_count] = {"boot.status", 11,
-                             aegir::bootstrap::kSlotFirstDeclared + 5,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
                              boot_status_, seL4_AllRights, 0, 0};
         ++port_count;
     }

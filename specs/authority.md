@@ -121,6 +121,20 @@ spawner and its heap compete for a fixed 4096 and one of them runs out; sizing
 it per role is the first-class answer, where a capacity number would only move
 the wall (`specs/launch.md`).
 
+**The spawn kit is a first-class grant.** What a launcher hands a child -- its
+console and identity, its runtime untyped, the session's namespace, the memory
+service, the ASID pool, the log, the clock and timer, the unbadged console a
+launcher's own children mint from -- is one shape, built in one place
+(`libs/freestanding/aegir-spawn-kit`: `aegir::spawn::Kit` and the builders
+`command_ports`, `launcher_ports`, `shell_ports`). auth builds the session's and
+the boot terminal with it; the terminal builds its commands, its shell and
+nested terminals with it. The mint-or-copy decision is a property of the
+capability, not of the child: an unbadged source (log, console, memory service)
+is minted with the child's badge, while the session's namespace -- which must
+carry the session's identity for `Home:` and `ENV:` to resolve -- is copied.
+No spawner reassembles the list, so a new launcher cannot get it subtly wrong
+(`specs/launch.md`).
+
 ## Accounts and accounting
 
 An **account** is the record of what a process, a user or a service has been

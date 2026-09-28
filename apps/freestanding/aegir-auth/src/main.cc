@@ -35,6 +35,7 @@
 #include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/initrd.h>
+#include <aegir/spawn/kit.h>
 #include <aegir/spawn/process.h>
 #include <aegir/volume.h>
 #include <sel4/sel4.h>
@@ -112,6 +113,26 @@ alignas(64) unsigned char g_session_nodes[256 * 1024];
 /* The mem.main copy the session allocator asks through, badged with the
  * session (minted per login). Zero before the first login. */
 seL4_CPtr g_session_mem_call = 0;
+
+/* A reusable slot for the session-badged namespace copy the first-class kit
+ * needs (specs/launch.md): a child's namespace must carry the session's
+ * identity, so the grant copies a cap badged for the session. It is minted
+ * from the unbadged delegate for each terminal, used by the grant, and deleted
+ * again. */
+seL4_CPtr g_kit_nmspace_slot = 0;
+
+/* Mint a session-badged namespace copy into `slot` (deleting whatever was
+ * there): the identity a child's namespace must carry, so Home: and ENV:
+ * resolve for it (specs/dos.md). */
+bool mint_session_nmspace(seL4_CPtr slot, uint64_t badge) noexcept
+{
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                      aegir::bootstrap::cnode_bits());
+    return seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
+                           aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
+                           g_spawn_nmspace, aegir::bootstrap::cnode_bits(),
+                           seL4_CapRights_new(1, 1, 0, 1), badge) == seL4_NoError;
+}
 
 /* The untyped source (specs/memory.md): ask mem.main for a chunk as wide as a
  * terminal's runtime, so every carve below -- the bureau's, the terminal's
@@ -856,58 +877,34 @@ void start_session(uint32_t user, bool bureau) noexcept
         seL4_CPtr const terminal_shell_pool =
             g_session_mem.carve_untyped(kTerminalShellPoolBits, session_account,
                                         &shell_pool_error, &shell_pool_physical);
-        aegir::spawn::PortGrant const terminal_ports[] = {
-            {aegir::log::kPortName, aegir::log::kPortNameLength,
-             aegir::bootstrap::kSlotFirstDeclared, g_spawn_log,
-             seL4_CapRights_new(1, 0, 0, 1), terminal_badge, 0},
-            {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
-             aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
-             seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
-            {aegir::console::kPortName, aegir::console::kPortNameLength,
-             aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_gui,
-             seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
-            /* The toolkit finds its untyped by name, the way the bureau's
-             * does: the capability entry is what adopt_memory looks up. */
-            {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3,
-             terminal_untyped, seL4_AllRights, 0, kTerminalUntypedBits},
-            /* The memory service (specs/memory.md Phase 3): the terminal mints
-             * a copy badged for each command, so a command's chunks are owned
-             * by its own badge and released when it exits. Plus the ASID pool
-             * their address spaces come from and the unbadged copies their own
-             * caps are minted from. An unbadged copy is what a spawning parent
-             * needs, because a badged endpoint cap cannot be minted again
-             * (specs/authority.md). */
-            {"spawn:mem.main", 14, aegir::bootstrap::kSlotFirstDeclared + 4,
-             g_spawn_mem, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
-            {"asid-pool", 9, aegir::bootstrap::kSlotFirstDeclared + 5, g_asid_pool,
-             seL4_AllRights, 0, 0},
-            {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
-             seL4_CapRights_new(1, 0, 0, 1), 0, 0},
-            /* The shell's namespace: badged with the terminal's own badge, so
-             * the shell resolves the session's Home: and ENV: -- the aliases
-             * auth bound for that badge. The terminal moves it to the shell,
-             * which inherits the session's namespace identity (specs/shell.md). */
-            {"shell:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
-             g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0},
-            {"shell-pool", 10, aegir::bootstrap::kSlotFirstDeclared + 8,
-             terminal_shell_pool, seL4_AllRights, 0, kTerminalShellPoolBits},
-            /* The clock, for the terminal's shell and its commands to pass on:
-             * unbadged, so the terminal can mint a session copy for each. The
-             * DOS tools and the shell's Date/Time ask the time through it
-             * (specs/dos.md). */
-            {"spawn:clock.main", 16, aegir::bootstrap::kSlotFirstDeclared + 9,
-             g_spawn_clock, seL4_CapRights_new(1, 0, 0, 1), 0, 0},
-            /* The timer, the interval side (specs/timer.md): the shell's Wait
-             * sleeps through it, and a command may too. Unbadged like the
-             * clock, so the terminal mints a session copy for each. */
-            {"spawn:timer.main", 16, aegir::bootstrap::kSlotFirstDeclared + 10,
-             g_spawn_timer, seL4_CapRights_new(1, 0, 0, 1), 0, 0},
-            /* The launcher kit (specs/launch.md): an unbadged console.gui so a
-             * nested terminal can mint its own (a second attach needs a badge
-             * of its own). A dead entry when the count says so. */
-            {"spawn:console.gui", 17, aegir::bootstrap::kSlotFirstDeclared + 11,
-             g_spawn_gui, seL4_CapRights_new(1, 1, 0, 1), 0, 0},
-        };
+        /* The terminal's kit, from the one first-class grant (specs/launch.md):
+         * its own console and identity, its runtime, and the unbadged sources
+         * it hands its commands and nested terminals. The namespace copy is
+         * badged for the session, so the terminal and its shell resolve Home:
+         * and ENV:. */
+        if (!mint_session_nmspace(g_kit_nmspace_slot, terminal_badge)) {
+            write("      auth: FAIL no namespace copy for the terminal\n");
+            reclaim_session(badge, mark, scratch_mark, session_account);
+            return;
+        }
+        aegir::spawn::Kit terminal_kit{};
+        terminal_kit.log = g_spawn_log;
+        terminal_kit.console_gui = g_spawn_gui;
+        terminal_kit.mem_main = g_spawn_mem;
+        terminal_kit.asid_pool = g_asid_pool;
+        terminal_kit.clock = g_spawn_clock;
+        terminal_kit.timer = g_spawn_timer;
+        terminal_kit.nmspace = g_kit_nmspace_slot;
+        aegir::spawn::Child terminal_child{};
+        terminal_child.badge = terminal_badge;
+        terminal_child.runtime = terminal_untyped;
+        terminal_child.runtime_bits = kTerminalUntypedBits;
+        terminal_child.shell_pool = terminal_shell_pool;
+        terminal_child.shell_pool_bits = kTerminalShellPoolBits;
+        terminal_child.launcher = true;
+        aegir::spawn::PortGrant terminal_ports[12];
+        uint32_t const terminal_port_count =
+            aegir::spawn::launcher_ports(terminal_kit, terminal_child, terminal_ports, 12);
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
         aegir::spawn::Request terminal_request{};
@@ -922,26 +919,6 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_request.cwd_length = sizeof(kHomeCwd) - 1;
         terminal_request.priority = seL4_MaxPrio - 2;
         terminal_request.ports = terminal_ports;
-        /* The spawn kit's entries are dead when the memory grant failed: the
-         * count keeps them out, the terminal runs without a spawner, and it
-         * says so rather than failing to start. The clock and timer ride last,
-         * each only when auth was given one (and the timer only when the clock
-         * is, so the count never skips a slot). */
-        uint32_t terminal_port_count = 4;
-        if (g_spawn_mem != 0) {
-            terminal_port_count = 9;
-            if (g_spawn_clock != 0) {
-                terminal_port_count = 10;
-                if (g_spawn_timer != 0) {
-                    terminal_port_count = 11;
-                    /* The launcher kit rides last, after the timer, so the
-                     * slots stay contiguous whatever auth was given. */
-                    if (g_spawn_gui != 0) {
-                        terminal_port_count = 12;
-                    }
-                }
-            }
-        }
         terminal_request.port_count = terminal_port_count;
         terminal_request.fault_endpoint = terminal_fault;
         terminal_request.badge = terminal_badge;
@@ -973,6 +950,10 @@ void start_session(uint32_t user, bool bureau) noexcept
         } else {
             write("      auth: the terminal is up\n");
         }
+        /* The kit's namespace copy was auth's scratch: the terminal holds its
+         * own now (specs/launch.md). */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_kit_nmspace_slot,
+                          aegir::bootstrap::cnode_bits());
     }
     g_serials[user] += aegir::ipc::kSessionSerialStride;
 
@@ -1037,42 +1018,34 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
         seL4_Yield();
     }
 
-    aegir::spawn::PortGrant ports[12] = {
-        {aegir::log::kPortName, aegir::log::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared, g_spawn_log,
-         seL4_CapRights_new(1, 0, 0, 1), kBootBadge, 0},
-        {aegir::nmspace::kPortName, aegir::nmspace::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared + 1, g_spawn_nmspace,
-         seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
-        {aegir::console::kPortName, aegir::console::kPortNameLength,
-         aegir::bootstrap::kSlotFirstDeclared + 2, g_spawn_gui,
-         seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
-        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, terminal_untyped,
-         seL4_AllRights, 0, kTerminalUntypedBits},
-        {"spawn:mem.main", 14, aegir::bootstrap::kSlotFirstDeclared + 4, g_spawn_mem,
-         seL4_CapRights_new(1, 1, 0, 1), 0, 0},
-        {"asid-pool", 9, aegir::bootstrap::kSlotFirstDeclared + 5, g_asid_pool,
-         seL4_AllRights, 0, 0},
-        {"spawn:log.main", 14, aegir::bootstrap::kSlotFirstDeclared + 6, g_spawn_log,
-         seL4_CapRights_new(1, 0, 0, 1), 0, 0},
-        {"shell:vfs.namespace", 19, aegir::bootstrap::kSlotFirstDeclared + 7,
-         g_spawn_nmspace, seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0},
-        {"shell-pool", 10, aegir::bootstrap::kSlotFirstDeclared + 8, shell_pool,
-         seL4_AllRights, 0, kShellPoolBits},
-    };
-    uint32_t port_count = 9;
-    if (g_spawn_clock != 0) {
-        ports[port_count] = {"spawn:clock.main", 16,
-                             aegir::bootstrap::kSlotFirstDeclared + port_count,
-                             g_spawn_clock, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
-        ++port_count;
-        if (g_spawn_timer != 0) {
-            ports[port_count] = {"spawn:timer.main", 16,
-                                 aegir::bootstrap::kSlotFirstDeclared + port_count,
-                                 g_spawn_timer, seL4_CapRights_new(1, 0, 0, 1), 0, 0};
-            ++port_count;
-        }
+    /* The boot terminal's kit, from the one first-class grant (specs/launch.md):
+     * like a session's terminal, but badged with the boot badge and not a
+     * launcher of launchers (it runs Startup-Sequence, no NEWSHELL). Its
+     * namespace copies are badged for the boot session, so its shell resolves
+     * Sys: and the boot aliases. */
+    if (!mint_session_nmspace(g_kit_nmspace_slot, kBootBadge)) {
+        write("      auth: FAIL no namespace copy for the boot terminal\n");
+        return false;
     }
+    aegir::spawn::Kit boot_kit{};
+    boot_kit.log = g_spawn_log;
+    boot_kit.console_gui = g_spawn_gui;
+    boot_kit.mem_main = g_spawn_mem;
+    boot_kit.asid_pool = g_asid_pool;
+    boot_kit.clock = g_spawn_clock;
+    boot_kit.timer = g_spawn_timer;
+    boot_kit.nmspace = g_kit_nmspace_slot;
+    aegir::spawn::Child boot_child{};
+    boot_child.badge = kBootBadge;
+    boot_child.runtime = terminal_untyped;
+    boot_child.runtime_bits = kTerminalUntypedBits;
+    boot_child.shell_pool = shell_pool;
+    boot_child.shell_pool_bits = kShellPoolBits;
+    boot_child.launcher = false;
+    aegir::spawn::PortGrant ports[13];
+    uint32_t port_count = aegir::spawn::launcher_ports(boot_kit, boot_child, ports, 13);
+    /* The boot status endpoint is not part of the kit a launched program gets:
+     * only the boot terminal's shell sends the outcome on it (specs/boot.md). */
     ports[port_count] = {"boot.status", 11,
                          aegir::bootstrap::kSlotFirstDeclared + port_count, boot_status,
                          seL4_AllRights, 0, 0};
@@ -1133,8 +1106,14 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
         write("      auth: FAIL spawning the boot session: ");
         write(spawner.problem());
         write("\n");
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_kit_nmspace_slot,
+                          aegir::bootstrap::cnode_bits());
         return true;
     }
+    /* The kit's namespace copy was auth's scratch: the boot terminal holds its
+     * own now (specs/launch.md). */
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_kit_nmspace_slot,
+                      aegir::bootstrap::cnode_bits());
     /* The script's end: the shell sends the outcome on `boot.status`
      * (specs/boot.md). 0 means Startup-Sequence finished -- its EndCLI closed
      * the boot window -- and the greeter runs; nonzero means it failed, the
@@ -1345,7 +1324,8 @@ int main(int argc, char *argv[])
      * reclaim): minted fresh for each login's badge, below every session's
      * mark, so it is auth's own and not part of the session's range. */
     g_session_mem_call = g_objects.alloc_slot();
-    if (g_home_slot == 0 || g_session_mem_call == 0) {
+    g_kit_nmspace_slot = g_objects.alloc_slot();
+    if (g_home_slot == 0 || g_session_mem_call == 0 || g_kit_nmspace_slot == 0) {
         write("      FAIL auth: no slot for the home or the session's mem.main\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();

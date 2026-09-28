@@ -141,12 +141,15 @@ and a MultiView differ only in the request's kind.
   (specs/memory.md), gives the child a reserved badge range so no two of a
   session's processes share a serial, hands it the session's namespace by copy,
   and gives it a larger CSpace (specs/authority.md) so it can launch in turn.
-  `NEWSHELL`/`NEWCLI` launch `aegir-terminal` this way, and a nested terminal
-  stands up as a peer with its own window and shell. Their `WINDOW=<spec>` (or a
-  bare `CON:...`) is the child's window, carried in the request's own field for
-  the child to parse; `FROM <file>` rides as the program's arguments, so the
-  child's shell runs it in place of Shell-Startup. A windowed non-terminal
-  customer (kind 2) is the next piece.
+  The kit itself is one module (`libs/freestanding/aegir-spawn-kit`): the
+  terminal builds its commands, its shell and a nested terminal with the same
+  three builders auth uses, so no launcher reassembles the list. `NEWSHELL`/
+  `NEWCLI` launch `aegir-terminal` this way, and a nested terminal stands up as
+  a peer with its own window and shell. Their `WINDOW=<spec>` (or a bare
+  `CON:...`) is the child's window, carried in the request's own field for the
+  child to parse; `FROM <file>` rides as the program's arguments, so the child's
+  shell runs it in place of Shell-Startup. A windowed non-terminal customer
+  (kind 2) is the next piece.
 - **Phase 4 -- the launchers.** The Bureau's Execute, a dock and the desktop
   icons become launcher clients, each sending its own context.
 
