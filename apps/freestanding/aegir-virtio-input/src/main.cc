@@ -33,6 +33,7 @@
 #include <aegir/input.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/signal.h>
 #include <aegir/virtio/handshake.h>
 #include <aegir/virtio/input.h>
 #include <aegir/virtio/mmio.h>
@@ -252,14 +253,22 @@ int main(int argc, char *argv[])
             }
         }
     }
-    seL4_CPtr const held_slot = static_cast<seL4_CPtr>(first_free);
+    /* The held reply (specs/signal.md): the caller's reply capability is saved
+     * here and answered when the interrupt lands, so the caller waits inside
+     * its call and this thread stays free. */
+    aegir::signal::Reply_holder held(aegir::bootstrap::kSlotOwnCNode,
+                                     aegir::bootstrap::cnode_bits(),
+                                     static_cast<seL4_CPtr>(first_free));
     /* A subscriber's notification arrives as a capability on the call: where
      * the kernel puts a received cap (the receive path, set once) and where
-     * the subscription keeps it. */
+     * the subscription keeps it. The capability is what the subscriber minted
+     * -- a Context_capability, its badge a context bit the subscriber reads
+     * and this side does not. */
     seL4_CPtr const receive_slot = static_cast<seL4_CPtr>(first_free + 1);
     seL4_CPtr const subscriber_slot = static_cast<seL4_CPtr>(first_free + 2);
     seL4_SetCapReceivePath(aegir::bootstrap::kSlotOwnCNode, receive_slot,
                            aegir::bootstrap::kCNodeBits);
+    aegir::signal::Context_capability subscriber;
     bool subscribed = false;
 
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
@@ -320,7 +329,6 @@ int main(int argc, char *argv[])
      * first word. Without an interrupt there is no held reply to keep: a
      * `next` that finds nothing spins the ring with a bound, the queue's own
      * fallback shape. */
-    bool held = false;
     for (;;) {
         seL4_Word badge = 0;
         seL4_MessageInfo_t const info = seL4_Recv(port, &badge);
@@ -328,16 +336,14 @@ int main(int argc, char *argv[])
             static_cast<void>(registers.read(aegir::virtio::kInterruptStatus));
             seL4_IRQHandler_Ack(static_cast<seL4_CPtr>(irq_handler));
             harvest();
-            if (held && pending_count != 0) {
-                seL4_SetMR(0, take_event());
-                seL4_Send(held_slot, seL4_MessageInfo_new(0, 0, 0, 1));
-                held = false;
+            if (held.held() && pending_count != 0) {
+                held.reply(take_event());
             }
             if (subscribed && pending_count != 0) {
                 /* The signal is the wakeup, not the event: the subscriber
                  * drains with poll/next, and coalesced signals lose nothing
                  * because the queue is ours. */
-                seL4_Signal(subscriber_slot);
+                aegir::signal::Transmitter::signal(subscriber);
             }
             continue;
         }
@@ -349,14 +355,14 @@ int main(int argc, char *argv[])
             harvest();
             if (pending_count != 0) {
                 reply_word(take_event());
-            } else if (!held && has_irq) {
-                /* Hold the reply: the caller's reply capability is saved into
-                 * a slot of ours -- a CNode invocation in this kernel's API,
-                 * not a syscall -- and the answer crosses when the interrupt
-                 * lands. */
-                seL4_CNode_SaveCaller(aegir::bootstrap::kSlotOwnCNode, held_slot,
-                                      aegir::bootstrap::kCNodeBits);
-                held = true;
+            } else if (!held.held() && has_irq) {
+                /* Hold the reply: the caller waits inside its call, and the
+                 * answer crosses when the interrupt lands. A save that finds
+                 * no caller holds nothing, so the caller is answered rather
+                 * than left waiting for an event that may never come. */
+                if (!held.save()) {
+                    reply_empty();
+                }
             } else if (!has_irq) {
                 /* No interrupt to wait on: the ring is the only place an
                  * event can appear, so spin it with the queue's own bound. */
@@ -382,6 +388,7 @@ int main(int argc, char *argv[])
                                 aegir::bootstrap::kCNodeBits,
                                 aegir::bootstrap::kSlotOwnCNode, receive_slot,
                                 aegir::bootstrap::kCNodeBits) == seL4_NoError) {
+                subscriber = aegir::signal::Context_capability(subscriber_slot, 0);
                 subscribed = true;
             } else {
                 static_cast<void>(seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
