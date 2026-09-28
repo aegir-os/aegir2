@@ -74,6 +74,15 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     (void)put(out, capacity, n++, aegir::memory::kPortName,
               aegir::memory::kPortNameLength, child.mem, seL4_CapRights_new(1, 1, 0, 1),
               0, 0, false, true);
+    /* Its own console, when the launcher has one to give: a program opens a
+     * window whenever it wants to use the GUI, rather than the launcher
+     * deciding before it runs (specs/launch.md). Optional -- a launcher with
+     * no unbadged console.gui hands none, and its programs run console-only. */
+    if (kit.console_gui != 0) {
+        (void)put(out, capacity, n++, aegir::console::kPortName,
+                  aegir::console::kPortNameLength, kit.console_gui,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
                   aegir::clock::kPortNameLength, kit.clock, seL4_CapRights_new(1, 0, 0, 1),
@@ -85,11 +94,6 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
                   0, 0, false, false);
     }
     return n;
-}
-
-uint32_t windowed_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
-{
-    return identity_ports(kit, child, out, capacity);
 }
 
 uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)

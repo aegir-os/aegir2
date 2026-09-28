@@ -35,11 +35,11 @@ constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
 /** What kind of program is being started -- what the launcher must hand it
  *  (specs/launch.md's kinds). A command shares the launcher's console stream
- *  and has no window; a windowed program opens its own console window; a
- *  launching program is given a spawn kit of its own and may launch in turn.
- *  Phase 2 fulfills a command; kinds 2 and 3 are Phase 3. */
+ *  and is handed its own console.gui, so it opens a window whenever it wants
+ *  one; a launching program is given a spawn kit of its own and may launch in
+ *  turn. The launcher does not classify a program as "windowed" before it
+ *  runs: the program decides, by attaching. */
 constexpr uint64_t kKindCommand = 1;   /* shares the launcher's console stream */
-constexpr uint64_t kKindWindowed = 2;  /* opens its own console window */
 constexpr uint64_t kKindLaunching = 3; /* also launches programs */
 
 /** Flags a spawn request carries. Bit 0 starts the command without waiting,

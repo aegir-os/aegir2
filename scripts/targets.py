@@ -695,7 +695,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"terminal: command exited 77",
                 # The click is in the session terminal's lower half, below the
                 # nested terminal's window (its content ends at y=392), so the
-                # launch is typed at a terminal with the launcher kit -- the
+                # command is typed at a terminal with the launcher kit -- the
                 # nested terminal is depth one (specs/launch.md).
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 7680}},
@@ -703,26 +703,26 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
-                # The kind-2 windowed customer (specs/launch.md): the shell asks
-                # the launcher for a windowed program -- a viewer that opens its
-                # own console window rather than sharing the console stream. The
-                # launcher resolves it from C: (a userland program), hands it its
-                # own console.gui, runtime and the session's namespace, and names
-                # its window with AEGIR_WINDOW. It is cued here, after the whole
-                # DOS and nested-terminal sequence, so the viewer's focus does not
+                # The windowed customer (specs/launch.md): the shell launches a
+                # program by its bare name, and the program opens its own window
+                # when it wants the GUI -- it is not classified before it runs.
+                # The launcher hands it its own console.gui with the rest of a
+                # command's grant; the viewer resolves from C: and reads the file
+                # through the session's namespace. It is cued here, after the DOS
+                # and nested-terminal sequence, so the viewer's focus does not
                 # race a press still owed to the shell.
-                press="launch WINDOW=CON:40/520/400/220/View view Sys:AEGIR.TXT\n",
+                press="view Sys:AEGIR.TXT\n",
             ),
-            QmpStep(r"terminal: windowed program started view"),
-            # The viewer is up: its window is where AEGIR_WINDOW put it, its
-            # content is the Workbench grey, and the file it read through the
-            # namespace is drawn as text in its grid.
+            QmpStep(r"terminal: command started view"),
+            # The viewer is up: its window is its own default (no launcher
+            # AEGIR_WINDOW was set), its content is the Workbench grey, and the
+            # file it read through the namespace is drawn as text in its grid.
             QmpStep(
                 r"view: ready",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 240, 700, 204, 204, 204),),
-                dark=(("gpu0", 46, 524, 300, 24, 20),),
+                pixels=(("gpu0", 600, 450, 204, 204, 204),),
+                dark=(("gpu0", 424, 204, 300, 24, 20),),
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across

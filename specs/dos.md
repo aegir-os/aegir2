@@ -123,9 +123,8 @@ ends.
 of the interpreter; its core -- `Execute`, `Quit`, `FailAt` -- landed with
 `specs/shell.md`'s Phase 8, `If`/`Else`/`EndIf` and `Skip`/`Label` with
 Phase 13, and pipelines (`|` over `PIPE:`) with Phase 14. `Run` has landed as
-the asynchronous command; `NewCLI`/`NewShell` launch a peer terminal and
-`Launch` starts a windowed program -- the generic launch mechanism, one kind
-at a time (`specs/launch.md`). `Status` needs a process registry. The GUI,
+the asynchronous command; `NewCLI`/`NewShell` start a peer terminal, the
+generic launch mechanism (`specs/launch.md`). `Status` needs a process registry. The GUI,
 printer, font, serial, disk and firmware commands
 are their own arcs or out of scope.
 
@@ -291,9 +290,9 @@ to a line.
 ## What this is not
 
 - **Scripts, in full.** `Execute` and its frame, substitution, control flow
-  and pipelines landed (`specs/shell.md`'s Phases 8, 12, 13 and 14); `Run`,
-  `Launch` and `NewCLI`/`NewShell` are the generic launch mechanism, one kind
-  at a time (`specs/launch.md`).
+  and pipelines landed (`specs/shell.md`'s Phases 8, 12, 13 and 14); `Run` has
+  landed and `NewCLI`/`NewShell` are the generic launch mechanism
+  (`specs/launch.md`).
 - **A POSIX toolset.** The commands are AmigaDOS's, with the Amiga's arguments
   and return codes, not `cp`/`ls`/`rm` with GNU options.
 - **The GUI, the printers, the disks.** The Workbench commands, the printer

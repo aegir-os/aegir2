@@ -3,11 +3,11 @@
 Status: decided (2026-09). The request shape, the kinds and the authority are
 below. `Run` (kind 1) landed as specs/memory.md Phase 5; Phase 2 (`aegir::launch`
 over the runtime primitive, the shell routed through it) landed. Phase 3 has
-landed: kinds 2 and 3 -- the launcher kit, the reserved badge ranges,
-`NEWSHELL`/`NEWCLI` launching a peer terminal with its `WINDOW=`/`FROM`
-arguments, and kind 2, a windowed program that opens its own window and does
-not launch. `aegir-view` (the MultiView shape) is the first kind-2 customer,
-started by the shell's `Launch` builtin.
+landed: the launcher kit and the reserved badge ranges, with `NEWSHELL`/`NEWCLI`
+starting a peer terminal and its `WINDOW=`/`FROM` arguments. A program opens a
+window whenever it wants one -- a command carries its own `console.gui` among
+the grants, so nothing classifies it as "windowed" before it runs. `aegir-view`
+(the MultiView shape) is the first program to use it, started by its bare name.
 
 Aegir's processes are not forked: a **spawner** creates a child out of
 authority it was delegated (specs/authority.md). That is the mechanism, and it
@@ -30,16 +30,15 @@ path, its stack request -- exactly as `fork` hands a child the parent's. Inherit
 is the default, because the caller *is* the counterpart of the parent.
 
     // C++
-    aegir::launch::spawn(argv, argv_length, aegir::launch::kKindWindowed,
-                         "CON:64/64/640/400/MultiView", window_length);
+    aegir::launch::spawn(argv, argv_length, aegir::launch::kKindCommand, "", 0);
 
     /* C */
-    aegir_spawn(argv, NULL, NULL, 0, "CON:64/64/640/400/MultiView",
-                kKindWindowed);
+    aegir_spawn(argv, NULL, NULL, 0, NULL, kKindCommand);
 
 `aegir::launch` adds no policy of its own: it builds the request and calls the
 launcher (below). A program with no launcher capability gets a refusal, the
-same way a `fork` in a system that caps processes does.
+same way a `fork` in a system that caps processes does. A program that wants a
+window opens one itself, with the `console.gui` every command is handed.
 
 ## What a launch carries
 
@@ -55,34 +54,34 @@ A launch request is the spawn `Request` (specs/services.md) plus the things a
   directory, prompt string, path, local environment variables, and stack
   size") is a property of the call, not of plumbing the caller writes;
 - **the kind**, below;
-- for a windowed program, **the window specification**: the Amiga
-  `CON:x/y/width/height/title/options`, parsed by the launcher into the
-  window's rectangle, title and flags (`/CLOSE`, `/AUTO`, `/INACTIVE`, ...);
+- **the window specification**, when the caller gives one: the Amiga
+  `CON:x/y/width/height/title/options`, which the program that owns the window
+  parses. A program launched by bare name uses its own default; the field is
+  what a `NEWSHELL WINDOW=` (and, later, a desktop icon) rides to name the
+  window it wants;
 - **who asked**: the caller's badge, which the launcher records for ownership
   and checks its policy against.
 
 ## The kinds
 
-A launched program is one of three kinds, and the kind is what the launcher
-must hand the child:
+A launched program is a **command** or a **launching program** -- the wire's
+`kKindCommand` (1) and `kKindLaunching` (3). Kind 2, a separate "windowed
+program" request, is retired: it classified a program before it ran, which is
+exactly what the launcher should not do.
 
-1. **A command** -- shares the launcher's (a shell's) console stream; no
-   window of its own. The launcher gives it the stream, the session namespace,
-   the clock and timer, and `mem.main`; its memory grows through the service
-   under its own badge (specs/memory.md). `Run` is this kind, without waiting.
-2. **A windowed program** -- opens its own console window. The launcher hands
-   it an unbadged `console.gui` so the child mints its own badge and its
-   `attach` is its own first attach; the console gives a fresh process a fresh
-   slice sized from its own windows, so no reservation and no growable slice
-   are needed (specs/console.md). MultiView and an editor are this kind.
-3. **A launching program** -- itself launches programs, so it also needs a
-   spawn kit: an untyped, an ASID pool, and the unbadged ports it will hand
-   its own children. A Terminal and a Workbench are this kind. A kind-3 child
-   is a peer of its launcher, not a command.
+- **A command** shares the launcher's (a shell's) console stream, and is handed
+  its own `console.gui` among the rest -- the session namespace, the clock and
+  timer, and `mem.main`, its memory growing through the service under its own
+  badge (specs/memory.md). It opens a window whenever it wants the GUI. `Run`
+  is this kind, without waiting.
+- **A launching program** itself launches programs, so it also needs a spawn
+  kit: an untyped, an ASID pool, and the unbadged ports it will hand its own
+  children. A Terminal and a Workbench are this kind. A launching child is a
+  peer of its launcher, not a command.
 
-A kind-2 or kind-3 child does not inherit the console stream: it has its own
-window or its own stream. A kind-3 child's `mem.main` is the session's, so its
-own commands still draw from the one pool.
+A launching child does not inherit the console stream: it has its own window
+and its own stream. A launching child's `mem.main` is the session's, so its own
+commands still draw from the one pool.
 
 ## `NEWSHELL` and `NEWCLI`
 
@@ -113,11 +112,12 @@ shape as the VFS's `may_resolve` (specs/vfs.md, specs/authority.md).
 
 The session's launcher is started with the session, by auth, which is what
 holds the session's unbadged `console.gui` and the kits today (specs/auth.md).
-The Terminal stops being a boot-started special case: it is a kind-3 program a
-session launches, and the boot session is simply its first launch. The
+The Terminal stops being a boot-started special case: it is a launching program
+a session launches, and the boot session is simply its first launch. The
 Terminal, in turn, is a launcher client: the Shell's `Run` and command lines go
 to the same `launch.session` the icons and the Bureau will use, so a command
-and a MultiView differ only in the request's kind.
+and a MultiView are the same request -- the MultiView simply attaches its
+window.
 
 ## Phases
 
@@ -134,29 +134,27 @@ and a MultiView differ only in the request's kind.
   route through it, so the call site does not change when the launcher moves
   out. `argv`, `cwd`, `environment`, `path`, the redirections, the window
   specification and the stack ask all travel; the launcher fulfills kind 1.
-- **Phase 3 -- kinds 2 and 3.** Landed. A kind-3 (launching) child is
-  built from the launcher kit: auth delegates the first-cut launcher, the
-  terminal, an unbadged `spawn:console.gui`, so the child mints its own and its
-  console `attach` is its own first. The launcher draws the child's runtime
-  untyped and shell pool from `mem.main` on demand under its own badge
-  (specs/memory.md), gives the child a reserved badge range so no two of a
-  session's processes share a serial, hands it the session's namespace by copy,
-  and gives it a larger CSpace (specs/authority.md) so it can launch in turn.
-  The kit itself is one module (`libs/freestanding/aegir-spawn-kit`): the
-  terminal builds its commands, its shell, a nested terminal and a windowed
-  program with the same builders auth uses, so no launcher reassembles the
-  list. `NEWSHELL`/`NEWCLI` launch `aegir-terminal` this way, and a nested
-  terminal stands up as a peer with its own window and shell; their
-  `WINDOW=<spec>` (or a bare `CON:...`) is the child's window, carried in the
-  request's own field for the child to parse, and `FROM <file>` rides as the
-  program's arguments, so the child's shell runs it in place of Shell-Startup.
-  A kind-2 child is the same without the launcher kit: `windowed_ports` hands it
-  its own console, runtime and the session's namespace, and nothing of what
-  makes a launcher -- it does not launch, so it needs no spawner. The shell's
-  `Launch` builtin makes the kind-2 request; `aegir-view` (the MultiView shape,
-  its file read through the granted namespace, its window named by
-  `AEGIR_WINDOW`) is the first customer, and it opens its own window as it
-  would under any other launcher (specs/console.md).
+- **Phase 3 -- the launcher kit and the windowed program.** Landed. A
+  launching child is built from the launcher kit: auth delegates the first-cut
+  launcher, the terminal, an unbadged `spawn:console.gui`, so the child mints
+  its own and its console `attach` is its own first. The launcher draws the
+  child's runtime untyped and shell pool from `mem.main` on demand under its
+  own badge (specs/memory.md), gives the child a reserved badge range so no two
+  of a session's processes share a serial, hands it the session's namespace by
+  copy, and gives it a larger CSpace (specs/authority.md) so it can launch in
+  turn. The kit itself is one module (`libs/freestanding/aegir-spawn-kit`): the
+  terminal builds its commands, its shell and a nested terminal with the same
+  builders auth uses, so no launcher reassembles the list. `NEWSHELL`/`NEWCLI`
+  launch `aegir-terminal` this way, and a nested terminal stands up as a peer
+  with its own window and shell; their `WINDOW=<spec>` (or a bare `CON:...`) is
+  the child's window, carried in the request's own field for the child to
+  parse, and `FROM <file>` rides as the program's arguments, so the child's
+  shell runs it in place of Shell-Startup. A command, meanwhile, now carries a
+  badged `console.gui` in its grant, so it opens its own window whenever it
+  wants one -- the launcher no longer tells a "windowed program" apart from a
+  command before it runs. `aegir-view` (the MultiView shape, its file read
+  through the granted namespace) is the first program to use it, launched by
+  its bare name like any other command (specs/console.md).
 - **Phase 4 -- the launchers.** The Bureau's Execute, a dock and the desktop
   icons become launcher clients, each sending its own context.
 
@@ -165,9 +163,10 @@ and a MultiView differ only in the request's kind.
 - **A `fork`.** There is no address-space copy; the child is a new process the
   launcher builds. The *interface* is `fork`/`exec`-shaped; the mechanism is a
   spawn (specs/authority.md).
-- **Unlimited.** A badge's kinds are policy. A command need not be allowed a
-  window; a session's launcher bounds how many kind-3 peers exist, because the
-  ASID pool and the pool are finite.
+- **Unlimited.** A badge's policy decides what it may launch. A session's
+  launcher bounds how many launching peers exist, because the ASID pool and the
+  pool are finite; a command's own memory still grows under its badge
+  (specs/memory.md).
 - **A process group or job control.** Stopping, signalling and reaping a
   session's tree is its own arc (specs/shell.md's later list).
 - **Portable POSIX.** `aegir::launch` and the C spawn primitive are Aegir's;

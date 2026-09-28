@@ -79,15 +79,11 @@ struct Child {
 };
 
 /** A command (kind 1): the launcher's stream, its runtime, the session's
- *  namespace by copy, the doorbell, its own memory copy, and the clock and
- *  timer when the launcher has them. */
+ *  namespace by copy, the doorbell, its own memory copy, the clock and timer
+ *  when the launcher has them, and -- when the launcher holds one -- its own
+ *  badged console.gui, so a program opens a window whenever it wants one
+ *  rather than being classified before it runs (specs/launch.md). */
 uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
-
-/** A windowed program (kind 2): its own console window and identity, the
- *  runtime its heap and page tables come from, and the session's namespace.
- *  It does not launch, so it gets no spawn kit -- the same four grants a kind-3
- *  peer starts with, and none of what makes a launcher. */
-uint32_t windowed_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
 
 /** A launching program (kind 3): its own console and identity, its runtime, and
  *  the unbadged sources it will hand its own children. When the launcher holds
