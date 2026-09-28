@@ -23,6 +23,7 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/memory.h>
 #include <aegir/registry.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -61,6 +62,48 @@ uint8_t *g_screen = nullptr;
 uint64_t g_width = 0;
 uint64_t g_height = 0;
 uint64_t g_stride = 0;
+
+/* Where a slice beyond the delegated pool comes from (specs/memory.md,
+ * specs/console.md): the console asks mem.main for a chunk when its own memory
+ * runs out, so the screen's size and the clients' number bound the slices, not
+ * a fixed delegation. `g_slice_chunk_bits` is one screen-max slice, set from
+ * the mode the driver answered; the chunks are reused by the allocator, so the
+ * pool settles at the high-water mark of what is on screen at once. */
+seL4_CPtr g_mem_call = 0;
+uint32_t g_slice_chunk_bits = 24;
+
+/* The allocator's untyped source (specs/memory.md): the launcher's own shape
+ * (the terminal's command_untyped_source) -- the reply's chunk rides the
+ * scratch receive slot and is moved into a slot the allocator keeps, because
+ * the chunk is retyped from for the slice's whole life. */
+seL4_CPtr console_untyped_source(void *context, seL4_Word *size_bits,
+                                 uint64_t *paddr) noexcept
+{
+    static_cast<void>(context);
+    if (g_mem_call == 0) {
+        return 0;
+    }
+    aegir::ipc::Consumer const service(g_mem_call);
+    uint64_t const request = g_slice_chunk_bits;
+    uint64_t answer[1] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply = service.call_transfer(
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        return 0;
+    }
+    seL4_CPtr const slot = g_objects.alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::cnode_bits());
+        return 0;
+    }
+    *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0] : g_slice_chunk_bits);
+    *paddr = 0;
+    return slot;
+}
+
 
 /* Push a changed rectangle of the screen to the display: the driver transfers
  * and flushes only this region (aegir/framebuffer.h). The whole screen per
@@ -769,6 +812,16 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    /* Slices beyond the delegated pool come from the memory service on demand
+     * (specs/console.md): when the allocator's own memory runs out it asks
+     * mem.main for another chunk. Optional -- a console given no port still
+     * serves its delegation and refuses when it is spent, which is the old
+     * behaviour. */
+    uint64_t mem_slot = 0;
+    if (aegir::bootstrap::capability("mem.main", 8, &mem_slot)) {
+        g_mem_call = static_cast<seL4_CPtr>(mem_slot);
+        g_objects.set_untyped_source(console_untyped_source, nullptr);
+    }
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -804,6 +857,15 @@ int main(int argc, char *argv[])
     uint64_t const width = in[0];
     uint64_t const height = in[1];
     uint64_t const stride = in[2];
+
+    /* The chunk a slice beyond the pool asks for: one screen-max window, plus
+     * the frame's border, rounded up. One fetch then covers any slice the
+     * screen allows, at any head the design claims (specs/console.md). */
+    uint64_t const screen_bytes = (width + 2) * (height + 2) * 4;
+    g_slice_chunk_bits = 0;
+    while ((1ull << g_slice_chunk_bits) < screen_bytes) {
+        ++g_slice_chunk_bits;
+    }
 
     /* The window the port serves through is the framebuffer itself: its
      * frames come over one per reply (aegir/registry.h's window and

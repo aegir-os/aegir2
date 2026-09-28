@@ -30,13 +30,19 @@ sees of the screen and the keyboard is what console serves.
   — is `specs/trinket.md`.
 - **Pixels never cross a message.** The window protocol is the established
   shared-window shape (`specs/services.md`: bulk data never crosses the
-  message), turned around: console carves one **arena** per client out of
-  its own delegation, megapage-sliced, and the client maps the slice and
-  draws into it. Console mapped the whole arena when it carved it, so
-  compositing is console reading memory it already has. A window's backing
-  is an offset into the client's slice — chosen by the client, which
-  allocates its own slice — so creating and destroying windows is
-  bookkeeping, not memory traffic.
+  message), turned around: console carves one **arena** per client,
+  megapage-sliced, and the client maps the slice and draws into it. Console
+  mapped the whole arena when it carved it, so compositing is console reading
+  memory it already has. A window's backing is an offset into the client's
+  slice — chosen by the client, which allocates its own slice — so creating
+  and destroying windows is bookkeeping, not memory traffic.
+- **The console's memory grows on demand.** A slice is carved from the
+  console's own allocator, and when that runs out the console asks `mem.main`
+  for another screen-max chunk (the terminal's untyped-source shape,
+  specs/memory.md). The delegation director gives it is a *starting* pool, not
+  a budget: the head's size and the number of windows on screen are what bound
+  it, so a wider head — four screen-max slices at 1916×1114 is 64 MiB — is
+  served like any other, and the design's 4K claim is not a capacity cliff.
 - **Capabilities ride this protocol.** Attaching hands over the slice's
   frame caps — one cap per reply, the registry-`open` precedent — and
   `listen` hands over the client's event notification. This is services.md's

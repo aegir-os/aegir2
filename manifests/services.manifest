@@ -267,19 +267,19 @@ restart   = never
 # keyboard is what it serves. It maps the gpu's pixel window itself --
 # `maps` is the spawner's vspace grant without the spawn authority -- so
 # its memory is what page tables and the clients' pixel slices are retyped
-# from: the test bed's 2 MiB, the greeter's 2, and the bureau's 4 -- a
-# full-screen 32-bit backdrop is 4 MiB at the preferred mode. A carve's
-# watermark is the console's to spend, not to take back, until the
-# re-login arc -- so the greeter's slice stays spent after the reap, and
-# the budget carries the boot's three slices at once.
+# from. The delegation is a *starting* pool, not a budget: when it runs out
+# the console asks mem.main for another screen-max chunk (specs/console.md),
+# so the number of windows and the head's size are what it can hold, not
+# this number. `memory_kib` here only saves the first few slices the trip to
+# the memory service. mem.main is a caller need, like the terminal's.
 [console]
 binary    = aegir-console
 authority = system
 account   = system
 owns      = console.gui
-needs     = log.main, devmgr.registry
+needs     = log.main, devmgr.registry, mem.main
 maps      = true
-memory_kib = 65536
+memory_kib = 8192
 restart   = always
 
 # auth owns the user database and the login port (specs/auth.md): it reads
