@@ -79,10 +79,13 @@ method console does not know is answered by saying nothing.
 - `destroy_window`. In: the id. The window leaves the z-order and its
   damage is everyone else's redraw.
 - `reap`. System authority's call — auth's, when a badge's windows must go:
-  every window the badge held is destroyed and its slice is free whole.
-  Today's caller is the login arc (the greeter, reaped before its login's
-  session starts); a session's own slice is the re-login arc's to take down
-  (`specs/auth.md`).
+  every window the badge held is destroyed and its slice is free whole. The
+  slice's untyped is revoked (its frames, the pristine mints and the console's
+  mappings all die with it) and handed back to the console's allocator, so the
+  piece is carved again for the next client — a console that reaps does not
+  leak its delegation. Today's caller is the login arc (the greeter, reaped
+  before its login's session starts); a session's own slice is the re-login
+  arc's to take down (`specs/auth.md`).
 
 ## The event channel
 

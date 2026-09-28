@@ -86,7 +86,9 @@ void flush(uint64_t x, uint64_t y, uint64_t width, uint64_t height) noexcept
  * adjacency reasoning, and the allocator interleaves (frame, mint) pairs. */
 struct Slice {
     uint64_t badge;
-    seL4_CPtr untyped;  /* the slice's own: revoking it reclaims the whole */
+    seL4_CPtr untyped; /* the slice's own: revoking it reclaims the whole */
+    void *cookie;      /* the carve's cookie, so reap gives the piece back */
+    uint32_t bits;     /* how wide the carved piece is */
     uint64_t frames;
     uintptr_t base; /* where the console reads the slice */
     seL4_CPtr events; /* the client's event notification, ours to signal */
@@ -1008,8 +1010,9 @@ int main(int argc, char *argv[])
             }
             seL4_Error carve_error = seL4_NoError;
             uint64_t slice_physical = 0;
-            seL4_CPtr const untyped =
-                g_objects.carve_untyped(bits, account, &carve_error, &slice_physical);
+            void *untyped_cookie = nullptr;
+            seL4_CPtr const untyped = g_objects.carve_untyped(
+                bits, account, &carve_error, &slice_physical, &untyped_cookie);
             /* The slice's home first, room for the two slot sets in it:
              * the carve loop's caps each go to the entry allocated for
              * them, because a cap is named by its own path -- never by one
@@ -1076,7 +1079,7 @@ int main(int argc, char *argv[])
                 reinterpret_cast<uint8_t *>(base), frames << seL4_LargePageBits);
             ring[0] = 0;
             ring[1] = 0;
-            *slice = Slice{badge, untyped, frames, base,
+            *slice = Slice{badge, untyped, untyped_cookie, bits, frames, base,
                            events, false, g_slices};
             g_slices = slice;
             uint64_t shape[2] = {seL4_LargePageBits, frames};
@@ -1223,11 +1226,11 @@ int main(int argc, char *argv[])
              * destroyed, then the slice's child untyped is revoked -- the
              * frames, the pristine mints and their copies in the client, and
              * with them the console's own mappings all die in one revoke
-             * (finaliseCap unmaps a mapped frame whose cap is deleted), and
-             * the memory is the console's to carve again. The console's own
-             * allocator never gives slots back, so the dead pristine and
-             * notification slots stay spent; a console that reaps daily is
-             * the bureau arc's problem. */
+             * (finaliseCap unmaps a mapped frame whose cap is deleted) -- and
+             * the piece is handed back to the allocator, so the memory is the
+             * console's to carve again. The console's own allocator never
+             * gives *slots* back, so the dead pristine and notification slots
+             * stay spent; that is the bureau arc's problem, not the memory. */
             uint64_t const target = static_cast<uint64_t>(seL4_GetMR(1));
             Window **link = &g_windows;
             bool lost_backdrop = false;
@@ -1258,12 +1261,20 @@ int main(int argc, char *argv[])
             if (*slink != nullptr) {
                 Slice *const dead = *slink;
                 *slink = dead->next;
+                /* Revoke, but do not delete: the piece goes back to the
+                 * allocator with its cap intact, or the next client to carve
+                 * this piece is handed a null cap. The piece's objects (the
+                 * frames) die in the revoke; the cap is the allocator's to
+                 * hand out again. */
                 seL4_CNode_Revoke(aegir::bootstrap::kSlotOwnCNode, dead->untyped,
                                   aegir::bootstrap::cnode_bits());
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                                  dead->untyped, aegir::bootstrap::cnode_bits());
-                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                                   dead->events, aegir::bootstrap::cnode_bits());
+                /* Give the piece back to the allocator, or a console that
+                 * reaps cannot carve the next client a slice: the cap is
+                 * childless now, but the memory is only free again once the
+                 * allocator is told. */
+                (void)g_objects.free_object(dead->cookie, dead->bits);
             }
             if (lost_backdrop) {
                 announce_screen_owner(0);
