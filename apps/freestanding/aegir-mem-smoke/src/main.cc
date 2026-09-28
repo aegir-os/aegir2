@@ -44,7 +44,10 @@ uint64_t first_free_slot() noexcept
 
 void fail(char const *what) noexcept
 {
-    write("  mem-smoke: FAIL ");
+    /* The harness counts a smoke's own failure by this marker
+     * (scripts/run_target.py's GUEST_FAILURE): the readable name first, the
+     * marker it looks for, then what. */
+    write("  mem-smoke: MEM_SMOKE_FAIL ");
     write(what);
     write("\n");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
