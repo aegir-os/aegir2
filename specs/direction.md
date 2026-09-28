@@ -8,13 +8,22 @@ NFS, USB. They were compared against Genode -- its seL4 IPC, its session model,
 its signal framework -- and the gaps that matter for them are four, in this
 order.
 
-## 1. The scratch window reclaims nothing
+## 1. Two allocators share one CSpace
 
-`Scratch`'s `next_` only moves on `rewind`
-(`libs/freestanding/aegir-mem/src/vspace.cc`), so a spawn maps pages it can
-never give back and the window is consumed by every frame ever mapped through
-it. A session's third child exhausted it. A region map with detach is the fix,
-and it is first because nothing else waits on it -- it is a plain defect.
+Auth owns its CSpace in `g_objects` from `first_free` upward, and hands the
+session pool in `g_session_mem` the range from `mark` (`g_objects.slot_mark()`)
+to the end -- so the two **overlap from `mark`**. It works only while auth
+allocates no slot after login, and the scratch window's page tables (which come
+from `g_objects`) do exactly that: the third session child retyped into
+`mark` itself, where the session's own objects already sat ("Untyped Retype:
+Slot #2009 in destination window non-empty"). One CSpace wants one partition --
+the pool allocates *down* from the top, or lives in a CNode of its own.
+
+Behind it is a smaller defect: the scratch window's `next_` only moves on
+`rewind` (`libs/freestanding/aegir-mem/src/vspace.cc`), and `Arena`'s regions are
+never unmapped, so the window climbs with every spawn. It is not what failed
+(the window is a gigabyte and the climb is pages), but a region map that detaches
+is the right shape and belongs with the partition fix.
 
 ## 2. Readiness is rebuilt per service
 
