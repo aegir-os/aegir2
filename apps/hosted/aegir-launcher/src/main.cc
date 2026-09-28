@@ -50,13 +50,6 @@ void write(char const *text) noexcept
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 
-/* The CSpace tail reserved for the commands this launcher stages: the
- * allocator above owns everything below, and the pool is the launcher's own
- * range so a command's capabilities can be revoked and its slots returned
- * whole (specs/memory.md Phase 5). The launcher is headless, so its own need
- * is a handful of slots and the pool is the rest. */
-constexpr uint64_t kLauncherSlots = 1024;
-
 /* Unpack the next string in the request, advancing `at` (the namespace
  * protocol's shape, aegir/nmspace.h). */
 bool read_string(uint64_t const *words, uint32_t count, uint32_t &at, std::string &out)
@@ -303,9 +296,14 @@ int main(int argc, char *argv[])
             }
         }
     }
-    /* The launcher's own slots below the pool, the command pool above it. */
-    g_objects.adopt_slots(first_free, kLauncherSlots - first_free, 0);
+    /* One CSpace, two cursors (specs/direction.md): the launcher's own objects
+     * come up from the block's slots, the commands' pool down from the top, so
+     * a slot cannot be handed out twice while anything is left and no boundary
+     * between them has to be guessed at. The pool is owner-tagged, so a
+     * command's capabilities can be revoked and its slots returned whole
+     * (specs/memory.md Phase 5). */
     uint64_t const total_slots = 1ull << aegir::bootstrap::cnode_bits();
+    g_objects.adopt_slots(first_free, total_slots - first_free, 0);
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -315,10 +313,10 @@ int main(int argc, char *argv[])
     }
 
     /* The spawn kit, adopted by name from the block auth installed, over the
-     * reserved command pool. */
+     * command pool -- the whole CSpace, handed out from the top. */
     aegir::spawn::ServiceKit service;
-    if (!service.adopt(g_objects, g_scratch, kLauncherSlots,
-                       static_cast<uint32_t>(total_slots - kLauncherSlots))) {
+    if (!service.adopt(g_objects, g_scratch, first_free,
+                       static_cast<uint32_t>(total_slots - first_free), true)) {
         write("FAIL the spawn kit was not given");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();

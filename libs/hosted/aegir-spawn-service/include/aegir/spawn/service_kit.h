@@ -50,11 +50,13 @@ public:
      * `allocator` and `scratch` are the process's own -- the toolkit's, or a
      * headless service's `g_objects`/`g_scratch` -- and `slot_base`/
      * `slot_count` is the CSpace range reserved for commands (the toolkit
-     * reserves everything above its own slots; a headless service reserves a
-     * range of its own). False when a grant is missing or an endpoint cannot be
-     * made; the caller then runs without a spawner. */
+     * reserves everything above its own slots; a headless service reserves the
+     * whole CSpace and hands the pool out from the top, `slot_descend`, so its
+     * own cursor below cannot meet it while anything is left). False when a
+     * grant is missing or an endpoint cannot be made; the caller then runs
+     * without a spawner. */
     bool adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
-               uint64_t slot_base, uint32_t slot_count);
+               uint64_t slot_base, uint32_t slot_count, bool slot_descend = false);
 
     bool ready() const { return ready_; }
 
@@ -267,6 +269,8 @@ private:
     aegir::mem::Scratch *scratch_ = nullptr;
     uint64_t slot_base_ = 0;
     uint32_t slot_count_ = 0;
+    /* Whether the command pool comes off the top of its range (adopt). */
+    bool slot_descend_ = false;
     aegir::mem::Account account_{"spawn-service", 0, 0, 0};
     std::unique_ptr<aegir::mem::Arena> arena_;
     std::unique_ptr<aegir::spawn::Initrd> initrd_;

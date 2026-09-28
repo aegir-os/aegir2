@@ -85,7 +85,7 @@ seL4_CPtr command_untyped_source(void *context, seL4_Word *size_bits,
 }  // namespace
 
 bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
-                       uint64_t slot_base, uint32_t slot_count)
+                       uint64_t slot_base, uint32_t slot_count, bool slot_descend)
 {
     if (ready_) {
         return true;
@@ -94,6 +94,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     scratch_ = &scratch;
     slot_base_ = slot_base;
     slot_count_ = slot_count;
+    slot_descend_ = slot_descend;
 
     /* The memory service, unbadged: a command's own copy is minted from it
      * (specs/memory.md). */
@@ -197,7 +198,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
      * command, but this pool is not: the slots a live command still holds stay
      * marked. */
     slot_owners_.assign(slot_count_, 0);
-    slot_pool_.adopt(slot_base_, slot_count_, slot_owners_.data());
+    slot_pool_.adopt(slot_base_, slot_count_, slot_owners_.data(), slot_descend_);
     /* A service addresses its own slots at depth zero (the node itself), and
      * the allocator has to be told (adopt_slots explains); there is no cursor
      * because the pool is the slot source. */

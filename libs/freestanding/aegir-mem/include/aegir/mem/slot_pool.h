@@ -21,12 +21,17 @@ namespace aegir::mem {
 class SlotPool {
 public:
     /** Adopt the range [first, first + count) and read/write `owners`, a
-     *  caller array of `count` words (zero is free). */
-    void adopt(seL4_CPtr first, seL4_Word count, uint32_t *owners) noexcept
+     *  caller array of `count` words (zero is free). `descend` hands slots out
+     *  from the top down, so a pool sharing a CSpace with a cursor that grows
+     *  upward cannot hand out a slot the other holds (allocator.h's
+     *  adopt_slots_down). */
+    void adopt(seL4_CPtr first, seL4_Word count, uint32_t *owners,
+               bool descend = false) noexcept
     {
         first_ = first;
         count_ = count;
         owners_ = owners;
+        descend_ = descend;
         for (seL4_Word i = 0; i < count_; ++i) {
             owners_[i] = 0;
         }
@@ -39,9 +44,10 @@ public:
             return 0;
         }
         for (seL4_Word i = 0; i < count_; ++i) {
-            if (owners_[i] == 0) {
-                owners_[i] = owner;
-                return first_ + i;
+            seL4_Word const at = descend_ ? count_ - 1 - i : i;
+            if (owners_[at] == 0) {
+                owners_[at] = owner;
+                return first_ + at;
             }
         }
         return 0;
@@ -86,6 +92,8 @@ private:
     seL4_CPtr first_ = 0;
     seL4_Word count_ = 0;
     uint32_t *owners_ = nullptr;
+    /* Which end alloc() looks at first (adopt explains). */
+    bool descend_ = false;
 };
 
 }  // namespace aegir::mem
