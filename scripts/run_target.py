@@ -201,7 +201,7 @@ def qmp_command(socket_path: Path, command: dict) -> dict:
 # letter or a digit is its own name, and the three whitespaces are QEMU's.
 # A shifted character is a chord (_PRESS_CHORDS) or a shift plus its base key.
 _PRESS_QCODES = {"\t": "tab", "\n": "ret", " ": "spc", "-": "minus",
-                 "/": "slash", ".": "dot", ",": "comma"}
+                 "/": "slash", ".": "dot", ",": "comma", "=": "equal"}
 
 # A character that needs a shift chord: QEMU's send-key holds the whole list
 # down together, so a chord is one call. Only what a step types is here.

@@ -3,9 +3,10 @@
 Status: decided (2026-09). The request shape, the kinds and the authority are
 below. `Run` (kind 1) landed as specs/memory.md Phase 5; Phase 2 (`aegir::launch`
 over the runtime primitive, the shell routed through it) landed; Phase 3's
-kinds 2/3 groundwork -- the launcher kit, the reserved badge ranges, and
-`NEWSHELL`/`NEWCLI` launching a peer terminal -- has landed. `WINDOW=`/`FROM`
-arguments and a windowed non-terminal customer are the next pieces.
+kinds 2/3 groundwork -- the launcher kit, the reserved badge ranges,
+`NEWSHELL`/`NEWCLI` launching a peer terminal, and its `WINDOW=`/`FROM`
+arguments -- has landed. A windowed non-terminal customer (kind 2) is the
+next piece.
 
 Aegir's processes are not forked: a **spawner** creates a child out of
 authority it was delegated (specs/authority.md). That is the mechanism, and it
@@ -141,8 +142,11 @@ and a MultiView differ only in the request's kind.
   session's processes share a serial, hands it the session's namespace by copy,
   and gives it a larger CSpace (specs/authority.md) so it can launch in turn.
   `NEWSHELL`/`NEWCLI` launch `aegir-terminal` this way, and a nested terminal
-  stands up as a peer with its own window and shell. `WINDOW=`/`FROM` and a
-  windowed non-terminal customer are the next pieces.
+  stands up as a peer with its own window and shell. Their `WINDOW=<spec>` (or a
+  bare `CON:...`) is the child's window, carried in the request's own field for
+  the child to parse; `FROM <file>` rides as the program's arguments, so the
+  child's shell runs it in place of Shell-Startup. A windowed non-terminal
+  customer (kind 2) is the next piece.
 - **Phase 4 -- the launchers.** The Bureau's Execute, a dock and the desktop
   icons become launcher clients, each sending its own context.
 

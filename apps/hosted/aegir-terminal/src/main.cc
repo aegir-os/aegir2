@@ -230,6 +230,20 @@ int main(int argc, char *argv[])
                     window.set_title(title.c_str());
                 }
             }
+            write("  terminal: nested window ");
+            write(spec);
+            write("\n");
+        }
+    }
+
+    /* A launcher's `FROM <file>` (specs/launch.md) rides as this program's own
+     * arguments: the shell this terminal starts runs the named file instead of
+     * Shell-Startup. */
+    std::string startup_file;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (argv[i] != nullptr && std::string(argv[i]) == "FROM" && argv[i + 1] != nullptr) {
+            startup_file = argv[i + 1];
+            break;
         }
     }
 
@@ -650,10 +664,11 @@ int main(int argc, char *argv[])
     /* Launch a nested terminal (specs/launch.md's kind 3): a peer of this
      * terminal, with its own console window, its own shell and its own badge
      * range. The launcher hands it the kit it needs -- the unbadged console,
-     * a runtime untyped and a shell pool from the child pool, and the
+     * a runtime untyped and a shell pool drawn from mem.main, and the
      * namespace, memory, log, ASID pool, clock and timer to stand up. False
-     * when the kit is absent or the pool or the range is spent. */
-    auto spawn_launched = [&](std::string const &program, std::string const &window) -> bool {
+     * when the kit is absent or the range is spent. */
+    auto spawn_launched = [&](std::string const &program, std::string const &window,
+                              std::vector<std::string> const &arguments) -> bool {
         if (!kit || !spawn_kit.can_launch() || !have_badge_range) {
             write("  terminal: no launcher kit for a nested terminal\n");
             return false;
@@ -778,6 +793,14 @@ int main(int argc, char *argv[])
         for (std::string const &entry : environment) {
             environment_pointers.push_back(entry.c_str());
         }
+        /* The words after argv[0] (a `NEWSHELL FROM <file>`): the child
+         * terminal's own arguments, which it hands on to the shell it starts
+         * (specs/launch.md). */
+        std::vector<char const *> argument_pointers;
+        argument_pointers.reserve(arguments.size());
+        for (std::string const &entry : arguments) {
+            argument_pointers.push_back(entry.c_str());
+        }
         std::error_code cwd_error;
         std::string const cwd = std::filesystem::current_path(cwd_error).string();
         static char const kName[] = "session.terminal";
@@ -793,6 +816,8 @@ int main(int argc, char *argv[])
         request.cwd_length = static_cast<uint32_t>(cwd.size());
         request.environment = environment_pointers.data();
         request.environment_count = static_cast<uint32_t>(environment_pointers.size());
+        request.arguments = argument_pointers.empty() ? nullptr : argument_pointers.data();
+        request.argument_count = static_cast<uint32_t>(argument_pointers.size());
         request.priority = seL4_MaxPrio - 2;
         request.ports = ports;
         request.port_count = port_count;
@@ -885,13 +910,18 @@ int main(int argc, char *argv[])
                 if (kind == aegir::launch::kKindLaunching) {
                     /* A kind-3 peer (specs/launch.md): the launcher resolves the
                      * program from argv[0] and hands it its kit -- its own
-                     * console window, a badge range, its own shell. */
+                     * console window, a badge range, its own shell. The words
+                     * after argv[0] (a `NEWSHELL FROM <file>`) travel as the
+                     * child's own arguments. */
                     std::vector<std::string> const words_of_argv =
                         split_command_words(stage.line);
                     std::string const program = words_of_argv.empty()
                                                     ? std::string("aegir-terminal")
                                                     : words_of_argv[0];
-                    reply[0] = spawn_launched(program, window) ? 1 : 0;
+                    std::vector<std::string> const arguments(
+                        words_of_argv.begin() + (words_of_argv.empty() ? 0 : 1),
+                        words_of_argv.end());
+                    reply[0] = spawn_launched(program, window, arguments) ? 1 : 0;
                     return 1;
                 }
                 if (kind != aegir::launch::kKindCommand) {
@@ -1098,7 +1128,13 @@ int main(int argc, char *argv[])
                  * auth granted the boot doorbell. */
                 static char const kBootScript[] = "Sys:S/Startup-Sequence";
                 char const *arguments[1] = {kBootScript};
-                uint32_t const argument_count = boot ? 1 : 0;
+                uint32_t argument_count = boot ? 1 : 0;
+                /* A nested terminal started with `FROM <file>` (specs/launch.md):
+                 * its shell runs that file instead of Shell-Startup. */
+                if (!boot && !startup_file.empty()) {
+                    arguments[0] = startup_file.c_str();
+                    argument_count = 1;
+                }
                 if (!spawn_kit.spawn_shell(image.data(), image.size(), cwd.c_str(),
                                            static_cast<uint32_t>(cwd.size()), kShellStream,
                                            arguments, argument_count)) {

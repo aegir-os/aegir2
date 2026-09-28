@@ -472,6 +472,24 @@ public:
         }
     }
 
+    /* Whether this shell is the boot session's: it was handed the boot status
+     * channel (specs/boot.md). A shell started with a command file *and* this
+     * channel runs Startup-Sequence; without it, that command file is a
+     * `NEWSHELL FROM` startup instead. */
+    bool has_boot_status() const { return boot_status_ != 0; }
+
+    /* The `FROM <file>` startup (specs/launch.md): run the named file instead
+     * of Shell-Startup. Not the boot path -- it sets no `booting_` and
+     * signals no auth. A file that will not open falls back to the default
+     * startup, the way a missing Shell-Startup does. */
+    void run_startup_file(std::string const &path)
+    {
+        if (start_script(path) == ScriptStart::Started) {
+            return;
+        }
+        run_startup();
+    }
+
 private:
     /* The built-in table: the shell's own words, the dispatch. A name not in
      * it is a program, resolved from C: and started by the terminal
@@ -641,13 +659,35 @@ private:
      * shell's context -- current directory, prompt, path, environment and
      * stack (specs/launch.md). The launcher owns the spawn authority, so this
      * is a launch of kind 3, the same call a MultiView or a desktop icon will
-     * make. */
+     * make. The arguments are the Amiga's: an optional window specification
+     * (`WINDOW=<spec>`, or a bare `CON:...`) and `FROM <file>` for the new
+     * shell's startup instead of S:Shell-Startup. The window rides the
+     * request's own field; the FROM file rides as the program's arguments, so
+     * the new terminal hands it to the shell it starts. */
     void command_newshell(std::vector<std::string> const &args)
     {
-        (void)args;
-        std::string const payload = "aegir-terminal";
-        if (!aegir::launch::spawn(payload.data(), static_cast<uint32_t>(payload.size()),
-                                  aegir::launch::kKindLaunching, "", 0)) {
+        std::string window;
+        std::string from;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            std::string const &arg = args[i];
+            if (arg.rfind("WINDOW=", 0) == 0) {
+                window = arg.substr(7);
+            } else if (arg.rfind("CON:", 0) == 0) {
+                window = arg;
+            } else if (arg == "FROM" && i + 1 < args.size()) {
+                from = args[++i];
+            }
+        }
+        std::string argv = "aegir-terminal";
+        if (!from.empty()) {
+            argv.push_back('\0');
+            argv.append("FROM");
+            argv.push_back('\0');
+            argv.append(from);
+        }
+        if (!aegir::launch::spawn(argv.data(), static_cast<uint32_t>(argv.size()),
+                                  aegir::launch::kKindLaunching, window.data(),
+                                  static_cast<uint32_t>(window.size()))) {
             print("Newshell: the launcher would not start it\n");
             line_status_ = 10;
         }
@@ -1244,11 +1284,18 @@ int main(int argc, char **argv)
     shell.set_boot_status();
     shell.load_environment();
     shell.start();
-    /* A shell started with a command file is the boot session: it runs
-     * Startup-Sequence and signals auth when it is done. A shell started with
-     * none is interactive, and runs Shell-Startup (specs/shell.md). */
+    /* A shell started with a command file is the boot session when it also
+     * holds the boot status channel: it runs Startup-Sequence and signals auth
+     * when it is done. A shell started with a file but no such channel is a
+     * `NEWSHELL FROM` startup (specs/launch.md): it runs the named file as its
+     * startup. One started with none is interactive and runs Shell-Startup
+     * (specs/shell.md). */
     if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') {
-        shell.run_boot_script(argv[1]);
+        if (shell.has_boot_status()) {
+            shell.run_boot_script(argv[1]);
+        } else {
+            shell.run_startup_file(argv[1]);
+        }
     } else {
         shell.run_startup();
     }

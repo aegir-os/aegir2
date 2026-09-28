@@ -162,6 +162,11 @@ AEGIR_BFS_TREE = [
          b"Else\n    aegir-echo 94\nEndIf\n"
          b"Skip tail\n    aegir-echo 95\nLab tail\n"
          b"aegir-echo 42\n"),
+        # `NEWSHELL FROM <file>` (specs/launch.md): the new shell runs this
+        # instead of Shell-Startup. Its exit code 77 is the acceptance's cue --
+        # unique to the FROM run, so it cannot match an earlier command.
+        ("file", "Nested-Startup",
+         b"; the newshell FROM startup (specs/launch.md).\naegir-echo 77\n"),
     ]),
 ]
 

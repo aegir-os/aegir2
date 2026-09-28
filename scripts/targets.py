@@ -679,12 +679,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # the session's namespace and the unbadged kit it needs, carves
                 # its runtime and shell pool from the memory service under the
                 # terminal's badge, and gives it a reserved badge range, so it
-                # stands up as a peer with its own shell. It is the last thing
-                # typed here, because the new window takes the focus.
-                press="newshell\n",
+                # stands up as a peer with its own shell. The arguments exercise
+                # the Amiga words: WINDOW= is the new window's own specification,
+                # and FROM names the startup file its shell runs in place of
+                # Shell-Startup. It is the last thing typed here, because the
+                # new window takes the focus.
+                press="newshell WINDOW=CON:32/32/560/360/Nested FROM Sys:S/Nested-Startup\n",
             ),
+            QmpStep(r"terminal: nested window"),
             QmpStep(r"terminal: nested terminal started"),
             QmpStep(r"terminal: nested ready"),
+            # The FROM startup ran: the nested shell executed aegir-echo 77,
+            # whose exit code is unique to this run (specs/launch.md).
+            QmpStep(r"terminal: command exited 77"),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across
             # its top -- #6688bb, the Workbench menus in it -- over the
