@@ -44,12 +44,13 @@ enough to state in one file.
   binary for each would be ceremony. Everything else is a program — including
   `Dir`, `List`, `Type`, `Date` and `Wait`, which begin as built-ins and leave
   with the DOS toolset (`specs/dos.md`).
-- **Commands come from `C:`, an alias of `Sys:C`.** A command name resolves
-  through the namespace to its binary, which the terminal reads and hands to
-  the spawner. `C:` is a **union alias** — `Sys:C` and `Home:C`, the `ENV:`
-  pattern (`specs/namespace.md`) — searched in order, bound per badge by auth.
-  No `PATH` variable: the Amiga assigns a directory to `C:`, and Aegir's
-  aliases are the same mechanism, per badge. The first two commands resolved
+- **A command comes from the caller's `Path`.** A bare command name is searched
+  across the caller's `Path` entries, in order, and resolved through the
+  namespace to its binary, which the launcher reads and hands to the spawner.
+  `C:` is one entry today, a **union alias** — `Sys:C` and `Home:C`, the `ENV:`
+  pattern (`specs/namespace.md`) — bound per badge by auth; a name with an
+  assign or volume is used as typed, and one with `/` against the current
+  directory (`specs/dos.md`). The first two commands resolved
   from the flat initrd (`Initrd:<name>`, Phases 3–6) while `C:` did not exist;
   the DOS toolset drops that lookup for the real set (`specs/dos.md`). A
   command's name is lowercased before it resolves, because a command is
@@ -172,10 +173,10 @@ are the shell's.
 
 ### Resolution: `C:CommandName`
 
-A command name with no volume resolves through the `C:` alias — `Sys:C` then
-`Home:C` (`specs/dos.md`) — and its lowercased name is what is looked up. A
-name with a volume (`Sys:Utilities/Hello`) resolves directly through the
-namespace and is run. This is the Amiga's `/`-path rule, applied to Aegir's
+A bare command name is searched across the caller's `Path`, in order — today
+one entry, the `C:` alias (`Sys:C` then `Home:C`, `specs/dos.md`) — and its
+lowercased form is what is looked up. A name with an assign or volume
+(`Sys:Utilities/Hello`) resolves directly through the namespace, as typed. This is the Amiga's `/`-path rule, applied to Aegir's
 `Volume:rest` grammar (`specs/vfs.md`). A name that resolves to a directory
 rather than a file is the implicit directory change; a name that resolves to
 nothing is "unknown command". Phases 3–6 resolved the two first commands from

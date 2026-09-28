@@ -52,7 +52,10 @@ A launch request is the spawn `Request` (specs/services.md) plus the things a
   path, and stack request. The runtime reads these from the caller, so the
   inheritance the manual promises ("the new window has the same current
   directory, prompt string, path, local environment variables, and stack
-  size") is a property of the call, not of plumbing the caller writes;
+  size") is a property of the call, not of plumbing the caller writes. The
+  `path` is the `Path` search list: a **bare** program name is resolved
+  through it, in order, while an assign or volume path is used as typed and a
+  path with `/` against the current directory (specs/dos.md).
 - **the kind**, below;
 - **the window specification**, when the caller gives one: the Amiga
   `CON:x/y/width/height/title/options`, which the program that owns the window

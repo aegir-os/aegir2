@@ -27,15 +27,21 @@ and asks no more of a command than that the port be there.
 - **`C:` is an alias, the `ENV:` shape.** It is bound per badge as a
   `specs/namespace.md` union: `Sys:C` the base, the user's `Home:C` appended
   when it exists, so a session can add commands without touching the system
-  volume. No `PATH` variable: the Amiga assigns a directory to `C:`, and the
-  per-badge alias is that assignment. auth binds it for a session and its
-  terminal, exactly as it binds `Home:` and `ENV:`.
+  volume. auth binds it for a session and its terminal, exactly as it binds
+  `Home:` and `ENV:`. A **bare** command name is not `C:` by definition: it is
+  searched across the caller's `Path`, in order, and `C:` is simply the entry
+  this system ships today. An assign or volume path (`Sys:System/Terminal`,
+  `BD1:Foo`) is used as typed; a path with `/` is resolved against the caller's
+  current directory. The caller carries its `Path` in the launch request's
+  `path` field (specs/launch.md).
 - **Names are lowercase and resolution is case-blind.** The Amiga is
   case-insensitive; Aegir's filesystems are not (`specs/vfs.md`). The
   convention that reconciles them: every command's binary is named in lowercase
-  (`copy`, `delete`, `makedir`), and the shell lowercases the first word of a
-  line before it resolves anything. So `Copy`, `COPY` and `copy` are one
-  command, and `C:Copy` is spelled `C:copy`.
+  (`copy`, `delete`, `makedir`), and the shell lowercases a **bare** first word
+  before it resolves anything. So `Copy`, `COPY` and `copy` are one command,
+  and `C:Copy` is spelled `C:copy`. A **path** is not a bare name: it is taken
+  as typed, case-sensitive like the filesystems behind it, so
+  `Sys:System/Terminal` reaches the file whose name is spelled that way.
 - **Built-ins are the shell's state; commands are programs.** The line editor,
   the implicit directory change, `CD`/`CurrentDir`, `Echo`, `Set`/`Get` and
   the environment family, `Alias`/`UnAlias`, `Prompt`, `Why`/`Fault`, `Eval`
@@ -239,7 +245,7 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   The framework four are the namespace's: `info` lays out its
   count/describe rows -- the volumes the caller may resolve, with their
   filesystem type and status -- and `which` answers the path a command name
-  resolves to through the session's `C:`, warning (5) when it is not there.
+  resolves to through the caller's `Path`, warning (5) when it is not there.
   `version` scans a file for the Amiga's `$VER:` marker and prints the line,
   and a file without one warns (5). `assign` is that alias made a command, and
   it needed two wire forms the namespace did not have: a command cannot read
