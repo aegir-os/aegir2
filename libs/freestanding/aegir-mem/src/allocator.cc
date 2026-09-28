@@ -367,8 +367,8 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
          * second the high one (kernel/src/object/untyped.c:225-232 aligns the
          * free pointer, :294-302 retypes and moves it). */
         seL4_Error const first = seL4_Untyped_Retype(
-            parent->cap, seL4_UntypedObject, size_bits, slots_root_,
-            slots_root_, cnode_depth_, left_slot, 1);
+            parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
+            seL4_CapInitThreadCNode, cnode_depth_, left_slot, 1);
         if (first != seL4_NoError) {
             /* The piece cannot even yield one child, so it is not whole: it
              * leaves the list, or every refill would retry it and fail. */
@@ -380,8 +380,8 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             continue;
         }
         seL4_Error const second = seL4_Untyped_Retype(
-            parent->cap, seL4_UntypedObject, size_bits, slots_root_,
-            slots_root_, cnode_depth_, right_slot, 1);
+            parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
+            seL4_CapInitThreadCNode, cnode_depth_, right_slot, 1);
         if (second != seL4_NoError) {
             /* The parent held one child, not two: a retype already spent its
              * low half, so the parent is partial. It must leave the list -- a
@@ -456,8 +456,8 @@ void Allocator::free_piece(Node *node) noexcept
          * its CNode's size (specs/memory.md). */
         seL4_Word const del_depth =
             cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
-        seL4_CNode_Delete(slots_root_, node->cap, del_depth);
-        seL4_CNode_Delete(slots_root_, sibling->cap, del_depth);
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, node->cap, del_depth);
+        seL4_CNode_Delete(seL4_CapInitThreadCNode, sibling->cap, del_depth);
         /* The caps are gone, so their slots are free again -- and a pool that
          * remembers owners must be told (specs/memory.md). */
         free_slot(node->cap);
@@ -506,8 +506,8 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    *error = seL4_Untyped_Retype(node->cap, type, size_bits, slots_root_,
-                                 slots_root_, cnode_depth_, slot, 1);
+    *error = seL4_Untyped_Retype(node->cap, type, size_bits, seL4_CapInitThreadCNode,
+                                 seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
     if (*error != seL4_NoError) {
         slot_failed(slot);
         insert(false, node);
@@ -557,8 +557,8 @@ bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *fi
             }
             seL4_Error const retyped =
                 seL4_Untyped_Retype(bootinfo_->untyped.start + i, seL4_RISCV_4K_Page,
-                                    seL4_PageBits, slots_root_,
-                                    slots_root_, cnode_depth_, slot, 1);
+                                    seL4_PageBits, seL4_CapInitThreadCNode,
+                                    seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
             if (retyped != seL4_NoError) {
                 slot_failed(slot);
                 *error = retyped;
@@ -636,8 +636,8 @@ seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
     seL4_Word const type =
         size_bits == seL4_PageBits ? seL4_RISCV_4K_Page : seL4_RISCV_Mega_Page;
     seL4_Error const retyped =
-        seL4_Untyped_Retype(untyped_cap, type, size_bits, slots_root_,
-                            slots_root_, cnode_depth_, slot, 1);
+        seL4_Untyped_Retype(untyped_cap, type, size_bits, seL4_CapInitThreadCNode,
+                            seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
     if (retyped != seL4_NoError) {
         slot_failed(slot);
         *error = retyped;

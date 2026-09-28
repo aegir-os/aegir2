@@ -230,14 +230,6 @@ public:
     void set_cnode_size_bits(unsigned bits) noexcept { cnode_size_bits_ = bits; }
 
     /**
-     * Address this allocator's slots in `cnode` rather than the process's own
-     * root. The range `adopt_slots` was given is then a range *inside* that
-     * CNode, so it cannot overlap another allocator over the same root -- which
-     * is what auth's session pool needs (specs/auth.md, specs/direction.md).
-     */
-    void set_slot_root(seL4_CPtr cnode) noexcept { slots_root_ = cnode; }
-
-    /**
      * An ASID pool, for a process that will build address spaces of its own.
      *
      * Not `alloc_object`: the kernel makes a pool from an *untyped* rather than by
@@ -407,12 +399,6 @@ private:
     /* The depth that addresses our slots: the whole word for the kernel's root CNode,
      * and zero for a service that addresses its own CSpace (adopt_slots explains). */
     seL4_Word cnode_depth_ = seL4_WordBits;
-    /* The CNode our slots live in: this process's own root, or a CNode it made
-     * for a range it hands to itself (auth's session pool, specs/auth.md). All
-     * the retype/delete/mint destinations go through it, so two allocators over
-     * one CSpace cannot collide -- one addresses the root, the other its own
-     * CNode. `slots_root_` and `cnode_depth_` are what address a slot in it. */
-    seL4_CPtr slots_root_ = seL4_CapInitThreadCNode;
     seL4_CPtr slots_first_;
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;

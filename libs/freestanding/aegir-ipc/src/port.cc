@@ -194,16 +194,11 @@ void Owner::reply_cap(uint64_t const *words, uint32_t count, seL4_CPtr cap) noex
     seL4_Reply(info);
 }
 
-bool take_received_cap(seL4_CPtr root, seL4_CPtr target, seL4_Word depth) noexcept
-{
-    return seL4_CNode_Move(root, target, depth, bootstrap::kSlotOwnCNode,
-                           bootstrap::kSlotReceiveCap,
-                           bootstrap::cnode_bits()) == seL4_NoError;
-}
-
 bool take_received_cap(seL4_CPtr target) noexcept
 {
-    return take_received_cap(bootstrap::kSlotOwnCNode, target, bootstrap::cnode_bits());
+    return seL4_CNode_Move(bootstrap::kSlotOwnCNode, target, bootstrap::cnode_bits(),
+                           bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+                           bootstrap::cnode_bits()) == seL4_NoError;
 }
 
 }  // namespace aegir::ipc
