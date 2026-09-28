@@ -21,6 +21,7 @@
 #include <aegir/environment.h>
 #include <aegir/heap.h>
 #include <aegir/ipc/port.h>
+#include <aegir/launch_client.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/script/condition.h>
@@ -247,17 +248,6 @@ std::string current_directory()
 std::string prompt_for(std::string const &directory)
 {
     return directory + ">";
-}
-
-std::string environment_string()
-{
-    std::string out;
-    char const *const *entries = aegir::environment::environ();
-    for (uint32_t i = 0; entries[i] != nullptr; ++i) {
-        out.append(entries[i]);
-        out.push_back('\0');
-    }
-    return out;
 }
 
 /* A built-in: the shell's own words, which it runs itself because they touch
@@ -846,15 +836,12 @@ private:
             payload.push_back('\0');
             payload += args[i];
         }
-        std::string const cwd = current_directory();
-        std::string const environment = environment_string();
-        if (!aegir::console::stream_run_background(
-                port_, payload.data(), static_cast<uint32_t>(payload.size()),
-                cwd.c_str(), static_cast<uint32_t>(cwd.size()), environment.data(),
-                static_cast<uint32_t>(environment.size()), redirect.in_path.data(),
+        if (!aegir::launch::command(
+                payload.data(), static_cast<uint32_t>(payload.size()),
+                redirect.in_path.data(),
                 static_cast<uint32_t>(redirect.in_path.size()),
                 redirect.out_path.data(),
-                static_cast<uint32_t>(redirect.out_path.size()))) {
+                static_cast<uint32_t>(redirect.out_path.size()), true)) {
             print("Run: " + args[0] + ": not started\n");
             line_status_ = 10;
         }
@@ -1024,18 +1011,13 @@ private:
             ins.push_back(redirect.in_path);
             outs.push_back(redirect.out_path);
         }
-        std::vector<aegir::console::StreamStage> wire;
+        std::vector<aegir::launch::Stage> wire;
         for (std::size_t i = 0; i < lines.size(); ++i) {
             wire.push_back({lines[i].data(), static_cast<uint32_t>(lines[i].size()),
                             ins[i].data(), static_cast<uint32_t>(ins[i].size()),
                             outs[i].data(), static_cast<uint32_t>(outs[i].size())});
         }
-        std::string const cwd = current_directory();
-        std::string const environment = environment_string();
-        if (aegir::console::stream_pipeline(
-                port_, wire.data(), static_cast<uint32_t>(wire.size()), cwd.data(),
-                static_cast<uint32_t>(cwd.size()), environment.data(),
-                static_cast<uint32_t>(environment.size()))) {
+        if (aegir::launch::pipeline(wire.data(), static_cast<uint32_t>(wire.size()))) {
             busy_ = true;
             return true;
         }
@@ -1156,25 +1138,25 @@ private:
             (void)change_directory(command_words[0]);
             return false;
         }
-        /* A program, run by the terminal on this shell's behalf: it owns the
-         * spawn authority and starts the command with this stream. The command
-         * word is lowercased (the Amiga is case-blind and C: is not,
-         * specs/dos.md) and the words travel NUL-separated, so an argument a
-         * quote grouped reaches the command as one argument (specs/shell.md);
-         * the redirections already left the list. */
+        /* A program, launched on this shell's behalf (specs/launch.md): the
+         * shell asks the session's launcher, which owns the spawn authority
+         * and starts the command with this stream. The command word is
+         * lowercased (the Amiga is case-blind and C: is not, specs/dos.md)
+         * and the words travel NUL-separated, so an argument a quote grouped
+         * reaches the command as one argument (specs/shell.md); the
+         * redirections already left the list. The launch carries the shell's
+         * own context, so `cd` and `Set` reach the command. */
         std::string payload = command;
         for (std::string const &arg : args) {
             payload.push_back('\0');
             payload += arg;
         }
-        std::string const cwd = current_directory();
-        std::string const environment = environment_string();
-        if (aegir::console::stream_run(
-                port_, payload.data(), static_cast<uint32_t>(payload.size()),
-                cwd.c_str(), static_cast<uint32_t>(cwd.size()), environment.data(),
-                static_cast<uint32_t>(environment.size()), redirect.in_path.data(),
-                static_cast<uint32_t>(redirect.in_path.size()), redirect.out_path.data(),
-                static_cast<uint32_t>(redirect.out_path.size()))) {
+        if (aegir::launch::command(
+                payload.data(), static_cast<uint32_t>(payload.size()),
+                redirect.in_path.data(),
+                static_cast<uint32_t>(redirect.in_path.size()),
+                redirect.out_path.data(),
+                static_cast<uint32_t>(redirect.out_path.size()), false)) {
             busy_ = true;
             return true;
         }

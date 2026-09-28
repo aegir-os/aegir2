@@ -1,8 +1,8 @@
 # memory: the memory service
 
 Status: decided (2026-09); the service, the runtime's source, the per-process
-spawner, the limits and `Run` are landed (phases 1-5); the generic
-`aegir::launch` API is next (specs/launch.md).
+spawner, the limits and `Run` are landed (phases 1-5), and the generic
+`aegir::launch` API (specs/launch.md Phase 2) is landed too.
 Aegir's memory is, today,
 a set of **static partitions**: director carves fixed untypeds for services,
 auth carves a fixed command pool and passes it to the terminal, and the
@@ -143,8 +143,9 @@ default, the machine).
   terminal reaps it without a `return code` line, and the spawner keeps a pool
   of live commands rather than one line's bracket. `NewCLI`/`NewShell` (a new
   Shell in a new window) is not a memory feature: it is the generic launch
-  mechanism of `specs/launch.md`, one client of the launch request whose
-  kind-3 program is the Terminal. That spec is the next work.
+  mechanism of `specs/launch.md`, whose Phase 2 -- `aegir::launch` over the
+  runtime primitive, and the shell's command lines, `Run` and pipelines routed
+  through it -- has landed.
 
 ## What this is not
 

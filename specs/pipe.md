@@ -90,15 +90,15 @@ its reader name the same pipe across that badge.
 
 ### The pipeline wire
 
-The shell asks the terminal to run a pipeline with one more console-stream
-method beside `run` (`kStreamMethodPipeline`): a stage count, each stage's
-line (the command words NUL-separated) and its own redirections, then the
-current directory and the environment once. The terminal spawns the stages in
-one bracket and names the connecting pipes itself -- `PIPE:p<serial>_<i>` --
-so the shell never invents a pipe name and a pipeline's bytes never depend on
-a name the user chose. The completion the shell waits on is the existing
-`command status` call; the terminal answers it only when every stage has
-reported.
+The shell asks the launcher to start a pipeline with the launcher protocol's
+pipeline method (`specs/launch.md`, `kMethodPipeline`): a stage count, each
+stage's argv (the command words NUL-separated) and its own redirections, then
+the context once -- the current directory, the environment and the path. The
+launcher spawns the stages in one bracket and names the connecting pipes
+itself -- `PIPE:p<serial>_<i>` -- so the shell never invents a pipe name and a
+pipeline's bytes never depend on a name the user chose. The completion the
+shell waits on is the existing `command status` call on the stream; the
+launcher answers it only when every stage has reported.
 
 ### The service's memory
 

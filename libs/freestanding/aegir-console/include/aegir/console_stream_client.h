@@ -7,7 +7,8 @@
  * The client half of aegir/console_stream.h: a program that opens a stream on
  * the terminal's port and reads and writes it. Kept apart from the wire
  * vocabulary so the handler -- which is host-tested -- need not see a kernel
- * header.
+ * header. Starting a program is not here: that is the launcher's, and its
+ * client is aegir/launch_client.h (specs/launch.md).
  */
 
 #ifndef AEGIR_CONSOLE_STREAM_CLIENT_H
@@ -150,144 +151,6 @@ inline bool stream_set_prompt(aegir::ipc::Consumer const &port, char const *prom
     aegir::ipc::WordsReply const answer =
         port.call_words(kStreamMethodSetPrompt, out, words, in, 1);
     return answer.error == 0;
-}
-
-/** Ask the terminal to run `line` -- the command words NUL-separated, the
- *  first the command and the rest its arguments, already substituted and
- *  quote-grouped by the shell (specs/shell.md) -- with `cwd` and the
- *  NUL-separated `environment` (the shell's, sent so the command inherits it),
- *  redirecting the command's standard input and output to `std_in`/`std_out`
- *  (empty for the console stream; specs/shell.md). True when it started. */
-inline bool stream_run_method(aegir::ipc::Consumer const &port, uint32_t method,
-                              char const *line, uint32_t line_length, char const *cwd,
-                              uint32_t cwd_length, char const *environment,
-                              uint32_t environment_length, char const *std_in,
-                              uint32_t std_in_length, char const *std_out,
-                              uint32_t std_out_length) noexcept
-{
-    uint64_t out[aegir::ipc::kMaxWords];
-    uint32_t words =
-        aegir::nmspace::pack_string(out, line, line_length, aegir::nmspace::kPathMax);
-    if (words == 0) {
-        return false;
-    }
-    uint32_t const cwd_words =
-        aegir::nmspace::pack_string(out + words, cwd, cwd_length, aegir::nmspace::kPathMax);
-    if (cwd_words == 0) {
-        return false;
-    }
-    words += cwd_words;
-    uint32_t const environment_words = aegir::nmspace::pack_string(
-        out + words, environment, environment_length, aegir::nmspace::kPathMax);
-    if (environment_words == 0) {
-        return false;
-    }
-    words += environment_words;
-    uint32_t const in_words =
-        aegir::nmspace::pack_string(out + words, std_in, std_in_length,
-                                    aegir::nmspace::kPathMax);
-    if (in_words == 0) {
-        return false;
-    }
-    words += in_words;
-    uint32_t const out_words2 =
-        aegir::nmspace::pack_string(out + words, std_out, std_out_length,
-                                    aegir::nmspace::kPathMax);
-    if (out_words2 == 0) {
-        return false;
-    }
-    words += out_words2;
-    if (words > aegir::ipc::kMaxWords) {
-        return false;
-    }
-    uint64_t in[1];
-    aegir::ipc::WordsReply const answer = port.call_words(method, out, words, in, 1);
-    return answer.error == 0 && answer.count == 1 && in[0] == 1;
-}
-
-inline bool stream_run(aegir::ipc::Consumer const &port, char const *line,
-                       uint32_t line_length, char const *cwd, uint32_t cwd_length,
-                       char const *environment, uint32_t environment_length,
-                       char const *std_in, uint32_t std_in_length, char const *std_out,
-                       uint32_t std_out_length) noexcept
-{
-    return stream_run_method(port, kStreamMethodRun, line, line_length, cwd, cwd_length,
-                             environment, environment_length, std_in, std_in_length,
-                             std_out, std_out_length);
-}
-
-/** Ask the terminal to run `line` in the background (specs/shell.md's `Run`):
- *  the same strings `run` carries, but the shell does not wait for it. True
- *  when it started. */
-inline bool stream_run_background(aegir::ipc::Consumer const &port, char const *line,
-                                  uint32_t line_length, char const *cwd,
-                                  uint32_t cwd_length, char const *environment,
-                                  uint32_t environment_length, char const *std_in,
-                                  uint32_t std_in_length, char const *std_out,
-                                  uint32_t std_out_length) noexcept
-{
-    return stream_run_method(port, kStreamMethodRunBackground, line, line_length, cwd,
-                             cwd_length, environment, environment_length, std_in,
-                             std_in_length, std_out, std_out_length);
-}
-
-/** One stage of a pipeline (specs/pipe.md): the command words NUL-separated,
- *  and the stage's own redirections, empty for the console or the connecting
- *  pipe. The terminal fills the pipes between stages. */
-struct StreamStage {
-    char const *line;
-    uint32_t line_length;
-    char const *std_in;
-    uint32_t std_in_length;
-    char const *std_out;
-    uint32_t std_out_length;
-};
-
-/** Pack a string into `out` at `words`, refusing when it would pass the
- *  envelope rather than overflowing the caller's array. */
-inline bool pack_stream_string(uint64_t *out, uint32_t &words, char const *text,
-                               uint32_t length) noexcept
-{
-    uint32_t const need = 1 + (length + 7) / 8;
-    if (words + need > aegir::ipc::kMaxWords) {
-        return false;
-    }
-    uint32_t const packed =
-        aegir::nmspace::pack_string(out + words, text, length, aegir::nmspace::kPathMax);
-    if (packed == 0) {
-        return false;
-    }
-    words += packed;
-    return true;
-}
-
-/** Ask the terminal to run a pipeline (specs/pipe.md): every stage at once,
- *  connected by pipes the terminal names. `cwd` and the NUL-separated
- *  `environment` are the shell's, sent once for the whole pipeline. True when
- *  it started. */
-inline bool stream_pipeline(aegir::ipc::Consumer const &port,
-                            StreamStage const *stages, uint32_t stage_count,
-                            char const *cwd, uint32_t cwd_length,
-                            char const *environment, uint32_t environment_length) noexcept
-{
-    uint64_t out[aegir::ipc::kMaxWords];
-    uint32_t words = 0;
-    out[words++] = stage_count;
-    for (uint32_t i = 0; i < stage_count; ++i) {
-        if (!pack_stream_string(out, words, stages[i].line, stages[i].line_length) ||
-            !pack_stream_string(out, words, stages[i].std_in, stages[i].std_in_length) ||
-            !pack_stream_string(out, words, stages[i].std_out, stages[i].std_out_length)) {
-            return false;
-        }
-    }
-    if (!pack_stream_string(out, words, cwd, cwd_length) ||
-        !pack_stream_string(out, words, environment, environment_length)) {
-        return false;
-    }
-    uint64_t in[1];
-    aegir::ipc::WordsReply const answer =
-        port.call_words(kStreamMethodPipeline, out, words, in, 1);
-    return answer.error == 0 && answer.count == 1 && in[0] == 1;
 }
 
 /** A finished command's status. True and fills `status` when one has finished

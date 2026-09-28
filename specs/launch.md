@@ -1,8 +1,10 @@
 # launch: starting a program from a session
 
 Status: decided (2026-09). The request shape, the kinds and the authority are
-below; `Run` (kind 1, without waiting) has landed, and the `aegir::launch` API
-with the per-session launcher is the next work (specs/memory.md Phase 5).
+below; `Run` (kind 1, without waiting) landed as specs/memory.md Phase 5, and
+Phase 2 -- `aegir::launch` over the C runtime primitive (`aegir_spawn`), the
+generic request, and the shell routed through it -- has landed. Kinds 2 and 3
+and a standalone launcher are the next work.
 
 Aegir's processes are not forked: a **spawner** creates a child out of
 authority it was delegated (specs/authority.md). That is the mechanism, and it
@@ -25,12 +27,12 @@ path, its stack request -- exactly as `fork` hands a child the parent's. Inherit
 is the default, because the caller *is* the counterpart of the parent.
 
     // C++
-    aegir::launch::Program child{"aegir-multiview", {"Work:Pic.iff"}};
-    aegir::launch::Window window{"CON:64/64/640/400/MultiView"};
-    aegir::launch::spawn(child, aegir::launch::Kind::Windowed, window);
+    aegir::launch::spawn(argv, argv_length, aegir::launch::kKindWindowed,
+                         "CON:64/64/640/400/MultiView", window_length);
 
     /* C */
-    spawnve(file, argv, environ, SPAWN_WINDOWED, &window_spec);
+    aegir_spawn(argv, NULL, NULL, 0, "CON:64/64/640/400/MultiView",
+                kKindWindowed);
 
 `aegir::launch` adds no policy of its own: it builds the request and calls the
 launcher (below). A program with no launcher capability gets a refusal, the
@@ -120,11 +122,15 @@ and a MultiView differ only in the request's kind.
   a program without waiting, as one more process under its own `mem.main`
   badge and limits; it is kind 1's asynchronous form. The request shape here
   is the terminal's own `run`, which this spec later generalizes.
-- **Phase 2 -- the launch request and the runtime API.** `aegir::launch` and
-  the C runtime's spawn primitive build a request from the caller's own
-  context; `launch.session` carries it. The terminal serves it for the first
-  cut (it already holds the kit), and the Shell's lines and `Run` route
-  through it, so the interface does not change when the launcher moves out.
+- **Phase 2 -- the launch request and the runtime API.** Landed. `aegir::launch`
+  (C++) and the C runtime primitive `aegir_spawn` (over `aegir_launch_request`)
+  build a request from the caller's own context; the terminal serves it on the
+  same endpoint as con.stream for the first cut, under the method numbers
+  `kMethodSpawn`/`kMethodPipeline` (chosen clear of con.stream's, because one
+  process serves one port). The shell's command lines, `Run` and pipelines all
+  route through it, so the call site does not change when the launcher moves
+  out. `argv`, `cwd`, `environment`, `path`, the redirections, the window
+  specification and the stack ask all travel; the launcher fulfills kind 1.
 - **Phase 3 -- kinds 2 and 3.** The launcher hands a windowed program its
   console and a launching program its kit; `NEWSHELL`/`NEWCLI` launch
   `aegir-terminal`, and a windowed program of the session (a viewer) is the

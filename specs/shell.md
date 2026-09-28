@@ -253,19 +253,20 @@ this arc's record of the order.
   already knows `exitcode`.
 - **Phase 6 — the shell as its own process.** Landed. `aegir-shell` opens a
   cooked stream on the terminal's `con.stream`, passes its own doorbell on
-  `open`, and loops: `read_line`, run the built-ins, and for a command ask the
-  terminal to `run` it. The terminal keeps the spawn authority (the pool, the
-  ASID pool and the `spawn:` ports are still auth's delegation to it), and the
-  shell's environment and current directory ride in the `run` call, so the
-  command inherits what the shell set; the terminal reports the exit through
-  the stream and the shell reads it with `command_status`. The terminal spawns
-  the shell once, from a pool of its own (`auth`'s `shell-pool`), in
-  `on_started` after the ready cue -- the spawn reads a 260 KiB image and would
-  otherwise delay the cue past the demo's zoom. The line editor, the history
-  and the grid stay the terminal's; only the words moved. Two interims from
-  Phase 3 remain: the command badge is still a placeholder, and a command holds
-  only the console stream and its runtime untyped. (The badge landed with
-  memory's Phase 4, specs/memory.md.)
+  `open`, and loops: `read_line`, run the built-ins, and for a command call
+  `aegir::launch` (specs/launch.md). The launcher keeps the spawn authority
+  (the pool, the ASID pool and the `spawn:` ports are still auth's delegation
+  to the terminal), and the launch request carries the shell's environment,
+  current directory, path and stack ask -- filled by the runtime from the
+  shell's own state -- so the command inherits what the shell set; the terminal
+  reports the exit through the stream and the shell reads it with
+  `command_status`. The terminal spawns the shell once, from a pool of its own
+  (`auth`'s `shell-pool`), in `on_started` after the ready cue -- the spawn
+  reads a 260 KiB image and would otherwise delay the cue past the demo's zoom.
+  The line editor, the history and the grid stay the terminal's; only the words
+  moved. Two interims from Phase 3 remain: the command badge is still a
+  placeholder, and a command holds only the console stream and its runtime
+  untyped. (The badge landed with memory's Phase 4, specs/memory.md.)
 - **Phase 7 — the DOS toolset.** `specs/dos.md`: the CLI commands as hosted
   programs in `Sys:C`, one binary each, with `ReadArgs` templates
   (`aegir::args`), and the plumbing that lets a command touch files without
@@ -294,7 +295,7 @@ this arc's record of the order.
   built-in `Alias` is what makes the next line's `date` spawn, so the command
   starting proves the file ran in order (`make check-script` asserts the rest).
 - **Phase 9 — redirection and `NIL:`.** Landed. `>`, `>>` and `<` are pulled
-  off a line; a command's target travels in the `run` call and the runtime
+  off a line; a command's target travels in the launch request and the runtime
   routes its fd 0/1 to the path, and a built-in's output opens the target in the
   shell itself. `NIL:` is a volume (`specs/vfs.md`), so `>NIL:` and
   `EndCLI >NIL:` are quiet with no special case. The redirect target opens the

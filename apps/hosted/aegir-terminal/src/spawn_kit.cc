@@ -12,6 +12,7 @@
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
 #include <aegir/environment.h>
+#include <aegir/launch.h>
 #include <aegir/log.h>
 #include <aegir/memory.h>
 #include <aegir/mem/vspace.h>
@@ -222,7 +223,7 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
                                   asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   aegir::bootstrap::kCNodeBits);
-    aegir::spawn::PortGrant ports[5] = {
+    aegir::spawn::PortGrant ports[6] = {
         {aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, stream_endpoint_,
          seL4_CapRights_new(1, 1, 0, 1), badge, 0},
@@ -237,13 +238,20 @@ bool SpawnKit::spawn_shell(char const *image, uint64_t image_bytes, char const *
          seL4_CapRights_new(1, 1, 0, 1), 0, 0, true},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 3, shell_pool_,
          seL4_AllRights, 0, shell_pool_bits_},
+        /* The launcher port (specs/launch.md): the terminal serves it for the
+         * first cut, so the shell's copy is another badged cap on the same
+         * endpoint. The shell launches through it, and the call site does not
+         * change when the launcher moves out. */
+        {aegir::launch::kPortName, aegir::launch::kPortNameLength,
+         aegir::bootstrap::kSlotFirstDeclared + 4, stream_endpoint_,
+         seL4_CapRights_new(1, 1, 0, 1), badge, 0},
     };
-    uint32_t port_count = 4;
+    uint32_t port_count = 5;
     /* The boot session's status endpoint (specs/boot.md): the shell sends the
      * outcome here and auth receives it. Only the boot terminal has one. */
     if (boot_status_ != 0) {
         ports[port_count] = {"boot.status", 11,
-                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             aegir::bootstrap::kSlotFirstDeclared + 5,
                              boot_status_, seL4_AllRights, 0, 0};
         ++port_count;
     }

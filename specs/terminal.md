@@ -41,10 +41,11 @@ scrollback, the line editor and the history; it serves a character-I/O port.
 The shell is a separate process that opens a console stream on that port,
 prints a prompt, reads lines, and launches commands. A command is a process
 whose standard input and output are the same console stream. The terminal
-keeps the spawn authority -- the shell asks it to run a command (`run`), and
-reads the command's status back with `command_status` -- so the shell is a
-plain CON: client and the command's environment is what the shell sent, not a
-second copy the terminal invented.
+keeps the spawn authority -- the shell asks it to launch a program
+(`specs/launch.md`) and reads the command's status back with
+`command_status` -- so the shell is a plain CON: client and the command's
+environment is what the shell inherited and passed on, not a second copy the
+terminal invented.
 
 The alternative — the shell owning the window and rendering its own text —
 was rejected, and the reason is not fidelity:
@@ -131,23 +132,14 @@ port does not know is answered by saying nothing.
   it with `command_status`.
 - `set_prompt`. In: the prompt as a string. A shell that changed directory
   redraws its prompt through this rather than reopening the stream.
-- `run`. In: the command words **NUL-separated** -- the first the command, the
-  rest its arguments, already substituted and quote-grouped by the shell
-  (`specs/shell.md`) -- the current directory, the shell's environment, and the
-  command's redirected standard input and output, each a string (the
-  environment is the NUL-separated `NAME=VALUE` the spawner wants; a
-  redirection is a VFS path, empty for the console stream, `specs/shell.md`).
-  The words are NUL-separated, not spaces: the shell owns the lexing, so an
-  argument a quote grouped reaches the command as one argument and the terminal
-  does not re-split it. Answer: one word, `1` started and `0`
-  refused. The terminal holds the spawn authority, so the shell asks it to
-  start the command -- with the shell's stream, so the output lands on the
-  same grid -- and the environment rides in the call because the shell's is
-  the shell's. The redirect paths ride to the child's bootstrap block, where
-  the runtime opens them and routes fd 0/1.
 - `command_status`. Answer: one word, the status, when a command has finished;
   an empty answer otherwise. Reading it clears the finished state, so the
   shell prints one `return code` line and draws the next prompt.
+- Starting a program is *not* a stream method any more: it is the launcher's
+  protocol, served on the same endpoint in the first cut and read by the
+  shell through `aegir::launch` (`specs/launch.md`). `exit` and
+  `command_status` remain here, because the finished command's report and the
+  status the shell takes are the stream's.
 - `size`. Out: two words, the rows then the columns of the text area, so a
   pager sizes a page to the window rather than a constant. It is the one
   attribute of the `get`/`set` family (`title`, later color) that has landed.
@@ -189,8 +181,9 @@ terminal. One handler serves every client: the wire (the shell and its
 commands) and the terminal's own key path, which reaches the same stream
 directly because a process cannot call its own endpoint. The terminal also
 owns the shell's spawn: `SpawnKit::spawn_shell` starts `aegir-shell` once from
-auth's `shell-pool`, and the shell's `run` calls come back to the terminal,
-which spawns each command on a mem.main copy badged for it (specs/memory.md).
+auth's `shell-pool`, and the shell's `run` calls come back to the terminal as
+launch requests (`specs/launch.md`), which spawns each command on a mem.main
+copy badged for it (specs/memory.md).
 
 ### The terminal's window and render
 

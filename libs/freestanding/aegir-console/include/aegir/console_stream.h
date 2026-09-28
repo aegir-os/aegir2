@@ -90,18 +90,6 @@ constexpr uint32_t kStreamMethodExit = 6;
  *  reopening the stream. Answer: nothing. */
 constexpr uint32_t kStreamMethodSetPrompt = 7;
 
-/** Run a command on the stream's behalf. In: the command line as a string, the
- *  current directory as a string, and the environment as a string -- the
- *  NUL-separated `NAME=VALUE` entries the spawner wants -- then the command's
- *  redirected standard input and output as two more strings, each empty for the
- *  console stream (specs/shell.md). Answer: one word, 1
- *  started and 0 refused. The terminal owns the spawn authority and starts the
- *  command with the caller's stream, so its output lands here and its exit is
- *  read back with `command_status` (specs/shell.md's Phase 4). The environment
- *  rides in the call because the shell's is the shell's: a command the terminal
- *  starts inherits what the shell sent. */
-constexpr uint32_t kStreamMethodRun = 8;
-
 /** A finished command's status. Answer: one word, the status, when a command
  *  has finished on the stream; an empty answer otherwise. Reading it is what
  *  clears the finished state, so the shell prints one `return code` line and
@@ -118,25 +106,6 @@ constexpr uint32_t kStreamMethodSize = 10;
  *  after it has reported the status to auth, and then stops reading; the
  *  terminal shows the window and takes no more input. */
 constexpr uint32_t kStreamMethodBootFail = 11;
-
-/** Run a pipeline on the stream's behalf (specs/pipe.md). In: a stage count,
- *  then per stage its command line (the words NUL-separated), its redirected
- *  input and its redirected output (strings, empty for the console or the
- *  connecting pipe), then the current directory and the environment once --
- *  the same strings `run` carries. Answer: one word, 1 started and 0 refused.
- *  The terminal owns the spawn authority and starts every stage at once,
- *  naming the pipes that connect them; the stages' exits are read back with
- *  `command_status` once all have finished (specs/pipe.md). */
-constexpr uint32_t kStreamMethodPipeline = 12;
-
-/** Run a command in the background (specs/shell.md's `Run`): the same five
- *  strings `run` carries, and one word back, 1 started and 0 refused. The
- *  terminal spawns it under its own memory badge like any command, but the
- *  shell does not wait: it draws the next prompt while the command runs, and
- *  the command's `exit` is reaped without a `return code` line. Output shares
- *  the console unless a redirection names a file or a pipe
- *  (`Run >PIPE:name producer`, specs/pipe.md). */
-constexpr uint32_t kStreamMethodRunBackground = 13;
 
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws

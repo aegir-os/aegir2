@@ -22,6 +22,7 @@
 #include <aegir/console_stream.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
+#include <aegir/launch.h>
 #include <aegir/log.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
@@ -242,7 +243,7 @@ int main(int argc, char *argv[])
                          std::string const &cwd,
                          std::vector<char const *> const &environment,
                          std::string const &std_in, std::string const &std_out,
-                         bool background) -> bool {
+                         bool background, uint32_t stack_pages) -> bool {
         if (!kit) {
             return false;
         }
@@ -376,6 +377,10 @@ int main(int argc, char *argv[])
         request.give_vspace = true;
         request.untyped_physical = command_untyped_physical;
         request.untyped_bits = aegir::terminal::SpawnKit::kCommandUntypedBits;
+        /* The launch request's stack ask (specs/launch.md): zero is the
+         * spawner's default, which is what a command gets unless the launcher
+         * was asked for more. */
+        request.stack_pages = stack_pages;
 
         aegir::spawn::Process process{};
         if (!spawn_kit.spawner().spawn(request, account, process)) {
@@ -466,7 +471,8 @@ int main(int argc, char *argv[])
      * on its own, so commands are independent owners. False when a stage would
      * not start (the line's commands are reclaimed). */
     auto spawn_stages = [&](std::vector<Stage> const &stages, std::string const &cwd,
-                            std::string const &environment, bool background) -> bool {
+                            std::string const &environment, bool background,
+                            uint32_t stack_pages) -> bool {
         /* The environment rides as NUL-separated NAME=VALUE; the spawner wants
          * pointers, so they point into a copy. */
         std::vector<char> environment_buffer(environment.begin(), environment.end());
@@ -506,7 +512,8 @@ int main(int argc, char *argv[])
             ok = spawn_one(words_of_line[0],
                            std::vector<std::string>(words_of_line.begin() + 1,
                                                     words_of_line.end()),
-                           cwd, environment_pointers, std_in, std_out, background);
+                           cwd, environment_pointers, std_in, std_out, background,
+                           stack_pages);
         }
         if (!ok && !background) {
             finish_foreground();
@@ -525,11 +532,10 @@ int main(int argc, char *argv[])
         app.on_call = [&](uint32_t method, uint64_t const *words, uint32_t count,
                           seL4_Word badge, bool cap_arrived, uint64_t *reply,
                           uint32_t capacity) -> uint32_t {
-            /* The shell asks the terminal to run a command: the line, the
-             * directory to run it in, the shell's environment, and the
-             * command's redirected input and output (five strings, packed in
-             * that order; specs/shell.md). The terminal holds the spawn
-             * authority, so it starts the command here. */
+            /* The shell asks the launcher to start a program: the launch
+             * request (specs/launch.md). The terminal holds the spawn
+             * authority, so it starts the command here, attached to the
+             * shell's stream -- the caller's badge. */
             if (method == aegir::console::kStreamMethodBootFail) {
                 if (capacity < 1) {
                     return 0;
@@ -544,42 +550,64 @@ int main(int argc, char *argv[])
                 reply[0] = 1;
                 return 1;
             }
-            if (method == aegir::console::kStreamMethodRun ||
-                method == aegir::console::kStreamMethodRunBackground) {
-                /* `run` is a one-stage pipeline (specs/shell.md): the line,
-                 * the directory, the environment, then the command's own
-                 * redirected input and output. `run_background` is `Run`: the
-                 * same call, but the shell does not wait (specs/shell.md). */
-                if (capacity < 1 || count == 0) {
+            if (method == aegir::launch::kMethodSpawn) {
+                /* A launch (specs/launch.md): the kind, the flags, the
+                 * program's argv, the caller's context (its directory, its
+                 * environment and its path), the command's redirected input
+                 * and output, a window specification and the stack ask. Phase
+                 * 2 fulfills a command; a launcher offered a kind it does not
+                 * know refuses rather than guessing. A command shares the
+                 * launcher's console stream, which is the caller's badge. */
+                if (capacity < 1 || count < 2) {
                     return 0;
                 }
                 uint32_t at = 0;
+                uint64_t const kind = words[at++];
+                uint64_t const flags = words[at++];
                 Stage stage;
                 std::string cwd;
                 std::string environment;
+                std::string path;
+                std::string window;
                 if (!read_string(words, count, at, stage.line) ||
                     !read_string(words, count, at, cwd) ||
                     !read_string(words, count, at, environment) ||
+                    !read_string(words, count, at, path) ||
                     !read_string(words, count, at, stage.std_in) ||
-                    !read_string(words, count, at, stage.std_out)) {
+                    !read_string(words, count, at, stage.std_out) ||
+                    !read_string(words, count, at, window) || at >= count) {
                     return 0;
+                }
+                uint64_t const stack_pages = words[at++];
+                /* The search path and the window specification are Phase 3's
+                 * (a command has no window and resolves through the session's
+                 * own path); read so the wire is whole, then unused. */
+                (void)path;
+                (void)window;
+                if (kind != aegir::launch::kKindCommand) {
+                    reply[0] = 0;
+                    return 1;
                 }
                 std::vector<Stage> stages;
                 stages.push_back(std::move(stage));
-                bool const background =
-                    method == aegir::console::kStreamMethodRunBackground;
-                reply[0] = spawn_stages(stages, cwd, environment, background) ? 1 : 0;
+                bool const background = (flags & aegir::launch::kFlagBackground) != 0;
+                reply[0] = spawn_stages(stages, cwd, environment, background,
+                                        static_cast<uint32_t>(stack_pages))
+                               ? 1
+                               : 0;
                 return 1;
             }
-            if (method == aegir::console::kStreamMethodPipeline) {
-                /* A pipeline (specs/pipe.md): a stage count, each stage's line
-                 * and its own redirections, then the directory and the
-                 * environment once. The terminal names the pipes between the
-                 * stages. */
-                if (capacity < 1 || count == 0) {
+            if (method == aegir::launch::kMethodPipeline) {
+                /* A pipeline (specs/pipe.md) launched through the same port: a
+                 * stage count, each stage's argv and its own redirections,
+                 * then the context once. The terminal names the pipes between
+                 * the stages. */
+                if (capacity < 1 || count < 3) {
                     return 0;
                 }
                 uint32_t at = 0;
+                uint64_t const kind = words[at++];
+                uint64_t const flags = words[at++];
                 uint32_t const stage_count = static_cast<uint32_t>(words[at++]);
                 if (stage_count == 0 || stage_count > count) {
                     reply[0] = 0;
@@ -597,11 +625,23 @@ int main(int argc, char *argv[])
                 }
                 std::string cwd;
                 std::string environment;
+                std::string path;
                 if (!read_string(words, count, at, cwd) ||
-                    !read_string(words, count, at, environment)) {
+                    !read_string(words, count, at, environment) ||
+                    !read_string(words, count, at, path) || at >= count) {
                     return 0;
                 }
-                reply[0] = spawn_stages(stages, cwd, environment, false) ? 1 : 0;
+                uint64_t const stack_pages = words[at++];
+                (void)flags;
+                (void)path;
+                if (kind != aegir::launch::kKindCommand) {
+                    reply[0] = 0;
+                    return 1;
+                }
+                reply[0] = spawn_stages(stages, cwd, environment, false,
+                                        static_cast<uint32_t>(stack_pages))
+                               ? 1
+                               : 0;
                 return 1;
             }
 
