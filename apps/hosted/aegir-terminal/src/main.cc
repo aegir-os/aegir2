@@ -680,9 +680,9 @@ int main(int argc, char *argv[])
         child.shell_pool = child_shell_pool;
         child.shell_pool_bits = kChildUntypedBits;
         child.launcher = false;
-        aegir::spawn::PortGrant ports[12];
+        aegir::spawn::PortGrant ports[16];
         uint32_t const port_count =
-            aegir::spawn::launcher_ports(spawn_kit.kit(), child, ports, 12);
+            aegir::spawn::launcher_ports(spawn_kit.kit(), child, ports, 16);
         /* The child's environment: this terminal's, less the launcher entries it
          * must not inherit, plus its own range and its window. */
         std::vector<std::string> environment;

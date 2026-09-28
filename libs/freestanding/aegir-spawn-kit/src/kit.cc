@@ -66,9 +66,15 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     (void)put(out, capacity, n++, aegir::nmspace::kPortName,
               aegir::nmspace::kPortNameLength, kit.nmspace,
               seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
-    (void)put(out, capacity, n++, aegir::console::kDoorbellName,
-              aegir::console::kDoorbellNameLength, kit.doorbell, seL4_AllRights, 0, 0,
-              false, true);
+    /* The command doorbell, when the launcher holds one: the same notification
+     * the stream's owner rings, copied so the command parks on `read` rather
+     * than polling (specs/terminal.md). Optional -- a launcher with none hands
+     * none, and its commands poll. */
+    if (kit.doorbell != 0) {
+        (void)put(out, capacity, n++, aegir::console::kDoorbellName,
+                  aegir::console::kDoorbellNameLength, kit.doorbell, seL4_AllRights, 0, 0,
+                  false, true);
+    }
     /* The command's own badged memory copy, by copy: the badge is already on
      * it, and its runtime grows through it under its own id (specs/memory.md). */
     (void)put(out, capacity, n++, aegir::memory::kPortName,
@@ -112,6 +118,16 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
               seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
     (void)put(out, capacity, n++, "shell:vfs.namespace", 19, kit.nmspace,
               seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
+    /* The command doorbell (specs/terminal.md): a launcher's commands park on it
+     * when their stream has no input, and the stream's owner rings the one
+     * object it and the launcher hold copies of. It travels *with the kit*
+     * rather than with a launch request, because a request can carry only one
+     * capability and the doorbell belongs to every command, not to one. */
+    if (kit.doorbell != 0) {
+        (void)put(out, capacity, n++, aegir::console::kDoorbellName,
+                  aegir::console::kDoorbellNameLength, kit.doorbell, seL4_AllRights, 0, 0,
+                  false, false);
+    }
     /* A shell pool only when the child was given one: a launcher draws a
      * nested shell's pool from mem.main on demand and has none of its own. */
     if (child.shell_pool != 0) {

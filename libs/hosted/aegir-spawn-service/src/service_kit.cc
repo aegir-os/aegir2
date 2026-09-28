@@ -175,13 +175,19 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
                                                 seL4_EndpointBits, account_, &error);
     fault_endpoint_ = allocator_->alloc_object(seL4_EndpointObject,
                                                seL4_EndpointBits, account_, &error);
-    /* The command doorbell: the stream's owner rings it when a command's stream
-     * has input, so a command's `read` parks on it (specs/terminal.md).
-     * Long-lived, like the endpoints; every command is handed a copy. */
-    command_doorbell_ = allocator_->alloc_object(seL4_NotificationObject,
-                                                 seL4_NotificationBits, account_, &error);
-    if (stream_endpoint_ == 0 || fault_endpoint_ == 0 || command_doorbell_ == 0) {
+    if (stream_endpoint_ == 0 || fault_endpoint_ == 0) {
         return false;
+    }
+    /* The command doorbell (specs/terminal.md): the session's, made by auth and
+     * given as a copy to every launcher, so the stream's owner -- the terminal
+     * -- rings the one object the launcher's commands park on. It is not the
+     * launcher's to make: a command's stream and its doorbell belong together,
+     * and the process that owns the stream is the one that must ring it.
+     * Optional -- without one the commands poll. */
+    uint64_t doorbell_slot = 0;
+    if (aegir::bootstrap::capability(aegir::console::kDoorbellName,
+                                     aegir::console::kDoorbellNameLength, &doorbell_slot)) {
+        command_doorbell_ = static_cast<seL4_CPtr>(doorbell_slot);
     }
 
     g_command_mem.adopt_nodes(g_command_nodes, sizeof(g_command_nodes));
