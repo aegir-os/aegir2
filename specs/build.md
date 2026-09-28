@@ -147,7 +147,11 @@ kernel's toolchain file and user targets inherit its flags.
 
   1. There is no `<cstdint>` and no other C++ header: user code is compiled
      `-nostdinc -nostdinc++`. musl's staged include directory *is* on the
-     include path, so C++ uses `<stdint.h>` — the C++-on-seL4 convention.
+     include path, so C++ uses `<stdint.h>` — the C++-on-seL4 convention. That
+     directory is a build *output*, so `aegir-c-headers` names it through a
+     generator expression **and** depends on the `muslc` target: a generator
+     expression alone does not order the build, and a fresh tree otherwise
+     compiles a library before musl has been extracted, failing on `<stdint.h>`.
   2. Static constructors **do** run before `main`: `sel4runtime` walks
      `__preinit_array`/`__init_array` (`projects/sel4runtime/src/init.c`, called
      from `env.c`). `apps/aegir-hello` asserts this at boot so a regression

@@ -85,6 +85,13 @@ add_library(aegir-c-headers INTERFACE)
 target_include_directories(
   aegir-c-headers SYSTEM INTERFACE $<TARGET_PROPERTY:muslc,INTERFACE_INCLUDE_DIRECTORIES>
 )
+# The directory above is muslc's staged headers, and a target that compiles
+# against it must wait for them to be extracted. A `$<TARGET_PROPERTY:muslc,...>`
+# expression alone does not order the build (CMake's CMP0112), so on a machine
+# where the stage is not already there a parallel build races it and fails on
+# <stdint.h>. The dependency is explicit, and add_dependencies on an INTERFACE
+# library propagates to everything that links it.
+add_dependencies(aegir-c-headers muslc)
 
 # C++ policies. A *target's* policy is where it lives: libs/freestanding and
 # apps/freestanding set the lean flags (-fno-exceptions -fno-rtti
