@@ -179,11 +179,13 @@ seL4_CPtr session_untyped_source(void *context, seL4_Word *size_bits,
 
 /* What a session spawn needs, kept from the bootstrap block: the initrd's
  * bytes (the binary is looked up by name), the ASID pool the address space
- * comes from, and the end of our slot range -- a session's slots run from
- * the login's mark to it. */
+ * comes from, and the ends of auth's own CSpace -- the session pool takes its
+ * slots from the top down while auth's own objects take theirs from the bottom
+ * up, so neither can hand out a slot the other holds (specs/direction.md). */
 uint64_t g_binaries_address = 0;
 uint32_t g_binaries_bytes = 0;
 seL4_CPtr g_asid_pool = 0;
+seL4_CPtr g_slots_first = 0;
 seL4_CPtr g_slots_end = 0;
 
 aegir::authdb::Row const *g_rows = nullptr;
@@ -733,7 +735,14 @@ void start_session(uint32_t user, bool bureau) noexcept
     }
     g_session_mem.adopt_nodes(g_session_nodes, sizeof(g_session_nodes));
     g_session_mem.reset();
-    g_session_mem.adopt_slots(mark, g_slots_end - mark, 0);
+    /* One cursor up, one down (specs/direction.md): the session pool takes its
+     * slots from the top of auth's CSpace, auth's own objects from the bottom,
+     * so a slot cannot be handed out twice while anything is left. A pool in a
+     * CNode of its own was the first choice and cannot work -- a capability
+     * inside a nested CNode cannot be invoked, because the root's guard covers
+     * every bit its CNode does not index, so the CPtr walk always ends in the
+     * root (kernel/src/kernel/cspace.c:51, :126-192). */
+    g_session_mem.adopt_slots_down(g_slots_first, g_slots_end - g_slots_first, 0);
     g_session_mem.set_untyped_source(session_untyped_source, &g_session_mem);
     aegir::mem::Arena session_arena(g_session_mem, g_scratch, session_account);
 
@@ -1438,6 +1447,7 @@ int main(int argc, char *argv[])
      * (kernel/src/object/untyped.c). The size is the one the spawner builds
      * (kCNodeBits in libs/aegir-spawn/src/process.cc). */
     g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    g_slots_first = first_free;
     g_slots_end = 1u << aegir::bootstrap::cnode_bits();
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),

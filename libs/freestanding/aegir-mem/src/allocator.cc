@@ -196,6 +196,15 @@ seL4_CPtr Allocator::alloc_slot() noexcept
     if (slot_pool_ != nullptr) {
         return slot_pool_->alloc(slot_owner_);
     }
+    /* Descending: the cursor is the lowest slot still free, and the free
+     * window is [slots_first_, slots_next_). */
+    if (slots_descend_) {
+        if (slots_next_ <= slots_first_) {
+            return 0;
+        }
+        ++slots_used_;
+        return --slots_next_;
+    }
     if (slots_next_ >= slots_end_) {
         return 0;
     }
@@ -209,6 +218,13 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
         slot_pool_->free(slot, slot_owner_);
         return;
     }
+    if (slots_descend_) {
+        if (slot == slots_next_) {
+            ++slots_next_;
+            --slots_used_;
+        }
+        return;
+    }
     if (slots_next_ != 0 && slot + 1 == slots_next_) {
         --slots_next_;
         --slots_used_;
@@ -218,6 +234,12 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
 void Allocator::slot_release(seL4_CPtr mark) noexcept
 {
     if (slot_pool_ != nullptr) {
+        return;
+    }
+    /* A descending run is not rewound by a mark: its slots were handed out from
+     * the top, and the owner that put them there takes them all back at once
+     * (the session pool resets and re-adopts per login, specs/auth.md). */
+    if (slots_descend_) {
         return;
     }
     if (mark >= slots_first_ && mark <= slots_next_) {
@@ -584,6 +606,17 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) n
     slots_first_ = first;
     slots_next_ = first;
     slots_end_ = first + count;
+    slots_descend_ = false;
+    slots_used_ = 0;
+    cnode_depth_ = depth;
+}
+
+void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept
+{
+    slots_first_ = first;
+    slots_next_ = first + count;
+    slots_end_ = first + count;
+    slots_descend_ = true;
     slots_used_ = 0;
     cnode_depth_ = depth;
 }

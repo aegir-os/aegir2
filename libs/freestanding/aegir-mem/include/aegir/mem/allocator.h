@@ -190,6 +190,21 @@ public:
     void adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept;
 
     /**
+     * Adopt a run of slots to be handed out from the *top* down. Two allocators
+     * that share one root CNode are pitted against each other this way -- one
+     * ascending, one descending -- so a slot can never be handed out twice
+     * while anything is left, and the two meet only when the CSpace is
+     * genuinely full, which is a failure worth hearing about
+     * (specs/direction.md).
+     *
+     * A CNode of one's own is not the alternative: a capability inside a
+     * nested CNode cannot be invoked at all, because the root's guard covers
+     * every bit its CNode does not index, so the CPtr walk always ends in the
+     * root (kernel/src/kernel/cspace.c:51, :126-192).
+     */
+    void adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept;
+
+    /**
      * Draw this allocator's slots from a shared pool instead of its own
      * cursor, owned by `owner` (specs/memory.md). An allocator that carves and
      * frees untypeds over its life -- the memory service -- reuses slots this
@@ -402,6 +417,9 @@ private:
     seL4_CPtr slots_first_;
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;
+    /* Which end the cursor starts at: false hands out `slots_first_` upward,
+     * true hands out `slots_end_ - 1` downward (adopt_slots_down explains). */
+    bool slots_descend_ = false;
     unsigned slots_used_;
     /* When set, slots come from here rather than the cursor above
      * (specs/memory.md). */
