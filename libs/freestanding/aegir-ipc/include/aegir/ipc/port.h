@@ -224,6 +224,14 @@ private:
  *  must be empty. False when the kernel refuses. What a transfer leaves in
  *  the scratch slot is the receiver's to put somewhere before the next one
  *  (aegir::bootstrap::kSlotReceiveCap). */
+bool take_received_cap(seL4_CPtr root, seL4_CPtr target, seL4_Word depth) noexcept;
+
+/** Move a capability out of the scratch receive slot into `target`, which
+ *  must be empty. False when the kernel refuses. What a transfer leaves in
+ *  the scratch slot is the receiver's to put somewhere before the next one
+ *  (aegir::bootstrap::kSlotReceiveCap). This form addresses `target` in the
+ *  process's own root; the rooted form is for a service whose slots are a
+ *  CNode of their own (specs/auth.md). */
 bool take_received_cap(seL4_CPtr target) noexcept;
 
 }  // namespace aegir::ipc
