@@ -168,17 +168,10 @@ void MenuBar::draw_menu(Canvas& canvas, const Menu& menu, int index) {
             int text_y = item_y + (item_height + font->ascent() - font->descent()) / 2;
             canvas.draw_text({text_x, text_y}, item.label, font, text_color);
 
-            // Shortcut
+            // Shortcut: keycap modifiers, then the key name
             if (item.shortcut_key != KeyCode::UNKNOWN) {
-                std::u32string shortcut;
-                if (item.shortcut_mods & 2) shortcut += U"Ctrl+";
-                if (item.shortcut_mods & 1) shortcut += U"Shift+";
-                if (item.shortcut_mods & 4) shortcut += U"Alt+";
-                shortcut += keycode_to_string(item.shortcut_key);
-
-                Size sc_sz = font->measure(shortcut);
-                int sc_x = menu_x + max_width - padding_h - sc_sz.width;
-                canvas.draw_text({sc_x, text_y}, shortcut, font, text_color);
+                draw_accelerator(canvas, menu_x + max_width - padding_h, text_y, item,
+                                 font, text_color);
             }
 
             // Checkmark
@@ -344,6 +337,69 @@ std::u32string MenuBar::keycode_to_string(KeyCode code) {
         case KeyCode::F12: return U"F12";
         default: return std::u32string(1, static_cast<char32_t>(code));
     }
+}
+
+namespace {
+
+constexpr int kKeycapPad = 3;
+constexpr int kKeycapGap = 4;
+
+/* The modifier keycaps of a shortcut, in draw order. */
+std::vector<std::u32string> modifier_tokens(uint32_t mods) {
+    std::vector<std::u32string> tokens;
+    if ((mods & kModControl) != 0) tokens.push_back(U"Ctrl");
+    if ((mods & kModAlt) != 0) tokens.push_back(U"Alt");
+    if ((mods & kModSuper) != 0) tokens.push_back(U"Win");
+    if ((mods & kModShift) != 0) tokens.push_back(U"Shift");
+    return tokens;
+}
+
+int keycap_width(std::u32string_view label, Font* font) {
+    return font->measure(label).width + 2 * kKeycapPad;
+}
+
+/* One keycap: a beveled box around a label, the titlebar gadgets' look. */
+void draw_keycap(Canvas& canvas, int x, int text_y, std::u32string_view label, Font* font) {
+    Theme& theme = Application::instance()->theme();
+    int const height = font->height() + 2 * kKeycapPad;
+    Rect const box{x, text_y - kKeycapPad, keycap_width(label, font), height};
+    canvas.fill_rect(box, theme.color(ColorRole::BUTTON_BG));
+    canvas.draw_rect(box, theme.color(ColorRole::BUTTON_BORDER));
+    canvas.draw_hline(box.x + 1, box.x + box.width - 2, box.y + 1,
+                      theme.color(ColorRole::GADGET_WHITE));
+    canvas.draw_vline(box.y + 1, box.y + box.height - 2, box.x + 1,
+                      theme.color(ColorRole::GADGET_WHITE));
+    canvas.draw_hline(box.x + 1, box.x + box.width - 2, box.y + box.height - 2,
+                      theme.color(ColorRole::GADGET_GREY));
+    canvas.draw_vline(box.y + 1, box.y + box.height - 2, box.x + box.width - 2,
+                      theme.color(ColorRole::GADGET_GREY));
+    canvas.draw_text({box.x + kKeycapPad, text_y}, label, font,
+                     theme.color(ColorRole::BUTTON_TEXT));
+}
+
+}  // namespace
+
+int MenuBar::accelerator_width(const MenuItem& item, Font* font) {
+    if (font == nullptr || item.shortcut_key == KeyCode::UNKNOWN) return 0;
+    int width = 0;
+    for (std::u32string const& token : modifier_tokens(item.shortcut_mods)) {
+        width += keycap_width(token, font) + kKeycapGap;
+    }
+    return width + font->measure(keycode_to_string(item.shortcut_key)).width;
+}
+
+int MenuBar::draw_accelerator(Canvas& canvas, int right_x, int y, const MenuItem& item,
+                              Font* font, Color text_color) {
+    if (font == nullptr || item.shortcut_key == KeyCode::UNKNOWN) return 0;
+    int const width = accelerator_width(item, font);
+    int x = right_x - width;
+    for (std::u32string const& token : modifier_tokens(item.shortcut_mods)) {
+        int const w = keycap_width(token, font);
+        draw_keycap(canvas, x, y, token, font);
+        x += w + kKeycapGap;
+    }
+    canvas.draw_text({x, y}, keycode_to_string(item.shortcut_key), font, text_color);
+    return width;
 }
 
 } // namespace aegir::trinket

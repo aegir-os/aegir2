@@ -18,6 +18,8 @@ using aegir::trinket::Canvas;
 using aegir::trinket::Color;
 using aegir::trinket::ColorRole;
 using aegir::trinket::Font;
+using aegir::trinket::KeyCode;
+using aegir::trinket::MenuBar;
 using aegir::trinket::MetricRole;
 using aegir::trinket::MouseEvent;
 using aegir::trinket::PaintEvent;
@@ -67,7 +69,10 @@ int Desktop::menu_width(int menu) const {
     int width = 120;
     for (const MenuItem& item : active_menus()[menu].items) {
         int const label = font != nullptr ? font->measure(item.label).width : 0;
-        width = std::max(width, label + 2 * pad + 24);
+        int const accel = item.shortcut_key != KeyCode::UNKNOWN
+                              ? MenuBar::accelerator_width(item, font) + 24
+                              : 0;
+        width = std::max(width, label + 2 * pad + 24 + accel);
     }
     return width;
 }
@@ -156,6 +161,11 @@ void Desktop::draw_menu(Canvas& canvas, int menu) {
                                : theme.color(ColorRole::MENU_TEXT);
         canvas.draw_text({slot.rect.x + pad, slot.rect.y + (height - font->height()) / 2},
                          item.label, font, text);
+        if (item.shortcut_key != KeyCode::UNKNOWN) {
+            MenuBar::draw_accelerator(canvas, slot.rect.x + slot.rect.width - pad,
+                                      slot.rect.y + (height - font->height()) / 2, item,
+                                      font, text);
+        }
         if ((item.flags & MenuItem::CHECKED) != 0) {
             int const cx = slot.rect.x + 8;
             int const cy = slot.rect.y + height / 2;

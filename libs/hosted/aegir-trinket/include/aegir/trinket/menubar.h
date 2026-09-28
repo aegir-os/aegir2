@@ -16,6 +16,9 @@
 
 namespace aegir::trinket {
 
+class Font;
+class Canvas;
+
 class MenuBar : public Widget {
 public:
     MenuBar();
@@ -58,6 +61,16 @@ public:
     // Called when a menu item is activated
     std::function<void(uint32_t action_id)> on_action;
 
+    // The accelerator of a menu item, drawn right-aligned as modifier keycaps
+    // (`Ctrl`, `Alt`, `Win`, `Shift`) then the key name. `accelerator_width`
+    // answers the space it needs; `draw_accelerator` draws it ending at
+    // `right_x` at text row `y` and answers the width it drew. 0 for an item
+    // with no shortcut.
+    static int accelerator_width(const MenuItem& item, Font* font);
+    static int draw_accelerator(Canvas& canvas, int right_x, int y, const MenuItem& item,
+                                Font* font, Color text_color);
+    static std::u32string keycode_to_string(KeyCode code);
+
     // Show context menu at position (for right-click)
     void show_context_menu(Point global_pos, const std::vector<MenuItem>& items);
 
@@ -90,7 +103,6 @@ private:
     const MenuItem* find_in_submenu(const std::vector<MenuItem>& items, uint32_t action_id) const;
     void draw_menu(Canvas& canvas, const Menu& menu, int index);
     void draw_popup(Canvas& canvas, Point pos, const std::vector<MenuItem>& items);
-    static std::u32string keycode_to_string(KeyCode code);
 };
 
 } // namespace aegir::trinket
