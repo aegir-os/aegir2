@@ -23,9 +23,10 @@ target_compile_options(aegir-console PRIVATE -Wall -Wextra -Werror)
 # aegir-cxx-policy carries the freestanding C++ flags; aegir-runtime provides
 # the pieces every binary needs (see libs/aegir-runtime). aegir-registry and
 # aegir-framebuffer are the driver introductions, aegir-mem the window this
-# service maps them through (specs/console.md).
+# service maps them through, aegir-signal the one wakeup it waits on
+# (specs/console.md, specs/signal.md).
 target_link_libraries(
   aegir-console PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                         aegir-registry aegir-framebuffer aegir-console-protocol aegir-memory-protocol
-                        aegir-mem sel4 muslc sel4runtime
+                        aegir-mem aegir-signal sel4 muslc sel4runtime
 )

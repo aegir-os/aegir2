@@ -25,6 +25,7 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/memory.h>
 #include <aegir/registry.h>
+#include <aegir/signal.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 #include <string.h>
@@ -198,6 +199,13 @@ aegir::ipc::Consumer g_hid[3];
 constexpr uint32_t kHidKbd = 0;
 constexpr uint32_t kHidMouse = 1;
 constexpr uint32_t kHidTablet = 2;
+
+/* The one wakeup the console waits on (specs/signal.md): a notification bound
+ * to this thread, so a device's signal wakes the same receive the port is
+ * served on, and one context per device -- the bit is the identity, so a
+ * coalesced repeat loses nothing. */
+aegir::signal::Receiver g_wake;
+aegir::signal::Context g_wake_context[3];
 
 /* The keymap is the system's, US layout v1 (specs/console.md): indexed by
  * the raw code as it arrives -- Linux's KEY_*, which virtio-input carries
@@ -926,29 +934,24 @@ int main(int argc, char *argv[])
     }
     {
         aegir::mem::Account self{"console", 0, 0, 0};
-        seL4_Error wake_error = seL4_NoError;
-        seL4_CPtr const wake = g_objects.alloc_object(seL4_NotificationObject,
-                                                      seL4_NotificationBits, self,
-                                                      &wake_error);
-        if (wake == 0 ||
-            seL4_TCB_BindNotification(aegir::bootstrap::kSlotOwnTcb, wake) !=
-                seL4_NoError) {
+        /* The wakeup, made and bound by the library (specs/signal.md): one
+         * notification for this thread, one context per device. A device's
+         * subscribe takes a mint badged with its context's bit, and the bit is
+         * all the serve loop has to read. */
+        if (!g_wake.init(g_objects, self, aegir::bootstrap::kSlotOwnTcb,
+                         aegir::bootstrap::kSlotOwnCNode,
+                         aegir::bootstrap::cnode_bits())) {
             write_line("FAIL the wake notification would not be made or bound");
             seL4_Signal(aegir::bootstrap::kSlotSupervision);
             aegir::halt();
         }
         for (uint32_t d = 0; d < 3; ++d) {
             seL4_CPtr const mint = g_objects.alloc_slot();
-            /* A notification's write right is the signal; the badge is the
-             * device's bit in the wakeup's word, set high above any service
-             * number so the loop can tell a wakeup from a call. */
-            if (mint == 0 ||
-                seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint,
-                                aegir::bootstrap::cnode_bits(),
-                                aegir::bootstrap::kSlotOwnCNode, wake,
-                                aegir::bootstrap::cnode_bits(),
-                                seL4_CapRights_new(0, 0, 0, 1),
-                                1ull << (32 + d)) != seL4_NoError) {
+            g_wake_context[d] = g_wake.create();
+            /* A notification's write right is the signal; the mint's badge is
+             * the device's context. */
+            if (mint == 0 || !g_wake_context[d].valid() ||
+                !g_wake.mint(g_wake_context[d], mint).valid()) {
                 write_line("FAIL a device mint would not be made");
                 seL4_Signal(aegir::bootstrap::kSlotSupervision);
                 aegir::halt();
@@ -1022,16 +1025,11 @@ int main(int argc, char *argv[])
             seL4_Recv(static_cast<seL4_CPtr>(gui_slot), &badge);
         uint32_t const length =
             static_cast<uint32_t>(seL4_MessageInfo_get_length(info));
-        if ((badge & (7ull << 32)) != 0) {
-            /* A wakeup, not a call: the device mints are badged with bits
-             * 32..34, above any service number, because a notification that
-             * wakes a blocked receive sets the badge register only -- the
-             * message registers keep whatever the last call left
-             * (notification.c's sendSignal), so the badge is the only thing
-             * to read. The test is those three bits exactly, not "any high
-             * bit": a user badge carries its class at bit 62
-             * (specs/authority.md), and a session's call -- the bureau's --
-             * is a call. */
+        if (g_wake.is_signal(badge)) {
+            /* A wakeup, not a call: the bound notification delivers the badge
+             * register alone -- the message registers keep whatever the last
+             * call left (kernel/src/object/notification.c:62-76) -- so the
+             * badge is the only thing to read. */
             /* Drain in a fixed order, and the tablet before the mouse: the
              * runner sends a click as an absolute position on the tablet and
              * then a button on the mouse, and a burst that wakes the console
@@ -1041,7 +1039,7 @@ int main(int argc, char *argv[])
              * relative motion and its button still arrive as sent. */
             static constexpr uint32_t kDrainOrder[] = {0, 2, 1}; /* kbd, tablet, mouse */
             for (uint32_t d : kDrainOrder) {
-                if ((badge & (1ull << (32 + d))) != 0) {
+                if (g_wake.ready(badge, g_wake_context[d])) {
                     drain(d);
                 }
             }
