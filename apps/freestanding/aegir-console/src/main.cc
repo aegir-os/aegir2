@@ -994,6 +994,11 @@ int main(int argc, char *argv[])
             uint64_t frames = (bytes + (1ull << seL4_LargePageBits) - 1) >>
                               seL4_LargePageBits;
             if (bytes == 0 || find_slice(badge) != nullptr) {
+                aegir::debug_write("      console: attach rejected bytes ");
+                aegir::debug_write_unsigned(bytes);
+                aegir::debug_write(" dup ");
+                aegir::debug_write_unsigned(find_slice(badge) != nullptr ? 1 : 0);
+                aegir::debug_write("\n");
                 gui.reply(0);
                 continue;
             }
@@ -1053,6 +1058,17 @@ int main(int argc, char *argv[])
                                                 &notify_error)
                        : 0;
             if (!carved || events == 0) {
+                aegir::debug_write("      console: attach refused bits ");
+                aegir::debug_write_unsigned(bits);
+                aegir::debug_write(" untyped ");
+                aegir::debug_write_unsigned(untyped);
+                aegir::debug_write(" error ");
+                aegir::debug_write_unsigned(carve_error);
+                aegir::debug_write(" carved ");
+                aegir::debug_write_unsigned(carved ? 1 : 0);
+                aegir::debug_write(" events ");
+                aegir::debug_write_unsigned(events);
+                aegir::debug_write("\n");
                 gui.reply(0);
                 continue;
             }
