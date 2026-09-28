@@ -75,6 +75,10 @@ struct Child {
     uint32_t shell_pool_bits = 0;
     seL4_CPtr mem = 0;            /* kind 1 */
     uint64_t stream_badge = 0;    /* kind 1: the con.stream set it joins */
+    /* The stream cap is already badged -- a launcher's own con.stream for a
+     * command it starts, minted onto the caller's copy -- so it must be copied
+     * rather than minted (a badged cap cannot be minted again). */
+    bool stream_copy = false;
     bool launcher = false;        /* kind 3: also the unbadged launcher console */
 };
 

@@ -103,16 +103,16 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     }
     mem_port_ = static_cast<seL4_CPtr>(mem_slot);
 
-    /* The shell's pool: a second pool, because the shell is spawned once and
-     * never reclaimed (specs/shell.md). */
+    /* The shell's pool: a second pool, because a shell is spawned once and
+     * never reclaimed (specs/shell.md). Optional: the session's launcher draws
+     * a nested shell's pool from mem.main and is given none. */
     uint64_t shell_pool_slot = 0;
     uint32_t shell_pool_bits = 0;
-    if (!aegir::bootstrap::capability("shell-pool", 10, &shell_pool_slot) ||
-        !aegir::bootstrap::capability_size_bits("shell-pool", 10, &shell_pool_bits)) {
-        return false;
+    if (aegir::bootstrap::capability("shell-pool", 10, &shell_pool_slot) &&
+        aegir::bootstrap::capability_size_bits("shell-pool", 10, &shell_pool_bits)) {
+        shell_pool_ = static_cast<seL4_CPtr>(shell_pool_slot);
+        shell_pool_bits_ = shell_pool_bits;
     }
-    shell_pool_ = static_cast<seL4_CPtr>(shell_pool_slot);
-    shell_pool_bits_ = shell_pool_bits;
 
     uint64_t asid_pool = 0;
     if (!aegir::bootstrap::capability("asid-pool", 9, &asid_pool)) {
@@ -438,6 +438,30 @@ void ServiceKit::reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner)
         (void)service.call_words(aegir::memory::kMethodRelease, &word, 1, &released, 1);
     }
     slot_pool_.free_owner(owner);
+}
+
+bool ServiceKit::hold_received_stream()
+{
+    if (allocator_ == nullptr) {
+        return false;
+    }
+    if (stream_slot_ == 0) {
+        stream_slot_ = allocator_->alloc_slot();
+        if (stream_slot_ == 0) {
+            return false;
+        }
+        stream_live_ = false;
+    }
+    if (stream_live_) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, stream_slot_,
+                          aegir::bootstrap::cnode_bits());
+        stream_live_ = false;
+    }
+    if (!aegir::ipc::take_received_cap(stream_slot_)) {
+        return false;
+    }
+    stream_live_ = true;
+    return true;
 }
 
 }  // namespace aegir::spawn

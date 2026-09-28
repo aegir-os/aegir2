@@ -58,7 +58,8 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     uint32_t n = 0;
     (void)put(out, capacity, n++, aegir::console::kStreamPortName,
               aegir::console::kStreamPortNameLength, kit.stream,
-              seL4_CapRights_new(1, 1, 0, 1), child.stream_badge, 0, false, false);
+              seL4_CapRights_new(1, 1, 0, 1), child.stream_badge, 0, false,
+              child.stream_copy);
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);
     /* The session's namespace, by copy: it already carries the session's

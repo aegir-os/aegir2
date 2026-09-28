@@ -14,7 +14,9 @@
  * auth starts it with the session and makes its endpoint: the owner half
  * arrives as the port `launch.session`, and the bureau and the terminal are
  * handed caller halves of the same endpoint, so no client depends on a name
- * the launcher chose (specs/authority.md).
+ * the launcher chose (specs/authority.md). A request carries the caller's
+ * con.stream when it has one; a request with none starts a command whose
+ * output goes to an output view (the next piece).
  */
 
 #include <aegir/bootstrap.h>
@@ -27,9 +29,12 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
-#include <aegir/spawn/process.h>
+#include <aegir/spawn/service_kit.h>
 #include <sel4/sel4.h>
+
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -45,41 +50,206 @@ void write(char const *text) noexcept
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 
-/* The kit, adopted by name from the block auth installed: the unbadged sources
- * a child's own caps are minted from, and the session's namespace. */
-struct Kit {
-    seL4_CPtr log = 0;
-    seL4_CPtr console_gui = 0;
-    seL4_CPtr mem_main = 0;
-    seL4_CPtr asid_pool = 0;
-    seL4_CPtr clock = 0;
-    seL4_CPtr timer = 0;
-    seL4_CPtr nmspace = 0;
-};
-Kit g_kit;
+/* The CSpace tail reserved for the commands this launcher stages: the
+ * allocator above owns everything below, and the pool is the launcher's own
+ * range so a command's capabilities can be revoked and its slots returned
+ * whole (specs/memory.md Phase 5). The launcher is headless, so its own need
+ * is a handful of slots and the pool is the rest. */
+constexpr uint64_t kLauncherSlots = 1024;
 
-bool adopt_kit() noexcept
+/* Unpack the next string in the request, advancing `at` (the namespace
+ * protocol's shape, aegir/nmspace.h). */
+bool read_string(uint64_t const *words, uint32_t count, uint32_t &at, std::string &out)
 {
-    uint64_t slot = 0;
-    if (!aegir::bootstrap::capability("spawn:log.main", 14, &slot)) return false;
-    g_kit.log = static_cast<seL4_CPtr>(slot);
-    if (!aegir::bootstrap::capability("spawn:console.gui", 17, &slot)) return false;
-    g_kit.console_gui = static_cast<seL4_CPtr>(slot);
-    if (!aegir::bootstrap::capability("spawn:mem.main", 14, &slot)) return false;
-    g_kit.mem_main = static_cast<seL4_CPtr>(slot);
-    if (!aegir::bootstrap::capability("asid-pool", 9, &slot)) return false;
-    g_kit.asid_pool = static_cast<seL4_CPtr>(slot);
-    if (!aegir::bootstrap::capability("shell:vfs.namespace", 19, &slot)) return false;
-    g_kit.nmspace = static_cast<seL4_CPtr>(slot);
-    /* The clock and timer are optional: a session without them still runs, and
-     * only the time tools report it. */
-    if (aegir::bootstrap::capability("spawn:clock.main", 16, &slot)) {
-        g_kit.clock = static_cast<seL4_CPtr>(slot);
+    char const *text = nullptr;
+    uint32_t length = 0;
+    if (!aegir::nmspace::unpack_string(words + at, count - at, aegir::nmspace::kPathMax,
+                                       &text, &length)) {
+        return false;
     }
-    if (aegir::bootstrap::capability("spawn:timer.main", 16, &slot)) {
-        g_kit.timer = static_cast<seL4_CPtr>(slot);
-    }
+    out.assign(text, length);
+    at += 1 + (length + 7) / 8;
     return true;
+}
+
+/* A nested terminal that gave no window gets this one, clear of the session
+ * terminal's own and offset per nested child (specs/launch.md). */
+std::string default_window(uint64_t index)
+{
+    int const x = 40 + 24 * static_cast<int>(index);
+    int const y = 120 + 24 * static_cast<int>(index);
+    return "CON:" + std::to_string(x) + "/" + std::to_string(y) + "/560/380/Terminal";
+}
+
+/* Start one program (kMethodSpawn). The request's fields are the wire's
+ * (aegir/launch.h): kind, flags, argv, cwd, environment, path, std_in,
+ * std_out, window, stack. `stream` is the caller's con.stream capability, or
+ * zero when it sent none. */
+void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
+                  bool cap_arrived, uint64_t *reply, uint32_t *reply_count)
+{
+    reply[0] = 0;
+    *reply_count = 1;
+    if (count < 2) {
+        return;
+    }
+    uint32_t at = 0;
+    uint64_t const kind = words[at++];
+    uint64_t const flags = words[at++];
+    std::string argv;
+    std::string cwd;
+    std::string environment;
+    std::string path;
+    std::string std_in;
+    std::string std_out;
+    std::string window;
+    if (!read_string(words, count, at, argv) || !read_string(words, count, at, cwd) ||
+        !read_string(words, count, at, environment) ||
+        !read_string(words, count, at, path) || !read_string(words, count, at, std_in) ||
+        !read_string(words, count, at, std_out) || !read_string(words, count, at, window) ||
+        at >= count) {
+        return;
+    }
+    uint64_t const stack_pages = words[at++];
+
+    std::vector<std::string> const argv_words = aegir::spawn::ServiceKit::split_words(argv);
+    if (argv_words.empty()) {
+        return;
+    }
+
+    /* The caller's stream (specs/launch.md): a launcher's command writes where
+     * its caller does. A capability that arrived is moved before anything else
+     * can occupy the scratch slot. */
+    seL4_CPtr stream = 0;
+    if (cap_arrived) {
+        if (!service.hold_received_stream()) {
+            write("FAIL the caller's stream would not move");
+            return;
+        }
+        stream = service.received_stream();
+    }
+
+    if (kind == aegir::launch::kKindLaunching) {
+        /* A launching peer (specs/launch.md): a nested terminal with its own
+         * window, badge range and shell. The words after argv[0] (a
+         * `NEWSHELL FROM <file>`) travel as the child's own arguments. */
+        std::string const program = argv_words[0];
+        std::vector<std::string> const arguments(argv_words.begin() + 1, argv_words.end());
+        aegir::spawn::ServiceKit::Started started{};
+        if (service.start_launcher(program, window, arguments, default_window(0), cwd,
+                                   &started)) {
+            reply[0] = 1;
+        }
+        *reply_count = 1;
+        return;
+    }
+    if (kind != aegir::launch::kKindCommand) {
+        return;
+    }
+    aegir::spawn::ServiceKit::Command command;
+    command.words = &argv_words;
+    command.cwd = &cwd;
+    command.environment = &environment;
+    command.path = &path;
+    command.std_in = &std_in;
+    command.std_out = &std_out;
+    command.background = (flags & aegir::launch::kFlagBackground) != 0;
+    command.stack_pages = static_cast<uint32_t>(stack_pages);
+    /* The cap is already badged (the caller minted it with the stream key), so
+     * the command takes a copy rather than a mint. */
+    command.stream = stream;
+    command.stream_copy = stream != 0;
+    aegir::spawn::ServiceKit::Started started{};
+    if (!service.start_command(command, &started)) {
+        return;
+    }
+    reply[0] = 1;
+    reply[1] = started.badge;
+    *reply_count = 2;
+}
+
+/* Start a line's stages (kMethodPipeline): a stage count, each stage's argv
+ * and its own redirections, then the context once (specs/pipe.md). */
+void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
+                     uint32_t count, bool cap_arrived, uint64_t *reply,
+                     uint32_t *reply_count)
+{
+    reply[0] = 0;
+    *reply_count = 1;
+    if (count < 3) {
+        return;
+    }
+    uint32_t at = 0;
+    uint64_t const kind = words[at++];
+    uint64_t const flags = words[at++];
+    uint32_t const stage_count = static_cast<uint32_t>(words[at++]);
+    if (kind != aegir::launch::kKindCommand || stage_count == 0 || stage_count > count) {
+        return;
+    }
+    std::vector<aegir::spawn::ServiceKit::Stage> stages;
+    stages.reserve(stage_count);
+    for (uint32_t i = 0; i < stage_count; ++i) {
+        aegir::spawn::ServiceKit::Stage stage;
+        if (!read_string(words, count, at, stage.line) ||
+            !read_string(words, count, at, stage.std_in) ||
+            !read_string(words, count, at, stage.std_out)) {
+            return;
+        }
+        stages.push_back(std::move(stage));
+    }
+    std::string cwd;
+    std::string environment;
+    std::string path;
+    if (!read_string(words, count, at, cwd) || !read_string(words, count, at, environment) ||
+        !read_string(words, count, at, path) || at >= count) {
+        return;
+    }
+    uint64_t const stack_pages = words[at++];
+
+    seL4_CPtr stream = 0;
+    if (cap_arrived) {
+        if (!service.hold_received_stream()) {
+            write("FAIL the caller's stream would not move");
+            return;
+        }
+        stream = service.received_stream();
+    }
+
+    aegir::spawn::ServiceKit::Command context;
+    context.cwd = &cwd;
+    context.environment = &environment;
+    context.path = &path;
+    context.background = (flags & aegir::launch::kFlagBackground) != 0;
+    context.stack_pages = static_cast<uint32_t>(stack_pages);
+    context.stream = stream;
+    context.stream_copy = stream != 0;
+    /* The reply carries the stages' badges after the answer, up to the
+     * envelope's ceiling; a line with more stages than that still runs (the
+     * caller learns the rest from their exits). */
+    uint32_t const room = aegir::ipc::kMaxWords > 1 ? aegir::ipc::kMaxWords - 1 : 0;
+    uint32_t const cap = stage_count < room ? stage_count : room;
+    std::vector<aegir::spawn::ServiceKit::Started> started(cap);
+    if (!service.start_pipeline(stages.data(), stage_count, context, started.data(), cap)) {
+        return;
+    }
+    reply[0] = 1;
+    for (uint32_t i = 0; i < cap; ++i) {
+        reply[1 + i] = started[i].badge;
+    }
+    *reply_count = 1 + cap;
+}
+
+/* Take a command back (kMethodRelease): its stream has seen it exit. */
+void handle_release(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
+                    uint64_t *reply, uint32_t *reply_count)
+{
+    reply[0] = 0;
+    *reply_count = 1;
+    if (count < 1) {
+        return;
+    }
+    service.release(words[0]);
+    reply[0] = 1;
 }
 
 }  // namespace
@@ -133,7 +303,9 @@ int main(int argc, char *argv[])
             }
         }
     }
-    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    /* The launcher's own slots below the pool, the command pool above it. */
+    g_objects.adopt_slots(first_free, kLauncherSlots - first_free, 0);
+    uint64_t const total_slots = 1ull << aegir::bootstrap::cnode_bits();
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -142,29 +314,49 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    if (!adopt_kit()) {
+    /* The spawn kit, adopted by name from the block auth installed, over the
+     * reserved command pool. */
+    aegir::spawn::ServiceKit service;
+    if (!service.adopt(g_objects, g_scratch, kLauncherSlots,
+                       static_cast<uint32_t>(total_slots - kLauncherSlots))) {
         write("FAIL the spawn kit was not given");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    /* The badges this session's commands are owned by: the range auth delegated
+     * (specs/launch.md), so a command's memory is charged to the user and the
+     * limits apply (specs/memory.md). */
+    uint64_t own_badge = 0;
+    if (!aegir::bootstrap::badge(&own_badge)) {
+        own_badge = 0;
+    }
+    service.adopt_identity(own_badge);
 
     write("ready, serving launch.session");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
-    /* The launch protocol (aegir/launch.h). The launcher's own endpoint, so a
-     * call and a reply are all it does; the spawning lands next. */
+    /* The launch protocol (aegir/launch.h): the launcher's own endpoint, so a
+     * call and a reply is all it does. */
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
-        (void)badge;
-        if (method == aegir::launch::kMethodSpawn ||
-            method == aegir::launch::kMethodPipeline) {
-            uint64_t const refused = 0;
-            port.reply_words(&refused, 1);
-            continue;
+        bool cap_arrived = false;
+        uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
+                                                   &badge, &cap_arrived);
+        static_cast<void>(badge);
+        uint64_t reply[aegir::ipc::kMaxWords] = {};
+        uint32_t reply_count = 0;
+        if (method == aegir::launch::kMethodSpawn) {
+            handle_spawn(service, words, count, cap_arrived, reply, &reply_count);
+        } else if (method == aegir::launch::kMethodPipeline) {
+            handle_pipeline(service, words, count, cap_arrived, reply, &reply_count);
+        } else if (method == aegir::launch::kMethodRelease) {
+            handle_release(service, words, count, reply, &reply_count);
+        } else {
+            reply[0] = 0;
+            reply_count = 1;
         }
-        port.reply_words(nullptr, 0);
+        port.reply_words(reply, reply_count);
     }
 }

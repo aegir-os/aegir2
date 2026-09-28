@@ -22,8 +22,8 @@ if(AEGIR_HOSTED_CXX)
   target_link_libraries(
     aegir-launcher PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-runtime
                            aegir-bootstrap aegir-ipc aegir-log aegir-launch aegir-memory-protocol
-                           aegir-namespace aegir-spawn aegir-spawn-kit aegir-mem aegir-environment
-                           sel4 sel4runtime
+                           aegir-namespace aegir-spawn aegir-spawn-kit aegir-spawn-service
+                           aegir-mem aegir-environment sel4 sel4runtime
   )
 else()
   add_executable(aegir-launcher src/placeholder.cc)

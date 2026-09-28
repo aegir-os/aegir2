@@ -12,7 +12,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-spawn-service CXX)
 
-add_library(aegir-spawn-service STATIC src/service_kit.cc)
+add_library(aegir-spawn-service STATIC src/service_kit.cc src/service_launch.cc)
 
 target_include_directories(aegir-spawn-service PUBLIC include)
 target_link_libraries(

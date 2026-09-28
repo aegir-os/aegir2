@@ -960,8 +960,16 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_child.shell_pool_bits = kTerminalShellPoolBits;
         terminal_child.launcher = true;
         aegir::spawn::PortGrant terminal_ports[16];
-        uint32_t const terminal_port_count =
+        uint32_t terminal_port_count =
             aegir::spawn::launcher_ports(terminal_kit, terminal_child, terminal_ports, 16);
+        /* The launcher's caller half (specs/launch.md): the terminal relays the
+         * shell's command lines to it, so a command is started by the service
+         * that holds the kit, not by the terminal. */
+        terminal_ports[terminal_port_count] = {
+            aegir::launch::kPortName, aegir::launch::kPortNameLength,
+            aegir::bootstrap::kSlotFirstDeclared + terminal_port_count, launch_port,
+            seL4_CapRights_new(1, 1, 0, 1), terminal_badge, 0};
+        ++terminal_port_count;
         static char const kTerminalName[] = "session.terminal";
         static char const kTerminalBinary[] = "aegir-terminal";
         aegir::spawn::Request terminal_request{};
@@ -985,8 +993,9 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_request.untyped_bits = kTerminalUntypedBits;
         /* The badge range the terminal hands out (specs/launch.md): its
          * commands and any nested terminal draw serials from it, so no two of
-         * a session's processes share one. Serial + 2 skips the session's own
-         * badge and this terminal's. */
+         * a session's processes share one. Serial + 3 skips the session's own
+         * badge, this terminal's and the launcher's. It moves to the launcher
+         * when the terminal relays its launches to it. */
         char const *const terminal_badge_range =
             badge_range_env(serial + 3, aegir::ipc::kSessionSerialStride - 3);
         char const *const terminal_environment[1] = {terminal_badge_range};
@@ -1068,6 +1077,15 @@ void start_session(uint32_t user, bool bureau) noexcept
                 field_length(g_rows[user].account, aegir::authdb::kAccountBytes);
             launcher_request.cwd = kHomeCwd;
             launcher_request.cwd_length = sizeof(kHomeCwd) - 1;
+            /* The badge range the launcher hands out (specs/launch.md): its
+             * commands and any nested terminal draw serials from it, so no two
+             * of a session's processes share one. Serial + 3 skips the
+             * session's own badge, the terminal's and the launcher's. */
+            char const *const launcher_badge_range =
+                badge_range_env(serial + 3, aegir::ipc::kSessionSerialStride - 3);
+            char const *const launcher_environment[1] = {launcher_badge_range};
+            launcher_request.environment = launcher_environment;
+            launcher_request.environment_count = 1;
             launcher_request.priority = seL4_MaxPrio - 2;
             launcher_request.ports = launcher_ports;
             launcher_request.port_count = launcher_port_count;

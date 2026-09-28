@@ -67,8 +67,10 @@ constexpr uint64_t kFlagBackground = 1;
  *    stack_pages   one word: the stack to ask for in pages, 0 for the
  *                  spawner's default
  *
- *  Answer: one word, 1 started and 0 refused. A launcher that does not know
- *  the kind refuses rather than guessing.
+ *  Answer: one word, 1 started and 0 refused -- a launcher that does not know
+ *  the kind refuses rather than guessing -- plus, for a launcher that started
+ *  commands, their badges after it, so the caller that relays the request
+ *  knows what to reap (specs/memory.md Phase 5).
  *
  *  The launcher shares the terminal's endpoint in the first cut (there is one
  *  served port per process), so these method numbers start clear of
@@ -91,6 +93,16 @@ constexpr uint32_t kMethodSpawn = 20;
  *  pipes between them, so a pipeline never depends on a name the caller
  *  chose. */
 constexpr uint32_t kMethodPipeline = 21;
+
+/** Reap one command (specs/launch.md): the stream that owns the command has
+ *  seen it exit, so the launcher takes it back -- suspend it, release its
+ *  memory, return its pool slots (specs/memory.md Phase 5). Fields after the
+ *  method:
+ *
+ *    badge         one word: the command's badge, as its exit reported it
+ *
+ *  Answer: one word, 1 released and 0 for a badge no live command carries. */
+constexpr uint32_t kMethodRelease = 22;
 
 }  // namespace aegir::launch
 

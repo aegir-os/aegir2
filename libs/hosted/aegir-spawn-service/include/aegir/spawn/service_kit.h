@@ -33,6 +33,7 @@
 #include <sel4/sel4.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace aegir::spawn {
@@ -127,7 +128,141 @@ public:
      * Zero for an interactive session. */
     seL4_CPtr boot_status() const { return boot_status_; }
 
+    /* ---- starting programs: the spawn paths (specs/launch.md) ---- */
+
+    /* This process's identity for the badges it hands out: its own badge, and
+     * the range auth delegated for its children (specs/launch.md). A system
+     * badge has no range, and its children keep the small system serials. */
+    void set_identity(uint64_t own_badge, uint64_t range_base, uint64_t range_size);
+    /* The same, reading the range out of this process's AEGIR_BADGE_RANGE: a
+     * malformed value is refused rather than guessed, so a launcher is never
+     * handed someone else's serials. */
+    void adopt_identity(uint64_t own_badge);
+    bool have_range() const { return badge_size_ != 0; }
+
+    /* Load a program's bytes through the session namespace, from a path that is
+     * an assign or a volume (specs/dos.md): `path` is already resolved by the
+     * caller. The buffer is kept and reused, so a spawn's image does not map
+     * fresh pages each command. The bytes are the last load's, for spawn_shell
+     * and for one command's spawn. */
+    bool load_image(std::string const &path);
+    char const *image() const { return image_.data(); }
+    uint64_t image_bytes() const { return image_.size(); }
+
+    /* One command to start: its words (program first, the rest as written), the
+     * caller's context, and where its output goes. `stream` is the con.stream
+     * the command writes to -- a launcher's own for a boot command, or the
+     * capability the caller sent for a session command -- and `stream_copy` says
+     * it is already badged, so it is copied rather than minted. */
+    struct Command {
+        std::vector<std::string> const *words = nullptr;
+        std::string const *cwd = nullptr;
+        std::string const *environment = nullptr; /* NUL-separated NAME=VALUE */
+        /* The caller's Path search list (`C:` today, `specs/dos.md`): a bare
+         * program name is searched across it in order. Empty means the default,
+         * one `C:` entry. */
+        std::string const *path = nullptr;
+        std::string const *std_in = nullptr;
+        std::string const *std_out = nullptr;
+        bool background = false;
+        uint32_t stack_pages = 0;
+        seL4_CPtr stream = 0;
+        uint64_t stream_badge = 0;
+        bool stream_copy = false;
+    };
+
+    /* One pipeline stage on the wire: its command line and its own
+     * redirections, empty for the console or the connecting pipe. */
+    struct Stage {
+        std::string line;
+        std::string std_in;
+        std::string std_out;
+    };
+
+    /* What a spawn produced: the process, and the identity its memory and pool
+     * slots are owned by (specs/memory.md Phase 5). */
+    struct Started {
+        Process process;
+        uint64_t badge = 0;
+        uint32_t owner = 0;
+    };
+
+    /* Start one command: mint its badge and memory owner, stage it, spawn it,
+     * and remember it so release() can take it back. False when the image is
+     * missing or the spawn fails. */
+    bool start_command(Command const &command, Started *out);
+
+    /* Start a pipeline: every stage at once, connected by pipes this service
+     * names (specs/pipe.md), so no stage depends on a name the user chose. The
+     * context -- cwd, environment, background, stack and the stream every stage
+     * shares -- comes from `context`; the stages carry only their lines and
+     * redirections. `out` receives the stages' records (up to `out_capacity`).
+     * False when a stage would not start; the stages already started are
+     * released. */
+    bool start_pipeline(Stage const *stages, uint32_t count, Command const &context,
+                        Started *out, uint32_t out_capacity);
+
+    /* Start a launching program (a nested terminal): a peer with its own
+     * console window and its own badge range, its memory drawn from mem.main
+     * under this process's badge (specs/launch.md). `arguments` are what follow
+     * argv[0] (a `FROM <file>`); `default_window` is the window specification
+     * when the caller gave none. */
+    bool start_launcher(std::string const &program, std::string const &window,
+                        std::vector<std::string> const &arguments,
+                        std::string const &default_window, std::string const &cwd,
+                        Started *out);
+
+    /* Take a command back by badge: suspend it, release its memory, return its
+     * slots (specs/memory.md Phase 5). A badge no live command carries is
+     * ignored. */
+    void release(uint64_t badge);
+    bool live() const { return !live_.empty(); }
+
+    /* A launcher's commands write to a stream it was handed, not to one it
+     * made: move the capability the last call carried into the service's own
+     * slot and hand it to the next command (specs/launch.md). False when the
+     * move fails; the caller then refuses the request. */
+    bool hold_received_stream();
+    seL4_CPtr received_stream() const { return stream_slot_; }
+
+    /* Split a NUL-separated argv string into words -- a caller parsing the
+     * wire's one argv field, or this class splitting a pipeline stage's line. */
+    static std::vector<std::string> split_words(std::string const &text);
+
 private:
+    /* The next badge for a child: a user serial out of the range, or a small
+     * system serial when there is none. Zero when the range is spent. */
+    uint64_t take_badge();
+    uint32_t take_owner();
+    /* Split a NUL-separated environment into pointers. */
+    static void split_environment(std::string const &text,
+                                  std::vector<std::string> &storage,
+                                  std::vector<char const *> &pointers);
+    Started *find_live(uint64_t badge);
+    /* An untyped of `bits` from mem.main through the current command's badged
+     * copy (specs/memory.md): a nested terminal's runtime and shell pool. */
+    seL4_CPtr alloc_child_mem(uint32_t bits);
+    /* The next nested-terminal quarter out of the range (specs/launch.md):
+     * false when the range is spent or there is none. */
+    bool reserve_child(uint64_t *base, uint64_t *badge);
+    /* Load a program's image (specs/dos.md): a name with an assign/volume is
+     * used as typed; a name with `/` is resolved against the caller's directory;
+     * a bare name is lowercased and searched across the caller's Path (one `C:`
+     * entry when the request gave none). */
+    bool load_program(std::string const &name, std::string const *path,
+                      std::string const *cwd);
+
+    uint64_t own_badge_ = 0;
+    uint64_t badge_base_ = 0;
+    uint64_t badge_size_ = 0;
+    uint64_t next_badge_ = 0;
+    uint64_t child_count_ = 0;
+    uint64_t command_serial_ = 0;
+    uint64_t pipeline_serial_ = 0;
+    uint64_t owner_serial_ = 0;
+    std::vector<char> image_;
+    std::vector<Started> live_;
+
     aegir::mem::Allocator *allocator_ = nullptr;
     aegir::mem::Scratch *scratch_ = nullptr;
     uint64_t slot_base_ = 0;
@@ -143,6 +278,10 @@ private:
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
     seL4_CPtr command_doorbell_ = 0;
+    /* The slot the last received stream capability was moved into, reused per
+     * request (a launcher's commands write to the caller's stream). */
+    seL4_CPtr stream_slot_ = 0;
+    bool stream_live_ = false;
     seL4_CPtr log_port_ = 0;
     seL4_CPtr nmspace_port_ = 0;
     seL4_CPtr command_nmspace_port_ = 0;
