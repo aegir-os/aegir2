@@ -598,8 +598,11 @@ void self_check()
         write("FAIL Noto Sans 16 would not load");
         return;
     }
-    bool const sane = face->ascent > 0 && face->descent <= 0 &&
-                      face->height >= face->ascent - face->descent;
+    /* The metrics a face must have: a positive ascent, a non-positive descent
+     * and a line height at least the ascent. `height` is FreeType's
+     * recommended line spacing and is not ascent minus descent -- Noto Sans at
+     * 16 is 18, -5, 22 -- so the two are checked apart. */
+    bool const sane = face->ascent > 0 && face->descent <= 0 && face->height >= face->ascent;
     std::string line;
     if (sane) {
         line = "open Noto Sans 16 is sane: ascent ";

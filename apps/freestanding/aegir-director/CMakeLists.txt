@@ -81,6 +81,7 @@ set(aegir_initrd_binaries
     aegir-env-smoke
     aegir-fs-smoke
     aegir-gui-demo
+    aegir-font
 )
 set(aegir_initrd_binary_names
     "aegir-hello"
@@ -115,6 +116,7 @@ set(aegir_initrd_binary_names
     "aegir-env-smoke"
     "aegir-fs-smoke"
     "aegir-gui-demo"
+    "aegir-font"
 )
 set(aegir_initrd_strip_dir "${CMAKE_CURRENT_BINARY_DIR}/initrd")
 list(LENGTH aegir_initrd_binaries aegir_initrd_binary_count)

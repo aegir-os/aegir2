@@ -253,6 +253,30 @@ maps      = true
 memory    = rest
 restart   = always
 
+# The font service (specs/fonts.md): it owns the faces Sys:Fonts holds and one
+# FreeType, and serves font.main -- a client opens a face by its own family and
+# style and asks for metrics, so no app carries an outline engine or a face set
+# of its own. It takes the maps grant because the hosted runtime's heap is
+# carved from its own address space, and mem.main because that heap grows past
+# its seed on demand (specs/memory.md). Sys:Fonts is not a port, so this service
+# waits for it -- the disk answers after the namespace -- rather than director
+# ordering it (specs/services.md).
+[font]
+binary     = aegir-font
+authority  = system
+account    = system
+owns       = font.main
+needs      = log.main, vfs.namespace, mem.main
+maps       = true
+# A face in the CJK collection is CFF-based: its table is sixteen megabytes, so
+# the seed is sized for a face rather than for an empty service, and the CSpace
+# is sized for the pages a face and its page tables are retyped from. Both are
+# floors, not ceilings: the heap grows through mem.main (specs/memory.md).
+memory_kib = 16384
+stack_kib  = 64
+cspace_bits = 14
+restart    = always
+
 # The memory service's client (specs/memory.md, Phase 1): it asks for a chunk,
 # retypes a frame from it, and releases -- the protocol exercised by a caller.
 [memsmoke]

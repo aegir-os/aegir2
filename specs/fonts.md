@@ -130,23 +130,23 @@ string shape:
   the descent negative as FreeType's metrics are.
 - `close`. In: the id.
 
-**Written, not yet started.** The service scans `Sys:Fonts` recursively,
-opens a file through FreeType to read each face's own family and style -- a
-collection's faces one by one, `num_faces` apart -- and selects a request's
-face by family, then the size nearest the ask, then the style. FreeType's
-stream is ours, a descriptor that reads through the VFS. It waits for
-`Sys:Fonts` before it indexes, and its first proof is its own: it opens a face
-by name, reads its metrics and checks them for the shape metrics must have.
+**Landed.** The service scans `Sys:Fonts` recursively, opens a file through
+FreeType to read each face's own family and style -- a collection's faces one
+by one, `num_faces` apart -- and selects a request's face by family, then the
+size nearest the ask, then the style. FreeType's stream is ours, a descriptor
+that reads through the VFS. It waits for `Sys:Fonts` before it indexes, and its
+first proof is its own: it opens a face by name, reads its metrics and checks
+them for the shape metrics must have (a positive ascent, a non-positive
+descent, a line height at least the ascent -- `height` is line spacing, not
+ascent minus descent, so they are checked apart). Over a boot it indexes all
+sixteen faces the volume holds, the CJK collection's ten among them, opening
+and closing one at a time.
 
-It does not run yet, and the reason is not the font code. A face in the CJK
-collection is CFF-based, and opening one costs about 2.4 MB; on the host it
-comes right back, so the rasterizer is not the leak. On Aegir it does not:
-`aegir::heap`'s `sys_munmap` is a no-op (`libs/hosted/aegir-heap/src/heap.cc`,
-"SYS_munmap: the pages stay mapped"), so every large allocation mallocng
-releases leaks its frames for the life of the process. Six collection faces
-reach the service's whole budget. That is a heap bug and not a font one, and
-every hosted client carries it; the manifest entry waits for it (specs/memory.md
-records the shape).
+What that costs is worth knowing: indexing opens every face, and a CJK face's
+CFF is read through a VFS window of 936 bytes, so the boot pays for it. It fits
+the acceptance's budget today; a probe that read only the OpenType `name` table
+would make the index cheap, and if the boot's margin ever bites that is the
+change to make.
 
 - `glyphs`. In: the id, a list of codepoints, and a capability to the client's
   transfer page. Out: each glyph's advance, bearing and rectangle within the
@@ -175,14 +175,12 @@ service-backed client does not otherwise hold.
    vendored trees with the magic check; the toolkit scans it, loads the
    default from it, and falls back to the embedded Terminus with a log when a
    family is missing. BDF/PCF only. No service, no FreeType.
-2. **Phase 2 -- FreeType and the service.** The signed-tarball pin and the
-   build script have landed, and so has the service's code: it indexes
-   `Sys:Fonts` through FreeType and serves `open`, `metrics` and `close`. It
-   cannot start until the hosted heap returns what it frees (the `munmap`
-   above, specs/memory.md), because indexing the CJK collection alone needs
-   more than the leak leaves. Then `glyphs` and the client-owned transfer page,
+2. **Phase 2 -- FreeType and the service.** The signed-tarball pin, the build
+   script and the service have landed: `aegir-font` scans `Sys:Fonts` through
+   FreeType and serves `open`, `metrics` and `close`, all sixteen faces of the
+   volume indexed. What remains is `glyphs` and the client-owned transfer page,
    and the client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc` face through
-   them.
+   them -- the client side of the seam phase 1 left open.
 3. **Phase 3 -- shaping and the fallback chain.** HarfBuzz, BiDi, and the Noto
    faces chosen per script.
 

@@ -166,6 +166,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the byte array compiled into the library. The path in the cue is
             # the proof it crossed the namespace.
             QmpStep(r"trinket: font Terminus 12 from Sys:Fonts/Terminus/ter-u12n.bdf"),
+            # The font service (specs/fonts.md): it scanned Sys:Fonts through
+            # FreeType -- the OpenType faces the phase-1 catalog could not read
+            # -- and proved its own loading by opening Noto Sans from the volume
+            # and checking the metrics it got back. The count is a regex: what
+            # matters is that the scan found faces at all.
+            QmpStep(r"font: \d+ faces from Sys:Fonts"),
+            QmpStep(r"font: open Noto Sans 16 is sane"),
+            QmpStep(r"font: ready, serving font.main"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up
