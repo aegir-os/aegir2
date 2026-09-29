@@ -1143,6 +1143,10 @@ private:
          * terminal starts at once, connected by pipes it names (specs/pipe.md).
          * A one-stage line is the ordinary path below. */
         std::vector<std::vector<std::string>> const stages = split_pipeline(words);
+        /* The line and its stage count, announced before anything is launched
+         * (specs/signal.md): the shell owns the line, so the shell is what the
+         * terminal's completion cue is read from. */
+        aegir::console::stream_line(port_, static_cast<uint32_t>(stages.size()));
         if (stages.size() > 1) {
             return run_pipeline(stages);
         }

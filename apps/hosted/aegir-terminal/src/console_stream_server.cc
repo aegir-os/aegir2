@@ -186,6 +186,12 @@ bool ConsoleStreamServer::has_input(uint64_t caller) const
     return s != nullptr && !s->input.empty();
 }
 
+uint32_t ConsoleStreamServer::stages(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s != nullptr ? s->stages : 1;
+}
+
 uint32_t ConsoleStreamServer::take_read(uint64_t caller, uint32_t bound, uint64_t* reply,
                                         uint32_t capacity)
 {
@@ -409,6 +415,15 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
             if (on_wake) {
                 on_wake(caller);
             }
+        }
+        return 0;
+    }
+    case console::kStreamMethodLine: {
+        /* The shell's line, announced (specs/signal.md): how many stages it
+         * has, for the cue the terminal reports when it ends. */
+        Stream* s = find(caller);
+        if (s != nullptr && count >= 1 && words[0] >= 1) {
+            s->stages = static_cast<uint32_t>(words[0]);
         }
         return 0;
     }

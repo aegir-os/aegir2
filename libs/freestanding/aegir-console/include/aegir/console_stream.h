@@ -110,6 +110,12 @@ constexpr uint32_t kStreamMethodSize = 10;
  *  terminal shows the window and takes no more input. */
 constexpr uint32_t kStreamMethodBootFail = 11;
 
+/** Announce a line and its stage count (specs/signal.md). In: the number of
+ *  stages the line has. The shell owns the line, so the shell says how many;
+ *  the terminal reports `pipeline exited` from it rather than from a spawn it
+ *  may no longer perform. Answer: nothing. */
+constexpr uint32_t kStreamMethodLine = 12;
+
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws
  *  itself (specs/terminal.md). */

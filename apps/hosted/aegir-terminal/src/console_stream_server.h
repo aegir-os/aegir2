@@ -97,6 +97,10 @@ public:
      * carries a status and a flag once a command has said it is done, which is
      * what the terminal finalizes on. */
     bool command_finished(uint64_t caller) const;
+
+    /* The stage count the shell announced for the line running now
+     * (specs/signal.md): one for an ordinary line, more for a pipeline. */
+    uint32_t stages(uint64_t caller) const;
     uint64_t exit_status(uint64_t caller) const;
     void clear_command(uint64_t caller);
 
@@ -110,6 +114,7 @@ private:
         bool ready = false;
         bool command = false;
         bool finished = false;
+        uint32_t stages = 1;
         uint64_t status = 0;
         uint64_t doorbell = 0;
     };

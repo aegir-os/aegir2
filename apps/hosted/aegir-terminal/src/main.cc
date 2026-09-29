@@ -341,10 +341,6 @@ int main(int argc, char *argv[])
     };
     std::vector<LiveCommand> live;
     uint32_t foreground_outstanding = 0;
-    /* The stages of the foreground line now running: >1 makes it a pipeline,
-     * which the completion cue names apart from a single command
-     * (specs/pipe.md). */
-    uint32_t command_stage_count = 0;
     auto spawn_one = [&](std::string const &name, std::vector<std::string> const &args,
                          std::string const &cwd,
                          std::vector<char const *> const &environment,
@@ -499,7 +495,6 @@ int main(int argc, char *argv[])
         }
         live.swap(keep);
         foreground_outstanding = 0;
-        command_stage_count = 0;
         if (live.empty()) {
             spawn_kit.rewind_staging();
         }
@@ -571,7 +566,6 @@ int main(int argc, char *argv[])
          * line editor while the command runs. A command that reads the console
          * is the foreground line's (specs/shell.md). */
         if (!background) {
-            command_stage_count = static_cast<uint32_t>(stages.size());
             server.begin_command(kShellStream);
         }
         uint64_t const pipe_serial = ++pipeline_serial;
@@ -934,7 +928,7 @@ int main(int argc, char *argv[])
                     write("  terminal: command exited ");
                     write_unsigned(reply[0]);
                     write("\n");
-                    if (command_stage_count > 1) {
+                    if (server.stages(badge) > 1) {
                         write("  terminal: pipeline exited ");
                         write_unsigned(reply[0]);
                         write("\n");
