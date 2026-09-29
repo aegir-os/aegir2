@@ -295,6 +295,12 @@ public:
     /** The largest piece still free to allocate from. */
     unsigned largest_free_bits() const noexcept;
 
+    /** A diagnostic for the host conformance driver: the number of free pieces
+     *  whose recorded state is inconsistent -- a piece sitting in a list other
+     *  than its own size, one not marked free, or a chain that does not end. A
+     *  correct allocator answers zero. */
+    unsigned check_free_lists() const noexcept;
+
     /* What the machine gave us, for the boot report. */
     unsigned untyped_count() const noexcept { return node_used_; }
     unsigned untyped_free() const noexcept;

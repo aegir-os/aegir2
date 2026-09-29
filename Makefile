@@ -88,6 +88,9 @@ check-script: ## run aegir::script against its host conformance cases (host)
 check-limits: ## run aegir::limits against its host conformance cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_limits.py
 
+check-allocator: ## run aegir-mem's allocator against its host conformance cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_allocator.py
+
 build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only
 

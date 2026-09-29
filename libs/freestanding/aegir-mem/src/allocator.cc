@@ -310,6 +310,27 @@ unsigned Allocator::largest_free_bits() const noexcept
     return 0;
 }
 
+unsigned Allocator::check_free_lists() const noexcept
+{
+    unsigned problems = 0;
+    Node *const *const arrays[2] = {heads_, dev_heads_};
+    for (Node *const *list : arrays) {
+        for (unsigned bits = 0; bits < seL4_WordBits; ++bits) {
+            unsigned steps = 0;
+            for (Node const *node = list[bits]; node != nullptr; node = node->next) {
+                /* A piece belongs in the list of its own size and is marked
+                 * free; a walk longer than the pool has a cycle in it. */
+                if (node->size_bits != bits || node->free == 0 ||
+                    ++steps > node_capacity_) {
+                    ++problems;
+                    break;
+                }
+            }
+        }
+    }
+    return problems;
+}
+
 bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 {
     if (refill_inner(device, size_bits)) {
