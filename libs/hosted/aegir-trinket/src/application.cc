@@ -434,6 +434,27 @@ void Application::dispatch_gui_event(uint64_t event, uint64_t window) {
         if (on_screen_owner) on_screen_owner(value != 0);
         return;
     }
+    /* A screen-level shortcut (specs/workbench.md): the console routed a menu
+     * key here because the screen bar is not a focus target. Built as a key
+     * event and offered to the client, on the press. */
+    if (type == aegir::console::kEventScreenKey) {
+        if ((value & aegir::console::kKeyPressed) == 0 || !on_screen_key) {
+            return;
+        }
+        KeyEvent key;
+        key.pressed = true;
+        if ((value & aegir::console::kKeyShift) != 0) key.modifiers |= kModShift;
+        if ((value & aegir::console::kKeyControl) != 0) key.modifiers |= kModControl;
+        if ((value & aegir::console::kKeyAlt) != 0) key.modifiers |= kModAlt;
+        if ((value & aegir::console::kKeySuper) != 0) key.modifiers |= kModSuper;
+        char const c = static_cast<char>(value & 0xffff);
+        if (c == ' ') {
+            key.code = KeyCode::SPACE;
+            key.text = U' ';
+        }
+        (void)on_screen_key(key);
+        return;
+    }
     for (Window* win : windows_) {
         if (win->console_window_id() != window) continue;
         if (type == aegir::console::kEventFocus) {

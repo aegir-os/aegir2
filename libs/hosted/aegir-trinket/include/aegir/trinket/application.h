@@ -61,6 +61,11 @@ public:
     // registers here, once it is up (specs/workbench.md).
     std::function<void(bool up)> on_screen_owner;
 
+    // A screen-level shortcut (specs/workbench.md): a key the console routed
+    // here because the screen bar is not a focus target. True when the client
+    // took it; the bureau matches it against its menu items' accelerators.
+    std::function<bool(KeyEvent const &key)> on_screen_key;
+
     // A server's call handler, when serve() set a port: `method` and the
     // `count` words that rode with it, answered with as many reply words as
     // the handler returns. `badge` is the caller's, as the kernel reports it.

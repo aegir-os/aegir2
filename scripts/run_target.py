@@ -232,6 +232,9 @@ _PRESS_KEYS = {
     "esc": "esc",
     "backspace": "backspace",
     "delete": "delete",
+    # A screen shortcut (specs/workbench.md): a chord, so the modifier is held
+    # with the key in one send-key. Super+Space is the bureau's Execute.
+    "win-space": ("meta_l", "spc"),
 }
 
 
@@ -251,7 +254,8 @@ def send_key(socket_path: Path, keys: str) -> bool:
             name = keys[index + 1 : end]
             if name not in _PRESS_KEYS:
                 return False
-            qcodes.append((_PRESS_KEYS[name],))
+            entry = _PRESS_KEYS[name]
+            qcodes.append(entry if isinstance(entry, tuple) else (entry,))
             index = end + 1
             continue
         char = keys[index]

@@ -50,6 +50,19 @@ public:
     std::function<void(uint32_t action_id)> on_client_action;
     // The menu a click opened, by index; the bureau logs its cue on it.
     std::function<void(int menu)> on_menu_opened;
+    // The open menu (>= 0) or -1 when none is: the bureau marks the screen
+    // layer from it, so the menu composites above the windows
+    // (specs/workbench.md).
+    std::function<void(int menu)> on_menu_changed;
+
+    // The screen title bar's height.
+    int screen_bar_height() const;
+    // An open menu's rectangle in screen coordinates, or an empty one: what
+    // the console composites above the windows (specs/workbench.md).
+    aegir::trinket::Rect open_menu_rect() const;
+    // Run the active menus' item an accelerator names, if one matches. True
+    // when a menu item took the key.
+    bool shortcut(aegir::trinket::KeyEvent const &key);
 
 protected:
     void on_paint(aegir::trinket::Canvas& canvas,
@@ -72,6 +85,8 @@ private:
     std::vector<Slot> item_slots(int menu) const;
     void draw_bar(aegir::trinket::Canvas& canvas);
     void draw_menu(aegir::trinket::Canvas& canvas, int menu);
+    /* The one place open_menu_ changes, so on_menu_changed fires once. */
+    void set_open_menu(int menu);
     /* The menus the bar shows: the active client's, or the bureau's own. */
     std::vector<Menu> const& active_menus() const;
 

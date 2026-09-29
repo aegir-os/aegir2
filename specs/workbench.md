@@ -23,12 +23,20 @@ it painted once and exited. This arc makes it live and gives it the bar.
   short-lived smoke can be and the desktop cannot. auth therefore waits for
   the exit this never sends, which is what a session that is the desktop
   means; the ready/exit split is the supervisor arc's.
-- **The screen title bar is the bureau's, drawn into the backdrop.** It is a
-  bar across the top of the screen holding the screen's menus. Because it is
-  the backdrop's own top, a window can be dragged over it — the Amiga keeps
-  the screen bar above the windows, and reserving the strip is the console's
-  (a later arc, noted below). For now the greeter and the demo sit clear of
-  it, and a zoomed window covers it as it covers the screen.
+- **The screen title bar is the bureau's, drawn into the backdrop, and the
+  console lifts it above the windows.** The bar is a strip across the top of
+  the screen holding the screen's menus, and the backdrop's own top; the
+  console reserves it in the compositor (`screen_bar`, specs/console.md), so
+  the screen bar is never covered -- a zoomed window still reaches the
+  screen's top, and the bar draws over it. The same mechanism lifts an open
+  menu (`screen_layer`), so a menu that drops below the bar is never covered
+  by a window either. The bureau marks both; the console does the lift.
+- **A menu item's accelerator runs from anywhere.** The Execute item shows
+  `Win Space`, and the console delivers that chord to the backdrop's owner
+  wherever the focus is (`kEventScreenKey`, specs/console.md), because the
+  screen bar is not a focus target and the key would otherwise reach the
+  focused window; the Desktop matches it against the active menus'
+  accelerators.
 - **Menus are always visible, not on the right mouse button.** Workbench shows
   a screen's menus in the title bar only while the right button is held; Aegir
   draws them always, because a right-button drag is awkward on a modern
@@ -165,10 +173,9 @@ here as where the event channel should end up.
 
 ## What this is not
 
-A menu's keyboard navigation; submenus beyond one level; desktop icons and a
-launcher; the console reserving the screen-title strip so a window cannot cover
-it; a window list. Each is its own step, and each is easier with the bar
-standing.
+A menu's keyboard navigation (only a menu item's own accelerator runs, not arrows or
+mnemonics); submenus beyond one level; desktop icons and a launcher; a window
+list. Each is its own step, and each is easier with the bar standing.
 
 ## Acceptance
 

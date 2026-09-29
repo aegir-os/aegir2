@@ -113,7 +113,8 @@ std::vector<aegir::bureau::Desktop::Menu> bureau_menus()
     bureau.items = {
         {1, U"About Aegir", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
         {2, U"Open...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::DISABLED, {}},
-        {8, U"Execute...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+        {8, U"Execute...", aegir::trinket::KeyCode::SPACE, aegir::trinket::kModSuper,
+         MenuItem::NONE, {}},
         {0, U"", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::SEPARATOR, {}},
         {3, U"Quit", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
     };
@@ -263,6 +264,30 @@ int main(int argc, char *argv[])
         write(registry.active() != nullptr ? "  bureau: client menu\n"
                                            : "  bureau: menu\n");
     };
+    /* The screen layer (specs/workbench.md): an open menu is composited above
+     * the windows, so a window over the desktop never hides it. */
+    desktop->on_menu_changed = [&](int menu) {
+        if (menu < 0) {
+            (void)aegir::console::screen_layer(gui, 0, 0, 0, 0);
+            return;
+        }
+        aegir::trinket::Rect const rect = desktop_ptr->open_menu_rect();
+        (void)aegir::console::screen_layer(gui, static_cast<uint64_t>(rect.x),
+                                           static_cast<uint64_t>(rect.y),
+                                           static_cast<uint64_t>(rect.width),
+                                           static_cast<uint64_t>(rect.height));
+    };
+    /* A screen-level shortcut (specs/workbench.md): the console routes a menu
+     * accelerator here wherever the focus is, and the menus run the item it
+     * names -- Super+Space is Execute. The cue is the acceptance's proof the
+     * key crossed to the bureau. */
+    app.on_screen_key = [desktop_ptr](KeyEvent const& key) {
+        bool const took = desktop_ptr->shortcut(key);
+        if (took) {
+            write("  bureau: screen shortcut\n");
+        }
+        return took;
+    };
     desktop->on_action = [&](uint32_t action_id) {
         if (action_id == 1) {
             write("  bureau: Aegir, the Workbench\n");
@@ -365,6 +390,11 @@ int main(int argc, char *argv[])
     window.show();
 
     app.on_started = [&]() {
+        /* Reserve the screen title bar (specs/workbench.md): the console
+         * composites the bar's strip above every window, so nothing covers it.
+         * The backdrop is up by now, so the console accepts it. */
+        (void)aegir::console::screen_bar(
+            gui, static_cast<uint64_t>(desktop_ptr->screen_bar_height()));
         write("  bureau: the screen is yours\n");
         if (log.valid()) {
             (void)log.call(aegir::log::kMethodEvent,

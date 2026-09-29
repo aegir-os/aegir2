@@ -178,6 +178,18 @@ Slice *g_slices = nullptr;
 Window *g_windows = nullptr;
 uint64_t g_next_id = 0;
 
+/* The screen layer (specs/workbench.md): the backdrop's top strip -- the screen
+ * bar -- reserved and composited above every window, and a rectangle the
+ * backdrop marks to draw above them too (its open menu). The backdrop's owner
+ * sets them through the port; both name the backdrop the pixels come from. */
+Window *g_bar_window = nullptr;
+uint64_t g_bar_height = 0;
+Window *g_layer_window = nullptr;
+uint64_t g_layer_x = 0;
+uint64_t g_layer_y = 0;
+uint64_t g_layer_width = 0;
+uint64_t g_layer_height = 0;
+
 Slice *find_slice(uint64_t badge) noexcept
 {
     for (Slice *s = g_slices; s != nullptr; s = s->next) {
@@ -192,6 +204,18 @@ Window *find_window(uint64_t id) noexcept
 {
     for (Window *w = g_windows; w != nullptr; w = w->next) {
         if (w->id == id) {
+            return w;
+        }
+    }
+    return nullptr;
+}
+
+/* The screen's backdrop window, when one is up (the bureau's). The screen bar
+ * and its menus are its own top (specs/workbench.md). */
+Window *find_backdrop() noexcept
+{
+    for (Window *w = g_windows; w != nullptr; w = w->next) {
+        if (w->backdrop) {
             return w;
         }
     }
@@ -518,7 +542,7 @@ void key_event(uint16_t code, uint32_t state) noexcept
     default:
         break;
     }
-    if (g_focused == nullptr) {
+    if (g_focused == nullptr && !g_super) {
         return;
     }
     uint32_t const translated =
@@ -535,6 +559,22 @@ void key_event(uint16_t code, uint32_t state) noexcept
     }
     if (g_super) {
         modifiers |= aegir::console::kKeySuper;
+    }
+    /* The screen shortcut (specs/workbench.md): the screen bar is not a focus
+     * target, so a menu shortcut goes to the backdrop's owner wherever the
+     * focus is. Super+Space is the bureau's Execute; a press and a release both
+     * travel, so the client sees the whole chord. */
+    if (g_super && translated == ' ') {
+        Window *const backdrop = find_backdrop();
+        if (backdrop != nullptr) {
+            deliver(backdrop->owner, aegir::console::kEventScreenKey, code,
+                    translated | (pressed ? aegir::console::kKeyPressed : 0) | modifiers,
+                    backdrop->id);
+        }
+        return;
+    }
+    if (g_focused == nullptr) {
+        return;
     }
     deliver(g_focused->owner, aegir::console::kEventKey, code,
             translated | (pressed ? aegir::console::kKeyPressed : 0) | modifiers,
@@ -621,6 +661,20 @@ void drain(uint32_t device) noexcept
     flush_motion();
 }
 
+/* One window's pixel at (x, y), or `fallback` when the window does not cover
+ * it. The screen layer's own windows are read this way (specs/workbench.md). */
+uint32_t window_pixel(Window const *from, uint64_t x, uint64_t y,
+                      uint32_t fallback) noexcept
+{
+    if (from == nullptr || !from->shown || from->slice == nullptr || x < from->x ||
+        x >= from->x + from->width || y < from->y || y >= from->y + from->height) {
+        return fallback;
+    }
+    auto const *backing =
+        reinterpret_cast<uint32_t const *>(from->slice->base + from->offset);
+    return backing[(y - from->y) * from->width + (x - from->x)];
+}
+
 /* Composite a screen rectangle: every pixel is the topmost window covering
  * it, or the backdrop. The windows are walked bottom to top, so the last
  * coverer wins. */
@@ -635,6 +689,12 @@ void composite_rect(uint64_t sx, uint64_t sy, uint64_t width,
     for (uint64_t yy = sy; yy < ey; ++yy) {
         auto *out =
             reinterpret_cast<uint32_t *>(g_screen + yy * g_stride);
+        /* The screen layer's rows, hoisted: the bar's strip and the overlay's
+         * rectangle prime the per-pixel work only where they can apply, so the
+         * common case pays two comparisons (specs/workbench.md). */
+        bool const bar_row = g_bar_window != nullptr && yy < g_bar_height;
+        bool const layer_row = g_layer_window != nullptr && yy >= g_layer_y &&
+                               yy < g_layer_y + g_layer_height;
         for (uint64_t xx = sx; xx < ex; ++xx) {
             uint32_t pixel = kBackdrop;
             for (Window const *w = g_windows; w != nullptr; w = w->next) {
@@ -649,6 +709,14 @@ void composite_rect(uint64_t sx, uint64_t sy, uint64_t width,
                 auto const *backing = reinterpret_cast<uint32_t const *>(
                     slice->base + w->offset);
                 pixel = backing[(yy - w->y) * w->width + (xx - w->x)];
+            }
+            /* The screen layer: the bar and the marked rectangle are the
+             * screen's own top, drawn above every window (specs/workbench.md). */
+            if (bar_row) {
+                pixel = window_pixel(g_bar_window, xx, yy, pixel);
+            }
+            if (layer_row && xx >= g_layer_x && xx < g_layer_x + g_layer_width) {
+                pixel = window_pixel(g_layer_window, xx, yy, pixel);
             }
             out[xx] = pixel;
         }
@@ -1464,6 +1532,44 @@ int main(int argc, char *argv[])
              * bureau sizes its backdrop from it (specs/bureau.md). */
             uint64_t const size[2] = {g_width, g_height};
             gui.reply_words(size, 2);
+        } else if (method == aegir::console::kMethodScreenBar && length == 2) {
+            /* The screen bar's strip (specs/workbench.md): the backdrop's own
+             * top, drawn above every window. Only the backdrop's owner may set
+             * it; a non-backdrop is refused. */
+            uint64_t const height = static_cast<uint64_t>(seL4_GetMR(1));
+            Window *const backdrop = find_backdrop();
+            if (backdrop == nullptr || backdrop->owner != badge) {
+                gui.reply(0);
+                continue;
+            }
+            uint64_t const touched = g_bar_height > height ? g_bar_height : height;
+            g_bar_window = height != 0 ? backdrop : nullptr;
+            g_bar_height = height;
+            repaint(0, 0, g_width, touched);
+            gui.reply(0);
+        } else if (method == aegir::console::kMethodScreenLayer && length == 5) {
+            /* The open menu's rectangle (specs/workbench.md): the backdrop's
+             * pixels here composite above every window. An all-zero rectangle
+             * clears it. Only the backdrop's owner may set it. The client
+             * damages the region itself: a repaint here would flush from
+             * inside a call and starve the input queues the same thread
+             * drains. */
+            uint64_t const x = static_cast<uint64_t>(seL4_GetMR(1));
+            uint64_t const y = static_cast<uint64_t>(seL4_GetMR(2));
+            uint64_t const width = static_cast<uint64_t>(seL4_GetMR(3));
+            uint64_t const height = static_cast<uint64_t>(seL4_GetMR(4));
+            Window *const backdrop = find_backdrop();
+            if (backdrop == nullptr || backdrop->owner != badge) {
+                gui.reply(0);
+                continue;
+            }
+            bool const clears = x == 0 && y == 0 && width == 0 && height == 0;
+            g_layer_window = clears ? nullptr : backdrop;
+            g_layer_x = x;
+            g_layer_y = y;
+            g_layer_width = width;
+            g_layer_height = height;
+            gui.reply(0);
         } else {
             /* A method we do not know: the answer says so by saying nothing
              * (aegir/console.h). */

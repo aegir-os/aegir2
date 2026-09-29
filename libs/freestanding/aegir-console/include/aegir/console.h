@@ -118,6 +118,20 @@ constexpr uint32_t kMethodLower = 12;
  *  refused. The answer is empty. */
 constexpr uint32_t kMethodFocus = 13;
 
+/** Reserve the screen title bar (specs/workbench.md): the strip `[0, height)`
+ *  is the screen bar's, so the backdrop's pixels there are composited above
+ *  every window -- the bar is never covered. In: one word, the strip's height,
+ *  or 0 to clear it. Only a backdrop's owner may set it. The answer is
+ *  empty. */
+constexpr uint32_t kMethodScreenBar = 14;
+
+/** Set the screen layer (specs/workbench.md): the backdrop's pixels inside
+ *  `[x, y, width, height]` are composited above every window, so an open menu
+ *  that drops below the bar is never covered by a window. In: four words -- x,
+ *  y, width, height -- or none to clear. Only a backdrop's owner may set it.
+ *  The answer is empty. */
+constexpr uint32_t kMethodScreenLayer = 15;
+
 /* The event channel. The ring is the slice's last 4 KiB page: the console
  * mapped the whole slice when it carved it, so appending is writing memory
  * it already has, and the client maps the page with the rest. Word 0 is
@@ -143,6 +157,14 @@ constexpr uint16_t kEventFocus = 3;   /* value: 1 in, 0 out */
  * zero -- it names no window, so a client must handle it before the
  * per-window routing. */
 constexpr uint16_t kEventScreenOwner = 4;
+
+/* A screen-level shortcut (specs/workbench.md): a key the screen's owner (the
+ * bureau's backdrop) asked to see wherever the focus is. The screen bar is not
+ * a focus target, so a menu shortcut pressed while a window is focused would
+ * otherwise reach that window; the console routes it to the backdrop's owner
+ * instead. The window word is the backdrop's id; the code and value are a key
+ * event's. */
+constexpr uint16_t kEventScreenKey = 5;
 
 /* A key event's value: bits 0..15 the translated character -- the keymap
  * is console's, US layout v1, and an unmapped code carries zero -- bit 16
@@ -303,6 +325,27 @@ inline bool lower(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
 inline bool focus(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
 {
     aegir::ipc::Reply const answer = gui.call(kMethodFocus, window);
+    return answer.error == 0;
+}
+
+/** Reserve the screen title bar (specs/workbench.md): the strip `[0, height)`
+ *  is the screen bar's, so the backdrop's pixels there composite above every
+ *  window. `height` 0 clears it. False when refused. */
+inline bool screen_bar(aegir::ipc::Consumer const &gui, uint64_t height) noexcept
+{
+    aegir::ipc::Reply const answer = gui.call(kMethodScreenBar, height);
+    return answer.error == 0;
+}
+
+/** Set the screen layer (specs/workbench.md): the backdrop's pixels inside the
+ *  rectangle composite above every window, so an open menu is never covered.
+ *  An all-zero rectangle clears it. False when refused. */
+inline bool screen_layer(aegir::ipc::Consumer const &gui, uint64_t x, uint64_t y,
+                         uint64_t width, uint64_t height) noexcept
+{
+    uint64_t out[4] = {x, y, width, height};
+    uint64_t in[1];
+    aegir::ipc::WordsReply const answer = gui.call_words(kMethodScreenLayer, out, 4, in, 1);
     return answer.error == 0;
 }
 

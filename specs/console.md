@@ -96,6 +96,18 @@ method console does not know is answered by saying nothing.
   leak its delegation. Today's caller is the login arc (the greeter, reaped
   before its login's session starts); a session's own slice is the re-login
   arc's to take down (`specs/auth.md`).
+- `screen_bar`. In: one word, the height of the screen title strip. The
+  sending window must be a backdrop; the console composites the backdrop's
+  pixels in the strip above every window, so the screen bar is never covered,
+  and repaints it. Zero clears it. The strip is reserved in the compositor,
+  not the placer: a zoomed window still reaches the screen's top, and the bar
+  draws over it (`specs/workbench.md`).
+- `screen_layer`. In: four words, a rectangle. The backdrop's pixels inside it
+  composite above every window, so an open menu that drops below the bar is
+  never covered by a window. An all-zero rectangle clears it. The client
+  damages the region itself: a repaint inside the call would flush from the
+  same thread that drains the input queues, and a burst of typing behind it is
+  dropped.
 
 ## The event channel
 
@@ -120,7 +132,7 @@ hands each driver a minted, badged notification, a signal wakes the receive
 that serves the port, and console drains with `poll`/`next` — the queue is
 the driver's, so coalesced signals lose nothing.
 
-The vocabulary is console's (`libs/aegir-console`), three kinds to start:
+The vocabulary is console's (`libs/aegir-console`), the kinds are:
 
 - **key** — the raw code, and the translated character in the same event.
   The keymap is console's (a table in the service, US layout v1): key-code
@@ -141,6 +153,12 @@ The vocabulary is console's (`libs/aegir-console`), three kinds to start:
   once and one event goes out — a client resizes or moves once per drain, not
   once per report, which is what a fast pointer outran.
 - **focus** — in and out. What a text field listens for.
+- **screen key** — a shortcut the screen's owner asked to see wherever the
+  focus is. The screen bar is not a focus target (below), so a menu
+  accelerator pressed while a window is focused would reach that window; the
+  console delivers Super+Space to the backdrop's owner as this event instead,
+  and the bureau matches it against its menu items' accelerators
+  (`specs/workbench.md`).
 
 ## Focus and the pointer
 

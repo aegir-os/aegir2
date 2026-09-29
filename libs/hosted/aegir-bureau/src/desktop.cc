@@ -19,6 +19,7 @@ using aegir::trinket::Color;
 using aegir::trinket::ColorRole;
 using aegir::trinket::Font;
 using aegir::trinket::KeyCode;
+using aegir::trinket::KeyEvent;
 using aegir::trinket::MenuBar;
 using aegir::trinket::MetricRole;
 using aegir::trinket::MouseEvent;
@@ -32,26 +33,78 @@ Desktop::~Desktop() = default;
 
 void Desktop::set_menus(std::vector<Menu> menus) {
     menus_ = std::move(menus);
-    open_menu_ = -1;
+    set_open_menu(-1);
     damage();
 }
 
 void Desktop::set_client_menus(std::vector<Menu> menus) {
     client_menus_ = std::move(menus);
     client_active_ = true;
-    open_menu_ = -1;
+    set_open_menu(-1);
     damage();
 }
 
 void Desktop::clear_client_menus() {
     client_active_ = false;
     client_menus_.clear();
-    open_menu_ = -1;
+    set_open_menu(-1);
     damage();
 }
 
 std::vector<Desktop::Menu> const& Desktop::active_menus() const {
     return client_active_ ? client_menus_ : menus_;
+}
+
+void Desktop::set_open_menu(int menu) {
+    if (open_menu_ == menu) {
+        return;
+    }
+    open_menu_ = menu;
+    if (on_menu_changed) on_menu_changed(menu);
+}
+
+int Desktop::screen_bar_height() const {
+    return bar_height();
+}
+
+Rect Desktop::open_menu_rect() const {
+    if (open_menu_ < 0 || open_menu_ >= static_cast<int>(active_menus().size())) {
+        return Rect{0, 0, 0, 0};
+    }
+    std::vector<Slot> const slots = item_slots(open_menu_);
+    if (slots.empty()) {
+        return Rect{0, 0, 0, 0};
+    }
+    int const height = item_height();
+    return Rect{slots.front().rect.x, slots.front().rect.y, slots.front().rect.width,
+                static_cast<int>(active_menus()[open_menu_].items.size()) * height};
+}
+
+bool Desktop::shortcut(KeyEvent const& key) {
+    if (!key.pressed || key.code == KeyCode::UNKNOWN) {
+        return false;
+    }
+    std::vector<Menu> const& menus = active_menus();
+    for (Menu const& menu : menus) {
+        for (MenuItem const& item : menu.items) {
+            if (item.shortcut_key == KeyCode::UNKNOWN || item.shortcut_key != key.code ||
+                item.shortcut_mods != key.modifiers) {
+                continue;
+            }
+            if ((item.flags & (MenuItem::DISABLED | MenuItem::SEPARATOR)) != 0) {
+                return false;
+            }
+            set_open_menu(-1);
+            damage();
+            if (client_active_) {
+                if (on_client_action) on_client_action(item.action_id);
+            } else if (on_action) {
+                on_action(item.action_id);
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 int Desktop::bar_height() const {
@@ -188,7 +241,7 @@ void Desktop::on_mouse_down(const MouseEvent& event) {
     for (const Slot& slot : title_slots()) {
         if (slot.rect.contains(event.pos)) {
             bool const opening = open_menu_ != slot.menu;
-            open_menu_ = opening ? slot.menu : -1;
+            set_open_menu(opening ? slot.menu : -1);
             damage();
             if (opening && on_menu_opened) on_menu_opened(open_menu_);
             return;
@@ -201,7 +254,7 @@ void Desktop::on_mouse_down(const MouseEvent& event) {
             uint32_t const action = item.action_id;
             bool const acts = (item.flags & (MenuItem::DISABLED | MenuItem::SEPARATOR)) == 0;
             bool const client = client_active_;
-            open_menu_ = -1;
+            set_open_menu(-1);
             damage();
             if (acts) {
                 if (client) {
@@ -212,7 +265,7 @@ void Desktop::on_mouse_down(const MouseEvent& event) {
             }
             return;
         }
-        open_menu_ = -1;
+        set_open_menu(-1);
         damage();
     }
 }

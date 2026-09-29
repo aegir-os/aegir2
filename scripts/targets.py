@@ -895,6 +895,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 dark=(("gpu0", 46, 446, 300, 60, 20),),
             ),
+            # The screen shortcut (specs/workbench.md): Super+Space runs the
+            # Bureau's Execute wherever the focus is, so the screen bar's menu
+            # need not be walked with the pointer. Pressed on the menu
+            # command's own end, and the bureau's cue proves the key crossed.
+            QmpStep(
+                r"output: command done",
+                press="<win-space>",
+            ),
+            QmpStep(r"bureau: screen shortcut"),
         ),
     )
 
