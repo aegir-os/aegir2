@@ -46,11 +46,17 @@ toolkit that asks for one.
   ship as the fallback also covers the path before `Sys:` is up.
 - **FreeType is vendored as a signed release tarball.** A `[[source]]` in
   `manifests/sources.toml` -- the release archive, its sha256, its detached
-  signature, the signing key committed and its fingerprint pinned, exactly as
-  musl is (`specs/third_party.md`). A script builds it into a static library
-  for the target with its optional dependencies off (`--without-zlib`,
-  `--without-bzip2`, `--without-png`, `--without-harfbuzz`) and
-  `FT_CONFIG_OPTION_SINGLE_OBJECT`, so the build is one translation unit.
+  signature, the signing key committed (`manifests/freetype-signing-key.asc`)
+  and its fingerprint pinned, exactly as musl is (`specs/third_party.md`).
+  `scripts/build_freetype.sh` builds it out of tree with CMake into a static
+  archive for the target, against the hosted runtime's full musl, with its
+  optional dependencies off (`FT_DISABLE_ZLIB`, `_BZIP2`, `_PNG`, `_HARFBUZZ`,
+  `_BROTLI`): Aegir ships none of them, and a module that wanted one should
+  fail to link rather than fall back at run time. The autotools path's
+  single-object build (`FT_MAKE_OPTION_SINGLE_OBJECT` in 2.14) has no CMake
+  equivalent, so the archive is many objects; the service links one archive and
+  the modules its faces reach, which is the trade for not carrying a second
+  build system for one library.
 - **The subset the system volume ships.** NotoSans (Latin, Greek and
   Cyrillic), NotoSansMono, NotoSansArabic, NotoSansHebrew, and NotoSansCJK's
   `.ttc` -- one file holding ten faces, and the only real CJK face the vendored

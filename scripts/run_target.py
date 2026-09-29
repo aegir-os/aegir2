@@ -147,16 +147,19 @@ def toolkit() -> bool:
 
 
 def build_runtimes(target: Target, timeout: int) -> None:
-    """Build the hosted runtime's two vendored pieces for this target.
+    """Build the hosted runtime's vendored pieces for this target.
 
-    Run before configure because cmake imports them (libs/aegir-musl,
-    libs/aegir-libcxx) and refuses to configure without them. Both scripts are
-    idempotent: an existing install is left alone, so this is cheap after the
-    first build of a target (and `make clean` is what forces a rebuild).
+    Full musl, libc++/libcxxabi/libunwind, and FreeType (the font service's
+    rasterizer). Run before configure because cmake imports them
+    (libs/aegir-musl, libs/aegir-libcxx, libs/aegir-freetype) and refuses to
+    configure without them. Each script is idempotent: an existing install is
+    left alone, so this is cheap after the first build of a target (and `make
+    clean` is what forces a rebuild).
     """
     root = ENV_SCRIPT.parent.parent
     bash(f"bash scripts/build_musl.sh {target.name}", root, timeout)
     bash(f"bash scripts/build_libcxx.sh {target.name}", root, timeout)
+    bash(f"bash scripts/build_freetype.sh {target.name}", root, timeout)
 
 
 def configured_flags(build_dir: Path) -> str:

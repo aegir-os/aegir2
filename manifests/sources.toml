@@ -26,6 +26,30 @@ signing_fingerprint = "836489290BB6B70F99FFDA0556BCDB593020450F"
 # The single top-level directory the tarball extracts, moved to `path`.
 extract_dir = "musl-1.2.6"
 
+# FreeType, the rasterizer the font service owns (specs/fonts.md). It is not a
+# git project we take a revision of: the release tarball is the canonical
+# artifact, its maintainer signs every release with a detached signature, and
+# the pin is therefore a content hash plus the signature plus that key's
+# fingerprint -- stronger than a mirror's commit, exactly as musl's is. The
+# key (Werner Lemberg, the maintainer who cuts FreeType's releases) is
+# committed at manifests/freetype-signing-key.asc. FreeType is dual-licensed
+# FTL/GPL-2.0-only; Aegir takes it under the FTL (THIRD-PARTY.md).
+[[source]]
+name = "freetype"
+version = "2.14.3"
+path = "projects/freetype"
+url = "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz"
+sha256 = "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f"
+archive = "freetype-2.14.3.tar.xz"
+signature_url = "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz.sig"
+signature_sha256 = "9bc9f852c4ec9d037a6e92c022e0b020a00dfd9644c644c12c6d4352792f46a3"
+signature_archive = "freetype-2.14.3.tar.xz.sig"
+signing_key = "manifests/freetype-signing-key.asc"
+# The key's full fingerprint, as gpg --status-fd reports it (no spaces).
+signing_fingerprint = "E30674707856409FF1948010BE6C3AAC63AD8E3F"
+# The single top-level directory the tarball extracts, moved to `path`.
+extract_dir = "freetype-2.14.3"
+
 # The Unicode Character Database (UCD), fetched as individually pinned files
 # rather than a tarball. The table files generate the toolkit's UAX #9 tables
 # and its character widths at build time (scripts/gen_bidi_tables.py,

@@ -3,6 +3,7 @@
 # manifests/aegir.xml. Never committed; see specs/third_party.md.
 /kernel/
 /projects/musl/
+/projects/freetype/
 /projects/util_libs/
 /projects/seL4_libs/
 /projects/sel4runtime/
