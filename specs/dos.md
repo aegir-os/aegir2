@@ -194,8 +194,12 @@ in the `run` call; the terminal passes it to the spawner unchanged.
 - **Phase 3 — `Sys:C` on the system volume, sized from the set.** The
   commands are built, stripped, packed into `Sys:C`, and the AEGIR partition
   and the image are sized from what they weigh rather than from a constant.
-  With the commands on `C:`, the terminal resolves an image from `C:<name>`
-  instead of `Initrd:<name>` and the shell lowercases the command token.
+  The partition carries a second tree's worth of free space as well: the volume
+  is a session's `Home:` and takes its writes, so sizing it to the boot tree
+  alone leaves a filesystem with no free blocks -- which the first session's
+  write finds. With the commands on `C:`, the terminal resolves an image from
+  `C:<name>` instead of `Initrd:<name>` and the shell lowercases the command
+  token.
 - **Phase 4 — the first commands.** Landed: `copy`, `delete`, `makedir`,
   `rename`, `list`, `type`, one hosted program each in `Sys:C`; `Dir`, `List`
   and `Type` left the shell's built-ins. Three pieces the tools needed came

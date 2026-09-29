@@ -66,6 +66,9 @@ later.
 `apps/aegir-bureau` builds the backdrop `Window` as before, sets a `Desktop`
 as its content, gives it the bureau's menus, and runs `Application::exec`
 instead of halting in `on_started`. An action logs a cue; the runner reads it.
+The Bureau menu's `Execute...` opens an Execute requester and sends its line
+through `launch.session` -- the Bureau's first launch, and the reason it holds a
+launcher caller half (specs/launch.md Phase 4).
 
 ## The `bureau.menu` server (the next phase)
 

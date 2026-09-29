@@ -128,14 +128,26 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
 
     /* The caller's stream (specs/launch.md): a launcher's command writes where
      * its caller does. A capability that arrived is moved before anything else
-     * can occupy the scratch slot. */
+     * can occupy the scratch slot. A caller with none (a launching program, or
+     * any client that draws its own window) gets the launcher's read-only
+     * output view, started once; the command's con.stream is a badged copy of
+     * it. */
     seL4_CPtr stream = 0;
+    bool stream_copy = false;
     if (cap_arrived) {
         if (!service.hold_received_stream()) {
             write("FAIL the caller's stream would not move");
             return;
         }
         stream = service.received_stream();
+        stream_copy = true;
+    } else {
+        aegir::spawn::ServiceKit::Started view{};
+        if (!service.start_output_view(&view)) {
+            write("FAIL no output view for a stream-less command");
+            return;
+        }
+        stream = service.output_stream();
     }
 
     if (kind == aegir::launch::kKindLaunching) {
@@ -166,9 +178,10 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
     command.background = (flags & aegir::launch::kFlagBackground) != 0;
     command.stack_pages = static_cast<uint32_t>(stack_pages);
     /* The cap is already badged (the caller minted it with the stream key), so
-     * the command takes a copy rather than a mint. */
+     * the command takes a copy rather than a mint; a view's endpoint is the
+     * launcher's own, so the command's copy is minted with its badge. */
     command.stream = stream;
-    command.stream_copy = stream != 0;
+    command.stream_copy = stream_copy;
     aegir::spawn::ServiceKit::Started started{};
     if (!service.start_command(command, &started)) {
         return;
@@ -218,12 +231,21 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
     uint64_t const stack_pages = words[at++];
 
     seL4_CPtr stream = 0;
+    bool stream_copy = false;
     if (cap_arrived) {
         if (!service.hold_received_stream()) {
             write("FAIL the caller's stream would not move");
             return;
         }
         stream = service.received_stream();
+        stream_copy = true;
+    } else {
+        aegir::spawn::ServiceKit::Started view{};
+        if (!service.start_output_view(&view)) {
+            write("FAIL no output view for a stream-less pipeline");
+            return;
+        }
+        stream = service.output_stream();
     }
 
     aegir::spawn::ServiceKit::Command context;
@@ -233,7 +255,7 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
     context.background = (flags & aegir::launch::kFlagBackground) != 0;
     context.stack_pages = static_cast<uint32_t>(stack_pages);
     context.stream = stream;
-    context.stream_copy = stream != 0;
+    context.stream_copy = stream_copy;
     /* The reply carries the stages' badges after the answer, up to the
      * envelope's ceiling; a line with more stages than that still runs (the
      * caller learns the rest from their exits). */

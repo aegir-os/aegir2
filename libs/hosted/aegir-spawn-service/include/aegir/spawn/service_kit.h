@@ -171,6 +171,11 @@ public:
         seL4_CPtr stream = 0;
         uint64_t stream_badge = 0;
         bool stream_copy = false;
+        /* Start an output view (specs/launch.md): the child serves the stream
+         * rather than writing to it, so its grant is `output_ports` -- the
+         * endpoint as an owner copy, plus the launcher's `launch.session` half
+         * so it can release the commands whose exits it reports. */
+        bool output_view = false;
     };
 
     /* One pipeline stage on the wire: its command line and its own
@@ -196,6 +201,17 @@ public:
      * and remember it so release() can take it back. False when the image is
      * missing or the spawn fails. */
     bool start_command(Command const &command, Started *out);
+
+    /* Start the launcher's output view (specs/launch.md), once: a program that
+     * serves a read-only con.stream for a command a caller launched with no
+     * stream of its own, and releases each command whose exit it reports. The
+     * endpoint the view owns is `output_stream()`; the launcher hands its
+     * commands a badged copy of it. True when a view is already up or one
+     * started, false when it could not -- the caller then refuses the request. */
+    bool start_output_view(Started *out);
+
+    /* The view's con.stream endpoint, or zero when none is up. */
+    seL4_CPtr output_stream() const { return output_view_endpoint_; }
 
     /* Start a pipeline: every stage at once, connected by pipes this service
      * names (specs/pipe.md), so no stage depends on a name the user chose. The
@@ -285,6 +301,9 @@ private:
     std::vector<uint32_t> slot_owners_;
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
+    /* The output view's endpoint, once one is up (specs/launch.md): the view
+     * owns it, and a stream-less command is handed a badged copy. */
+    seL4_CPtr output_view_endpoint_ = 0;
     /* The slot the last received stream capability was moved into, reused per
      * request (a launcher's commands write to the caller's stream). */
     seL4_CPtr stream_slot_ = 0;

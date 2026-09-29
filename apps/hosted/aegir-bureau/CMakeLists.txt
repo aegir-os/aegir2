@@ -26,7 +26,7 @@ if(AEGIR_TOOLKIT)
   # maps its slice through (the session spawn's give_vspace grant).
   target_link_libraries(
     aegir-bureau-app PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-bureau-lib aegir-runtime aegir-bootstrap aegir-ipc aegir-log
-                            aegir-console-protocol aegir-mem sel4 sel4runtime
+                            aegir-console-protocol aegir-launch aegir-mem sel4 sel4runtime
   )
 else()
   # No hosted runtime yet: a placeholder keeps director's manifest validation

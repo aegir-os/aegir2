@@ -69,8 +69,9 @@ A launch request is the spawn `Request` (specs/services.md) plus the things a
   carries one capability, so nothing can ride beside it). A command the launcher
   starts writes where its caller does, and its readiness is the stream's own (a
   held `read`), so no notification travels with the request. A caller with no
-  stream sends none, and the launcher gives the command a stream of its own -- a
-  read-only output view (`specs/console.md`'s viewer shape);
+  stream sends none, and the launcher gives the command a stream of its own: a
+  read-only output view, one per launcher, started the first time a stream-less
+  request arrives (`aegir-output`, below);
 - **who asked**: the caller's badge, which the launcher records for ownership
   and checks its policy against.
 
@@ -94,6 +95,21 @@ exactly what the launcher should not do.
 A launching child does not inherit the console stream: it has its own window
 and its own stream. A launching child's `mem.main` is the session's, so its own
 commands still draw from the one pool.
+
+## The read-only output view
+
+A launching program -- a Terminal, a Workbench, the Bureau -- has its own window
+and no console stream of its own, so a command it starts has nowhere to write.
+The launcher gives it somewhere: on the first stream-less request it starts
+`aegir-output` once, and keeps the endpoint the view owns. The view is granted
+`aegir-spawn-kit`'s `output_ports`: a command's grant with the `con.stream` cap as
+an *owner* copy -- the view serves it, the command calls it -- plus the launcher's
+`launch.session` caller half. It draws the bytes it is written into a text grid,
+answers a read empty (it takes no input; it is a view, not a terminal), and, when
+the command's exit report arrives -- carrying the command's own badge -- releases
+the command through `launch.session` (`kMethodRelease`), because no shell holds
+the command's line to reap it. One view serves a session's stream-less commands;
+the next one's output appears in the same window.
 
 ## `NEWSHELL` and `NEWCLI`
 
@@ -170,8 +186,16 @@ window.
   command before it runs. `aegir-view` (the MultiView shape, its file read
   through the granted namespace) is the first program to use it, launched by
   its bare name like any other command (specs/console.md).
-- **Phase 4 -- the launchers.** The Bureau's Execute, a dock and the desktop
-  icons become launcher clients, each sending its own context.
+- **Phase 4 -- the launchers.** Landed in part: the Bureau's Execute is a
+  launcher client. A Bureau menu item (`Execute...`) opens a `Requester` with a
+  `TextBox`, splits the line to argv, and sends it through `launch.session` with
+  the Bureau's own context. The Bureau has no console stream, so this is also
+  where the launcher's **read-only output view** lands: a caller that sends no
+  stream is given one by the launcher, which starts `aegir-output` once -- a
+  program that owns the `con.stream` endpoint the command writes to, draws what
+  arrives in a window, and releases the command through `launch.session`
+  (`kMethodRelease`) when it sees the exit, because no shell holds the command's
+  line to reap it. A dock and the desktop icons are still to come.
 
 ## What this is not
 

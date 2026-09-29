@@ -855,6 +855,39 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             QmpStep(r"bureau: Aegir, the Workbench"),
+            # The Bureau's Execute (specs/launch.md): the Bureau has no console
+            # stream of its own, so a command it starts goes to the launcher's
+            # read-only output view. Triggered on the last cue so nothing follows
+            # the requester's close (which leaves no window focused): the runner
+            # reopens the Bureau menu, clicks Execute..., types a command line,
+            # and reads the command start and the view's own start; the view cues
+            # when the command's exit has been seen, and the screendump there
+            # proves the text landed.
+            QmpStep(
+                r"view: ready",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 3154}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                # A leading space: the first key races the requester's focus, so
+                # it lands nowhere; a separator is dropped by the split anyway.
+                press=" info\n",
+            ),
+            QmpStep(r"bureau: execute info"),
+            QmpStep(r"launcher: command started info"),
+            QmpStep(r"output: ready"),
+            QmpStep(
+                r"output: command done",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 46, 446, 300, 60, 20),),
+            ),
         ),
     )
 

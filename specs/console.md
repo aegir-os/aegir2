@@ -38,9 +38,13 @@ sees of the screen and the keyboard is what console serves.
   and destroying windows is bookkeeping, not memory traffic.
 - **The console's memory grows on demand.** A slice is carved from the
   console's own allocator, and when that runs out the console asks `mem.main`
-  for another screen-max chunk (the terminal's untyped-source shape,
-  specs/memory.md). The delegation director gives it is a *starting* pool, not
-  a budget: the head's size and the number of windows on screen are what bound
+  for another chunk (the terminal's untyped-source shape, specs/memory.md). The
+  chunk is a *slice*, not a screen: a process may reserve more than one
+  screen-max window (the terminal reserves its failure view, so its slice is two
+  screens), and a chunk smaller than the slice can never be split into it — so
+  the console asks for the largest slice any client has requested, remembered as
+  it serves. The delegation director gives it is a *starting* pool, not a
+  budget: the head's size and the number of windows on screen are what bound
   it, so a wider head — four screen-max slices at 1916×1114 is 64 MiB — is
   served like any other, and the design's 4K claim is not a capacity cliff.
 - **Capabilities ride this protocol.** Attaching hands over the slice's

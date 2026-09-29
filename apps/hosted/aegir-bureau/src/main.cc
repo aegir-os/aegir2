@@ -23,12 +23,17 @@
 #include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
+#include <aegir/launch_client.h>
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/requester.h>
+#include <aegir/trinket/textbox.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -36,6 +41,64 @@ namespace {
 void write(char const *text)
 {
     aegir::debug_write(text);
+}
+
+/* Split a command line into the wire's one argv string (specs/launch.md): the
+ * words NUL-separated, program first. Whitespace separates and a double-quoted
+ * run is one word, so a name with spaces rides. No substitution and no
+ * redirection -- this is the Bureau's Execute, a command line, not a Shell
+ * line; a program that wants a Shell launches one. */
+std::string split_argv(std::string_view line)
+{
+    std::string out;
+    bool first = true;
+    std::size_t i = 0;
+    while (i < line.size()) {
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
+            ++i;
+        }
+        if (i >= line.size()) {
+            break;
+        }
+        std::string word;
+        while (i < line.size() && line[i] != ' ' && line[i] != '\t') {
+            if (line[i] == '"') {
+                ++i;
+                while (i < line.size() && line[i] != '"') {
+                    word.push_back(line[i++]);
+                }
+                if (i < line.size()) {
+                    ++i; /* the closing quote */
+                }
+            } else {
+                word.push_back(line[i++]);
+            }
+        }
+        if (!first) {
+            out.push_back('\0');
+        }
+        out += word;
+        first = false;
+    }
+    return out;
+}
+
+/* Execute a typed line (specs/launch.md): split it to argv and ask the session's
+ * launcher for the command, carrying this process's own context. The Bureau has
+ * no console stream, so the launcher gives the command its read-only output
+ * view. */
+void execute_command(std::string const &line)
+{
+    std::string const argv = split_argv(line);
+    if (argv.empty()) {
+        return;
+    }
+    std::string cue("  bureau: execute ");
+    cue += line;
+    cue.push_back('\n');
+    write(cue.c_str());
+    (void)aegir::launch::command(argv.data(), static_cast<uint32_t>(argv.size()), "", 0, "", 0,
+                                 false);
 }
 
 /* The bureau's menus (specs/workbench.md): its own, until the bureau.menu
@@ -50,6 +113,7 @@ std::vector<aegir::bureau::Desktop::Menu> bureau_menus()
     bureau.items = {
         {1, U"About Aegir", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
         {2, U"Open...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::DISABLED, {}},
+        {8, U"Execute...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
         {0, U"", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::SEPARATOR, {}},
         {3, U"Quit", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
     };
@@ -172,6 +236,29 @@ int main(int argc, char *argv[])
     desktop->set_menus(bureau_menus());
     aegir::bureau::Desktop* const desktop_ptr = desktop.get();
     Registry registry;
+
+    /* The Bureau's Execute (specs/launch.md): a requester with a command line,
+     * built and reserved before the loop, so the console sizes the slice for its
+     * window. OK, Return or the OK button runs the line through the session's
+     * launcher, sending this process's own context. */
+    auto execute_box = std::make_unique<TextBox>();
+    execute_box->set_font(app.default_font());
+    TextBox* const execute_box_ptr = execute_box.get();
+    std::unique_ptr<Requester> execute = std::make_unique<Requester>(
+        app, "Execute Command",
+        std::vector<Requester::Action>{{1, U"OK", false, false}, {2, U"Cancel", false, true}});
+    execute->set_content(std::move(execute_box));
+    execute->set_gadgets(kGadgetClose);
+    execute->on_action = [&](uint32_t id) {
+        if (id == 1) {
+            execute_command(execute_box_ptr->text_utf8());
+        }
+    };
+    execute_box_ptr->on_submit = [&]() {
+        execute_command(execute_box_ptr->text_utf8());
+        execute->close();
+    };
+
     desktop->on_menu_opened = [&](int) {
         write(registry.active() != nullptr ? "  bureau: client menu\n"
                                            : "  bureau: menu\n");
@@ -182,6 +269,8 @@ int main(int argc, char *argv[])
         } else if (action_id == 3) {
             write("  bureau: quit\n");
             aegir::halt();
+        } else if (action_id == 8) {
+            execute->show();
         } else if (action_id == 4) {
             write("  bureau: clean up\n");
         } else if (action_id == 6) {

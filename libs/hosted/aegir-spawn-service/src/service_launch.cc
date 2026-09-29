@@ -319,7 +319,7 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     child.runtime = command_untyped;
     child.runtime_bits = kCommandUntypedBits;
     child.mem = command_mem_;
-    child.stream_badge = command.stream_badge;
+    child.stream_badge = command.stream_badge != 0 ? command.stream_badge : badge;
     child.stream_copy = command.stream_copy;
     /* The command's con.stream is the caller's, so the kit's stream is set for
      * this spawn alone and put back after: the kit is the process's, and two
@@ -327,7 +327,9 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     seL4_CPtr const saved_stream = kit_.stream;
     kit_.stream = command.stream;
     aegir::spawn::PortGrant ports[8];
-    uint32_t const port_count = aegir::spawn::command_ports(kit_, child, ports, 8);
+    uint32_t const port_count = command.output_view
+                                    ? aegir::spawn::output_ports(kit_, child, ports, 8)
+                                    : aegir::spawn::command_ports(kit_, child, ports, 8);
     kit_.stream = saved_stream;
 
     aegir::spawn::Request request{};
@@ -384,6 +386,42 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     if (out != nullptr) {
         *out = live_.back();
     }
+    return true;
+}
+
+bool ServiceKit::start_output_view(Started *out)
+{
+    if (output_view_endpoint_ != 0) {
+        return true; /* one view per launcher (specs/launch.md) */
+    }
+    if (allocator_ == nullptr) {
+        return false;
+    }
+    /* The endpoint the view owns and a stream-less command calls: retyped from
+     * this process's own memory, so it is the launcher's to mint each command's
+     * copy from, and the view's to serve. */
+    aegir::mem::Account account{"output-view", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const endpoint = allocator_->alloc_object(
+        seL4_EndpointObject, seL4_EndpointBits, account, &error);
+    if (endpoint == 0) {
+        return false;
+    }
+    /* A bare name: the launcher resolves it across the session's Path (`C:`),
+     * where `make_disk.py` packed it. The context is empty -- a view has no
+     * current directory or environment of its own. */
+    std::vector<std::string> const words{"output"};
+    static std::string const empty;
+    Command command;
+    command.words = &words;
+    command.cwd = &empty;
+    command.stream = endpoint;
+    command.stream_copy = true; /* the view is the receiver: a copy, all rights */
+    command.output_view = true;
+    if (!start_command(command, out)) {
+        return false;
+    }
+    output_view_endpoint_ = endpoint;
     return true;
 }
 

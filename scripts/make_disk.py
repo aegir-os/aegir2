@@ -205,7 +205,12 @@ def partition_table(commands) -> list:
     for name, sectors, known_name, known_content in PARTITION_LAYOUT:
         first = ((cursor + 2047) // 2048) * 2048
         if sectors is None:
-            needed = bfs_minimum_bytes(aegir_tree(commands), name)
+            # The system volume holds the sessions' data -- Home:, ENV:, S: --
+            # as well as the boot tree, and a filesystem with no free blocks
+            # cannot take a session's first write. `bfs_minimum_bytes` is the
+            # tree alone, so the reserve is a second tree's worth: the volume
+            # is sized to be written, not only read (specs/bfs.md).
+            needed = bfs_minimum_bytes(aegir_tree(commands), name) * 2
             sectors = (needed + SECTOR - 1) // SECTOR
             sectors = ((sectors + 2047) // 2048) * 2048
         last = first + sectors - 1

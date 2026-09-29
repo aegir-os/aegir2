@@ -195,6 +195,7 @@ set(aegir_commands
   aegir-which:which
   aegir-version:version
   aegir-view:view
+  aegir-output:output
 )
 set(aegir_commands_dir "${CMAKE_BINARY_DIR}/sys-c")
 set(aegir_command_images)

@@ -94,6 +94,20 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     return n;
 }
 
+uint32_t output_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
+{
+    uint32_t n = command_ports(kit, child, out, capacity);
+    /* The view releases each command whose exit it reports, so it holds the
+     * launcher's `launch.session` caller half (specs/launch.md). Copied, not
+     * minted: it is already badged, and a badged cap cannot be minted again. */
+    if (kit.launch != 0) {
+        (void)put(out, capacity, n++, aegir::launch::kPortName,
+                  aegir::launch::kPortNameLength, kit.launch,
+                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
+    }
+    return n;
+}
+
 uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
 {
     uint32_t n = identity_ports(kit, child, out, capacity);

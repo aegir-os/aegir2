@@ -90,6 +90,16 @@ struct Child {
  *  rather than being classified before it runs (specs/launch.md). */
 uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
 
+/** An output view (specs/launch.md): the launcher's command grant, with the
+ *  con.stream cap as a *copy* -- the view owns and serves the endpoint a
+ *  stream-less caller's command writes to, so it is the receiver, not a caller
+ *  -- plus the launcher's `launch.session` caller half, so the view can release
+ *  each command whose exit it reports (the command's badge arrives in the exit
+ *  report). `kit.stream` is the view's own endpoint; `child.stream_copy` must be
+ *  true. Everything else is a command's: its runtime, its own badged memory, the
+ *  session's namespace, its console.gui, the clock and the timer. */
+uint32_t output_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
+
 /** A launching program (kind 3): its own console and identity, its runtime, and
  *  the unbadged sources it will hand its own children. When the launcher holds
  *  no memory service -- the degraded boot -- only the first four entries are

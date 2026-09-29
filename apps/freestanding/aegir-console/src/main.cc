@@ -72,6 +72,12 @@ uint64_t g_stride = 0;
  * pool settles at the high-water mark of what is on screen at once. */
 seL4_CPtr g_mem_call = 0;
 uint32_t g_slice_chunk_bits = 24;
+/* The largest slice any client has asked for: a process may reserve more than
+ * one screen-max window (the terminal reserves its failure view), so the pool
+ * must be able to grow by a *slice*, not only by a screen. A chunk smaller
+ * than the request can never be split into it, so growth uses whichever is
+ * larger. */
+uint32_t g_slice_max_bits = 0;
 
 /* The allocator's untyped source (specs/memory.md): the launcher's own shape
  * (the terminal's command_untyped_source) -- the reply's chunk rides the
@@ -85,7 +91,8 @@ seL4_CPtr console_untyped_source(void *context, seL4_Word *size_bits,
         return 0;
     }
     aegir::ipc::Consumer const service(g_mem_call);
-    uint64_t const request = g_slice_chunk_bits;
+    uint64_t const request =
+        g_slice_chunk_bits > g_slice_max_bits ? g_slice_chunk_bits : g_slice_max_bits;
     uint64_t answer[1] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const reply = service.call_transfer(
@@ -1067,6 +1074,11 @@ int main(int argc, char *argv[])
             uint32_t bits = seL4_LargePageBits;
             while ((1ull << bits) < (frames << seL4_LargePageBits)) {
                 ++bits;
+            }
+            /* Grow by at least this slice, so the pool can hold one this
+             * size (the source reads it). */
+            if (bits > g_slice_max_bits) {
+                g_slice_max_bits = bits;
             }
             seL4_Error carve_error = seL4_NoError;
             uint64_t slice_physical = 0;
