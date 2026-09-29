@@ -3,9 +3,9 @@
 #
 # It owns the faces Sys:Fonts holds and one FreeType, and serves font.main:
 # a client opens a face by its own family and style, reads its metrics, and
-# (in the next piece of the phase) asks for glyphs. Faces are found by
-# scanning the tree, not by a path, so a face dropped anywhere under it is
-# served without a rebuild.
+# asks for the glyphs it draws -- rasterized into a page the client owns
+# (specs/fonts.md). Faces are found by scanning the tree, not by a path, so a
+# face dropped anywhere under it is served without a rebuild.
 #
 # It runs the hosted runtime but never the toolkit: it draws nothing. The
 # hosted runtime is where the VFS and libc++ come from, and FreeType is the

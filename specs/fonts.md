@@ -159,17 +159,25 @@ one; the probe is what makes the boot cheap until then, and the index is the
 same one a cache would persist.
 
 - `glyphs`. In: the id, a list of codepoints, and a capability to the client's
-  transfer page. Out: each glyph's advance, bearing and rectangle within the
-  page. **Next.**
+  transfer page. Out: 1, how many codepoints were answered, and a record each --
+  advance, bearing, bitmap box, the byte offset within the page, and whether the
+  face has the codepoint. **Landed in the service.** The page bounds the pixels
+  and the kernel's envelope bounds the records, so an answer is a *prefix* of a
+  request: a caller whose batch was trimmed asks again for the rest.
 
-The transfer page is a frame the client maps, hands over for the call, and the
-service maps a *copy* of before writing: a frame cap pins to the VSpace it is
-first mapped into, so a page two processes read and write is two capabilities
-to one frame, which is the kernel's documented way to share a page
-(`kernel/manual/parts/vspace.tex`). The copy is unmapped when the call is
-answered, so the page is the client's alone between calls -- which is what
-makes a client-owned page cheaper than a server-owned one, which would need a
-lease or a generation to answer the same question.
+The transfer page is a frame the client owns, maps, and hands over for one
+call, and the service maps a *copy* of before writing. The copy is not a
+formality: a frame capability pins to the VSpace it is first mapped into --
+`seL4_RISCV_Page_Map` refuses one already mapped elsewhere with
+`seL4_InvalidCapability`, "already mapped in a different VSpace". So the
+capability that crosses is a copy made before the client's own mapping, and
+`seL4_CNode_Copy` is what makes it: a derived frame capability carries no
+mapping (`Arch_deriveCap` clears the ASID and address). Two capabilities to one
+frame is the kernel's documented way to share a page
+(`kernel/manual/parts/vspace.tex`). The service unmaps and drops its copy when
+the call is answered, so the page is the client's alone between calls -- which
+is what makes a client-owned page cheaper than a server-owned one, which would
+need a lease or a generation to answer the same question.
 
 ### Shaping (phase 3)
 
@@ -187,10 +195,10 @@ service-backed client does not otherwise hold.
    family is missing. BDF/PCF only. No service, no FreeType.
 2. **Phase 2 -- FreeType and the service.** The signed-tarball pin, the build
    script and the service have landed: `aegir-font` reads the volume's faces
-   directly and serves `open`, `metrics` and `close`, all sixteen indexed in
-   425 ms. What remains is `glyphs` and the client-owned transfer page, and the
-   client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc` face through them --
-   the client side of the seam phase 1 left open.
+   directly and serves `open`, `metrics`, `close` and `glyphs`, all sixteen
+   indexed in 429 ms, and it rasterizes a glyph into the caller's own page.
+   What remains is the client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc`
+   face through them -- the client side of the seam phase 1 left open.
 3. **Phase 3 -- shaping and the fallback chain.** HarfBuzz, BiDi, and the Noto
    faces chosen per script.
 

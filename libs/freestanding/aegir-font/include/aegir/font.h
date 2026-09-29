@@ -60,6 +60,48 @@ constexpr uint32_t kMetricsWords = 4;
  *  Answer: 1 closed, 0 for an id the service does not know. */
 constexpr uint32_t kMethodClose = 3;
 
+/** Rasterize glyphs into the caller's transfer page (specs/fonts.md). Fields
+ *  after the method:
+ *
+ *    id       one word: from `open`
+ *    count    one word: how many codepoints follow
+ *    codes    count words, one codepoint each
+ *
+ *  and one capability, the caller's page. The page is a frame the caller owns,
+ *  maps and hands over for this call alone; the service maps a *copy* of the
+ *  capability, writes the glyphs into it and unmaps it before answering, so the
+ *  page is the caller's again between calls (specs/fonts.md). A call with no
+ *  capability is refused with 0 -- the service will not guess where to put a
+ *  glyph.
+ *
+ *  Answer: 1, then how many codepoints were answered, then that many records of
+ *  `kGlyphsWordsPerCode` words each, in request order:
+ *
+ *    advance       horizontal advance in pixels
+ *    bearing_x     distance from the pen to the bitmap's left edge
+ *    bearing_y     distance from the baseline to the bitmap's top edge
+ *    width         bitmap width in pixels, 0 when the face has no glyph
+ *    height        bitmap height in pixels
+ *    offset        byte offset of the bitmap in the page, `width * height`
+ *                  bytes of 8-bit coverage, row-major
+ *    present       1 when the face has the codepoint, 0 when it does not
+ *
+ *  A record whose `present` is 0 has every other field zero: the caller learns
+ *  the codepoint is absent rather than asking again. A page holds what it holds
+ *  and the answer is trimmed to it, so the caller re-asks for the rest -- the
+ *  count answered says how far it got. One answer's records are bounded by
+ *  `aegir::ipc::kMaxWords` too; both sides know the envelope. */
+constexpr uint32_t kMethodGlyphs = 4;
+
+/** The words one glyph's record takes in a `glyphs` answer. */
+constexpr uint32_t kGlyphsWordsPerCode = 7;
+
+/** The transfer page's size: one small frame, the page the caller retypes and
+ *  maps, and the service maps a copy of. It bounds how many glyphs one call can
+ *  carry, and it is a page and not a policy -- a bigger request is more calls
+ *  (specs/fonts.md). */
+constexpr uint32_t kTransferPageBytes = 4096;
+
 }  // namespace aegir::font
 
 #endif  // AEGIR_FONT_H

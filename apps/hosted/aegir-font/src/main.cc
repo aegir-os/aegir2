@@ -17,8 +17,10 @@
  * be tens of thousands of round trips (specs/fonts.md).
  *
  * A face is opened on demand and the service holds it until its client closes
- * it. This is the first cut: `open`, `metrics` and `close`. The glyphs method
- * and the client-owned transfer page are the next piece of the phase.
+ * it. Glyphs are rasterized on demand into a page the *caller* owns and hands
+ * over for one call: the service maps a copy of the capability, writes, and
+ * unmaps before answering, so the page is the caller's again between calls
+ * (specs/fonts.md).
  */
 
 /* musl's <string.h> first, before any seL4 header: seL4's RISC-V syscall
@@ -594,6 +596,151 @@ void handle_close(uint64_t const *words, uint32_t count, uint64_t *reply, uint32
     reply[0] = 1;
 }
 
+/* ---- the caller's transfer page (specs/fonts.md) ---- */
+
+/* The slot a client's page capability is moved into for one call, reused: the
+ * capability is deleted when the call is answered, so the next install finds
+ * the slot empty (take_received_cap moves with CNode_Move, which refuses an
+ * occupied destination), and a long-lived service does not leak a slot per
+ * glyph batch. */
+seL4_CPtr g_transfer_slot = 0;
+
+void drop_transfer() noexcept
+{
+    if (g_transfer_slot != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_transfer_slot,
+                          aegir::bootstrap::cnode_bits());
+    }
+}
+
+/* One rasterized glyph's coverage into the page, as 8-bit alpha. FreeType
+ * hands the two shapes a face here uses: 8-bit gray for an outline face, and
+ * 1-bit packed for a bitmap face (a BDF). True when it was written -- a blank
+ * glyph (a space) has nothing to copy and is written as nothing. */
+bool write_coverage(FT_Bitmap const &bitmap, uint8_t *page, size_t at) noexcept
+{
+    size_t const width = bitmap.width;
+    size_t const rows = bitmap.rows;
+    if (width == 0 || rows == 0) {
+        return true;
+    }
+    int const pitch = static_cast<int>(bitmap.pitch);
+    if (bitmap.buffer == nullptr || pitch <= 0) {
+        return false;
+    }
+    uint8_t *const out = page + at;
+    if (bitmap.pixel_mode == FT_PIXEL_MODE_GRAY) {
+        for (size_t y = 0; y < rows; ++y) {
+            memcpy(out + y * width, bitmap.buffer + y * static_cast<size_t>(pitch), width);
+        }
+        return true;
+    }
+    if (bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
+        for (size_t y = 0; y < rows; ++y) {
+            uint8_t const *const row = bitmap.buffer + y * static_cast<size_t>(pitch);
+            for (size_t x = 0; x < width; ++x) {
+                bool const on = (row[x / 8] & (0x80u >> (x % 8))) != 0;
+                out[y * width + x] = on ? 255 : 0;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+/* glyphs: the id, the count, the codepoints and the caller's page. Answer: 1,
+ * how many were answered, and a record each (aegir/font.h). The page bounds the
+ * pixels and the envelope bounds the records, so the answer is a prefix of the
+ * request: a caller whose batch was trimmed asks again for the rest. */
+void handle_glyphs(uint64_t const *words, uint32_t count, bool cap_arrived,
+                   uint64_t *reply, uint32_t *reply_count)
+{
+    reply[0] = 0;
+    *reply_count = 1;
+    /* The page is picked up whatever happens next: a capability left in the
+     * scratch receive slot is the *next* transfer's problem (ipc/port.h). */
+    drop_transfer();
+    if (!cap_arrived || count < 2) {
+        return;
+    }
+    if (!aegir::ipc::take_received_cap(g_transfer_slot)) {
+        return;
+    }
+    uint32_t const asked = static_cast<uint32_t>(words[1]);
+    OpenServerFace *const face = lookup_face(words[0]);
+    if (face == nullptr || face->open.face == nullptr || asked > count - 2) {
+        drop_transfer();
+        return;
+    }
+    uint8_t *const page = static_cast<uint8_t *>(g_scratch.map(g_transfer_slot));
+    if (page == nullptr) {
+        drop_transfer();
+        return;
+    }
+
+    uint32_t const record_room =
+        (aegir::ipc::kMaxWords - 2) / aegir::font::kGlyphsWordsPerCode;
+    uint32_t const limit = asked < record_room ? asked : record_room;
+    FT_Face const ft = face->open.face;
+    size_t used = 0;
+    uint32_t answered = 0;
+    uint32_t at = 2;
+    for (uint32_t i = 0; i < limit; ++i) {
+        auto const code = static_cast<FT_ULong>(words[2 + i]);
+        int advance = 0;
+        int bearing_x = 0;
+        int bearing_y = 0;
+        int width = 0;
+        int height = 0;
+        size_t offset = 0;
+        bool present = false;
+
+        FT_UInt const index = FT_Get_Char_Index(ft, code);
+        if (index != 0 && FT_Load_Glyph(ft, index, FT_LOAD_RENDER) == 0) {
+            FT_GlyphSlot const slot = ft->glyph;
+            FT_Bitmap const &bitmap = slot->bitmap;
+            size_t const bytes = static_cast<size_t>(bitmap.width) * bitmap.rows;
+            present = true;
+            advance = static_cast<int>(slot->advance.x >> 6);
+            bearing_x = slot->bitmap_left;
+            bearing_y = slot->bitmap_top;
+            if (bytes == 0) {
+                /* A blank glyph: a space carries an advance and no ink. */
+            } else if (bytes > aegir::font::kTransferPageBytes) {
+                /* Bigger than a page: no call could carry it, so it is
+                 * answered as the advance alone rather than asked forever. */
+                width = 0;
+                height = 0;
+            } else if (bytes > aegir::font::kTransferPageBytes - used) {
+                /* The page is full: the caller asks again from the top, and
+                 * the next call's page is empty. */
+                break;
+            } else if (write_coverage(bitmap, page, used)) {
+                width = static_cast<int>(bitmap.width);
+                height = static_cast<int>(bitmap.rows);
+                offset = used;
+                used += bytes;
+            } else {
+                present = false;
+            }
+        }
+        reply[at++] = static_cast<uint64_t>(advance);
+        reply[at++] = static_cast<uint64_t>(bearing_x);
+        reply[at++] = static_cast<uint64_t>(bearing_y);
+        reply[at++] = static_cast<uint64_t>(width);
+        reply[at++] = static_cast<uint64_t>(height);
+        reply[at++] = static_cast<uint64_t>(offset);
+        reply[at++] = present ? 1 : 0;
+        ++answered;
+    }
+
+    g_scratch.unmap(g_transfer_slot);
+    drop_transfer();
+    reply[0] = 1;
+    reply[1] = answered;
+    *reply_count = at;
+}
+
 /* The service's own proof that the disk's faces load and measure, and what the
  * acceptance cues on: a face is opened by name, its metrics read, and they are
  * checked for the shape a face's metrics must have (specs/fonts.md). */
@@ -627,6 +774,26 @@ void self_check()
     line += ", height ";
     line += std::to_string(face->height);
     write(line.c_str());
+
+    /* And it draws: a glyph is rasterized here, so the cue is a box and not
+     * just a measurement (specs/fonts.md). The pixels cross a client's page in
+     * a real call; this is the rasterizer's own proof. */
+    if (FT_Load_Char(face->open.face, 'A', FT_LOAD_RENDER) == 0) {
+        FT_GlyphSlot const slot = face->open.face->glyph;
+        std::string glyph("glyph A ");
+        glyph += std::to_string(slot->bitmap.width);
+        glyph += "x";
+        glyph += std::to_string(slot->bitmap.rows);
+        glyph += " at ";
+        glyph += std::to_string(slot->bitmap_left);
+        glyph += ",";
+        glyph += std::to_string(slot->bitmap_top);
+        glyph += ", advance ";
+        glyph += std::to_string(static_cast<int>(slot->advance.x >> 6));
+        write(glyph.c_str());
+    } else {
+        write("FAIL Noto Sans 16 would not rasterize A");
+    }
 }
 
 }  // namespace
@@ -707,6 +874,13 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    /* The one slot a client's transfer page is moved into (specs/fonts.md). */
+    g_transfer_slot = g_objects.alloc_slot();
+    if (g_transfer_slot == 0) {
+        write("FAIL no CSpace slot for the transfer page");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
 
     /* What the service was born with, said once, because a face that will not
      * fit is otherwise a mystery: the untyped it retypes from, the window it
@@ -781,7 +955,9 @@ int main(int argc, char *argv[])
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+        bool cap_arrived = false;
+        uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
+                                                   &badge, &cap_arrived);
         static_cast<void>(badge);
         uint64_t reply[aegir::ipc::kMaxWords] = {};
         uint32_t reply_count = 0;
@@ -791,6 +967,8 @@ int main(int argc, char *argv[])
             handle_metrics(words, count, reply, &reply_count);
         } else if (method == aegir::font::kMethodClose) {
             handle_close(words, count, reply, &reply_count);
+        } else if (method == aegir::font::kMethodGlyphs) {
+            handle_glyphs(words, count, cap_arrived, reply, &reply_count);
         } else {
             reply[0] = 0;
             reply_count = 1;
