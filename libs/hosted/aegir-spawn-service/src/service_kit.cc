@@ -208,8 +208,10 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     /* The launch caller half (specs/launch.md): the launcher's own copy, the
      * `spawn:launch.session` auth granted it, so it can hand a nested terminal
      * the same caller half a shell gets; a terminal that owns no launcher reads
-     * the `launch.session` auth granted it instead. Optional: the boot
-     * session's terminal has neither, and its shell is granted none. */
+     * the `launch.session` auth granted it instead -- which is the boot
+     * session's terminal now that the boot session has a launcher of its own,
+     * so a Startup-Sequence line starts a command. Optional: a process with
+     * neither (a degraded boot's terminal) grants its shell none. */
     uint64_t launch_slot = 0;
     seL4_CPtr launch_holder = 0;
     if (aegir::bootstrap::capability("spawn:launch.session", 20, &launch_slot) ||

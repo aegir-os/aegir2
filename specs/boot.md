@@ -50,12 +50,14 @@ system authority and runs once, and a user's shell startup is the user's own
   wrote and nothing else. On success the script's `EndCLI >NIL:` closes the
   window and auth starts the greeter; on failure the view stands and no greeter
   runs.
-- **`C:` is bound for the boot badge; `Sys:` is waited for.** A command in the
-  sequence resolves through `C:` (`Sys:C`, `specs/dos.md`), which auth binds
-  for the boot badge -- though the boot session has no launcher yet
-  (`specs/launch.md`'s later phase, where the terminal becomes the session's
-  first launch), so today the sequence runs built-ins only, its `EndCLI >NIL:`
-  among them. `Sys:` is a filesystem's to register and comes up after
+- **The boot session has a launcher, so its sequence runs commands.** A command
+  in the sequence resolves through `C:` (`Sys:C`, `specs/dos.md`), which auth
+  binds for the boot badge, and starts through the boot session's
+  `launch.session` -- the same launcher a login's shell uses (`specs/launch.md`),
+  which auth starts beside the terminal. Its namespace copy is badged for the
+  boot badge, so the launcher and its commands resolve the boot session's `Sys:`
+  and `C:`, and its commands take system serials (a system badge has no range).
+  `Sys:` is a filesystem's to register and comes up after
   auth, so the bind is retried until the boot volume is there — the same wait
   the user database's resolve does.
 - **The firmware's boot flags are the device tree's `/chosen/bootargs`.** The
@@ -79,13 +81,16 @@ system authority and runs once, and a user's shell startup is the user's own
         wait for Sys:C, bind C: for the boot badge
         spawn the system.boot terminal (console.gui, namespace, shell kit,
             boot.status, AEGIR_BOOTARGS) with cwd Sys:
+        spawn the system.launcher that serves launch.session, and hand the
+            terminal its caller half
         receive the outcome on boot.status: 0 runs the greeter, nonzero does not
     terminal (system.boot):
         spawn the shell with argv[1] = Sys:S/Startup-Sequence, and pass
-            boot.status
+            boot.status and the launcher's caller half
     shell:
-        run the command file; on failure (or aegir.fail) ask the terminal for
-            the read-only failure view
+        run the command file, starting each command through launch.session;
+            on failure (or aegir.fail) ask the terminal for the read-only
+            failure view
         send the outcome on boot.status when its frame empties or EndCLI takes it
 
 ## What this is not yet

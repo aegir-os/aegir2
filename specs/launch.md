@@ -140,7 +140,11 @@ shape as the VFS's `may_resolve` (specs/vfs.md, specs/authority.md).
 
 The session's launcher is started with the session, by auth, which is what
 holds the session's unbadged `console.gui` and the kits today (specs/auth.md).
-The Terminal stops being a boot-started special case: it is a launching program
+The boot session gets one too, for the same reason a login's does: its
+`Sys:S/Startup-Sequence` is a sequence of commands, and a command is started by
+the service that holds the kit, so auth starts a `system.launcher` beside the
+boot terminal and hands the terminal its caller half (specs/boot.md). The
+Terminal stops being a boot-started special case: it is a launching program
 a session launches, and the boot session is simply its first launch. The
 Terminal, in turn, is a launcher client: the Shell's `Run` and command lines go
 to the same `launch.session` the icons and the Bureau will use, so a command

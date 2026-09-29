@@ -154,6 +154,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # through the __funcs_on_exit bridge and prints the second marker.
             QmpStep(r"CXX_SMOKE_OK"),
             QmpStep(r"CXX_ATEXIT_OK"),
+            # The boot session's Startup-Sequence runs a command (specs/boot.md):
+            # the boot session has a launcher now, so a sequence line starts a
+            # program like any shell's line does. `filenote` is the marker -- no
+            # other step cues on it -- and the boot's proceeding to the greeter
+            # is what proves the launch, since a line that could not start a
+            # program fails the sequence and leaves the failure view instead.
+            QmpStep(r"launcher: command started filenote"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up

@@ -121,10 +121,15 @@ AEGIR_BFS_TREE = [
          b"\n"
          b"[default]\n"
          b"# memory_log = 64M\n"),
-        # Run once by the system boot session, then closed. EndCLI >NIL: is
-        # the Amiga's quiet close; it needs the NIL: handler (specs/boot.md).
+        # Run once by the system boot session, then closed. A sequence line is a
+        # command like any other's, so it starts a program -- the point of the
+        # boot session's launcher (specs/boot.md). `filenote` is quiet and no
+        # other acceptance step cues on it, so the boot window stays hidden and
+        # the start is a clean marker. EndCLI >NIL: is the Amiga's quiet close;
+        # it needs the NIL: handler (specs/boot.md).
         ("file", "Startup-Sequence",
-         b"; Aegir system startup -- nothing to do yet.\nEndCLI >NIL:\n"),
+         b"; Aegir system startup: a command, then the quiet close.\n"
+         b"filenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
         # The interpreter's acceptance (specs/shell.md): a built-in changes the
         # shell, and the next line only runs if the script did -- the shell
         # expands the alias x to date, so date starting is the proof.
