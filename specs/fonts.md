@@ -17,7 +17,10 @@ toolkit that asks for one.
 - **Fonts live in `Sys:Fonts`, and the tree is scanned recursively.** The path
   is for a person navigating it; a face is found by its **own metadata**, not
   by where it sits -- the BDF's `FAMILY_NAME`, `WEIGHT_NAME`, `SLANT` and
-  `PIXEL_SIZE`, or an OpenType name table read through FreeType. A subfolder
+  `PIXEL_SIZE`, or a TrueType/OpenType `name` table reached through the file's
+  table directory. That name is read directly, and FreeType is kept for the
+  rendering: opening a face to ask its name reads megabytes through a VFS
+  window of 936 bytes, which was twenty seconds of a boot (below). A subfolder
   named after a family is a convenience and nothing more; moving the file
   between folders changes nothing.
 - **The toolkit's `Font` is the seam.** `BitmapFont` (a BDF/PCF parsed in the
@@ -130,27 +133,30 @@ string shape:
   the descent negative as FreeType's metrics are.
 - `close`. In: the id.
 
-**Landed.** The service scans `Sys:Fonts` recursively, opens a file through
-FreeType to read each face's own family and style -- a collection's faces one
-by one, `num_faces` apart -- and selects a request's face by family, then the
-size nearest the ask, then the style. FreeType's stream is ours, a descriptor
-that reads through the VFS. It waits for `Sys:Fonts` before it indexes, and its
-first proof is its own: it opens a face by name, reads its metrics and checks
-them for the shape metrics must have (a positive ascent, a non-positive
-descent, a line height at least the ascent -- `height` is line spacing, not
-ascent minus descent, so they are checked apart). Over a boot it indexes all
-sixteen faces the volume holds, the CJK collection's ten among them, opening
-and closing one at a time.
+**Landed.** The service scans `Sys:Fonts` recursively and reads each face's own
+family and style -- a BDF's properties, or a TrueType/OpenType `name` table
+reached through the table directory, a collection's being a directory per face
+(`apps/hosted/aegir-font/src/probe.{h,cc}`, host-tested over the real faces by
+`scripts/check_font_probe.py`). FreeType answers `open` and follows: it reads
+through a stream that is ours, a descriptor over the VFS, and it is opened only
+when a client asks for a face. A request's face is chosen by family, then the
+size nearest the ask, then the style. It waits for `Sys:Fonts` before it
+indexes, and its first proof is its own: it opens a face by name, reads its
+metrics and checks them for the shape metrics must have (a positive ascent, a
+non-positive descent, a line height at least the ascent -- `height` is line
+spacing, not ascent minus descent, so they are checked apart).
 
-What that costs is worth knowing, and it is measured: indexing opens every
-face, and a CJK face's CFF is read through a VFS window of 936 bytes, so the
-scan takes **about twenty seconds** -- `16 faces from Sys:Fonts in 19974 ms`,
-logged by the service itself with `timer.main`. That is most of the acceptance's
-margin at `BOOT_TIMEOUT=480`, where the run then depends on the console's
-timing; a probe that read only the OpenType `name` table and left FreeType the
-rendering would make the index cheap, and that is the change to make before
-this is comfortable. It is a change to the "name read through FreeType" clause
-above, which is why it is stated here and not taken.
+**What the direct read bought.** Indexing through FreeType cost twenty seconds
+of a boot (`16 faces from Sys:Fonts in 19974 ms`) because opening a CFF face
+reads megabytes through the VFS window, and it left the acceptance depending on
+the console's timing at `BOOT_TIMEOUT=480`. Reading the name directly is
+**425 ms** for the same sixteen faces. A face is still opened -- through
+FreeType -- when a client asks for it, which is where the megabytes belong.
+
+A disk cache in the fontconfig shape (a persisted index, invalidated when
+`Sys:Fonts` changes) is the next step if the tree ever grows enough to want
+one; the probe is what makes the boot cheap until then, and the index is the
+same one a cache would persist.
 
 - `glyphs`. In: the id, a list of codepoints, and a capability to the client's
   transfer page. Out: each glyph's advance, bearing and rectangle within the
@@ -180,11 +186,11 @@ service-backed client does not otherwise hold.
    default from it, and falls back to the embedded Terminus with a log when a
    family is missing. BDF/PCF only. No service, no FreeType.
 2. **Phase 2 -- FreeType and the service.** The signed-tarball pin, the build
-   script and the service have landed: `aegir-font` scans `Sys:Fonts` through
-   FreeType and serves `open`, `metrics` and `close`, all sixteen faces of the
-   volume indexed. What remains is `glyphs` and the client-owned transfer page,
-   and the client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc` face through
-   them -- the client side of the seam phase 1 left open.
+   script and the service have landed: `aegir-font` reads the volume's faces
+   directly and serves `open`, `metrics` and `close`, all sixteen indexed in
+   425 ms. What remains is `glyphs` and the client-owned transfer page, and the
+   client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc` face through them --
+   the client side of the seam phase 1 left open.
 3. **Phase 3 -- shaping and the fallback chain.** HarfBuzz, BiDi, and the Noto
    faces chosen per script.
 

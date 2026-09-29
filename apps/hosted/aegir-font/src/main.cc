@@ -42,6 +42,8 @@
 #include <aegir/nmspace.h>
 #include <sel4/sel4.h>
 
+#include "probe.h"
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
@@ -79,15 +81,13 @@ alignas(64) unsigned char g_nodes[64 * 1024];
 
 FT_Library g_library = nullptr;
 
-/* FreeType's allocator, ours so a failure can say what it could not get. A
- * face in the CJK collection is CFF-based and its table is sixteen megabytes,
- * so an out-of-memory while opening one is a number worth having rather than
- * an error code (specs/fonts.md). FreeType's free callback is not told the
- * size it is freeing, so what is counted is the requests and the largest of
- * them, not the bytes held. */
+/* FreeType's allocator, ours so a failure can say what it could not get: a
+ * face the rasterizer would not fit is otherwise an error code. What is
+ * counted is the requests that came before the failure; FreeType's free
+ * callback is not told the size it is freeing, so the bytes held are not
+ * tracked (specs/fonts.md). */
 struct FtMemory {
     uint64_t requests = 0;
-    uint64_t largest = 0;
 };
 
 FtMemory g_ft_memory;
@@ -105,9 +105,6 @@ void *ft_alloc(FT_Memory, long size) noexcept
         return nullptr;
     }
     ++g_ft_memory.requests;
-    if (static_cast<uint64_t>(size) > g_ft_memory.largest) {
-        g_ft_memory.largest = static_cast<uint64_t>(size);
-    }
     return block;
 }
 
@@ -124,9 +121,6 @@ void *ft_realloc(FT_Memory, long current, long size, void *block) noexcept
         return nullptr;
     }
     ++g_ft_memory.requests;
-    if (static_cast<uint64_t>(size) > g_ft_memory.largest) {
-        g_ft_memory.largest = static_cast<uint64_t>(size);
-    }
     return grown;
 }
 
@@ -306,47 +300,64 @@ bool is_dir(std::string const &path)
 /* Open every face of one file and record its name. The file may hold several
  * faces (a TrueType collection): `num_faces` is FreeType's count, and each is
  * opened by its own index. */
+/* The reader the probe asks for: the file's bytes at an offset. `context` is
+ * the open fd. */
+bool read_at(void *context, uint64_t offset, uint64_t length, void *out) noexcept
+{
+    int const fd = *static_cast<int *>(context);
+    if (::lseek(fd, static_cast<long>(offset), SEEK_SET) < 0) {
+        return false;
+    }
+    auto *bytes = static_cast<char *>(out);
+    uint64_t total = 0;
+    while (total < length) {
+        ssize_t const have = ::read(fd, bytes + total, length - total);
+        if (have <= 0) {
+            return false;
+        }
+        total += static_cast<uint64_t>(have);
+    }
+    return true;
+}
+
+/* Read a face's own name from the file, without opening it through FreeType:
+ * the name is a few kilobytes and a CJK face is megabytes, so opening sixteen
+ * of them to index the volume cost twenty seconds of a boot (probe.h,
+ * specs/fonts.md). FreeType is left the rendering. */
 void probe_file(std::string const &path, std::vector<IndexedFace> &faces)
 {
-    /* How many faces the file holds, then each of them one at a time: a
-     * collection's faces are megabytes each, so the count is read and the face
-     * closed before the next is opened. */
-    long count = 1;
-    {
-        OpenFace first;
-        if (!open_face(path, 0, &first, "scan")) {
-            return;
-        }
-        count = first.face->num_faces > 0 ? first.face->num_faces : 1;
+    int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        return;
     }
-    for (long index = 0; index < count; ++index) {
-        OpenFace held;
-        if (!open_face(path, index, &held, "scan")) {
-            break;
-        }
-        FT_Face face = held.face;
+    long const size = ::lseek(fd, 0, SEEK_END);
+    if (size <= 0) {
+        ::close(fd);
+        return;
+    }
+    aegir::font::Reader reader;
+    reader.context = &fd;
+    reader.size = static_cast<uint64_t>(size);
+    reader.at = read_at;
+    for (aegir::font::FaceInfo &info : aegir::font::probe_file(reader)) {
         IndexedFace record;
+        record.family = std::move(info.family);
+        record.style = std::move(info.style);
+        record.scalable = info.scalable;
+        record.pixel_size = info.pixel_size;
+        record.index = static_cast<long>(info.index);
         record.path = path;
-        record.index = index;
-        record.family = face->family_name != nullptr ? face->family_name : "";
-        record.style = face->style_name != nullptr ? face->style_name : "";
-        record.scalable = (face->face_flags & FT_FACE_FLAG_SCALABLE) != 0;
-        if (!record.scalable && face->num_fixed_sizes > 0 &&
-            face->available_sizes != nullptr) {
-            record.pixel_size = static_cast<int>(face->available_sizes[0].y_ppem >> 6);
-        }
-        if (!record.family.empty()) {
-            std::string line("face ");
-            line += std::to_string(index);
-            line += ": ";
-            line += record.family;
-            line += " (";
-            line += record.style;
-            line += ")";
-            write(line.c_str());
-            faces.push_back(std::move(record));
-        }
+        std::string line("face ");
+        line += std::to_string(record.index);
+        line += ": ";
+        line += record.family;
+        line += " (";
+        line += record.style;
+        line += ")";
+        write(line.c_str());
+        faces.push_back(std::move(record));
     }
+    ::close(fd);
 }
 
 /* Scan a root recursively. A directory that will not open is skipped, not
@@ -757,12 +768,6 @@ int main(int argc, char *argv[])
     if (g_index.empty()) {
         write("FAIL Sys:Fonts holds no face this service can read");
     }
-    std::string allocations("FreeType made ");
-    allocations += std::to_string(g_ft_memory.requests);
-    allocations += " allocations, the largest ";
-    allocations += std::to_string(g_ft_memory.largest);
-    allocations += " bytes";
-    write(allocations.c_str());
     self_check();
 
     if (log.valid()) {

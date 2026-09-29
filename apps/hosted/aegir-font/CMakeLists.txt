@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.16.0)
 project(aegir-font CXX)
 
 if(AEGIR_HOSTED_CXX)
-  add_executable(aegir-font src/main.cc)
+  add_executable(aegir-font src/main.cc src/probe.cc)
 
   target_compile_options(aegir-font PRIVATE -Wall -Wextra -Werror)
 
