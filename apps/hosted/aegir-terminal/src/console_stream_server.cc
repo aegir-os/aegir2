@@ -186,6 +186,21 @@ bool ConsoleStreamServer::has_input(uint64_t caller) const
     return s != nullptr && !s->input.empty();
 }
 
+uint32_t ConsoleStreamServer::take_status(uint64_t caller, uint64_t* reply, uint32_t capacity)
+{
+    Stream* s = find(caller);
+    if (s == nullptr || !s->finished || capacity < 1) {
+        return 0;
+    }
+    reply[0] = s->status;
+    s->finished = false;
+    s->command = false;
+    /* A line typed while the command ran is the shell's next command; the
+     * command did not read it, so hand it to the editor now. */
+    flush_input(caller);
+    return 1;
+}
+
 uint32_t ConsoleStreamServer::take_line(uint64_t caller, uint64_t* reply, uint32_t capacity)
 {
     Stream* s = find(caller);
@@ -376,7 +391,7 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
              * read is marked by a bound of zero, which a raw read never holds
              * with -- it holds only with a positive bound. */
             if (capacity >= 1 && on_hold) {
-                on_hold(caller, 0);
+                on_hold(caller, console::kStreamMethodReadLine, 0);
             }
             return 0;
         }
@@ -406,7 +421,7 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
          * terminal holds its reply until a key or the command's end
          * (specs/signal.md). */
         if (bound != 0 && !command_finished(caller) && on_hold) {
-            on_hold(caller, bound);
+            on_hold(caller, console::kStreamMethodRead, bound);
         }
         return 0;
     }
@@ -457,18 +472,21 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
     case console::kStreamMethodCommandStatus: {
         /* The shell reads a finished command's status; reading it clears the
          * finished state and ends the command bracket (keys go back to the
-         * editor). An empty answer means no command has finished. */
+         * editor). */
         Stream* s = find(caller);
-        if (s == nullptr || !s->finished || capacity < 1) {
+        if (s == nullptr || capacity < 1) {
             return 0;
         }
-        reply[0] = s->status;
-        s->finished = false;
-        s->command = false;
-        /* A line typed while the command ran is the shell's next command; the
-         * command did not read it, so hand it to the editor now. */
-        flush_input(caller);
-        return 1;
+        if (!s->finished) {
+            /* No command has finished: the shell waits for one, so hold its
+             * reply and answer it from on_wake when a command reports in
+             * (specs/signal.md). */
+            if (on_hold) {
+                on_hold(caller, console::kStreamMethodCommandStatus, 0);
+            }
+            return 0;
+        }
+        return take_status(caller, reply, capacity);
     }
     case console::kStreamMethodSize: {
         /* The text area, so a pager sizes a page to the window. */

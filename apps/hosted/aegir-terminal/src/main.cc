@@ -54,9 +54,9 @@
 struct HeldRead {
     aegir::signal::Reply_holder reply;
     uint32_t bound = 0;
-    /* A line read (the shell's) rather than a raw one: a bound of zero marks it,
-     * since a raw read holds only with a positive bound. */
-    bool line = false;
+    /* Which method is waiting: a raw read (take_read), a line (take_line), or a
+     * command's status (take_status). */
+    uint32_t method = 0;
 };
 
 static std::unordered_map<uint64_t, HeldRead> g_held_reads;
@@ -996,14 +996,17 @@ int main(int argc, char *argv[])
             if (held != g_held_reads.end()) {
                 uint64_t reply[aegir::ipc::kMaxWords];
                 uint32_t const n =
-                    held->second.line
-                        ? server.take_line(caller, reply, aegir::ipc::kMaxWords)
-                        : server.take_read(caller, held->second.bound, reply,
-                                           aegir::ipc::kMaxWords);
+                    held->second.method == aegir::console::kStreamMethodRead
+                        ? server.take_read(caller, held->second.bound, reply,
+                                           aegir::ipc::kMaxWords)
+                        : held->second.method == aegir::console::kStreamMethodReadLine
+                              ? server.take_line(caller, reply, aegir::ipc::kMaxWords)
+                              : server.take_status(caller, reply, aegir::ipc::kMaxWords);
                 if (n != 0) {
                     held->second.reply.reply(reply, n, 0);
                     g_held_reads.erase(held);
-                } else if (!held->second.line && server.command_finished(caller)) {
+                } else if (held->second.method == aegir::console::kStreamMethodRead &&
+                           server.command_finished(caller)) {
                     held->second.reply.reply(nullptr, 0, 0);
                     g_held_reads.erase(held);
                 }
@@ -1016,7 +1019,7 @@ int main(int argc, char *argv[])
         /* A read that found nothing waits: save the caller's reply capability
          * and answer it from on_wake when a key or the command's end arrives
          * (specs/signal.md). */
-        server.on_hold = [&](uint64_t caller, uint32_t bound) {
+        server.on_hold = [&](uint64_t caller, uint32_t method, uint32_t bound) {
             seL4_CPtr const slot = app.alloc_slot();
             if (slot == 0) {
                 return;
@@ -1026,7 +1029,7 @@ int main(int argc, char *argv[])
                                                      aegir::bootstrap::cnode_bits(),
                                                      slot);
             held.bound = bound;
-            held.line = bound == 0;
+            held.method = method;
             if (!held.reply.save()) {
                 return;
             }

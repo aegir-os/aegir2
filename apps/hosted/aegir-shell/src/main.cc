@@ -275,7 +275,7 @@ public:
         std::string const prompt = prompt_for(current_directory());
         if (!aegir::console::stream_open(port_, aegir::console::kStreamModeCooked,
                                          prompt.c_str(),
-                                         static_cast<uint32_t>(prompt.size()), doorbell_)) {
+                                         static_cast<uint32_t>(prompt.size()))) {
             aegir::debug_write("  aegir-shell: FAIL the stream would not open\n");
             std::exit(1);
         }
@@ -373,12 +373,10 @@ public:
     void loop()
     {
         for (;;) {
-            bool answered = false;
             if (busy_) {
                 uint64_t status = 0;
                 if (aegir::console::stream_command_status(port_, &status)) {
                     busy_ = false;
-                    answered = true;
                     last_status_ = status;
                     if (status != 0) {
                         print("return code " + std::to_string(status) + "\n");
@@ -400,7 +398,6 @@ public:
             if (!busy_) {
                 std::string const *line = frames_.next();
                 if (line != nullptr) {
-                    answered = true;
                     bool const spawned = run_line(*line);
                     /* A line that finished here is the last return code for
                      * the If condition words (WARN/ERROR/FAIL), the same as a
@@ -420,27 +417,23 @@ public:
                      * is waiting on the status (specs/shell.md). */
                     boot_done();
                     if (boot_view_) {
-                        /* The failure view is up and takes no input: idle on the
-                         * doorbell rather than read a line (specs/boot.md). */
-                        seL4_Wait(doorbell_, nullptr);
+                        /* The failure view is up and takes no input: idle on a
+                         * raw read, which paints no prompt and never comes back
+                         * (specs/boot.md, specs/signal.md). */
+                        char sink = 0;
+                        (void)aegir::console::stream_read(port_, &sink, 1);
                         continue;
                     }
                     char buffer[1024];
                     uint32_t const have =
                         aegir::console::stream_read_line(port_, buffer, sizeof(buffer));
                     if (have > 0) {
-                        answered = true;
                         (void)run_line(std::string(buffer, have));
                     }
                 }
             }
-            if (!answered) {
-                seL4_Wait(doorbell_, nullptr);
-            }
         }
     }
-
-    void set_doorbell(seL4_CPtr doorbell) { doorbell_ = doorbell; }
 
     /* The boot session signals auth when its command file is done, after which
      * auth starts the greeter (specs/shell.md, specs/boot.md). The channel is
@@ -1228,7 +1221,6 @@ private:
     }
 
     aegir::ipc::Consumer port_;
-    seL4_CPtr doorbell_ = 0;
     bool busy_ = false;
     aegir::script::Frames frames_;
     std::vector<std::pair<std::string, std::string>> aliases_;
@@ -1272,19 +1264,7 @@ int main(int argc, char **argv)
         std::_Exit(127);
     }
 
-    /* The doorbell: the terminal rings it when a line is ready or a command
-     * has finished, so the shell waits instead of polling. */
-    seL4_Error error = seL4_NoError;
-    aegir::mem::Account account{"shell", 0, 0, 0};
-    seL4_CPtr const doorbell = g_objects.alloc_object(seL4_NotificationObject,
-                                                      seL4_NotificationBits, account, &error);
-    if (doorbell == 0) {
-        aegir::debug_write("  aegir-shell: FAIL no doorbell notification\n");
-        std::_Exit(127);
-    }
-
     Shell shell(port);
-    shell.set_doorbell(doorbell);
     shell.set_boot_status();
     shell.load_environment();
     shell.start();
