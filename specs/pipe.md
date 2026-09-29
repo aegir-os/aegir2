@@ -125,10 +125,10 @@ constant.
   the second stage starting and exiting.
 - **Phase 3 — a blocking read, and many pipelines.** The first pipe service
   is non-blocking: a reader waits by yielding to the writer, and the service
-  serves one call at a time. A true block -- the reader parks on a doorbell
-  the service rings -- and a service that serves several pipes' ends at once
-  (a thread, or deferred replies, `aegir::ipc::Owner`'s open question) are
-  this phase. The protocol does not change.
+  serves one call at a time. A true block -- the reader's reply held until the
+  writer moves (specs/signal.md) -- and a service that serves several pipes'
+  ends at once (a thread, or deferred replies, `aegir::ipc::Owner`'s open
+  question) are this phase. The protocol does not change.
 
 ## What this is not
 

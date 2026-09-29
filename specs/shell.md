@@ -253,8 +253,8 @@ this arc's record of the order.
   union. The system archive ships in the image, so a session's first command
   already knows `exitcode`.
 - **Phase 6 — the shell as its own process.** Landed. `aegir-shell` opens a
-  cooked stream on the terminal's `con.stream`, passes its own doorbell on
-  `open`, and loops: `read_line`, run the built-ins, and for a command call
+  cooked stream on the terminal's `con.stream` and loops: `read_line`, which
+  waits inside its call, run the built-ins, and for a command call
   `aegir::launch` (specs/launch.md). The launcher keeps the spawn authority
   (the pool, the ASID pool and the `spawn:` ports are still auth's delegation
   to the terminal), and the launch request carries the shell's environment,

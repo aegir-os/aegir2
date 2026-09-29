@@ -216,10 +216,10 @@ in the `run` call; the terminal passes it to the spawner unchanged.
   `version` -- the set is complete. `join`'s destination is a
   keyword (`AS`, the Amiga's `TO`) because that is the Amiga's template,
   `File/M/A AS=TO/K/A`, and `FROM` repeats. `more` needed the console stream's
-  blocking read, which landed with it: the terminal grants each command a
-  `con.doorbell` and rings it, the runtime's `read` parks on it, and a line
-  typed while a command ran reaches the shell after it exits
-  (`specs/terminal.md`). The page is the stream's `size`, not a constant.
+  blocking read, which landed with the held reply (specs/signal.md): the
+  runtime's `read` waits inside its call, answered when a key arrives or the
+  command ends, and a line typed while a command ran reaches the shell after it
+  exits (`specs/terminal.md`). The page is the stream's `size`, not a constant.
 
   `filenote` is a BFS attribute, `AEGIR:COMMENT` (`specs/bfs.md`), reached
   through the POSIX xattr calls the runtime maps onto the metadata protocol;
