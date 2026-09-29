@@ -36,7 +36,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions build run run-ui envelope test clean distclean
 
 all: help
 
@@ -93,6 +93,9 @@ check-allocator: ## run aegir-mem's allocator against its host conformance cases
 
 check-fonts: ## run the toolkit's font catalog against its host conformance cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_fonts.py
+
+check-regions: ## run the heap's free-region list against its host conformance cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_regions.py
 
 build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only

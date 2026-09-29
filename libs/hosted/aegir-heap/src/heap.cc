@@ -34,9 +34,17 @@
 
 #define _GNU_SOURCE 1
 
+/* The C library's <string.h> first, before any seL4 header: seL4's RISC-V
+ * syscall header declares strcpy at file scope (seL4_DebugNameThread uses it),
+ * and a later `extern "C"` declaration of strcpy -- which is what the C
+ * library's has -- conflicts with that C++ one. With the C header first, the
+ * plain redeclaration inherits C linkage. memset lives behind it too. */
+#include <string.h>
+
 #include <aegir/heap.h>
 
 #include "files.h"
+#include "regions.h"
 #include "time.h"
 
 #include <aegir/bootstrap.h>
@@ -118,6 +126,31 @@ uintptr_t brk_ = 0;
 uintptr_t mmap_ = 0;
 bool ready_ = false;
 
+/* The regions an munmap released, awaiting the next mmap. Its nodes live in
+ * pages the heap maps below the cursor (regions.h), so growing the list never
+ * allocates through the list it is growing, and the region itself is never
+ * asked to describe itself. */
+aegir::heap::detail::Regions g_free_regions;
+
+bool map_page(uintptr_t address) noexcept;
+
+/* Another node page for the free list: one page mapped below the cursor, where
+ * every mmap comes from, so it is address space the heap already owns. */
+void *grow_node_region(void *context, unsigned *bytes) noexcept
+{
+    static_cast<void>(context);
+    if (!ready_ || mmap_ - brk_ < kPageBytes) {
+        return nullptr;
+    }
+    uintptr_t const page = mmap_ - kPageBytes;
+    if (!map_page(page)) {
+        return nullptr;
+    }
+    mmap_ = page;
+    *bytes = static_cast<unsigned>(kPageBytes);
+    return reinterpret_cast<void *>(page);
+}
+
 /* Diagnosis only, off unless the heap is built with -DAEGIR_HEAP_TRACE: every
  * mapping, release and refusal is logged, so the pairs can be replayed offline
  * (scripts/heap_trace.py). The badge tags the lines, because two processes with
@@ -161,7 +194,8 @@ void trace(char const *kind, uintptr_t first, uintptr_t second) noexcept
 
 /* Threads (musl's clone): where a new thread runs, what its objects are charged
  * to, and the ids it hands out. A library cannot know a process's VSpace on its
- * own, so init() fills this in from the window it was handed. */aegir::thread::Placement g_thread_placement{};
+ * own, so init() fills this in from the window it was handed. */
+aegir::thread::Placement g_thread_placement{};
 aegir::mem::Account g_thread_account{"thread", 0, 0, 0};
 int g_next_tid = 0;
 
@@ -360,6 +394,7 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     brk_ = base_;
     mmap_ = top;
     ready_ = true;
+    g_free_regions.set_node_source(grow_node_region, nullptr);
     trace("region", base_, limit_);
 
     /* Seed again, in case a constructor ordering surprise ran seed_musl()
@@ -480,6 +515,13 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
         return -EINVAL;
     }
     uintptr_t const needed = align_up(length);
+    if (void *released = g_free_regions.take(needed)) {
+        /* mmap promises zero-filled pages, and a released region is not: the
+         * bytes it holds are the last owner's (specs/memory.md). */
+        memset(released, 0, needed);
+        trace("mmap-reused", reinterpret_cast<uintptr_t>(released), needed);
+        return static_cast<long>(reinterpret_cast<uintptr_t>(released));
+    }
     if (needed > mmap_ - brk_) {
         trace("mmap-refused", length, 0);
         return -ENOMEM;
@@ -507,8 +549,24 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
 long sys_munmap(void *addr, size_t length) noexcept
 {
     trace("munmap", reinterpret_cast<uintptr_t>(addr), length);
-    static_cast<void>(addr);
-    static_cast<void>(length);
+    if (!ready_ || addr == nullptr || length == 0) {
+        return -EINVAL;
+    }
+    uintptr_t const base = reinterpret_cast<uintptr_t>(addr);
+    uintptr_t const bytes = align_up(length);
+    /* The heap's whole region, not the mmap cursor: the cursor only ever moves
+     * down, so a region mapped earlier sits above it and is still ours to
+     * release. The break, which grows up, never reaches a released region --
+     * it is bounded by the cursor -- so a release below it is a caller bug. */
+    if ((base & (kPageBytes - 1)) != 0 || base < base_ || base < brk_ ||
+        base + bytes > limit_) {
+        trace("munmap-refused", base, bytes);
+        return -EINVAL;
+    }
+    if (!g_free_regions.give(base, bytes)) {
+        trace("munmap-refused", base, bytes);
+        return -EINVAL;
+    }
     return 0;
 }
 

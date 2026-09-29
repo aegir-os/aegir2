@@ -145,12 +145,16 @@ The trace (`-DAEGIR_HEAP_TRACE` on `aegir-heap`, read back by
 What follows from that is where to look next: not the list's arithmetic but
 **where the list is kept and what a reused region contains**. A node written
 into a released region can be clobbered after the release, and a region handed
-back *dirty* violates `mmap`'s promise that a mapping is zero-filled. So the
-next attempt keeps the free list in memory the heap owns -- nodes chained from
-pages mapped below the cursor, the way the allocator keeps its own -- and hands
-a reused region out zeroed. Until then a service's memory ceiling is the number
-of large allocations it makes, not the pool it was given -- and the font
-service waits for it (`specs/fonts.md`).
+back *dirty* violates `mmap`'s promise that a mapping is zero-filled.
+
+**Landed.** The list now keeps its nodes in memory the heap owns -- a chain of
+pages mapped below the cursor, the way `Allocator` keeps its own node pool, so
+growing the list never allocates through the list it is growing and a released
+region is never asked to describe itself -- and a region handed back out is
+zeroed first, because that is what `mmap` promises and a released region holds
+its last owner's bytes. The split, the first fit and the neighbour merge are
+unchanged. `scripts/check_regions.py` asserts 297 cases, and the boot the fix
+was measured against is green (specs/fonts.md picks the font service back up).
 
 ## What the spawner stops doing
 
