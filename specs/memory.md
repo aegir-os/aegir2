@@ -112,15 +112,33 @@ frames, and `SYS_munmap` by **doing nothing** -- the comment says the pages
 "stay mapped ... an mmap that follows hands back over the same memory"
 (`libs/hosted/aegir-heap/src/heap.cc`). The second half is what does not hold:
 `mmap_` only ever decreases, so the memory an `munmap` returns is never handed
-back, and every large allocation musl releases leaks its frames for the life of
-the process. It is invisible while a process's large allocations are few, which
-is why it went unnoticed; a font service turning over 2.4 MB faces finds it at
-the sixth. mallocng recycles the *small* pieces itself, so what leaks is the
-individually-mapped ones, and the fix is for `munmap` to return those regions to
-a free list the next `mmap` hands back out (or to unmap the frames and free
-them to the allocator). Until then a service's memory ceiling is the number of
-large allocations it makes, not the pool it was given -- and the font service
-waits for it (`specs/fonts.md`).
+back, and a process that turns over large allocations reaches the end of its
+budget. It is invisible while those are few, which is why it went unnoticed; a
+font service opening faces finds it at the sixth.
+
+The measurements, so the next attempt starts further along:
+
+- A face in the CJK collection is CFF-based (`CFF ` is 15.4 MB of a 19.5 MB
+  `.ttc`) and opening one costs about **2.4 MB**. On the host it comes straight
+  back -- peak RSS 7.2 MB, back to 5.4 MB -- so the rasterizer is not the leak.
+- A naive fix was written and **reverted because it corrupts**. The list was
+  kept in the released regions themselves (two words, no table to allocate),
+  address-ordered with a first fit, a split and a neighbour merge, and a host
+  conformance of 65 checks passed. In the heap it did not: bounded by the
+  `mmap_` cursor it was *safe* but changed nothing (mallocng's releases are
+  mostly of older regions, which the bound refused), and bounded by the
+  region's `limit_` it accepted those older releases and **the demo and the
+  service faulted on a null access** -- a released address handed back out over
+  live memory. Which release that is, and why, is not yet understood, and
+  mallocng's `munmap` contract (`free.c`'s `nontrivial_free`, `malloc.c`'s
+  `alloc_meta`) is where the answer is.
+
+The two directions, once that is settled: record the frame capabilities so
+`munmap` can unmap them and return them to the allocator (a bookkeeping page
+per region, magic-guarded, is one shape), or find why reusing an older region
+is unsafe and restore the free list with that guard. Until then a service's
+memory ceiling is the number of large allocations it makes, not the pool it was
+given -- and the font service waits for it (`specs/fonts.md`).
 
 ## What the spawner stops doing
 
