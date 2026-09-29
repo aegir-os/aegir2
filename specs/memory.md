@@ -105,6 +105,23 @@ fixed seed:
 Nothing about `mmap`/`malloc` changes at the libc edge; only where the memory
 comes from.
 
+### What is missing: an `munmap` that gives the frames back
+
+The dispatcher answers `SYS_mmap` by walking `mmap_` down and mapping fresh
+frames, and `SYS_munmap` by **doing nothing** -- the comment says the pages
+"stay mapped ... an mmap that follows hands back over the same memory"
+(`libs/hosted/aegir-heap/src/heap.cc`). The second half is what does not hold:
+`mmap_` only ever decreases, so the memory an `munmap` returns is never handed
+back, and every large allocation musl releases leaks its frames for the life of
+the process. It is invisible while a process's large allocations are few, which
+is why it went unnoticed; a font service turning over 2.4 MB faces finds it at
+the sixth. mallocng recycles the *small* pieces itself, so what leaks is the
+individually-mapped ones, and the fix is for `munmap` to return those regions to
+a free list the next `mmap` hands back out (or to unmap the frames and free
+them to the allocator). Until then a service's memory ceiling is the number of
+large allocations it makes, not the pool it was given -- and the font service
+waits for it (`specs/fonts.md`).
+
 ## What the spawner stops doing
 
 `SpawnKit` stops carving a per-command untyped from a per-command pool. For a

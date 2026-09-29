@@ -25,12 +25,21 @@ toolkit that asks for one.
   the widgets never learn which they hold. This is what makes the mechanism
   below a decision that can be revisited without touching a single client.
 - **A font service owns FreeType, the index and the cache, and is a
-  rasterizer.** `font.main` loads faces from `Sys:Fonts` (with
-  `FT_New_Memory_Face` over bytes read through the VFS -- FreeType's own file
-  layer is never used), keeps the family index and a glyph cache, and answers
-  metrics and glyph bitmaps. It does **not** shape text: shaping is HarfBuzz's
-  and grows later behind `Font::shape`, which is the seam for it. One FreeType,
-  one face set, one glyph cache; an app holds only a thin client and its atlas.
+  rasterizer.** `font.main` loads faces from `Sys:Fonts`, keeps the family index
+  and a glyph cache, and answers metrics and glyph bitmaps. FreeType's own file
+  layer is never used: its stream is ours, a descriptor that reads through the
+  VFS on demand. That is not a detail. A face can be nineteen megabytes (the CJK
+  collection) and one VFS read carries 936 bytes
+  (`aegir::volume::kReadMax`), so a memory face is tens of thousands of round
+  trips and the whole collection resident, where a stream reads the tables a
+  face needs -- kilobytes to index it, and only what a render touches. It is the
+  closest thing to what fontconfig does on Linux, where FreeType also reads only
+  the tables it needs and the expensive scan is paid for once; there the once is
+  an on-disk cache, here it is the service's own index, which no client rescans
+  (a persistent cache is the escape hatch if `Sys:Fonts` ever gets large). The
+  service does **not** shape text: shaping is HarfBuzz's and grows later behind
+  `Font::shape`, which is the seam for it. One FreeType, one face set, one glyph
+  cache; an app holds only a thin client and its atlas.
 - **Glyphs cross on a client-owned transfer page, batched.** The client maps a
   page, hands the service a capability to it, and asks for a list of
   codepoints; the service fills the page with the glyphs and answers their
@@ -115,16 +124,42 @@ Owned by `aegir-font`, started by director before any session draws (the
 greeter is auth's and comes later). Methods, in the namespace protocol's
 string shape:
 
-- `open`. In: family, size, bold, italic. Out: a font id, or nothing when no
+- `open`. In: family, size, bold, italic. Out: 1 and a face id, or 0 when no
   face matches (the caller falls back).
-- `metrics`. In: the id. Out: ascent, descent, line gap, height.
-- `glyphs`. In: the id, a list of codepoints. Out: each glyph's advance,
-  bearing and rectangle within the transfer page, which rode with the call.
+- `metrics`. In: the id. Out: 1 and the ascent, descent, line gap and height,
+  the descent negative as FreeType's metrics are.
 - `close`. In: the id.
 
-The transfer page is a frame the client maps and hands over; the service maps
-it writable for the call, which is the one place the service touches another
-process's memory and lasts one call.
+**Written, not yet started.** The service scans `Sys:Fonts` recursively,
+opens a file through FreeType to read each face's own family and style -- a
+collection's faces one by one, `num_faces` apart -- and selects a request's
+face by family, then the size nearest the ask, then the style. FreeType's
+stream is ours, a descriptor that reads through the VFS. It waits for
+`Sys:Fonts` before it indexes, and its first proof is its own: it opens a face
+by name, reads its metrics and checks them for the shape metrics must have.
+
+It does not run yet, and the reason is not the font code. A face in the CJK
+collection is CFF-based, and opening one costs about 2.4 MB; on the host it
+comes right back, so the rasterizer is not the leak. On Aegir it does not:
+`aegir::heap`'s `sys_munmap` is a no-op (`libs/hosted/aegir-heap/src/heap.cc`,
+"SYS_munmap: the pages stay mapped"), so every large allocation mallocng
+releases leaks its frames for the life of the process. Six collection faces
+reach the service's whole budget. That is a heap bug and not a font one, and
+every hosted client carries it; the manifest entry waits for it (specs/memory.md
+records the shape).
+
+- `glyphs`. In: the id, a list of codepoints, and a capability to the client's
+  transfer page. Out: each glyph's advance, bearing and rectangle within the
+  page. **Next.**
+
+The transfer page is a frame the client maps, hands over for the call, and the
+service maps a *copy* of before writing: a frame cap pins to the VSpace it is
+first mapped into, so a page two processes read and write is two capabilities
+to one frame, which is the kernel's documented way to share a page
+(`kernel/manual/parts/vspace.tex`). The copy is unmapped when the call is
+answered, so the page is the client's alone between calls -- which is what
+makes a client-owned page cheaper than a server-owned one, which would need a
+lease or a generation to answer the same question.
 
 ### Shaping (phase 3)
 
@@ -140,9 +175,14 @@ service-backed client does not otherwise hold.
    vendored trees with the magic check; the toolkit scans it, loads the
    default from it, and falls back to the embedded Terminus with a log when a
    family is missing. BDF/PCF only. No service, no FreeType.
-2. **Phase 2 -- FreeType and the service.** The signed-tarball pin, the build
-   script, `aegir-font` and `font.main`, the client `ServerFont`, the `.ttf`/
-   `.otf`/`.ttc` faces from `Sys:Fonts`, the batched transfer page.
+2. **Phase 2 -- FreeType and the service.** The signed-tarball pin and the
+   build script have landed, and so has the service's code: it indexes
+   `Sys:Fonts` through FreeType and serves `open`, `metrics` and `close`. It
+   cannot start until the hosted heap returns what it frees (the `munmap`
+   above, specs/memory.md), because indexing the CJK collection alone needs
+   more than the leak leaves. Then `glyphs` and the client-owned transfer page,
+   and the client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc` face through
+   them.
 3. **Phase 3 -- shaping and the fallback chain.** HarfBuzz, BiDi, and the Noto
    faces chosen per script.
 
