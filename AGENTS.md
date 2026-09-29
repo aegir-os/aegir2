@@ -20,7 +20,7 @@
   used. Three others asked for care in prose: edit by unique content, read the exact lines
   first, land the smallest piece. They were correct, and the same class of mistake still
   happened seven times *after* they were written. So when a mistake repeats, change the tool
-  rather than write it down harder. For edits the mechanism is `edit_file`: it requires its
+  rather than write it down harder. For edits the mechanism is the edit tool: it requires its
   anchor to occur exactly once and refuses otherwise -- and it refuses to touch a file that
   has not been read in the session -- so a silent no-op is impossible and a multi-line
   pattern is not expressible. A script doing `str.replace`, `re.sub` or a line-number slice
@@ -73,7 +73,23 @@
   one file per step when the change is coupled, and rebuild between steps. A format
   change that spans a writer and its readers is one change to the same commit, not two.
   Assertions on an edit that did not apply are cheap; three failed anchors in one batch
-  cost a round each, and every one of them was quoting a line from memory.
+  cost a round each, and every one of them was quoting a line from memory. Two further
+  shapes of the same mistake cost another round each, and the anchor check cannot catch
+  either, because in both the anchor *matched*:
+  - **A removal's replacement is a copy, never a composition.** Deleting lines means
+    naming the block and writing back the lines around it *as the file has them*, copied
+    out of a read of them. A line typed because it "should be there" is an invented line.
+    Four landed this arc -- `boot_kit.stream = boot_terminal_untyped;`,
+    `launcher_kit.stream = launch_port;`, `kit_.stream = stream_endpoint_;`, and a stray
+    `bool busy_now = false;` -- each put in place of a line being removed, each plausible,
+    and the build caught only the first two. If the replacement is not a copy of text
+    just read, it is wrong; when the change is a pure deletion, the replacement is the
+    surrounding lines and nothing else.
+  - **One kind of call per step.** Batched calls run concurrently, so a `grep` sent
+    beside the edits it is meant to verify reads the file as it was *before* them -- it
+    reported a landed fix as missing twice this arc -- and two edits to one file in one
+    message can interleave. Read and grep in their own step, before or after; edit in
+    their own step, and one file at a time when a file takes more than one edit.
 - Architecture specific code must be abstracted to ensure we properly support multiple
   architectures (like riscv64, aarch64, x86-64, etc).
 - Any third party dependencies will be vendored - we will not commit third party sources
