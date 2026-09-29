@@ -1006,9 +1006,6 @@ int main(int argc, char *argv[])
             if (slot != 0) {
                 seL4_Signal(slot);
             }
-            if (kit && server.in_command(caller) && spawn_kit.kit().doorbell != 0) {
-                seL4_Signal(spawn_kit.kit().doorbell);
-            }
         };
         /* A read that found nothing waits: save the caller's reply capability
          * and answer it from on_wake when a key or the command's end arrives

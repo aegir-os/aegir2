@@ -281,7 +281,6 @@ private:
     std::vector<uint32_t> slot_owners_;
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
-    seL4_CPtr command_doorbell_ = 0;
     /* The slot the last received stream capability was moved into, reused per
      * request (a launcher's commands write to the caller's stream). */
     seL4_CPtr stream_slot_ = 0;

@@ -37,13 +37,6 @@ namespace aegir::console {
 constexpr char const kStreamPortName[] = "con.stream";
 constexpr uint32_t kStreamPortNameLength = sizeof(kStreamPortName) - 1;
 
-/** The notification a spawner grants a command as its console doorbell. The
- *  terminal rings it when the running command's stream has input, so the
- *  command's `read` parks on it instead of polling (specs/terminal.md). A
- *  command looks it up by name; a client with no such grant polls. */
-constexpr char const kDoorbellName[] = "con.doorbell";
-constexpr uint32_t kDoorbellNameLength = sizeof(kDoorbellName) - 1;
-
 /** Open a stream. In: the mode, then the prompt as a string (unused in raw
  *  mode). The call may carry one capability: the client's own doorbell, a
  *  notification the handler signals when there is something to read -- input

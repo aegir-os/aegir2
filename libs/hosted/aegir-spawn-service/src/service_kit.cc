@@ -179,18 +179,6 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     if (stream_endpoint_ == 0 || fault_endpoint_ == 0) {
         return false;
     }
-    /* The command doorbell (specs/terminal.md): the session's, made by auth and
-     * given as a copy to every launcher, so the stream's owner -- the terminal
-     * -- rings the one object the launcher's commands park on. It is not the
-     * launcher's to make: a command's stream and its doorbell belong together,
-     * and the process that owns the stream is the one that must ring it.
-     * Optional -- without one the commands poll. */
-    uint64_t doorbell_slot = 0;
-    if (aegir::bootstrap::capability(aegir::console::kDoorbellName,
-                                     aegir::console::kDoorbellNameLength, &doorbell_slot)) {
-        command_doorbell_ = static_cast<seL4_CPtr>(doorbell_slot);
-    }
-
     g_command_mem.adopt_nodes(g_command_nodes, sizeof(g_command_nodes));
 
     /* The command-slot pool: the reserved spawn range, one owner per live
@@ -234,7 +222,6 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     kit_.shell_nmspace = nmspace_port_;
     kit_.stream = stream_endpoint_;
     kit_.launch = stream_endpoint_;
-    kit_.doorbell = command_doorbell_;
     kit_.boot_status = boot_status_;
     ready_ = true;
     return true;

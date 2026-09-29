@@ -768,22 +768,6 @@ void start_session(uint32_t user, bool bureau) noexcept
             return;
         }
     }
-    /* The command doorbell (specs/terminal.md): one notification for the
-     * session, made here so the terminal -- which rings it -- and the launcher
-     * -- which hands a copy to every command -- hold the one object. It is not
-     * the launcher's to make: the doorbell belongs to the stream the terminal
-     * owns, and a process cannot hand out what only the stream's owner can
-     * ring. It lives with the session, so reclaim takes it back. */
-    seL4_CPtr doorbell = 0;
-    if (bureau) {
-        seL4_Error doorbell_error = seL4_NoError;
-        doorbell = g_session_mem.alloc_object(seL4_NotificationObject,
-                                              seL4_NotificationBits, session_account,
-                                              &doorbell_error);
-        if (doorbell == 0) {
-            write("      auth: the session has no command doorbell; its commands will poll\n");
-        }
-    }
     /* The bureau's kit: 1 MiB of the pool -- the page tables its slice mapping
      * is retyped from, and the heap the toolkit (its screen bar and font)
      * allocates from, where the raw backdrop it replaced allocated nothing.
@@ -951,7 +935,6 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_kit.clock = g_spawn_clock;
         terminal_kit.timer = g_spawn_timer;
         terminal_kit.nmspace = g_kit_nmspace_slot;
-        terminal_kit.doorbell = doorbell;
         aegir::spawn::Child terminal_child{};
         terminal_child.badge = terminal_badge;
         terminal_child.runtime = terminal_untyped;
@@ -1050,7 +1033,6 @@ void start_session(uint32_t user, bool bureau) noexcept
             launcher_kit.clock = g_spawn_clock;
             launcher_kit.timer = g_spawn_timer;
             launcher_kit.nmspace = g_kit_nmspace_slot;
-            launcher_kit.doorbell = doorbell;
             aegir::spawn::Child launcher_child{};
             launcher_child.badge = launcher_badge;
             launcher_child.runtime = launcher_untyped;
@@ -1152,11 +1134,6 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
      * (specs/boot.md). auth receives it and decides whether the greeter runs. */
     seL4_CPtr const boot_status = g_objects.alloc_object(
         seL4_EndpointObject, seL4_EndpointBits, account, &error);
-    /* The boot session's command doorbell (specs/terminal.md): made here like a
-     * user session's, so the boot terminal rings the one object its commands
-     * park on. Optional -- without it the commands poll. */
-    seL4_CPtr const boot_doorbell = g_objects.alloc_object(
-        seL4_NotificationObject, seL4_NotificationBits, account, &error);
     constexpr uint32_t kTerminalUntypedBits = 22;
     uint64_t terminal_untyped_physical = 0;
     seL4_CPtr const terminal_untyped = g_objects.carve_untyped(
@@ -1201,7 +1178,6 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     boot_kit.clock = g_spawn_clock;
     boot_kit.timer = g_spawn_timer;
     boot_kit.nmspace = g_kit_nmspace_slot;
-    boot_kit.doorbell = boot_doorbell;
     aegir::spawn::Child boot_child{};
     boot_child.badge = kBootBadge;
     boot_child.runtime = terminal_untyped;

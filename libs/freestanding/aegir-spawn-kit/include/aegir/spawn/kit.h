@@ -40,8 +40,8 @@ namespace aegir::spawn {
 /** What a launcher holds to start the session's programs. The unbadged
  *  members are the sources a child's own caps are minted from; the two
  *  namespace members are badged for the session (a child is handed a copy, so
- *  it keeps the session's identity). `stream`, `launch` and `doorbell` are the
- *  launcher's own endpoints, not delegates. */
+ *  it keeps the session's identity). `stream` and `launch` are the launcher's
+ *  own endpoints, not delegates. */
 struct Kit {
     /* Unbadged delegates. */
     seL4_CPtr log = 0;
@@ -56,10 +56,9 @@ struct Kit {
     seL4_CPtr nmspace = 0;
     seL4_CPtr shell_nmspace = 0;
     /* The launcher's own: the stream its commands share and its launch port
-     * (the same endpoint for now), and the doorbell a command parks on. */
+     * (the same endpoint for now). */
     seL4_CPtr stream = 0;
     seL4_CPtr launch = 0;
-    seL4_CPtr doorbell = 0;
     /* The boot session's status endpoint, when this is the boot terminal. */
     seL4_CPtr boot_status = 0;
 };
@@ -83,7 +82,7 @@ struct Child {
 };
 
 /** A command (kind 1): the launcher's stream, its runtime, the session's
- *  namespace by copy, the doorbell, its own memory copy, the clock and timer
+ *  namespace by copy, its own memory copy, the clock and timer
  *  when the launcher has them, and -- when the launcher holds one -- its own
  *  badged console.gui, so a program opens a window whenever it wants one
  *  rather than being classified before it runs (specs/launch.md). */
