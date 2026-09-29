@@ -22,6 +22,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
+#include <aegir/heap.h>
 #include <aegir/launch.h>
 #include <aegir/log.h>
 #include <aegir/mem/allocator.h>
@@ -45,10 +46,25 @@ void write(char const *text) noexcept
     aegir::debug_write("\n");
 }
 
+/* A command the launcher started: the spawn progress the acceptance cues on
+ * (specs/launch.md). Only the spawner can say it, and the launcher is the
+ * spawner now, so this is where the cue lives. */
+void write_started(char const *name)
+{
+    std::string line("command started ");
+    line.append(name);
+    write(line.c_str());
+}
+
 /* Static, like every service's: an allocator carries the tables of what it
  * handed out, and a service's stack is pages. */
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
+/* The allocator's node pool: it splits the session's untyped into the
+ * launcher's endpoints and the staging's page tables, and a service's stack is
+ * pages, so the pool is a static region rather than the heap it serves -- the
+ * heap cannot exist before the allocator that maps it. */
+alignas(64) unsigned char g_nodes[64 * 1024];
 
 /* Unpack the next string in the request, advancing `at` (the namespace
  * protocol's shape, aegir/nmspace.h). */
@@ -131,6 +147,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
         aegir::spawn::ServiceKit::Started started{};
         if (service.start_launcher(program, window, arguments, default_window(0), cwd,
                                    &started)) {
+            write("nested terminal started");
             reply[0] = 1;
         }
         *reply_count = 1;
@@ -156,6 +173,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
     if (!service.start_command(command, &started)) {
         return;
     }
+    write_started(argv_words[0].c_str());
     reply[0] = 1;
     reply[1] = started.badge;
     *reply_count = 2;
@@ -225,6 +243,13 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
     if (!service.start_pipeline(stages.data(), stage_count, context, started.data(), cap)) {
         return;
     }
+    for (uint32_t i = 0; i < stage_count; ++i) {
+        std::vector<std::string> const words =
+            aegir::spawn::ServiceKit::split_words(stages[i].line);
+        if (!words.empty()) {
+            write_started(words[0].c_str());
+        }
+    }
     reply[0] = 1;
     for (uint32_t i = 0; i < cap; ++i) {
         reply[1 + i] = started[i].badge;
@@ -241,8 +266,7 @@ void handle_release(aegir::spawn::ServiceKit &service, uint64_t const *words, ui
     if (count < 1) {
         return;
     }
-    service.release(words[0]);
-    reply[0] = 1;
+    reply[0] = static_cast<uint64_t>(service.release(words[0]));
 }
 
 }  // namespace
@@ -260,6 +284,10 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+
+    /* The allocator's node pool, before it splits anything: the pool is what
+     * lets the 22-bit untyped split all the way down to a notification. */
+    g_objects.adopt_nodes(g_nodes, sizeof(g_nodes));
 
     /* The launcher's own memory: the untyped its objects and its children's
      * staging come from, and the window it maps the staging through. */
@@ -308,6 +336,16 @@ int main(int argc, char *argv[])
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
         write("FAIL the window I was given could not be adopted");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    /* The C++ heap (specs/cxx.md): the request handler builds std::string and
+     * std::vector, and a nested terminal's image is read into one, so the
+     * launcher needs a heap of its own -- the window's tail, as every hosted
+     * process claims it. */
+    constexpr uint64_t kHeapBytes = 8ull << 20;
+    if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
+        write("FAIL the heap would not claim the window");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }

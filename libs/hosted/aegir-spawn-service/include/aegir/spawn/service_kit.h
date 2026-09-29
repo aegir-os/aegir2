@@ -187,6 +187,9 @@ public:
         Process process;
         uint64_t badge = 0;
         uint32_t owner = 0;
+        /* A `Run` (specs/shell.md): the command does not hold the caller's
+         * line, so its exit is reported apart from the line's (specs/terminal.md). */
+        bool background = false;
     };
 
     /* Start one command: mint its badge and memory owner, stage it, spawn it,
@@ -215,9 +218,10 @@ public:
                         Started *out);
 
     /* Take a command back by badge: suspend it, release its memory, return its
-     * slots (specs/memory.md Phase 5). A badge no live command carries is
-     * ignored. */
-    void release(uint64_t badge);
+     * slots (specs/memory.md Phase 5). Answers 0 for a badge no live command
+     * carries, 1 for a command that held the caller's line, 2 for a background
+     * `Run` -- so the stream that saw the exit can report it apart. */
+    int release(uint64_t badge);
     bool live() const { return !live_.empty(); }
 
     /* A launcher's commands write to a stream it was handed, not to one it

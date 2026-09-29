@@ -1041,11 +1041,31 @@ void start_session(uint32_t user, bool bureau) noexcept
             aegir::spawn::PortGrant launcher_ports[16];
             uint32_t launcher_port_count = aegir::spawn::launcher_ports(
                 launcher_kit, launcher_child, launcher_ports, 16);
-            /* The endpoint's owner half: the launcher serves on it. */
+            /* The endpoint's owner half: the launcher serves on it. An owner
+             * needs Read to receive; the caller's halves carry Write instead,
+             * which is the other side of the same endpoint. */
             launcher_ports[launcher_port_count] = {
                 aegir::launch::kPortName, aegir::launch::kPortNameLength,
                 aegir::bootstrap::kSlotFirstDeclared + launcher_port_count, launch_port,
-                seL4_CapRights_new(1, 0, 0, 1), 0, 0};
+                seL4_CapRights_new(0, 0, 1, 0), 0, 0};
+            ++launcher_port_count;
+            /* The launcher's own caller half (specs/launch.md): with it the
+             * launcher hands a nested terminal the same caller half a shell is
+             * given, so a nested terminal's commands go through the one
+             * launcher too. */
+            launcher_ports[launcher_port_count] = {
+                "spawn:launch.session", 20,
+                aegir::bootstrap::kSlotFirstDeclared + launcher_port_count, launch_port,
+                seL4_CapRights_new(1, 1, 0, 1), launcher_badge, 0};
+            ++launcher_port_count;
+            /* The launcher's own badged mem.main (specs/memory.md): its heap
+             * grows through it, as a command's does, so the session's spawning
+             * does not exhaust the fixed seed the launcher was started with
+             * (its images are megabytes, and it is the one that stages them). */
+            launcher_ports[launcher_port_count] = {
+                aegir::memory::kPortName, aegir::memory::kPortNameLength,
+                aegir::bootstrap::kSlotFirstDeclared + launcher_port_count, g_spawn_mem,
+                seL4_CapRights_new(1, 1, 0, 1), launcher_badge, 0};
             ++launcher_port_count;
             static char const kLauncherName[] = "session.launcher";
             static char const kLauncherBinary[] = "aegir-launcher";

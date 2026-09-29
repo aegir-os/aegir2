@@ -150,8 +150,15 @@ uint32_t shell_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_
               seL4_CapRights_new(1, 1, 0, 1), 0, 0, true, false);
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);
-    (void)put(out, capacity, n++, aegir::launch::kPortName, aegir::launch::kPortNameLength,
-              kit.launch, seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    /* The launcher's caller half (specs/launch.md): copied, not minted -- it is
+     * already badged, and a badged endpoint cap cannot be minted again. A
+     * process with no launcher (the boot session's terminal) is granted none,
+     * so its shell's launches fail rather than guess at a port. */
+    if (kit.launch != 0) {
+        (void)put(out, capacity, n++, aegir::launch::kPortName,
+                  aegir::launch::kPortNameLength, kit.launch,
+                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
+    }
     return n;
 }
 

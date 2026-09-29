@@ -55,8 +55,10 @@ struct Kit {
      * shell takes is moved and a moved cap cannot also be copied. */
     seL4_CPtr nmspace = 0;
     seL4_CPtr shell_nmspace = 0;
-    /* The launcher's own: the stream its commands share and its launch port
-     * (the same endpoint for now). */
+    /* The launcher's own: the stream its commands share, and the caller half of
+     * launch.session it hands a shell or a nested terminal -- copied, never
+     * minted, because it is already badged. A process that launches nothing
+     * (the boot shell's terminal) has none, and the grant is skipped. */
     seL4_CPtr stream = 0;
     seL4_CPtr launch = 0;
     /* The boot session's status endpoint, when this is the boot terminal. */

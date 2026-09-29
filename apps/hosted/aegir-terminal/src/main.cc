@@ -87,68 +87,6 @@ void write_unsigned(uint64_t value)
     aegir::debug_write_unsigned(value);
 }
 
-/* The shell's command words. The shell has already substituted variables and
- * grouped quotes, so it sends the words NUL-separated and the terminal does
- * not re-lex them: the first word is the command, the rest its arguments
- * (specs/shell.md). */
-std::vector<std::string> split_command_words(std::string const &text)
-{
-    std::vector<std::string> words;
-    if (text.empty()) {
-        return words;
-    }
-    std::size_t start = 0;
-    for (std::size_t i = 0; i <= text.size(); ++i) {
-        if (i == text.size() || text[i] == '\0') {
-            words.push_back(text.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    return words;
-}
-
-/* The packed words a string of `length` bytes occupies: the count word, then
- * the bytes (nmspace::pack_string's own arithmetic). */
-uint32_t packed_words(uint32_t length)
-{
-    return 1 + (length + 7) / 8;
-}
-
-/* Parse a `AEGIR_BADGE_RANGE=<base>,<size>` value (specs/launch.md). True and
- * fills base/size when it is well formed; a malformed value is refused rather
- * than guessed, so a terminal is never handed someone else's serials. */
-bool parse_badge_range(char const *value, uint64_t *base, uint64_t *size)
-{
-    if (value == nullptr) {
-        return false;
-    }
-    uint64_t values[2] = {0, 0};
-    uint32_t which = 0;
-    bool any_digit = false;
-    for (char const *p = value;; ++p) {
-        char const c = *p;
-        if (c >= '0' && c <= '9') {
-            values[which] = values[which] * 10 + static_cast<uint64_t>(c - '0');
-            any_digit = true;
-        } else if (c == ',' && which == 0) {
-            if (!any_digit) {
-                return false;
-            }
-            which = 1;
-            any_digit = false;
-        } else if (c == '\0') {
-            if (!any_digit || which != 1 || values[1] == 0) {
-                return false;
-            }
-            *base = values[0];
-            *size = values[1];
-            return true;
-        } else {
-            return false;
-        }
-    }
-}
-
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -305,475 +243,6 @@ int main(int argc, char *argv[])
         return !image.empty();
     };
 
-    uint64_t command_serial = 0;
-    uint64_t pipeline_serial = 0;
-    /* One owner per live command; the slot pool's 0 means free, so owners run
-     * from 1. */
-    uint64_t owner_serial = 0;
-    /* This terminal's own badge (specs/shell.md's interim, now landed): a
-     * session terminal is a user process, so its commands' memory is owned by
-     * a user badge and limits apply (specs/memory.md). The boot terminal is a
-     * system process, so its commands stay unlimited like it is. */
-    uint64_t own_badge = 0;
-    if (!aegir::bootstrap::badge(&own_badge)) {
-        own_badge = 0;
-    }
-    /* The badge range this terminal hands out (specs/launch.md): auth sets it
-     * for a session terminal, a launcher sets it for a nested one. Commands
-     * and nested terminals draw serials from it, so no two of a session's
-     * processes share one; a system terminal has none and its commands keep
-     * the small system badges. A quarter is reserved for nested terminals. */
-    uint64_t badge_base = 0;
-    uint64_t badge_size = 0;
-    bool const have_badge_range =
-        parse_badge_range(aegir::environment::getenv("AEGIR_BADGE_RANGE"), &badge_base,
-                          &badge_size);
-    uint64_t next_command = badge_base;
-    uint64_t child_count = 0;
-    uint64_t const child_size = badge_size / 4;
-    /* The live commands: each owns a pool slot range (`owner`) and its memory
-     * chunks (`badge`), and a background command is just another of them
-     * (specs/memory.md Phase 5). A foreground line's records are reaped when
-     * the shell takes its status; a background command's when its exit
-     * arrives. */
-    struct LiveCommand {
-        aegir::spawn::Process process;
-        uint64_t badge = 0;
-        uint32_t owner = 0;
-        bool foreground = false;
-    };
-    std::vector<LiveCommand> live;
-    uint32_t foreground_outstanding = 0;
-    auto spawn_one = [&](std::string const &name, std::vector<std::string> const &args,
-                         std::string const &cwd,
-                         std::vector<char const *> const &environment,
-                         std::string const &std_in, std::string const &std_out,
-                         bool background, uint32_t stack_pages) -> bool {
-        if (!kit) {
-            return false;
-        }
-        /* The image comes from C: -- the alias of Sys:C, the command set
-         * (specs/dos.md) -- through the namespace, not from a mapped initrd.
-         * The spawner copies the image into the child before it returns, so
-         * the one buffer is reused for the next stage. */
-        if (!load_image("C:" + name)) {
-            write("  terminal: no image for the command ");
-            write(name.c_str());
-            write("\n");
-            return false;
-        }
-
-        /* The command's id: its stream badge (a key inside the terminal, not a
-         * kernel badge) and its memory owner. A session terminal mints a user
-         * badge from the range it was granted (specs/launch.md), so the memory
-         * service resolves the command's class and limits (specs/memory.md,
-         * specs/limits.md) and a nested terminal's commands never share a
-         * serial with its parent's; a system terminal's commands stay system
-         * badges, unlimited. A range with none left refuses rather than
-         * reusing a serial. */
-        uint64_t command_badge = 0;
-        if (aegir::ipc::is_user_badge(own_badge)) {
-            uint64_t const floor = have_badge_range
-                                       ? badge_base + badge_size - 3 * child_size
-                                       : 0;
-            if (have_badge_range && next_command >= floor) {
-                write("  terminal: FAIL the badge range is spent\n");
-                return false;
-            }
-            command_badge = aegir::ipc::make_user_badge(
-                aegir::ipc::user_index(own_badge), next_command++);
-        } else {
-            command_badge = 0x1000 + command_serial++;
-        }
-        uint32_t const owner = static_cast<uint32_t>(++owner_serial);
-        if (!spawn_kit.begin(owner)) {
-            write("  terminal: FAIL the command's staging would not begin\n");
-            return false;
-        }
-        if (!spawn_kit.begin_command(command_badge)) {
-            write("  terminal: FAIL no memory copy for the command\n");
-            spawn_kit.abandon(command_badge, owner);
-            return false;
-        }
-        aegir::mem::Account account{"command", 0, 0, 0};
-        seL4_Error untyped_error = seL4_NoError;
-        uint64_t command_untyped_physical = 0;
-        seL4_CPtr const command_untyped = spawn_kit.memory().carve_untyped(
-            aegir::spawn::ServiceKit::kCommandUntypedBits, account, &untyped_error,
-            &command_untyped_physical);
-        if (command_untyped == 0) {
-            write("  terminal: FAIL no untyped for the command's runtime\n");
-            spawn_kit.abandon(command_badge, owner);
-            return false;
-        }
-
-        /* `Request.arguments` is what follows argv[0]: the spawner writes
-         * `request.name` as argv[0] itself (specs/environment.md). */
-        std::vector<char const *> argument_pointers;
-        for (std::string const &arg : args) {
-            argument_pointers.push_back(arg.c_str());
-        }
-        static std::string const kAccountText = "command";
-        /* The command's kit, from the one first-class builder (specs/launch.md):
-         * the launcher's stream, its runtime, the session's namespace by copy,
-         * its own memory copy, its own console (so it opens a
-         * window when it wants one), and the clock and timer. */
-        aegir::spawn::Child child{};
-        child.badge = command_badge;
-        child.runtime = command_untyped;
-        child.runtime_bits = aegir::spawn::ServiceKit::kCommandUntypedBits;
-        child.mem = spawn_kit.command_mem();
-        child.stream_badge = kShellStream;
-        aegir::spawn::PortGrant ports[8];
-        uint32_t const port_count =
-            aegir::spawn::command_ports(spawn_kit.kit(), child, ports, 8);
-        aegir::spawn::Request request{};
-        request.name = name.c_str();
-        request.name_length = static_cast<uint32_t>(name.size());
-        request.binary_image = image.data();
-        request.binary_image_bytes = image.size();
-        request.account = kAccountText.c_str();
-        request.account_length = static_cast<uint32_t>(kAccountText.size());
-        request.arguments = argument_pointers.data();
-        request.argument_count = static_cast<uint32_t>(args.size());
-        /* Inheritance: the command gets the environment the shell sent in its
-         * `run`, so `Set` reaches it (specs/environment.md). */
-        request.environment = environment.empty() ? nullptr : environment.data();
-        request.environment_count = static_cast<uint32_t>(environment.size());
-        request.cwd = cwd.c_str();
-        request.cwd_length = static_cast<uint32_t>(cwd.size());
-        /* The command's redirection (specs/shell.md): the shell parsed it off
-         * the line, and the runtime routes the command's fd 0/1 to these paths
-         * instead of the console stream. Empty is the console. */
-        request.std_in = std_in.empty() ? nullptr : std_in.c_str();
-        request.std_in_length = static_cast<uint32_t>(std_in.size());
-        request.std_out = std_out.empty() ? nullptr : std_out.c_str();
-        request.std_out_length = static_cast<uint32_t>(std_out.size());
-        request.priority = seL4_MaxPrio - 2;
-        request.ports = ports;
-        request.port_count = port_count;
-        request.fault_endpoint = spawn_kit.fault_endpoint();
-        request.badge = command_badge;
-        request.give_vspace = true;
-        request.untyped_physical = command_untyped_physical;
-        request.untyped_bits = aegir::spawn::ServiceKit::kCommandUntypedBits;
-        /* The launch request's stack ask (specs/launch.md): zero is the
-         * spawner's default, which is what a command gets unless the launcher
-         * was asked for more. */
-        request.stack_pages = stack_pages;
-
-        aegir::spawn::Process process{};
-        if (!spawn_kit.spawner().spawn(request, account, process)) {
-            write("  terminal: FAIL spawning a command: ");
-            write(spawn_kit.spawner().problem());
-            write("\n");
-            spawn_kit.abandon(command_badge, owner);
-            return false;
-        }
-        /* The staging is done with: the command is alive, its capabilities are
-         * in the pool owned by `owner`, and the window is free for the next
-         * command -- which is what lets a background `Run` and the foreground
-         * line coexist (specs/memory.md Phase 5). */
-        spawn_kit.end_staging();
-        live.push_back(LiveCommand{process, command_badge, owner, !background});
-        if (!background) {
-            ++foreground_outstanding;
-        }
-        write("  terminal: command started ");
-        write(name.c_str());
-        write("\n");
-        return true;
-    };
-    /* Reap every foreground command of the line -- the shell has taken its
-     * status, or the line failed to start: suspend, release memory, return
-     * slots. Background commands are not touched (specs/shell.md's `Run`). */
-    auto finish_foreground = [&]() {
-        std::vector<LiveCommand> keep;
-        for (LiveCommand &record : live) {
-            if (record.foreground) {
-                spawn_kit.reap(record.process.tcb, record.badge, record.owner);
-            } else {
-                keep.push_back(record);
-            }
-        }
-        live.swap(keep);
-        foreground_outstanding = 0;
-        if (live.empty()) {
-            spawn_kit.rewind_staging();
-        }
-    };
-    /* A background command has exited: reap it and forget it, without a
-     * `return code` line (specs/shell.md). */
-    auto reap_background = [&](uint64_t badge) -> bool {
-        for (std::size_t i = 0; i < live.size(); ++i) {
-            if (live[i].badge == badge && !live[i].foreground) {
-                spawn_kit.reap(live[i].process.tcb, live[i].badge, live[i].owner);
-                live.erase(live.begin() + static_cast<std::ptrdiff_t>(i));
-                if (live.empty()) {
-                    spawn_kit.rewind_staging();
-                }
-                return true;
-            }
-        }
-        return false;
-    };
-    /* One pipeline stage on the wire: its command line and its own
-     * redirections, empty for the console or the connecting pipe. */
-    struct Stage {
-        std::string line;
-        std::string std_in;
-        std::string std_out;
-    };
-    /* Unpack the next string in the call, advancing `at`. */
-    auto read_string = [](uint64_t const *words, uint32_t count, uint32_t &at,
-                          std::string &out) -> bool {
-        char const *text = nullptr;
-        uint32_t length = 0;
-        if (!aegir::nmspace::unpack_string(words + at, count - at,
-                                           aegir::console::kStreamBytesMax, &text,
-                                           &length)) {
-            return false;
-        }
-        out.assign(text, length);
-        at += packed_words(length);
-        return true;
-    };
-    /* The pipe that connects two stages: named by the terminal, so a pipeline
-     * never depends on a name the user chose (specs/pipe.md). */
-    auto pipe_path = [](uint64_t serial, uint32_t index) {
-        return std::string("PIPE:p") + std::to_string(serial) + "_" +
-               std::to_string(index);
-    };
-    /* Spawn a line's stages, connecting them with pipes the terminal names
-     * (specs/pipe.md); `run` is a one-stage pipeline, and a `Run` is one
-     * background stage (specs/shell.md). Each command is staged and bracketed
-     * on its own, so commands are independent owners. False when a stage would
-     * not start (the line's commands are reclaimed). */
-    auto spawn_stages = [&](std::vector<Stage> const &stages, std::string const &cwd,
-                            std::string const &environment, bool background,
-                            uint32_t stack_pages) -> bool {
-        /* The environment rides as NUL-separated NAME=VALUE; the spawner wants
-         * pointers, so they point into a copy. */
-        std::vector<char> environment_buffer(environment.begin(), environment.end());
-        std::vector<char const *> environment_pointers;
-        std::size_t index = 0;
-        while (index < environment_buffer.size()) {
-            environment_pointers.push_back(&environment_buffer[index]);
-            while (index < environment_buffer.size() &&
-                   environment_buffer[index] != '\0') {
-                ++index;
-            }
-            ++index;
-        }
-        /* A background `Run` does not take the console: the shell keeps its
-         * line editor while the command runs. A command that reads the console
-         * is the foreground line's (specs/shell.md). */
-        if (!background) {
-            server.begin_command(kShellStream);
-        }
-        uint64_t const pipe_serial = ++pipeline_serial;
-        uint32_t const stage_count = static_cast<uint32_t>(stages.size());
-        bool ok = true;
-        for (uint32_t i = 0; ok && i < stage_count; ++i) {
-            std::vector<std::string> const words_of_line =
-                split_command_words(stages[i].line);
-            if (words_of_line.empty()) {
-                ok = false;
-                break;
-            }
-            /* The ends keep the stage's own redirection; the middle is the
-             * pipe that connects it to its neighbour. */
-            std::string const std_in =
-                i == 0 ? stages[i].std_in : pipe_path(pipe_serial, i - 1);
-            std::string const std_out =
-                i + 1 == stage_count ? stages[i].std_out : pipe_path(pipe_serial, i);
-            ok = spawn_one(words_of_line[0],
-                           std::vector<std::string>(words_of_line.begin() + 1,
-                                                    words_of_line.end()),
-                           cwd, environment_pointers, std_in, std_out, background,
-                           stack_pages);
-        }
-        if (!ok && !background) {
-            finish_foreground();
-            server.clear_command(kShellStream);
-        }
-        return ok;
-    };
-
-    /* A untyped of the asked-for size from the memory service, on demand
-     * (specs/memory.md): there is no pool to size, and the session's release
-     * takes it back. Shared by a nested terminal (its runtime and shell pool)
-     * and a windowed program (its runtime). */
-    auto alloc_child_mem = [&](uint32_t bits) -> seL4_CPtr {
-        aegir::ipc::Consumer const service(spawn_kit.command_mem());
-        uint64_t const request = bits;
-        uint64_t answer[1] = {};
-        bool cap_arrived = false;
-        aegir::ipc::WordsReply const reply = service.call_transfer(
-            aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
-        if (reply.error != 0 || !cap_arrived) {
-            return 0;
-        }
-        seL4_CPtr const slot = spawn_kit.memory().alloc_slot();
-        if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
-            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                              aegir::bootstrap::kSlotReceiveCap,
-                              aegir::bootstrap::cnode_bits());
-            return 0;
-        }
-        return slot;
-    };
-    /* Reserve the next peer badge out of the range's nested-terminal quarter
-     * (specs/launch.md): a nested terminal and a windowed program both draw
-     * here, so no two of a session's peers share a serial. False when the
-     * quarter is spent. */
-    auto reserve_child = [&](uint64_t *base, uint64_t *badge) -> bool {
-        if (child_size == 0 || child_count >= 3) {
-            return false;
-        }
-        *base = badge_base + badge_size - (child_count + 1) * child_size;
-        ++child_count;
-        *badge = aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge), *base);
-        return true;
-    };
-
-    /* Launch a nested terminal (specs/launch.md's kind 3): a peer of this
-     * terminal, with its own console window, its own shell and its own badge
-     * range. The launcher hands it the kit it needs -- the unbadged console,
-     * a runtime untyped and a shell pool drawn from mem.main, and the
-     * namespace, memory, log, ASID pool, clock and timer to stand up. False
-     * when the kit is absent or the range is spent. */
-    auto spawn_launched = [&](std::string const &program, std::string const &window,
-                              std::vector<std::string> const &arguments) -> bool {
-        if (!kit || !spawn_kit.can_launch() || !have_badge_range) {
-            write("  terminal: no launcher kit for a nested terminal\n");
-            return false;
-        }
-        uint64_t child_base = 0;
-        uint64_t child_badge = 0;
-        if (!reserve_child(&child_base, &child_badge)) {
-            write("  terminal: the badge range is spent\n");
-            return false;
-        }
-        uint64_t const window_index = child_count - 1;
-        constexpr uint32_t kChildUntypedBits = 22;
-        if (!load_image("Initrd:" + program)) {
-            write("  terminal: no image for the nested terminal\n");
-            return false;
-        }
-        uint32_t const owner = static_cast<uint32_t>(++owner_serial);
-        /* The staging and the child's runtime are charged to this terminal's
-         * own badge, not the child's: the session's reclaim releases the
-         * terminal's badge (specs/auth.md), so a nested terminal's memory comes
-         * back at logout even though a nested terminal is never reaped. */
-        if (!spawn_kit.begin(owner) || !spawn_kit.begin_command(own_badge)) {
-            write("  terminal: FAIL the nested terminal's staging would not begin\n");
-            spawn_kit.abandon(own_badge, owner);
-            return false;
-        }
-        seL4_CPtr const child_runtime = alloc_child_mem(kChildUntypedBits);
-        seL4_CPtr const child_shell_pool = alloc_child_mem(kChildUntypedBits);
-        if (child_runtime == 0 || child_shell_pool == 0) {
-            write("  terminal: FAIL no memory for the nested terminal\n");
-            spawn_kit.abandon(own_badge, owner);
-            return false;
-        }
-        /* The nested terminal's kit, from the one first-class builder
-         * (specs/launch.md): its own console and badge, its runtime, and the
-         * unbadged sources it hands its own commands. It is not a launcher of
-         * launchers -- depth one -- so it gets no spawn:console.gui yet. */
-        aegir::spawn::Child child{};
-        child.badge = child_badge;
-        child.runtime = child_runtime;
-        child.runtime_bits = kChildUntypedBits;
-        child.shell_pool = child_shell_pool;
-        child.shell_pool_bits = kChildUntypedBits;
-        child.launcher = false;
-        aegir::spawn::PortGrant ports[16];
-        uint32_t const port_count =
-            aegir::spawn::launcher_ports(spawn_kit.kit(), child, ports, 16);
-        /* The child's environment: this terminal's, less the launcher entries it
-         * must not inherit, plus its own range and its window. */
-        std::vector<std::string> environment;
-        for (char const *const *e = aegir::environment::environ(); *e != nullptr; ++e) {
-            std::string const entry(*e);
-            if (entry.rfind("AEGIR_BADGE_RANGE=", 0) == 0 ||
-                entry.rfind("AEGIR_WINDOW=", 0) == 0 || entry.rfind("AEGIR_FROM=", 0) == 0) {
-                continue;
-            }
-            environment.push_back(entry);
-        }
-        environment.push_back("AEGIR_BADGE_RANGE=" + std::to_string(child_base + 1) + "," +
-                              std::to_string(child_size - 1));
-        if (!window.empty()) {
-            environment.push_back("AEGIR_WINDOW=" + window);
-        } else {
-            int const x = kWindowX + 24 * static_cast<int>(window_index);
-            int const y = kWindowY + 24 * static_cast<int>(window_index);
-            environment.push_back("AEGIR_WINDOW=CON:" + std::to_string(x) + "/" +
-                                  std::to_string(y) + "/" + std::to_string(kWindowWidth) +
-                                  "/" + std::to_string(kWindowHeight) + "/Terminal");
-        }
-        std::vector<char const *> environment_pointers;
-        environment_pointers.reserve(environment.size());
-        for (std::string const &entry : environment) {
-            environment_pointers.push_back(entry.c_str());
-        }
-        /* The words after argv[0] (a `NEWSHELL FROM <file>`): the child
-         * terminal's own arguments, which it hands on to the shell it starts
-         * (specs/launch.md). */
-        std::vector<char const *> argument_pointers;
-        argument_pointers.reserve(arguments.size());
-        for (std::string const &entry : arguments) {
-            argument_pointers.push_back(entry.c_str());
-        }
-        std::error_code cwd_error;
-        std::string const cwd = std::filesystem::current_path(cwd_error).string();
-        static char const kName[] = "session.terminal";
-        static char const kAccount[] = "terminal";
-        aegir::spawn::Request request{};
-        request.name = kName;
-        request.name_length = sizeof(kName) - 1;
-        request.binary_image = image.data();
-        request.binary_image_bytes = image.size();
-        request.account = kAccount;
-        request.account_length = sizeof(kAccount) - 1;
-        request.cwd = cwd.c_str();
-        request.cwd_length = static_cast<uint32_t>(cwd.size());
-        request.environment = environment_pointers.data();
-        request.environment_count = static_cast<uint32_t>(environment_pointers.size());
-        request.arguments = argument_pointers.empty() ? nullptr : argument_pointers.data();
-        request.argument_count = static_cast<uint32_t>(argument_pointers.size());
-        request.priority = seL4_MaxPrio - 2;
-        request.ports = ports;
-        request.port_count = port_count;
-        request.fault_endpoint = spawn_kit.fault_endpoint();
-        request.badge = child_badge;
-        request.give_vspace = true;
-        /* A peer is a launcher too, so it gets the larger CSpace (`
-         * specs/authority.md`): nesting works at any depth. */
-        request.cnode_bits = 13;
-        request.untyped_physical = 0;
-        request.untyped_bits = kChildUntypedBits;
-        aegir::mem::Account account{"terminal", 0, 0, 0};
-        aegir::spawn::Process process{};
-        if (!spawn_kit.spawner().spawn(request, account, process)) {
-            write("  terminal: FAIL spawning a nested terminal: ");
-            write(spawn_kit.spawner().problem());
-            char const *const detail = spawn_kit.spawner().detail();
-            if (detail != nullptr && detail[0] != '\0') {
-                write(" (");
-                write(detail);
-                write(")");
-            }
-            write("\n");
-            spawn_kit.abandon(own_badge, owner);
-            return false;
-        }
-        spawn_kit.end_staging();
-        write("  terminal: nested terminal started\n");
-        return true;
-    };
 
     /* The shell: its own process, spawned once from its own pool. Its
      * con.stream copy is badged with the shell's stream, and it opens the
@@ -782,13 +251,32 @@ int main(int argc, char *argv[])
      * the spawn (the acceptance types at it before the demo's zoom). */
     if (kit) {
         app.serve(aegir::ipc::Owner(spawn_kit.kit().stream));
+        /* The session's launcher (specs/launch.md): the shell launches through
+         * it now, and a command's exit is reported on this stream, so the
+         * terminal asks the launcher to take the finished command back --
+         * suspend it, release its memory, return its slots (specs/memory.md).
+         * The terminal learns the stream's state from the stream, not from who
+         * spawned whom. */
+        aegir::ipc::Consumer const launcher = aegir::ipc::Consumer::find(
+            aegir::launch::kPortName, aegir::launch::kPortNameLength);
+        auto release_command = [&](uint64_t command_badge) -> uint64_t {
+            if (!launcher.valid() || command_badge == 0) {
+                return 0;
+            }
+            uint64_t words[1] = {command_badge};
+            uint64_t answer[1] = {};
+            aegir::ipc::WordsReply const reply = launcher.call_words(
+                aegir::launch::kMethodRelease, words, 1, answer, 1);
+            return reply.error == 0 && reply.count >= 1 ? answer[0] : 0;
+        };
         app.on_call = [&](uint32_t method, uint64_t const *words, uint32_t count,
                           seL4_Word badge, bool cap_arrived, uint64_t *reply,
                           uint32_t capacity) -> uint32_t {
-            /* The shell asks the launcher to start a program: the launch
-             * request (specs/launch.md). The terminal holds the spawn
-             * authority, so it starts the command here, attached to the
-             * shell's stream -- the caller's badge. */
+            /* The terminal serves the stream now, not the spawn: the shell
+             * launches through the session's launcher (specs/launch.md), and
+             * what the terminal still owns is the stream -- the line editor,
+             * the input queue, and the finished command's report, which
+             * arrives here because the command's stream is this one. */
             if (method == aegir::console::kStreamMethodBootFail) {
                 if (capacity < 1) {
                     return 0;
@@ -803,131 +291,24 @@ int main(int argc, char *argv[])
                 reply[0] = 1;
                 return 1;
             }
-            if (method == aegir::launch::kMethodSpawn) {
-                /* A launch (specs/launch.md): the kind, the flags, the
-                 * program's argv, the caller's context (its directory, its
-                 * environment and its path), the command's redirected input
-                 * and output, a window specification and the stack ask. The
-                 * launcher fulfills a command and a launching peer; a kind it
-                 * does not know refuses rather than guessing. A command shares
-                 * the launcher's console stream, which is the caller's badge,
-                 * and carries its own console.gui so it opens a window when it
-                 * wants one. */
-                if (capacity < 1 || count < 2) {
-                    return 0;
-                }
-                uint32_t at = 0;
-                uint64_t const kind = words[at++];
-                uint64_t const flags = words[at++];
-                Stage stage;
-                std::string cwd;
-                std::string environment;
-                std::string path;
-                std::string window;
-                if (!read_string(words, count, at, stage.line) ||
-                    !read_string(words, count, at, cwd) ||
-                    !read_string(words, count, at, environment) ||
-                    !read_string(words, count, at, path) ||
-                    !read_string(words, count, at, stage.std_in) ||
-                    !read_string(words, count, at, stage.std_out) ||
-                    !read_string(words, count, at, window) || at >= count) {
-                    return 0;
-                }
-                uint64_t const stack_pages = words[at++];
-                (void)path;
-                if (kind == aegir::launch::kKindLaunching) {
-                    /* A kind-3 peer (specs/launch.md): the launcher resolves the
-                     * program from argv[0] and hands it its kit -- its own
-                     * console window, a badge range, its own shell. The words
-                     * after argv[0] (a `NEWSHELL FROM <file>`) travel as the
-                     * child's own arguments. */
-                    std::vector<std::string> const words_of_argv =
-                        split_command_words(stage.line);
-                    std::string const program = words_of_argv.empty()
-                                                    ? std::string("aegir-terminal")
-                                                    : words_of_argv[0];
-                    std::vector<std::string> const arguments(
-                        words_of_argv.begin() + (words_of_argv.empty() ? 0 : 1),
-                        words_of_argv.end());
-                    reply[0] = spawn_launched(program, window, arguments) ? 1 : 0;
-                    return 1;
-                }
-                if (kind != aegir::launch::kKindCommand) {
-                    reply[0] = 0;
-                    return 1;
-                }
-                std::vector<Stage> stages;
-                stages.push_back(std::move(stage));
-                bool const background = (flags & aegir::launch::kFlagBackground) != 0;
-                reply[0] = spawn_stages(stages, cwd, environment, background,
-                                        static_cast<uint32_t>(stack_pages))
-                               ? 1
-                               : 0;
-                return 1;
-            }
-            if (method == aegir::launch::kMethodPipeline) {
-                /* A pipeline (specs/pipe.md) launched through the same port: a
-                 * stage count, each stage's argv and its own redirections,
-                 * then the context once. The terminal names the pipes between
-                 * the stages. */
-                if (capacity < 1 || count < 3) {
-                    return 0;
-                }
-                uint32_t at = 0;
-                uint64_t const kind = words[at++];
-                uint64_t const flags = words[at++];
-                uint32_t const stage_count = static_cast<uint32_t>(words[at++]);
-                if (stage_count == 0 || stage_count > count) {
-                    reply[0] = 0;
-                    return 1;
-                }
-                std::vector<Stage> stages;
-                for (uint32_t i = 0; i < stage_count; ++i) {
-                    Stage stage;
-                    if (!read_string(words, count, at, stage.line) ||
-                        !read_string(words, count, at, stage.std_in) ||
-                        !read_string(words, count, at, stage.std_out)) {
-                        return 0;
-                    }
-                    stages.push_back(std::move(stage));
-                }
-                std::string cwd;
-                std::string environment;
-                std::string path;
-                if (!read_string(words, count, at, cwd) ||
-                    !read_string(words, count, at, environment) ||
-                    !read_string(words, count, at, path) || at >= count) {
-                    return 0;
-                }
-                uint64_t const stack_pages = words[at++];
-                (void)flags;
-                (void)path;
-                if (kind != aegir::launch::kKindCommand) {
-                    reply[0] = 0;
-                    return 1;
-                }
-                reply[0] = spawn_stages(stages, cwd, environment, false,
-                                        static_cast<uint32_t>(stack_pages))
-                               ? 1
-                               : 0;
-                return 1;
-            }
-
             if (method == aegir::console::kStreamMethodCommandStatus) {
-                /* A pipeline is done only when every stage has reported; until
-                 * then there is no status to take and the stream's bracket
-                 * must not close (specs/pipe.md). */
-                if (foreground_outstanding != 0) {
+                /* The shell reads the line's status, and it is due only when
+                 * every stage has reported (specs/pipe.md, specs/signal.md):
+                 * while the line still runs there is no status to take, and
+                 * the shell polls for it -- a held status would sit in the one
+                 * slot the command's own held `read` is using, because both
+                 * belong to the same stream. Once the line is done, the
+                 * status is the last stage's, and the cue says which. */
+                if (server.in_command(badge) && !server.line_complete(badge)) {
                     return 0;
                 }
+                g_hold_requested = false;
                 uint32_t const answer =
                     server.handle(method, words, count, badge, reply, capacity);
+                if (g_hold_requested) {
+                    return app.kHoldReply;
+                }
                 if (answer == 1) {
-                    /* The shell has taken the status, so the line's commands
-                     * are done: stop and reclaim them, so the pool goes back
-                     * whole. The status is the last stage's. A pipeline's line
-                     * is distinct so a script can wait for the whole pipeline
-                     * rather than its first stage (specs/pipe.md). */
                     write("  terminal: command exited ");
                     write_unsigned(reply[0]);
                     write("\n");
@@ -936,30 +317,31 @@ int main(int argc, char *argv[])
                         write_unsigned(reply[0]);
                         write("\n");
                     }
-                    finish_foreground();
                 }
                 return answer;
             }
 
             if (method == aegir::console::kStreamMethodExit) {
-                /* A command's exit carries its own badge (specs/shell.md), so
-                 * the terminal can tell a background `Run`'s exit from the
-                 * foreground line's. A background command is reaped here,
-                 * without touching the stream's status; a foreground one's
-                 * status stays for `command_status`. */
+                /* The launcher is the one that knows the command: its answer to
+                 * the release says whether the command held the caller's line
+                 * or was a background `Run`, and 0 for a badge it does not hold
+                 * -- a *shell* closing its own con.stream, whose exit report
+                 * rides the same path (the runtime sends one when the process
+                 * ends, specs/shell.md). A shell's exit is nothing to report,
+                 * and a background exit leaves the stream's status untouched
+                 * (specs/signal.md, specs/terminal.md). */
                 uint64_t const exit_badge = count >= 2 ? words[1] : 0;
-                if (exit_badge != 0 && reap_background(exit_badge)) {
+                uint64_t const released = release_command(exit_badge);
+                if (released == 0) {
+                    return 0;
+                }
+                if (released == 2) {
                     write("  terminal: background command exited ");
                     write_unsigned(count >= 1 ? words[0] : 0);
                     write("\n");
                     return 0;
                 }
-                uint32_t const exit_answer =
-                    server.handle(method, words, count, badge, reply, capacity);
-                if (foreground_outstanding > 0) {
-                    --foreground_outstanding;
-                }
-                return exit_answer;
+                return server.handle(method, words, count, badge, reply, capacity);
             }
 
             g_hold_requested = false;

@@ -400,9 +400,9 @@ void check_stream_input()
                 "input: Backspace as BS, then the two-byte character");
 }
 
-/* The doorbell: the handler raises on_wake when the stream has something to
- * read, and the terminal signals the recorded slot (specs/terminal.md). */
-void check_stream_doorbell()
+/* The wake: the handler raises on_wake when the stream has something to read,
+ * and the terminal answers the reply it held (specs/signal.md). */
+void check_stream_wake()
 {
     TerminalBuffer b(20, 5);
     ConsoleStreamServer server(b);
@@ -420,24 +420,19 @@ void check_stream_doorbell()
     static_cast<void>(server.handle(aegir::console::kStreamMethodOpen, open_words, open_count,
                                     11, reply, 1));
 
-    expect_int(static_cast<int>(server.doorbell(11)), 0, "doorbell: none until it is set");
-    server.set_doorbell(11, 0x1234);
-    expect_int(static_cast<int>(server.doorbell(11)), 0x1234, "doorbell: the slot is recorded");
-    expect_int(static_cast<int>(server.doorbell(99)), 0, "doorbell: an unknown stream has none");
-
     server.begin(11);
     server.queue_input(11, "x");
-    expect_int(wakes, 1, "doorbell: queued input wakes the client");
-    expect_int(static_cast<int>(last_caller), 11, "doorbell: the wake names the stream");
+    expect_int(wakes, 1, "wake: queued input wakes the client");
+    expect_int(static_cast<int>(last_caller), 11, "wake: the wake names the stream");
 
     LineEditor* const editor = server.editor(11);
     editor->on_key(char_key(U'y'));
     editor->on_key(code_key(KeyCode::ENTER));
-    expect_int(wakes, 2, "doorbell: a finished line wakes the client");
+    expect_int(wakes, 2, "wake: a finished line wakes the client");
 
     uint64_t exit_words[1] = {3};
     server.handle(aegir::console::kStreamMethodExit, exit_words, 1, 11, reply, 1);
-    expect_int(wakes, 3, "doorbell: a command's exit wakes the client");
+    expect_int(wakes, 3, "wake: a command's exit wakes the client");
 }
 
 /* The shell's own calls: the prompt it redraws after a directory change, and
@@ -472,6 +467,23 @@ void check_stream_command()
     expect_int(answer == 1 && reply[0] == 7 ? 1 : 0, 1, "command: the status is the command's");
     answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
     expect_int(static_cast<int>(answer), 0, "command: reading the status clears it");
+
+    /* A two-stage line (specs/pipe.md): the shell announces the count with
+     * `line`, and the status waits for every stage -- not the first. */
+    uint64_t line_words[1] = {2};
+    static_cast<void>(
+        server.handle(aegir::console::kStreamMethodLine, line_words, 1, 13, reply, 1));
+    expect_int(server.line_complete(13) ? 1 : 0, 0, "command: a two-stage line is not done yet");
+    uint64_t stage_words[1] = {4};
+    static_cast<void>(
+        server.handle(aegir::console::kStreamMethodExit, stage_words, 1, 13, reply, 1));
+    answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
+    expect_int(static_cast<int>(answer), 0, "command: one stage does not finish the line");
+    static_cast<void>(
+        server.handle(aegir::console::kStreamMethodExit, stage_words, 1, 13, reply, 1));
+    answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
+    expect_int(answer == 1 && reply[0] == 4 ? 1 : 0, 1,
+               "command: the status is due once the whole line reported");
 }
 
 } // namespace
@@ -494,7 +506,7 @@ int main()
     check_line_editor();
     check_stream_wire();
     check_stream_input();
-    check_stream_doorbell();
+    check_stream_wake();
     check_stream_command();
 
     std::printf("terminal: %d checks, %d failures\n", g_checks, g_failures);

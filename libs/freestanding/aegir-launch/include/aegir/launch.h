@@ -101,7 +101,9 @@ constexpr uint32_t kMethodPipeline = 21;
  *
  *    badge         one word: the command's badge, as its exit reported it
  *
- *  Answer: one word, 1 released and 0 for a badge no live command carries. */
+ *  Answer: one word -- 0 for a badge no live command carries, 1 for a command
+ *  that held the caller's line, 2 for a background `Run` -- so the stream can
+ *  report the exit as the line's own or apart from it (specs/terminal.md). */
 constexpr uint32_t kMethodRelease = 22;
 
 }  // namespace aegir::launch

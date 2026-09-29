@@ -1135,11 +1135,11 @@ private:
          * terminal starts at once, connected by pipes it names (specs/pipe.md).
          * A one-stage line is the ordinary path below. */
         std::vector<std::vector<std::string>> const stages = split_pipeline(words);
-        /* The line and its stage count, announced before anything is launched
-         * (specs/signal.md): the shell owns the line, so the shell is what the
-         * terminal's completion cue is read from. */
-        aegir::console::stream_line(port_, static_cast<uint32_t>(stages.size()));
+        /* A pipeline is a line with more than one stage: announce its stage
+         * count before anything is launched (specs/signal.md), so the terminal
+         * knows what the completion cue is read from. */
         if (stages.size() > 1) {
+            aegir::console::stream_line(port_, static_cast<uint32_t>(stages.size()));
             return run_pipeline(stages);
         }
         Redirect const redirect = split_redirect(stages[0]);
@@ -1205,6 +1205,12 @@ private:
             payload.push_back('\0');
             payload += arg;
         }
+        /* A foreground command: announce the one-stage line (specs/signal.md),
+         * so the terminal knows a command is about to run on the stream -- it
+         * routes keys to the command's input queue while the bracket holds --
+         * and when the completion cue is due. A `Run` does not announce: it
+         * keeps the shell's line editor while it runs. */
+        aegir::console::stream_line(port_, 1);
         if (aegir::launch::command(
                 payload.data(), static_cast<uint32_t>(payload.size()),
                 redirect.in_path.data(),

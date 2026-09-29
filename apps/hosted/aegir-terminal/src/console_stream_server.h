@@ -102,8 +102,11 @@ public:
     bool command_finished(uint64_t caller) const;
 
     /* The stage count the shell announced for the line running now
-     * (specs/signal.md): one for an ordinary line, more for a pipeline. */
+     * (specs/signal.md): one for an ordinary line, more for a pipeline -- and
+     * whether every one of those stages has reported its exit yet. The status
+     * is due only when the whole line is done (specs/pipe.md). */
     uint32_t stages(uint64_t caller) const;
+    bool line_complete(uint64_t caller) const;
     uint64_t exit_status(uint64_t caller) const;
     void clear_command(uint64_t caller);
 
@@ -118,6 +121,9 @@ private:
         bool command = false;
         bool finished = false;
         uint32_t stages = 1;
+        /* How many of the line's foreground stages have reported an exit
+         * (specs/signal.md): the status waits for the whole line. */
+        uint32_t done = 0;
         uint64_t status = 0;
     };
 

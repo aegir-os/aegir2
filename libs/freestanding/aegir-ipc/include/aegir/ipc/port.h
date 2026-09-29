@@ -143,6 +143,11 @@ public:
 
     bool valid() const noexcept { return capability_ != 0; }
 
+    /** The capability itself, for a client that must hand it to another service:
+     *  a launch carries the caller's own con.stream to the launcher
+     *  (specs/launch.md), and no other call needs to name it. */
+    seL4_CPtr capability() const noexcept { return capability_; }
+
     /** Ask the owner something and wait for the answer. `reply.error` is non-zero
      *  when the kernel refused the call -- a missing right, or an owner that is
      *  not there -- which is a fact the caller has to be able to see rather than

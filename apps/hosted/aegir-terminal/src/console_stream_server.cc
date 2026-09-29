@@ -224,6 +224,12 @@ uint32_t ConsoleStreamServer::stages(uint64_t caller) const
     return s != nullptr ? s->stages : 1;
 }
 
+bool ConsoleStreamServer::line_complete(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s != nullptr && s->done >= s->stages;
+}
+
 uint32_t ConsoleStreamServer::take_read(uint64_t caller, uint32_t bound, uint64_t* reply,
                                         uint32_t capacity)
 {
@@ -366,6 +372,11 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         if (s == nullptr || s->editor == nullptr) {
             return 0;
         }
+        /* The shell is at the prompt, so any command bracket is over: a line
+         * that announced itself but never started a command (a launch that
+         * failed) must not leave keys queuing for a reader that is not there
+         * (specs/signal.md). */
+        s->command = false;
         if (!s->ready && !s->editor->editing()) {
             /* begin, not editor->begin(): the public one damages the view, so
              * the prompt is painted the moment it is written. */
@@ -422,26 +433,40 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         return 0;
     }
     case console::kStreamMethodExit: {
-        /* A command said it is done. The stream stays open -- it is the
-         * shell's -- and the status waits for the terminal to finalize. */
+        /* A command of the line said it is done. The stream stays open -- it is
+         * the shell's -- and the status waits for the terminal to finalize.
+         * Only when every stage the shell announced has reported is the line's
+         * status due (specs/pipe.md); the terminal routes a background
+         * command's exit away from here, so this counts the foreground line's
+         * own stages. */
         Stream* s = find(caller);
         if (s != nullptr) {
             if (count >= 1) {
                 s->status = words[0];
             }
-            s->finished = true;
-            if (on_wake) {
-                on_wake(caller);
+            if (s->done < s->stages) {
+                ++s->done;
+            }
+            if (s->done >= s->stages) {
+                s->finished = true;
+                if (on_wake) {
+                    on_wake(caller);
+                }
             }
         }
         return 0;
     }
     case console::kStreamMethodLine: {
         /* The shell's line, announced (specs/signal.md): how many stages it
-         * has, for the cue the terminal reports when it ends. */
+         * has -- for the cue the terminal reports when it ends, and for the
+         * status, which waits for the whole line -- and the command bracket,
+         * which routes keys to the command's input queue rather than the idle
+         * editor while it runs. */
         Stream* s = find(caller);
         if (s != nullptr && count >= 1 && words[0] >= 1) {
             s->stages = static_cast<uint32_t>(words[0]);
+            s->done = 0;
+            s->command = true;
         }
         return 0;
     }

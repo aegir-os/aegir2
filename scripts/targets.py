@@ -485,11 +485,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # argument is both the .KEY name {text} and the positional $1, so
             # the command starting proves the two bound to Execute's argument.
             QmpStep(
-                r"terminal: command started aegir-print",
+                r"launcher: command started aegir-print",
                 press="execute Sys:S/Params-Test named-arg\n",
             ),
             QmpStep(
-                r"terminal: command started aegir-echo",
+                r"launcher: command started aegir-echo",
                 # Interpreter-Test last: its file's built-in Alias makes x stand
                 # for date, and date starting is the proof the interpreter ran
                 # the file in order.
@@ -503,19 +503,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the Skip all chose the path they should.
             QmpStep(r"terminal: command exited 42"),
             QmpStep(
-                r"terminal: command started date",
+                r"launcher: command started date",
                 events=TERMINAL_CLICK,
                 # wait is a program too (C:WAIT), and with no period it waits a
                 # second (specs/dos.md).
                 press="wait\n",
             ),
             QmpStep(
-                r"terminal: command started wait",
+                r"launcher: command started wait",
                 events=TERMINAL_CLICK,
                 press="makedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
-                r"terminal: command started makedir",
+                r"launcher: command started makedir",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
@@ -523,7 +523,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="copy Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT Home:DosTest\n",
             ),
             QmpStep(
-                r"terminal: command started copy",
+                r"launcher: command started copy",
                 events=TERMINAL_CLICK,
                 # `l` is an alias the system's Shell-Startup set (specs/shell.md,
                 # Sys:S/Shell-Startup = `alias l list`), so list starting proves
@@ -531,7 +531,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="l Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
-                r"terminal: command started list",
+                r"launcher: command started list",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
@@ -544,7 +544,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="dir Home:DosTest S: >Home:DosTest/DIR.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started dir",
+                r"launcher: command started dir",
                 events=TERMINAL_CLICK,
                 # Sys:S holds the startup scripts (specs/boot.md); reading one
                 # proves the system's script directory resolves and reads. The
@@ -554,14 +554,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                       "Home:DosTest/DIR.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started type",
+                r"launcher: command started type",
                 events=TERMINAL_CLICK,
                 # `>NIL:` is the Amiga's quiet output (specs/boot.md): search
                 # writes its matches to NIL: and they disappear.
                 press="search Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT disk >NIL:\n",
             ),
             QmpStep(
-                r"terminal: command started search",
+                r"launcher: command started search",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
@@ -569,18 +569,18 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="sort Sys:AEGIR.TXT Home:DosTest/SORTED.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started sort",
+                r"launcher: command started sort",
                 events=TERMINAL_CLICK,
                 press="join Sys:AEGIR.TXT Sys:AEGIR.TXT AS Home:DosTest/JOINED.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started join",
+                r"launcher: command started join",
                 events=TERMINAL_CLICK,
                 # LONG.TXT is longer than a window, so more pages it and waits.
                 press="more Sys:LONG.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started more",
+                r"launcher: command started more",
                 events=TERMINAL_CLICK,
                 # q is the key more waits for; the rename line queued behind it
                 # runs once more exits -- the terminal hands it to the shell.
@@ -589,7 +589,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="qrename Home:DosTest/AEGIR.TXT Home:DosTest/MOVED.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started rename",
+                r"launcher: command started rename",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 # more's first page reached the grid.
@@ -600,19 +600,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="protect Home:DosTest/MOVED.TXT rwe\n",
             ),
             QmpStep(
-                r"terminal: command started protect",
+                r"launcher: command started protect",
                 events=TERMINAL_CLICK,
                 # info lists the volumes the session may resolve.
                 press="info\n",
             ),
             QmpStep(
-                r"terminal: command started info",
+                r"launcher: command started info",
                 events=TERMINAL_CLICK,
                 # which resolves a command name through the C: assignment.
                 press="which copy\n",
             ),
             QmpStep(
-                r"terminal: command started which",
+                r"launcher: command started which",
                 events=TERMINAL_CLICK,
                 # assign binds an alias in the session's namespace; the version
                 # line reads a file through it, so the binding is exercised by
@@ -620,12 +620,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="assign FOOVOL Sys:\n",
             ),
             QmpStep(
-                r"terminal: command started assign",
+                r"launcher: command started assign",
                 events=TERMINAL_CLICK,
                 press="version FOOVOL:VER.TXT\n",
             ),
             QmpStep(
-                r"terminal: command started version",
+                r"launcher: command started version",
                 events=TERMINAL_CLICK,
                 # `Run` starts a background command (specs/shell.md): the shell
                 # does not wait, so the next step cues on the background
@@ -651,7 +651,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="delete Home:DosTest Home:DosTest2 ALL\n",
             ),
             QmpStep(
-                r"terminal: command started delete",
+                r"launcher: command started delete",
                 events=TERMINAL_CLICK,
                 # filenote on FAT: the interchange volume is public, and FAT has
                 # no attributes, so the command names the filesystem and fails
@@ -687,7 +687,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="newshell WINDOW=CON:32/32/560/360/Nested FROM Sys:S/Nested-Startup\n",
             ),
             QmpStep(r"terminal: nested window"),
-            QmpStep(r"terminal: nested terminal started"),
+            QmpStep(r"launcher: nested terminal started"),
             QmpStep(r"terminal: nested ready"),
             # The FROM startup ran: the nested shell executed aegir-echo 77,
             # whose exit code is unique to this run (specs/launch.md).
@@ -713,7 +713,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # race a press still owed to the shell.
                 press="view Sys:AEGIR.TXT\n",
             ),
-            QmpStep(r"terminal: command started view"),
+            QmpStep(r"launcher: command started view"),
             # The viewer is up: its window is its own default (no launcher
             # AEGIR_WINDOW was set), its content is the Workbench grey, and the
             # file it read through the namespace is drawn as text in its grid.

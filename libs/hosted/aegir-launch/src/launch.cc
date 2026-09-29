@@ -13,6 +13,7 @@
 
 #include <aegir/launch_client.h>
 
+#include <aegir/console_stream.h>
 #include <aegir/environment.h>
 #include <aegir/nmspace.h>
 
@@ -102,8 +103,16 @@ extern "C" int aegir_launch_request(uint32_t method, uint64_t const *words,
     if (!port.valid()) {
         return -1;
     }
+    /* The caller's own con.stream, when it has one: the request's one
+     * capability, which the launcher hands the command so its output lands
+     * where the caller's does (specs/launch.md, specs/signal.md). A caller
+     * with no stream sends none, and the launcher gives the command a view of
+     * its own. */
+    aegir::ipc::Consumer const stream = aegir::ipc::Consumer::find(
+        aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength);
     uint64_t answer[1] = {};
-    aegir::ipc::WordsReply const reply = port.call_words(method, words, count, answer, 1);
+    aegir::ipc::WordsReply const reply = port.call_transfer(
+        method, words, count, stream.capability(), answer, 1, nullptr);
     if (reply.error != 0 || reply.count != 1) {
         return -1;
     }

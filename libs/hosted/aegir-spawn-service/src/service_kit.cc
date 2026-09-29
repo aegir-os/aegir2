@@ -205,6 +205,19 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
         spawn_console_gui = static_cast<seL4_CPtr>(spawn_gui_slot);
     }
 
+    /* The launch caller half (specs/launch.md): the launcher's own copy, the
+     * `spawn:launch.session` auth granted it, so it can hand a nested terminal
+     * the same caller half a shell gets; a terminal that owns no launcher reads
+     * the `launch.session` auth granted it instead. Optional: the boot
+     * session's terminal has neither, and its shell is granted none. */
+    uint64_t launch_slot = 0;
+    seL4_CPtr launch_holder = 0;
+    if (aegir::bootstrap::capability("spawn:launch.session", 20, &launch_slot) ||
+        aegir::bootstrap::capability(aegir::launch::kPortName,
+                                     aegir::launch::kPortNameLength, &launch_slot)) {
+        launch_holder = static_cast<seL4_CPtr>(launch_slot);
+    }
+
     /* The spawner insists on an Initrd it never reads when an image is given:
      * the shell hands the one command's bytes as `binary_image`
      * (specs/shell.md). */
@@ -221,7 +234,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     kit_.nmspace = command_nmspace_port_;
     kit_.shell_nmspace = nmspace_port_;
     kit_.stream = stream_endpoint_;
-    kit_.launch = stream_endpoint_;
+    kit_.launch = launch_holder;
     kit_.boot_status = boot_status_;
     ready_ = true;
     return true;

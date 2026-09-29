@@ -380,7 +380,7 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * which is what lets a background `Run` and the foreground line coexist
      * (specs/memory.md Phase 5). */
     end_staging();
-    live_.push_back(Started{process, badge, owner});
+    live_.push_back(Started{process, badge, owner, command.background});
     if (out != nullptr) {
         *out = live_.back();
     }
@@ -480,7 +480,17 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     child.shell_pool_bits = kChildUntypedBits;
     child.launcher = false;
     aegir::spawn::PortGrant ports[16];
-    uint32_t const port_count = aegir::spawn::launcher_ports(kit_, child, ports, 16);
+    uint32_t port_count = aegir::spawn::launcher_ports(kit_, child, ports, 16);
+    /* The nested terminal launches programs too (specs/launch.md): it is a
+     * launcher client, so it is handed the same caller half a shell gets,
+     * copied -- it is already badged. A launcher with no caller half of its own
+     * hands none, and the child's shell launches nothing. */
+    if (kit_.launch != 0 && port_count < 16) {
+        ports[port_count] = {aegir::launch::kPortName, aegir::launch::kPortNameLength,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count, kit_.launch,
+                             seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true};
+        ++port_count;
+    }
 
     /* The child's environment: this process's, less the launcher entries it
      * must not inherit, plus its own range and its window. */
@@ -554,6 +564,13 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
         return false;
     }
     end_staging();
+    /* The nested terminal's staging was charged to this process's own badge (a
+     * nested terminal is never reaped), so its frames stay mapped for the
+     * session: move the staging mark past them, or a later command's staging
+     * would map onto the same addresses and the kernel would refuse it
+     * (specs/memory.md Phase 5). */
+    scratch_mark_ = scratch_->next();
+    staged_since_rewind_ = true;
     /* A nested terminal is never reaped by badge -- it lives as long as the
      * session, and the session's reclaim takes its memory (specs/auth.md) -- so
      * it is not recorded as live. */
@@ -573,19 +590,21 @@ ServiceKit::Started *ServiceKit::find_live(uint64_t badge)
     return nullptr;
 }
 
-void ServiceKit::release(uint64_t badge)
+int ServiceKit::release(uint64_t badge)
 {
     for (std::size_t i = 0; i < live_.size(); ++i) {
         if (live_[i].badge != badge) {
             continue;
         }
+        bool const background = live_[i].background;
         reap(live_[i].process.tcb, live_[i].badge, live_[i].owner);
         live_.erase(live_.begin() + static_cast<std::ptrdiff_t>(i));
         if (live_.empty()) {
             rewind_staging();
         }
-        return;
+        return background ? 2 : 1;
     }
+    return 0;
 }
 
 }  // namespace aegir::spawn
