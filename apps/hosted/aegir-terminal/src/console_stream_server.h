@@ -77,6 +77,10 @@ public:
      * to hand over, in which case the reply stays held. */
     uint32_t take_read(uint64_t caller, uint32_t bound, uint64_t* reply, uint32_t capacity);
 
+    /* Answer a line read that was held (specs/signal.md): the finished line
+     * packed as the wire packs it, or zero when the editor still has none. */
+    uint32_t take_line(uint64_t caller, uint64_t* reply, uint32_t capacity);
+
     /* The bracket a command runs in (specs/shell.md's Phase 4, design A): the
      * command inherits the shell's stream, and while it runs the terminal
      * routes keys to the input queue rather than the idle editor. */

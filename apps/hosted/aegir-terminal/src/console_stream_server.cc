@@ -186,6 +186,23 @@ bool ConsoleStreamServer::has_input(uint64_t caller) const
     return s != nullptr && !s->input.empty();
 }
 
+uint32_t ConsoleStreamServer::take_line(uint64_t caller, uint64_t* reply, uint32_t capacity)
+{
+    Stream* s = find(caller);
+    if (s == nullptr || !s->ready || capacity < 1) {
+        return 0;
+    }
+    std::string const line = utf32_to_utf8(s->pending);
+    s->pending.clear();
+    s->ready = false;
+    if (line.size() > console::kStreamBytesMax) {
+        return 0;
+    }
+    return aegir::nmspace::pack_string(reply, line.data(),
+                                       static_cast<uint32_t>(line.size()),
+                                       console::kStreamBytesMax);
+}
+
 uint32_t ConsoleStreamServer::stages(uint64_t caller) const
 {
     Stream const* s = find(caller);
@@ -354,16 +371,16 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
             begin(caller);
         }
         if (!s->ready) {
+            /* The line is the shell's and there is none yet: hold its reply and
+             * answer it when the editor has one (specs/signal.md). A held line
+             * read is marked by a bound of zero, which a raw read never holds
+             * with -- it holds only with a positive bound. */
+            if (capacity >= 1 && on_hold) {
+                on_hold(caller, 0);
+            }
             return 0;
         }
-        std::string const line = utf32_to_utf8(s->pending);
-        s->pending.clear();
-        s->ready = false;
-        if (line.size() > console::kStreamBytesMax) {
-            return 0;
-        }
-        return nmspace::pack_string(reply, line.data(), static_cast<uint32_t>(line.size()),
-                                    console::kStreamBytesMax);
+        return take_line(caller, reply, capacity);
     }
     case console::kStreamMethodRead: {
         /* Answer with whatever input is queued. The reply's own room bounds the

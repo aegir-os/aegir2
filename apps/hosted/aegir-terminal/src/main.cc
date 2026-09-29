@@ -54,6 +54,9 @@
 struct HeldRead {
     aegir::signal::Reply_holder reply;
     uint32_t bound = 0;
+    /* A line read (the shell's) rather than a raw one: a bound of zero marks it,
+     * since a raw read holds only with a positive bound. */
+    bool line = false;
 };
 
 static std::unordered_map<uint64_t, HeldRead> g_held_reads;
@@ -992,12 +995,15 @@ int main(int argc, char *argv[])
             auto held = g_held_reads.find(caller);
             if (held != g_held_reads.end()) {
                 uint64_t reply[aegir::ipc::kMaxWords];
-                uint32_t const n = server.take_read(caller, held->second.bound, reply,
-                                                    aegir::ipc::kMaxWords);
+                uint32_t const n =
+                    held->second.line
+                        ? server.take_line(caller, reply, aegir::ipc::kMaxWords)
+                        : server.take_read(caller, held->second.bound, reply,
+                                           aegir::ipc::kMaxWords);
                 if (n != 0) {
                     held->second.reply.reply(reply, n, 0);
                     g_held_reads.erase(held);
-                } else if (server.command_finished(caller)) {
+                } else if (!held->second.line && server.command_finished(caller)) {
                     held->second.reply.reply(nullptr, 0, 0);
                     g_held_reads.erase(held);
                 }
@@ -1020,6 +1026,7 @@ int main(int argc, char *argv[])
                                                      aegir::bootstrap::cnode_bits(),
                                                      slot);
             held.bound = bound;
+            held.line = bound == 0;
             if (!held.reply.save()) {
                 return;
             }
