@@ -161,6 +161,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # is what proves the launch, since a line that could not start a
             # program fails the sequence and leaves the failure view instead.
             QmpStep(r"launcher: command started filenote"),
+            # The toolkit's font comes off the system volume (specs/fonts.md):
+            # `Sys:Fonts` is scanned and the face it names is read from it, not
+            # the byte array compiled into the library. The path in the cue is
+            # the proof it crossed the namespace.
+            QmpStep(r"trinket: font Terminus 12 from Sys:Fonts/Terminus/ter-u12n.bdf"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up

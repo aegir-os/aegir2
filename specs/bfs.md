@@ -253,7 +253,7 @@ The B+tree header (`bplustree_header`) is at the start of the stream:
 | Field | Notes |
 | ----- | ----- |
 | `magic` | `0x69f6c2e8` |
-| `node_size` | `BPLUSTREE_NODE_SIZE`, hard-coded 1024 whatever the block size; a directory's stream is two nodes |
+| `node_size` | `BPLUSTREE_NODE_SIZE`, 1024 in the format. **Our builder writes 2048** until it can write a multi-level index: a volume's name index is one node, and the faces `Sys:Fonts` carries overflow 1024 (specs/fonts.md). Our own reader takes the size from this header, so the volumes we build read; a Haiku mount of one is the follow-up that multi-level index buys, not a promise today |
 | `max_number_of_levels` | a bound, for validation |
 | `data_type` | the key type (below) |
 | `root_node_pointer` | the root node's block, or `-1` when empty |

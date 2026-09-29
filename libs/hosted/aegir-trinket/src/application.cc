@@ -6,6 +6,7 @@
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/fonts.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/translation.h>
 #include <aegir/trinket/window.h>
@@ -326,9 +327,15 @@ void Application::set_default_font(std::unique_ptr<Font> font) {
 
 Font* Application::default_font() {
     if (!default_font_) {
-        default_font_ = load_builtin_font("Terminus", 12);
+        default_font_ = load_font(font_family_, font_size_);
         if (!default_font_) {
-            aegir::debug_write("Warning: Could not load default font\n");
+            /* A usable fallback and a line saying so: a blank window is the
+             * worst way to report a missing font (specs/fonts.md). */
+            std::string line("  trinket: no font ");
+            line.append(font_family_);
+            line += " in Sys:Fonts, using the built-in\n";
+            aegir::debug_write(line.c_str());
+            default_font_ = load_builtin_font("Terminus", 12);
         }
     }
     return default_font_.get();
@@ -395,9 +402,34 @@ uint64_t Application::claim_backing(uint64_t bytes) {    if (slice_ == nullptr |
 }
 
 std::unique_ptr<Font> Application::load_font(std::string_view family, int size_pts) {
-    // Load from resources/fonts/
-    // For now, use builtin
-    return load_builtin_font(family, size_pts);
+    /* The system volume's faces, scanned once (specs/fonts.md). A scan that
+     * finds nothing -- no Sys:Fonts, or none this phase can read -- leaves the
+     * caller to fall back. */
+    if (!catalog_scanned_) {
+        catalog_scanned_ = true;
+        catalog_.scan("Sys:Fonts");
+    }
+    FontFace const* const face = catalog_.find(family, size_pts, false, false);
+    if (face == nullptr) {
+        return nullptr;
+    }
+    std::string const bytes = read_file(face->path);
+    if (bytes.empty()) {
+        return nullptr;
+    }
+    auto font = std::make_unique<BitmapFont>();
+    if (!font->load_bdf(bytes.data(), bytes.size())) {
+        return nullptr;
+    }
+    std::string line("  trinket: font ");
+    line.append(family);
+    line.push_back(' ');
+    line += std::to_string(size_pts);
+    line += " from ";
+    line += face->path;
+    line.push_back('\n');
+    aegir::debug_write(line.c_str());
+    return font;
 }
 
 std::unique_ptr<Font> Application::load_builtin_font(std::string_view name, int size_pts) {

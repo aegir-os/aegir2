@@ -186,6 +186,77 @@ BFS_TREE = [
 ]
 
 
+# The faces `Sys:Fonts` ships (specs/fonts.md). The source is the vendored tree
+# (specs/third_party.md); the destination is where a person finds it, because
+# the catalog indexes a face by its *own* name and not by its path. Latin,
+# Greek and Cyrillic, monospace, Arabic, Hebrew, and one CJK collection -- the
+# CJK faces are large as a class and the volume carries one; a built subset is
+# the escape hatch if its size ever bites.
+ROOT = Path(__file__).resolve().parent.parent
+FONT_SOURCES = [
+    ("projects/terminus-font/ter-u12n.bdf", "Fonts/Terminus/ter-u12n.bdf"),
+    ("projects/terminus-font/ter-u12b.bdf", "Fonts/Terminus/ter-u12b.bdf"),
+    ("projects/noto-fonts/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+     "Fonts/Noto/NotoSans-Regular.ttf"),
+    ("projects/noto-fonts/hinted/ttf/NotoSansMono/NotoSansMono-Regular.ttf",
+     "Fonts/Noto/NotoSansMono-Regular.ttf"),
+    ("projects/noto-fonts/hinted/ttf/NotoSansArabic/NotoSansArabic-Regular.ttf",
+     "Fonts/Noto/NotoSansArabic-Regular.ttf"),
+    ("projects/noto-fonts/hinted/ttf/NotoSansHebrew/NotoSansHebrew-Regular.ttf",
+     "Fonts/Noto/NotoSansHebrew-Regular.ttf"),
+    ("projects/noto-fonts/archive/unhinted/NotoSansCJK/NotoSansCJK-Regular.ttc",
+     "Fonts/Noto/NotoSansCJK-Regular.ttc"),
+]
+
+
+def check_font(path: str, data: bytes) -> None:
+    """A font file's magic must match its extension (specs/fonts.md).
+
+    The vendored `noto-fonts` tree holds an HTML page where a CJK collection
+    should be, so a fetch can land something that is not a font at all. Packing
+    it would embed the bytes and fail at the first *load*, far from the cause;
+    this is where the bad path is still obvious."""
+    suffix = path.rsplit(".", 1)[-1].lower()
+    magics = {
+        "bdf": (b"STARTFONT",),
+        "pcf": (b"\x01fcp",),
+        "ttf": (b"\x00\x01\x00\x00", b"true"),
+        "otf": (b"OTTO",),
+        "ttc": (b"ttcf",),
+    }
+    if suffix not in magics:
+        raise SystemExit(f"make_disk: {path}: unknown font extension")
+    if not data.startswith(magics[suffix]):
+        raise SystemExit(
+            f"make_disk: {path}: is not a {suffix} font -- its first bytes are "
+            f"{data[:8]!r}, not one of {magics[suffix]!r} (a bad fetch?)")
+
+
+def font_tree() -> list:
+    """`Sys:Fonts`, read from the vendored faces."""
+    root: dict = {}
+    for source, destination in FONT_SOURCES:
+        data = (ROOT / source).read_bytes()
+        check_font(destination, data)
+        # The destination starts `Fonts/`; `aegir_tree` makes that directory.
+        parts = destination.split("/")[1:]
+        node = root
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = data
+
+    def to_tree(node: dict) -> list:
+        entries = []
+        for name, value in node.items():
+            if isinstance(value, dict):
+                entries.append(("dir", name, to_tree(value)))
+            else:
+                entries.append(("file", name, value))
+        return entries
+
+    return to_tree(root)
+
+
 def aegir_tree(commands) -> list:
     """The system volume's tree, with the command set as Sys:C.
 
@@ -194,6 +265,7 @@ def aegir_tree(commands) -> list:
     tree = list(AEGIR_BFS_TREE)
     if commands:
         tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
+    tree.append(("dir", "Fonts", font_tree()))
     return tree
 
 

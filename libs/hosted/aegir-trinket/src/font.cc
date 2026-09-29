@@ -4,6 +4,9 @@
 
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/unicode.h>
+
+#include "bdf_text.h"
+
 #include <algorithm>
 #include <cstring>
 #include <vector>
@@ -17,35 +20,8 @@ namespace aegir::trinket {
 
 namespace {
 
-bool starts_with(std::string_view line, std::string_view prefix) {
-    return line.size() >= prefix.size() &&
-           line.compare(0, prefix.size(), prefix) == 0;
-}
-
-/* A decimal integer off the front of `text`, the way a BDF line carries its
- * fields. A hand parser rather than sscanf: a line is a view into the font
- * buffer and is not NUL-terminated at its end. */
-bool next_int(std::string_view& text, int& value) {
-    size_t i = 0;
-    while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
-    text.remove_prefix(i);
-    if (text.empty()) return false;
-    bool negative = false;
-    size_t j = 0;
-    if (text[j] == '-') {
-        negative = true;
-        ++j;
-    }
-    if (j >= text.size() || text[j] < '0' || text[j] > '9') return false;
-    int parsed = 0;
-    while (j < text.size() && text[j] >= '0' && text[j] <= '9') {
-        parsed = parsed * 10 + (text[j] - '0');
-        ++j;
-    }
-    text.remove_prefix(j);
-    value = negative ? -parsed : parsed;
-    return true;
-}
+using detail::next_int;
+using detail::starts_with;
 
 /* One glyph as parsed, before the atlas is laid out. */
 struct ParsedGlyph {

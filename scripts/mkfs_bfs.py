@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 BLOCK = 2048
-NODE = 1024  # the B+tree node size
+NODE = 2048  # the B+tree node size (the service reads it from the tree header)
 SECTOR = 512
 
 # BFS's magic numbers, as the C multicharacter constants pack them (big-endian
@@ -342,11 +342,12 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
 
     def build(entries: list, own_block: int, parent_block: int,
               own_name: str | None = None) -> None:
-        # A directory owns a tree block, and every child owns an inode (and,
-        # for a file, its data). The children are taken first so the parent's
-        # tree can name their inode numbers; this directory's own inode is
-        # written last, once its tree block is known.
-        tree_block = take()
+        # A directory owns a tree (its entries), and every child owns an inode
+        # (and, for a file, its data). The children are taken first so the
+        # parent's tree can name their inode numbers; this directory's own
+        # inode is written last, once its tree is written. The tree is taken
+        # once its length is known: it is a node plus a header (`_tree`), and
+        # with a node wider than half a block that is more than one block.
         table: list[tuple[bytes, int]] = []
 
         for entry in entries:
@@ -390,11 +391,15 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
         table.append((b".", own_block))
         table.append((b"..", parent_block))
         table.sort(key=_sort_key)
-        data_blocks.append((tree_block, _tree(table)))
+        tree_bytes = _tree(table)
+        tree_blocks = (len(tree_bytes) + BLOCK - 1) // BLOCK
+        tree_base = take(tree_blocks)
+        for b in range(tree_blocks):
+            data_blocks.append((tree_base + b, tree_bytes[b * BLOCK : (b + 1) * BLOCK]))
         inodes.append((own_block, _inode(
             run=_run(own_block, 1, ag_shift), mode=S_IFDIR | S_STR_INDEX | 0o755,
             parent=_run(parent_block, 1, ag_shift), attributes=ZERO_RUN,
-            size=NODE * 2, runs=[_run(tree_block, 1, ag_shift)],
+            size=len(tree_bytes), runs=[_run(tree_base, tree_blocks, ag_shift)],
             name=own_name.encode("utf-8") if own_name is not None else None,
             time=0)))
 

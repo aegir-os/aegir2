@@ -110,6 +110,7 @@ add_library(aegir-trinket STATIC
     src/menubar.cc
     src/window.cc
     src/font.cc
+    src/fonts.cc
     src/unicode.cc
     src/locale.cc
     "${AEGIR_LOCALE_DATA}"

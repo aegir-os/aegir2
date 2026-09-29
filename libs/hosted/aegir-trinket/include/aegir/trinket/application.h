@@ -10,12 +10,14 @@
 
 #include <aegir/trinket/point.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/fonts.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/worker.h>
 #include <aegir/console.h>
 #include <aegir/ipc/port.h>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace aegir::mem {
@@ -91,9 +93,11 @@ public:
     void set_theme(std::unique_ptr<Theme> theme);
     Theme& theme() const { return *theme_; }
     void set_default_font(std::unique_ptr<Font> font);
-    // The application's font, loaded from the embedded default the first time
-    // a widget asks: a client whose windows draw no text (the bureau's
-    // backdrop) never pays for the atlas.
+    /* The application's font: the family and size it asks `Sys:Fonts` for,
+     * scanned and loaded the first time a widget wants it. A miss -- or a
+     * volume with no fonts on it -- keeps the embedded Terminus and says so,
+     * because a blank window is the worst way to report a missing font
+     * (specs/fonts.md). */
     Font* default_font();
 
     // Locale
@@ -186,6 +190,12 @@ private:
 
     std::unique_ptr<Theme> theme_;
     std::unique_ptr<Font> default_font_;
+    /* The faces `Sys:Fonts` holds, scanned once on the first font request
+     * (specs/fonts.md), and the family and size the default is asked for. */
+    FontCatalog catalog_;
+    bool catalog_scanned_ = false;
+    std::string font_family_ = "Terminus";
+    int font_size_ = 12;
     WorkerPool workers_;
     std::vector<Window*> windows_;
     DisplayInfo display_info_;
