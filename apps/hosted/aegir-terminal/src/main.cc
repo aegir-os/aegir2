@@ -26,6 +26,7 @@
 #include <aegir/log.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
+#include <aegir/signal.h>
 #include <aegir/spawn/process.h>
 #include <aegir/spawn/service_kit.h>
 #include <aegir/timer.h>
@@ -46,6 +47,17 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+
+/* A raw read that is waiting (specs/signal.md): the caller's reply capability
+ * is held in a slot of ours until a key arrives or the command ends. One per
+ * stream badge -- a caller is single-threaded, so one at a time. */
+struct HeldRead {
+    aegir::signal::Reply_holder reply;
+    uint32_t bound = 0;
+};
+
+static std::unordered_map<uint64_t, HeldRead> g_held_reads;
+static bool g_hold_requested = false;
 #include <vector>
 
 namespace {
@@ -953,8 +965,15 @@ int main(int argc, char *argv[])
                 return exit_answer;
             }
 
+            g_hold_requested = false;
             uint32_t const answer =
                 server.handle(method, words, count, badge, reply, capacity);
+            if (g_hold_requested) {
+                /* The read found nothing queued: its reply is held and the
+                 * handler saved the caller's reply capability, so the toolkit
+                 * must not answer for it (specs/signal.md). */
+                return app.kHoldReply;
+            }
             if (cap_arrived) {
                 /* A capability rode with the call -- the shell's doorbell on
                  * its open (specs/terminal.md). Move it out of the scratch slot
@@ -973,6 +992,22 @@ int main(int argc, char *argv[])
          * lives here. A running command's `read` parks on the command doorbell
          * instead of its own, so ring that too (specs/terminal.md). */
         server.on_wake = [&](uint64_t caller) {
+            /* A raw read that was waiting is answered here: the bytes when
+             * there are any, end of input when the command has ended, and
+             * nothing when there is still nothing (specs/signal.md). */
+            auto held = g_held_reads.find(caller);
+            if (held != g_held_reads.end()) {
+                uint64_t reply[aegir::ipc::kMaxWords];
+                uint32_t const n = server.take_read(caller, held->second.bound, reply,
+                                                    aegir::ipc::kMaxWords);
+                if (n != 0) {
+                    held->second.reply.reply(reply, n, 0);
+                    g_held_reads.erase(held);
+                } else if (server.command_finished(caller)) {
+                    held->second.reply.reply(nullptr, 0, 0);
+                    g_held_reads.erase(held);
+                }
+            }
             seL4_CPtr const slot = server.doorbell(caller);
             if (slot != 0) {
                 seL4_Signal(slot);
@@ -980,6 +1015,25 @@ int main(int argc, char *argv[])
             if (kit && server.in_command(caller) && spawn_kit.kit().doorbell != 0) {
                 seL4_Signal(spawn_kit.kit().doorbell);
             }
+        };
+        /* A read that found nothing waits: save the caller's reply capability
+         * and answer it from on_wake when a key or the command's end arrives
+         * (specs/signal.md). */
+        server.on_hold = [&](uint64_t caller, uint32_t bound) {
+            seL4_CPtr const slot = app.alloc_slot();
+            if (slot == 0) {
+                return;
+            }
+            HeldRead held;
+            held.reply = aegir::signal::Reply_holder(aegir::bootstrap::kSlotOwnCNode,
+                                                     aegir::bootstrap::cnode_bits(),
+                                                     slot);
+            held.bound = bound;
+            if (!held.reply.save()) {
+                return;
+            }
+            g_held_reads[caller] = held;
+            g_hold_requested = true;
         };
     }
 

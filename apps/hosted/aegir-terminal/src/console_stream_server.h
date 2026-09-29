@@ -42,6 +42,13 @@ public:
      * knows no kernel; the terminal does the signal. */
     std::function<void(uint64_t caller)> on_wake;
 
+    /* Called when a read finds nothing queued and the command has not ended:
+     * the caller's reply must be held and answered when input arrives or the
+     * command does (specs/signal.md). The handler knows no kernel, so the
+     * terminal saves the reply capability and answers it; `bound` is how many
+     * bytes the caller can take, which the answer must respect. */
+    std::function<void(uint64_t caller, uint32_t bound)> on_hold;
+
     /* The wire: one call from a stream's client. The reply words land in
      * `reply` (up to `capacity`); the answer is how many were written. */
     uint32_t handle(uint32_t method, uint64_t const* words, uint32_t count,
@@ -64,6 +71,11 @@ public:
     void queue_input(uint64_t caller, std::string_view bytes);
     uint32_t read_input(uint64_t caller, char* out, uint32_t capacity);
     bool has_input(uint64_t caller) const;
+
+    /* Answer a read that was held (specs/signal.md): the queued bytes packed
+     * as the wire packs them, up to `bound`; zero when there is still nothing
+     * to hand over, in which case the reply stays held. */
+    uint32_t take_read(uint64_t caller, uint32_t bound, uint64_t* reply, uint32_t capacity);
 
     /* The bracket a command runs in (specs/shell.md's Phase 4, design A): the
      * command inherits the shell's stream, and while it runs the terminal

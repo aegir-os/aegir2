@@ -186,6 +186,23 @@ bool ConsoleStreamServer::has_input(uint64_t caller) const
     return s != nullptr && !s->input.empty();
 }
 
+uint32_t ConsoleStreamServer::take_read(uint64_t caller, uint32_t bound, uint64_t* reply,
+                                        uint32_t capacity)
+{
+    if (find(caller) == nullptr || capacity < 1) {
+        return 0;
+    }
+    uint32_t const room = (capacity - 1) * 8;
+    uint32_t const limit = room < console::kStreamBytesMax ? room : console::kStreamBytesMax;
+    uint32_t const want = bound == 0 || bound > limit ? limit : bound;
+    char buffer[console::kStreamBytesMax];
+    uint32_t const got = read_input(caller, buffer, want);
+    if (got == 0) {
+        return 0;
+    }
+    return aegir::nmspace::pack_string(reply, buffer, got, console::kStreamBytesMax);
+}
+
 void ConsoleStreamServer::begin_command(uint64_t caller)
 {
     Stream* s = find(caller);
@@ -343,10 +360,10 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
                                     console::kStreamBytesMax);
     }
     case console::kStreamMethodRead: {
-        /* Tier 1 is a poll: answer with whatever input is queued, or an empty
-         * answer. The reply's own room bounds the bytes, and the caller's
-         * requested count narrows it further -- a one-byte key read must not
-         * drain the characters queued behind it (specs/terminal.md). */
+        /* Answer with whatever input is queued. The reply's own room bounds the
+         * bytes, and the caller's requested count narrows it further -- a
+         * one-byte key read must not drain the characters queued behind it
+         * (specs/terminal.md). */
         if (find(caller) == nullptr || capacity < 1) {
             return 0;
         }
@@ -357,10 +374,18 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         }
         char buffer[console::kStreamBytesMax];
         uint32_t const got = read_input(caller, buffer, bound);
-        if (got == 0) {
-            return 0;
+        if (got != 0) {
+            return aegir::nmspace::pack_string(reply, buffer, got, console::kStreamBytesMax);
         }
-        return aegir::nmspace::pack_string(reply, buffer, got, console::kStreamBytesMax);
+        /* Nothing queued. A zero bound is the tier-1 poll, and an empty answer
+         * is all it can be; a command that has ended is end of input, answered
+         * now rather than waited on. Otherwise the caller waits, and the
+         * terminal holds its reply until a key or the command's end
+         * (specs/signal.md). */
+        if (bound != 0 && !command_finished(caller) && on_hold) {
+            on_hold(caller, bound);
+        }
+        return 0;
     }
     case console::kStreamMethodClose: {
         Stream* s = find(caller);

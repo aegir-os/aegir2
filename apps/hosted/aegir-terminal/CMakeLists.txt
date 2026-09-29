@@ -27,7 +27,7 @@ if(AEGIR_TOOLKIT)
   # terminal's own: it starts the session's commands (specs/shell.md).
   target_link_libraries(
     aegir-terminal-app PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-trinket aegir-runtime
-                              aegir-bootstrap aegir-ipc aegir-log aegir-console-protocol
+                              aegir-bootstrap aegir-ipc aegir-signal aegir-log aegir-console-protocol
                               aegir-launch-protocol aegir-mem aegir-environment aegir-spawn
                               aegir-spawn-kit aegir-spawn-service aegir-heap sel4 sel4runtime
   )

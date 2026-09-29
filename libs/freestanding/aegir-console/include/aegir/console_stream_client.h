@@ -83,11 +83,13 @@ inline uint32_t stream_read_line(aegir::ipc::Consumer const &port, char *out,
     return length;
 }
 
-/** Read queued bytes into `out`, at most `capacity`. Answers the byte count, 0
- *  when nothing is queued. The capacity travels as the call's input word, so
- *  the handler drains no more than the caller can hold -- a one-byte key read
- *  must not swallow the characters queued behind it. Tier 1 is a poll
- *  (specs/terminal.md). */
+/** Read bytes into `out`, at most `capacity`. The capacity travels as the
+ *  call's input word, so the handler drains no more than the caller can hold --
+ *  a one-byte key read must not swallow the characters queued behind it. A
+ *  positive capacity *waits*: the terminal holds the caller's reply until a key
+ *  arrives or the command ends, so this call blocks (specs/signal.md). An empty
+ *  answer is end of input. A capacity of zero is the tier-1 poll, which answers
+ *  at once. Answers the byte count. */
 inline uint32_t stream_read(aegir::ipc::Consumer const &port, char *out,
                             uint32_t capacity) noexcept
 {

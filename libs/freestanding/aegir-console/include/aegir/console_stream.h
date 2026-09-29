@@ -60,9 +60,12 @@ constexpr uint32_t kStreamMethodOpen = 1;
 constexpr uint32_t kStreamMethodWrite = 2;
 
 /** Read bytes. In: the most bytes the caller can take, or no word for the
- *  envelope's bound. Answer: the queued bytes as a string, or an empty answer.
- *  Tier 1 is a poll; a caller with a console doorbell blocks instead
- *  (specs/terminal.md). */
+ *  envelope's bound. A positive bound *waits*: when nothing is queued and the
+ *  command has not ended, the handler holds the caller's reply capability and
+ *  answers it when a key arrives or the command does (specs/signal.md). A
+ *  bound of zero is the tier-1 poll -- answer now, empty when nothing is
+ *  queued -- for a caller that will not wait. Answer: the queued bytes as a
+ *  string, or an empty answer, which for a read that waited is end of input. */
 constexpr uint32_t kStreamMethodRead = 3;
 
 /** Read one line. Answer: the finished line as a string when the line editor

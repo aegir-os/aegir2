@@ -496,23 +496,6 @@ aegir::ipc::Consumer &console_stream() noexcept
     return const_cast<aegir::ipc::Consumer &>(stream);
 }
 
-/* The notification a spawned command was given as its console doorbell, or 0
- * when it has none -- a boot service, or a client that polls (specs/terminal.md).
- * Found once, by name, like the stream: the terminal rings it when the running
- * command's stream has input, and `read` parks on it. */
-seL4_CPtr console_doorbell() noexcept
-{
-    static seL4_CPtr const doorbell = []() -> seL4_CPtr {
-        uint64_t slot = 0;
-        if (!aegir::bootstrap::capability(aegir::console::kDoorbellName,
-                                          aegir::console::kDoorbellNameLength, &slot)) {
-            return 0;
-        }
-        return static_cast<seL4_CPtr>(slot);
-    }();
-    return doorbell;
-}
-
 /* A redirected standard stream (specs/shell.md): the spawner put a path in the
  * bootstrap block, and the first use opens it. -1 is "no redirection" and
  * leaves the stream the console's; a failed open returns its errno. The path is
@@ -609,18 +592,12 @@ long sys_read(int fd, void *buffer, size_t length) noexcept
         uint32_t const want = length < aegir::console::kStreamBytesMax
                                   ? static_cast<uint32_t>(length)
                                   : aegir::console::kStreamBytesMax;
-        for (;;) {
-            uint32_t const got =
-                aegir::console::stream_read(stream, static_cast<char *>(buffer), want);
-            if (got != 0) {
-                return static_cast<long>(got);
-            }
-            seL4_CPtr const doorbell = console_doorbell();
-            if (doorbell == 0) {
-                return 0;
-            }
-            seL4_Wait(doorbell, nullptr);
-        }
+        /* The read waits inside the call: the terminal holds the reply until a
+         * key arrives or the command ends, so there is no doorbell to park on
+         * and nothing to poll (specs/signal.md). An empty answer is end of
+         * input. */
+        return static_cast<long>(
+            aegir::console::stream_read(stream, static_cast<char *>(buffer), want));
     }
     return files::read(fd, buffer, length);
 }
