@@ -50,6 +50,8 @@ enum : unsigned {
     seL4_NotificationObject = 4,
     seL4_RISCV_4K_Page = 5,
     seL4_RISCV_Mega_Page = 6,
+    seL4_RISCV_PageTableObject = 7,
+    seL4_PageTableBits = 12,
     CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS = 230,
 };
 enum : seL4_CPtr {

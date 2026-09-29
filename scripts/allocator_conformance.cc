@@ -82,10 +82,84 @@ constexpr Shape kShapes[] = {
 
 aegir::mem::Account g_account{"workload", 0, 0, 0};
 
+/* The launcher's node source is vspace.cc's `grow_nodes_from_window`: to grow
+ * the allocator's own bookkeeping it retypes a frame ... by calling the very
+ * allocator it belongs to. This mimics that -- an `alloc_object` from inside
+ * the node source -- so the harness can reproduce the re-entrant refill. */
+struct NodeWindow {
+    aegir::mem::Allocator *allocator;
+    unsigned char *pool;
+    unsigned capacity;
+    unsigned used;
+};
+
+void *reentrant_nodes(void *context, unsigned *bytes)
+{
+    auto *const window = static_cast<NodeWindow *>(context);
+    seL4_Error error = seL4_NoError;
+    void *cookie = nullptr;
+    /* The frame the bookkeeping lives in is an object this allocator must
+     * retype; the call re-enters refill while the outer refill holds a parent
+     * it has chosen but not yet unlinked. */
+    (void)window->allocator->alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, g_account, &error,
+                                          &cookie);
+    unsigned const chunk = 4096;
+    if (window->used + chunk > window->capacity) {
+        *bytes = 0;
+        return nullptr;
+    }
+    unsigned char *const region = window->pool + window->used;
+    window->used += chunk;
+    *bytes = chunk;
+    return region;
+}
+
+/* A node pool too small for a single split, so the very first `alloc_node`
+ * inside `refill_inner` asks the source -- and the source re-enters. Returns
+ * true when nothing was refused and the lists stayed consistent. */
+bool reentrancy_holds()
+{
+    host_sel4::reset();
+    g_chunks = 0;
+    seL4_BootInfo info{};
+    info.empty = {1, 8000};
+    info.initThreadCNodeSizeBits = 12;
+    seL4_CPtr const root = host_sel4::make_root_untyped(22);
+    info.untypedList[0].sizeBits = 22;
+    info.untyped = {root, root + 1};
+
+    aegir::mem::Allocator allocator(&info);
+    if (!allocator.initialise()) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+    alignas(64) static unsigned char nodes[512];
+    allocator.adopt_nodes(nodes, sizeof(nodes));
+    alignas(64) static unsigned char pool[1 << 20];
+    NodeWindow window{&allocator, pool, sizeof(pool), 0};
+    allocator.set_node_source(reentrant_nodes, &window);
+
+    unsigned const before = host_sel4::refusals();
+    for (unsigned i = 0; i < 80; ++i) {
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        (void)allocator.alloc_object(seL4_RISCV_PageTableObject, seL4_PageTableBits, g_account,
+                                     &error, &cookie);
+    }
+    return host_sel4::refusals() == before && allocator.check_free_lists() == 0;
+}
+
 }  // namespace
 
 int main()
 {
+    host_sel4::reset();
+
+    /* The node source allocates from the allocator it serves (the launcher's
+     * `grow_nodes_from_window` does exactly this), so a refill can re-enter
+     * itself. No piece may be lost to that. */
+    expect(reentrancy_holds(), "a re-entrant refill keeps the allocator whole");
+
     host_sel4::reset();
 
     /* The bootinfo: one 22-bit root untyped -- the launcher's seed -- and a run

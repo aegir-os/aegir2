@@ -381,6 +381,15 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
         if (parent == nullptr) {
             continue;
         }
+        /* Take the piece off the list *now*. The node source grows this
+         * allocator's pool by allocating from the allocator itself
+         * (vspace.cc's `grow_nodes_from_window` calls `alloc_object`), so the
+         * `alloc_node` below can re-enter `refill_inner`. Left linked, the
+         * re-entrant refill finds this same parent -- still whole -- splits it
+         * and spends it, and the retype here is then refused with the kernel's
+         * "0 bytes available". Off the list first, the re-entrant call takes a
+         * different piece. */
+        unlink(parent);
         Node *const left = alloc_node();
         Node *const right = alloc_node();
         if (left == nullptr || right == nullptr) {
@@ -390,6 +399,8 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             if (right != nullptr) {
                 free_node(right);
             }
+            /* Nothing was spent: the piece is still whole, so it goes back. */
+            insert(device, parent);
             return false;
         }
         seL4_CPtr const left_slot = alloc_slot();
@@ -403,6 +414,7 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             }
             free_node(left);
             free_node(right);
+            insert(device, parent);
             return false;
         }
         /* The parent's two halves: the kernel carves each from the parent's
@@ -413,9 +425,8 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
             seL4_CapInitThreadCNode, cnode_depth_, left_slot, 1);
         if (first != seL4_NoError) {
-            /* The piece cannot even yield one child, so it is not whole: it
-             * leaves the list, or every refill would retry it and fail. */
-            unlink(parent);
+            /* The piece cannot even yield one child, so it is not whole: it is
+             * already off the list, and it stays off. */
             slot_failed(left_slot);
             slot_failed(right_slot);
             free_node(left);
@@ -427,12 +438,11 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             seL4_CapInitThreadCNode, cnode_depth_, right_slot, 1);
         if (second != seL4_NoError) {
             /* The parent held one child, not two: a retype already spent its
-             * low half, so the parent is partial. It must leave the list -- a
-             * partial parent left listed was the bug, retried forever -- and
-             * the child that did succeed is a whole piece, so it is kept. The
-             * rest of the parent is lost; recovering it needs the kernel to say
-             * how much is left, which it does not. */
-            unlink(parent);
+             * low half, so the parent is partial. It is off the list already,
+             * and it stays off (a partial parent left listed was the bug,
+             * retried forever); the child that did succeed is a whole piece, so
+             * it is kept. The rest of the parent is lost; recovering it needs
+             * the kernel to say how much is left, which it does not. */
             left->cap = left_slot;
             left->physical = parent->physical;
             left->size_bits = static_cast<uint8_t>(size_bits);
@@ -446,11 +456,10 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             insert(device, left);
             return true;
         }
-        /* The parent leaves the free list but its node stays: it is the merge
-         * anchor, and its memory is reclaimable once both children are deleted
-         * (the kernel resets a childless untyped's free index on the next
-         * retype, kernel/src/object/untyped.c:184-189). */
-        unlink(parent);
+        /* Both halves exist. The parent is the merge anchor: it is off the
+         * free list already, and its memory is reclaimable once both children
+         * are deleted (the kernel resets a childless untyped's free index on
+         * the next retype, kernel/src/object/untyped.c:184-189). */
         left->cap = left_slot;
         left->physical = parent->physical;
         left->size_bits = static_cast<uint8_t>(size_bits);

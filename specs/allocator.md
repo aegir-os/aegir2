@@ -26,6 +26,16 @@ splitting with that shape.
   calls of `size_bits` each), insert both, and repeat until a piece of the
   wanted size exists. This is `_refill_pool` exactly: the two halves are
   buddies, and the parent is kept so a later free can merge them back.
+- **A split takes its piece off the list before it can re-enter.** Growing the
+  node pool calls back into the allocator -- the caller's node source retypes a
+  frame by calling `alloc_object` (`vspace.cc`'s `grow_nodes_from_window`) -- so a
+  refill can re-enter itself mid-split. The piece is unlinked *before* the node
+  allocation, so the re-entrant refill cannot choose the same parent, still whole
+  and still listed, split it, and spend it out from under the outer call (the
+  kernel then refuses the outer retype with "0 bytes available"). If the split
+  cannot be made -- no nodes or no slots -- the whole piece is put back, because
+  nothing was spent. The launcher's own allocator (`g_objects`, whose node source
+  is the window's `grow_nodes_from_window`) hit this exactly, four times a boot.
 - **Allocation pops and retypes; the node is consumed.** `alloc_object` refills
   the wanted size, takes a node, retypes the object out of its capability, and
   the node's storage is released (its memory is the object now).
@@ -138,4 +148,7 @@ the env-smoke that found the bug now boots (`ENV_SMOKE_OK`). A unit test in
 `aegir-test` splits a large untyped into many objects, frees half of them, and
 allocates again -- the buddy must merge and hand the same physical memory back
 -- and a boot with the free path exercised must not leak nodes (the pool
-returns to its pre-allocation count).
+returns to its pre-allocation count). On the host, `make check-allocator` runs
+the allocator over a stub of the kernel's retype rule through a long randomized
+workload and a re-entrant node source, and requires that no retype is ever made
+from a spent piece and the free lists stay consistent.
