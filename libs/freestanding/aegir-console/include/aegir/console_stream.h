@@ -38,13 +38,11 @@ constexpr char const kStreamPortName[] = "con.stream";
 constexpr uint32_t kStreamPortNameLength = sizeof(kStreamPortName) - 1;
 
 /** Open a stream. In: the mode, then the prompt as a string (unused in raw
- *  mode). The call may carry one capability: the client's own doorbell, a
- *  notification the handler signals when there is something to read -- input
- *  queued, a line ready, a command finished (the `listen` shape, the client's
- *  way to park instead of poll; specs/terminal.md). A client that polls passes
- *  none. A badge holds one stream: a second `open` is refused. Answer: one
- *  word, 1 opened and 0 refused -- the answer the spec's "nothing" did not
- *  leave room for, because a client has to be able to tell. */
+ *  mode). The call carries no capability: a read that finds nothing waits by
+ *  holding its reply, so there is no doorbell to hand over (specs/signal.md).
+ *  A badge holds one stream: a second `open` is refused. Answer: one word, 1
+ *  opened and 0 refused -- the answer the spec's "nothing" did not leave room
+ *  for, because a client has to be able to tell. */
 constexpr uint32_t kStreamMethodOpen = 1;
 
 /** Write bytes. In: the bytes as a string. They land at the stream's cursor,

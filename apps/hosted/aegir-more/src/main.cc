@@ -7,8 +7,8 @@
  * A page is the terminal's text area less a row for the prompt, asked of the
  * stream so there is no page height baked in. After a page with more to show,
  * `more` prints `--More--` and blocks on a key: space or return shows the next
- * page, q quits. The key arrives through fd 0, which parks on the console
- * doorbell the terminal rings while the command runs (specs/terminal.md), so
+ * page, q quits. The key arrives through fd 0, whose read waits inside its call
+ * until a key or the command's end (specs/signal.md), so
  * the wait costs no CPU the way a poll loop would.
  */
 
@@ -67,8 +67,8 @@ std::vector<std::string> read_lines(char const *path, bool &ok) noexcept
     return lines;
 }
 
-/* The next key, blocking: fd 0's read parks on the console doorbell (or polls
- * when there is none, in which case zero is end of input). */
+/* The next key, blocking: fd 0's read waits inside its call for a key or the
+ * command's end, where an empty answer is end of input (specs/signal.md). */
 char next_key() noexcept
 {
     char key = 0;

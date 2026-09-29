@@ -158,9 +158,9 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
         command_timer_port_ = static_cast<seL4_CPtr>(command_timer_slot);
     }
 
-    /* The boot session's doorbell (specs/boot.md): auth grants it only to the
-     * boot terminal, which passes it on to the shell. Its presence is what
-     * makes this process the boot session's. */
+    /* The boot session's status endpoint (specs/boot.md): auth grants it only
+     * to the boot terminal, which passes it on to the shell. Its presence is
+     * what makes this process the boot session's. */
     uint64_t boot_status_slot = 0;
     if (aegir::bootstrap::capability("boot.status", 11, &boot_status_slot)) {
         boot_status_ = static_cast<seL4_CPtr>(boot_status_slot);

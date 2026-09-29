@@ -283,20 +283,6 @@ bool ConsoleStreamServer::in_command(uint64_t caller) const
     return s != nullptr && s->command;
 }
 
-void ConsoleStreamServer::set_doorbell(uint64_t caller, uint64_t slot)
-{
-    Stream* s = find(caller);
-    if (s != nullptr) {
-        s->doorbell = slot;
-    }
-}
-
-uint64_t ConsoleStreamServer::doorbell(uint64_t caller) const
-{
-    Stream const* s = find(caller);
-    return s == nullptr ? 0 : s->doorbell;
-}
-
 bool ConsoleStreamServer::on_key(uint64_t caller, aegir::trinket::KeyEvent const& event)
 {
     Stream* s = find(caller);

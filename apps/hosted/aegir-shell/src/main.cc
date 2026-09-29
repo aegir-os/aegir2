@@ -9,9 +9,8 @@
  * -- CD, Echo, Set/Get, Alias, Prompt, Why, Eval, EndCLI/EndShell -- or asks
  * the terminal to run a command. The terminal owns
  * the window and the spawn authority; the shell owns the loop and the words.
- * Its doorbell is a notification it passes on
- * open: the terminal rings it when a line is ready or a command has finished,
- * so the shell waits instead of polling (specs/terminal.md).
+ * Its reads wait by holding their reply -- a line, and a running command's
+ * status -- so it blocks instead of polling (specs/signal.md).
  */
 
 #include <aegir/bootstrap.h>

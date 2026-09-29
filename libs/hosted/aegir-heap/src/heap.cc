@@ -570,11 +570,10 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
     return files::write(fd, buffer, length);
 }
 
-/* SYS_read: fd 0 is the console stream. A command parks on the doorbell the
- * terminal rings when its stream has input, so `read` blocks; a client with no
- * doorbell gets tier 1's poll, where nothing queued answers zero
- * (specs/terminal.md). A process with no stream has no stdin. Any other fd is a
- * file. */
+/* SYS_read: fd 0 is the console stream. The read waits inside its call --
+ * the terminal holds its reply until a key arrives or the command ends, where
+ * an empty answer is end of input (specs/signal.md). A process with no stream
+ * has no stdin. Any other fd is a file. */
 long sys_read(int fd, void *buffer, size_t length) noexcept
 {
     if (fd == 0) {

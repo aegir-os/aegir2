@@ -37,9 +37,9 @@ public:
     std::function<void()> on_change;
 
     /* Called when the stream has something for its client to read -- input
-     * queued, a line ready, a command finished -- so the terminal signals the
-     * stream's doorbell (specs/terminal.md). The handler is host-tested and
-     * knows no kernel; the terminal does the signal. */
+     * queued, a line ready, a command finished -- so the terminal answers the
+     * read that was waiting for it (specs/signal.md). The handler is
+     * host-tested and knows no kernel; the terminal holds the reply. */
     std::function<void(uint64_t caller)> on_wake;
 
     /* Called when a read finds nothing to answer: the caller's reply must be
@@ -66,8 +66,8 @@ public:
 
     /* Raw input (specs/terminal.md): a key that reaches a raw stream -- or a
      * cooked stream while a command runs -- is a byte on the stream's input
-     * queue, and the client drains it with `read`. The queue grows on demand;
-     * tier 1 is a poll and the handler signals no doorbell yet. */
+     * queue, and the client drains it with `read`. The queue grows on demand,
+     * and a read that was waiting is answered from it. */
     void queue_input(uint64_t caller, std::string_view bytes);
     uint32_t read_input(uint64_t caller, char* out, uint32_t capacity);
     bool has_input(uint64_t caller) const;
@@ -90,11 +90,6 @@ public:
      * routes keys to the input queue rather than the idle editor. */
     void begin_command(uint64_t caller);
     bool in_command(uint64_t caller) const;
-
-    /* The client's doorbell: the CSpace slot its notification was moved to
-     * (zero when it polls). The terminal signals it from `on_wake`. */
-    void set_doorbell(uint64_t caller, uint64_t slot);
-    uint64_t doorbell(uint64_t caller) const;
 
     /* One key, routed by the stream's discipline: a command bracket or a raw
      * stream queues it as bytes; an idle cooked stream feeds the editor. True
@@ -124,7 +119,6 @@ private:
         bool finished = false;
         uint32_t stages = 1;
         uint64_t status = 0;
-        uint64_t doorbell = 0;
     };
 
     Stream* find(uint64_t caller);

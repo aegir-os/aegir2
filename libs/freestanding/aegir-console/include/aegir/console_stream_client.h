@@ -19,13 +19,11 @@
 
 namespace aegir::console {
 
-/** Open a stream in `mode` with `prompt` (cooked mode), carrying `doorbell`
- *  -- the client's own notification the handler signals when there is
- *  something to read -- as a capability (zero for none, a client that polls).
- *  False when refused. */
+/** Open a stream in `mode` with `prompt` (cooked mode). False when refused.
+ *  The call carries no capability: a read waits by holding its reply, so
+ *  there is no doorbell to hand over (specs/signal.md). */
 inline bool stream_open(aegir::ipc::Consumer const &port, uint64_t mode,
-                        char const *prompt, uint32_t prompt_length,
-                        seL4_CPtr doorbell = 0) noexcept
+                        char const *prompt, uint32_t prompt_length) noexcept
 {
     uint64_t out[1 + aegir::nmspace::kPathMax / 8 + 1];
     out[0] = mode;
@@ -37,7 +35,7 @@ inline bool stream_open(aegir::ipc::Consumer const &port, uint64_t mode,
     }
     uint64_t in[1];
     aegir::ipc::WordsReply const answer =
-        port.call_transfer(kStreamMethodOpen, out, words, doorbell, in, 1, nullptr);
+        port.call_transfer(kStreamMethodOpen, out, words, 0, in, 1, nullptr);
     return answer.error == 0 && answer.count == 1 && in[0] == 1;
 }
 

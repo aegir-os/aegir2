@@ -416,7 +416,7 @@ int main(int argc, char *argv[])
         static std::string const kAccountText = "command";
         /* The command's kit, from the one first-class builder (specs/launch.md):
          * the launcher's stream, its runtime, the session's namespace by copy,
-         * the doorbell, its own memory copy, its own console (so it opens a
+         * its own memory copy, its own console (so it opens a
          * window when it wants one), and the clock and timer. */
         aegir::spawn::Child child{};
         child.badge = command_badge;
@@ -972,22 +972,22 @@ int main(int argc, char *argv[])
                 return app.kHoldReply;
             }
             if (cap_arrived) {
-                /* A capability rode with the call -- the shell's doorbell on
-                 * its open (specs/terminal.md). Move it out of the scratch slot
-                 * before the next receive, and record it for the stream. */
+                /* No client passes a capability at open any more -- a read
+                 * waits by holding its reply (specs/signal.md) -- but one that
+                 * does is taken out of the scratch slot and dropped, so the
+                 * next receive finds it empty. */
                 seL4_CPtr const slot = app.alloc_slot();
-                if (slot != 0 && aegir::ipc::take_received_cap(slot) &&
-                    method == aegir::console::kStreamMethodOpen && answer == 1 &&
-                    reply[0] == 1) {
-                    server.set_doorbell(badge, slot);
+                if (slot != 0 && aegir::ipc::take_received_cap(slot)) {
+                    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                                      aegir::bootstrap::cnode_bits());
                 }
             }
             return answer;
         };
-        /* The handler says the stream has something to read; the terminal rings
-         * the client's doorbell. The handler is a pure value, so the signal
-         * lives here. A running command's `read` parks on the command doorbell
-         * instead of its own, so ring that too (specs/terminal.md). */
+        /* The handler says the stream has something to read; the terminal
+         * answers the read that was waiting for it (specs/signal.md). The
+         * handler is a pure value and knows no kernel, so the answer lives
+         * here. */
         server.on_wake = [&](uint64_t caller) {
             /* A raw read that was waiting is answered here: the bytes when
              * there are any, end of input when the command has ended, and
@@ -1010,10 +1010,6 @@ int main(int argc, char *argv[])
                     held->second.reply.reply(nullptr, 0, 0);
                     g_held_reads.erase(held);
                 }
-            }
-            seL4_CPtr const slot = server.doorbell(caller);
-            if (slot != 0) {
-                seL4_Signal(slot);
             }
         };
         /* A read that found nothing waits: save the caller's reply capability
@@ -1099,7 +1095,7 @@ int main(int argc, char *argv[])
                  * signals auth when it is done; an interactive session's shell
                  * is started with none and runs Shell-Startup itself
                  * (specs/shell.md, specs/boot.md). The boot terminal is the one
-                 * auth granted the boot doorbell. */
+                 * auth granted the boot status. */
                 static char const kBootScript[] = "Sys:S/Startup-Sequence";
                 char const *arguments[1] = {kBootScript};
                 uint32_t argument_count = boot ? 1 : 0;

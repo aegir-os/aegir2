@@ -162,21 +162,15 @@ port does not know is answered by saying nothing.
   shown or reserved then, and a window shown later would otherwise have nowhere
   to draw.
 
-The handler wakes a client the way the console wakes its clients: each stream
-carries the client's own doorbell -- a notification the client passes as a
-capability when it opens the stream (the `listen` shape), which the handler
-rings when input is queued, a line is ready, or a command finishes. The
-terminal's handler raises `on_wake`; the terminal, which holds the kernel, does
-the signal. A toolkit client already waits on the console's event notification
-and checks its stream in `on_poll` after each drain (specs/workbench.md's
-`Application` shape); a client without that -- the shell as its own process --
-waits on its doorbell and reads after each wake.
+The handler wakes a client by holding the reply of the read that found nothing:
+`read`, `read_line` and `command_status` each wait inside their call, and the
+handler raises `on_wake` when input is queued, a line is ready, or a command
+finishes; the terminal, which holds the kernel, answers the held reply
+(specs/signal.md). There is no notification for a client to pass and none for
+the spawn graph to carry, so a stream capability is the whole of what a client
+needs -- and a held read is what "this stream has a reader" means.
 
-A *command* has no doorbell of its own -- it inherits the shell's stream -- so
-the terminal grants each command a *copy* of one notification as
-`con.doorbell` and rings it while a command runs. The runtime's `read` of fd 0
-(`aegir-heap`) finds that grant and parks on it, so a command blocks instead of
-polling. A line typed while a command ran past what the command read is the
+A line typed while a command ran past what the command read is the
 shell's next command: when the shell reads the finished status, the handler
 hands the leftover bytes to the line editor, so nothing typed ahead is lost
 (`specs/dos.md`'s `more` is the caller this was built for).
@@ -280,9 +274,9 @@ does not renders as correctly-sized blanks rather than collapsing the line.
 - **A full ANSI/VT terminal.** Tier 1 understands `\r`, `\b`, `\t`, `\n` and
   erase-to-end-of-line. Colors, alternate screen, cursor addressing, scroll
   regions and mouse reporting are a later arc, added as programs need them.
-- **`select`, and a blocking read for a client with no doorbell.** A command's
-  read parks on the doorbell the terminal grants it; a client that opens a
-  stream without one still polls, and there is no readiness set.
+- **`select`, and a readiness set.** A read, a line and a command's status each
+  wait by holding their reply (specs/signal.md), but there is no way to wait on
+  several at once, and no readiness set.
 - **Selection, copy and paste.** There is no clipboard service; selecting the
   grid and copying is deferred until one exists.
 - **Multiple consoles per session.** One terminal, one window, one stream per
