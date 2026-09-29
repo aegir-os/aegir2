@@ -139,11 +139,11 @@ are their own arcs or out of scope.
 ### Storage and resolution
 
     C:copy      the alias resolved by the namespace, the bytes read by the
-                terminal, the image handed to the spawner
-    copy        what the shell sends the terminal, lowercased
+                launcher, the image handed to the spawner
+    copy        what the shell sends the launcher, lowercased
 
-The terminal owns the spawn authority (`specs/shell.md`'s Phase 6) and reads
-the command's image from `C:<name>` through the namespace, the way it read
+The launcher owns the spawn authority (`specs/launch.md`) and reads the
+command's image from `C:<name>` through the namespace, the way it read
 `Initrd:<name>` before. The image is near a megabyte and is read one command at
 a time; `Sys:C` is a BFS directory (`specs/bfs.md`), so the binaries are files
 on the system volume, built and packed into the image by `scripts/make_disk.py`.

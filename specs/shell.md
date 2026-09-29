@@ -209,8 +209,10 @@ this arc's record of the order.
 - **Phase 3 — external commands.** Landed. Resolve a name to `Initrd:`, spawn
   it with the console stream, wait, report the status. The spawn authority a
   session is meant to have (`specs/authority.md`: a session spawns user
-  processes "as ordinary use") is the terminal's, delegated by auth: a spawn
-  untyped, a copy of auth's ASID pool, and the unbadged `spawn:` ports, which
+  processes "as ordinary use") is the session's launcher's now
+  (`specs/signal.md` Phase 3); it was the terminal that first held it, delegated
+  by auth: a spawn untyped, a copy of auth's ASID pool, and the unbadged
+  `spawn:` ports, which
   the terminal adopts into the toolkit's one allocator and window (a process
   has one VSpace root). The name is read out of `Initrd:` through the
   namespace as bytes and handed to the spawner as `binary_image` -- the whole
@@ -255,13 +257,13 @@ this arc's record of the order.
 - **Phase 6 — the shell as its own process.** Landed. `aegir-shell` opens a
   cooked stream on the terminal's `con.stream` and loops: `read_line`, which
   waits inside its call, run the built-ins, and for a command call
-  `aegir::launch` (specs/launch.md). The launcher keeps the spawn authority
-  (the pool, the ASID pool and the `spawn:` ports are still auth's delegation
-  to the terminal), and the launch request carries the shell's environment,
-  current directory, path and stack ask -- filled by the runtime from the
-  shell's own state -- so the command inherits what the shell set; the terminal
-  reports the exit through the stream and the shell reads it with
-  `command_status`. The terminal spawns the shell once, from a pool of its own
+  `aegir::launch` (specs/launch.md) -- the session's launcher, since
+  `specs/signal.md`'s Phase 3, where the earlier slices had the terminal serve
+  it. The launch request carries the shell's environment, current directory,
+  path and stack ask -- filled by the runtime from the shell's own state -- so
+  the command inherits what the shell set; the terminal reports the exit through
+  the stream and the shell reads it with `command_status`. The terminal spawns
+  the shell once, from a pool of its own
   (`auth`'s `shell-pool`), in `on_started` after the ready cue -- the spawn
   reads a 260 KiB image and would otherwise delay the cue past the demo's zoom.
   The line editor, the history and the grid stay the terminal's; only the words
@@ -335,8 +337,8 @@ this arc's record of the order.
   `aegir::script`'s and the condition's parse is, host-tested by
   `make check-script`.
 - **Phase 14 — pipelines.** Landed (`specs/pipe.md`). A line's standalone
-  `|` splits it into stages; the shell sends them to the terminal, which
-  spawns every stage at once and names the `PIPE:` between each pair. The
+  `|` splits it into stages; the shell sends them to the session's launcher,
+  which spawns every stage at once and names the `PIPE:` between each pair. The
   pipeline's status is its last stage's, and its completion is the existing
   `command status` call, answered only once every stage has reported. A
   built-in stage is refused -- the shell's own words are not programs -- and
@@ -394,13 +396,13 @@ session's badge: `auth` grants the terminal a `shell:vfs.namespace` copy badged
 with the session, and the terminal moves it to the shell.
 
 Phase 6's is the same run: every line the runner types is read by `aegir-shell`
-in its own process and every command is one the terminal started on its
+in its own process and every command is one the launcher started on its
 request, so the whole command line -- `set`, `aegir-print`, `aegir-read`, and
 the history recall -- is the shell-as-a-process path.
 
 Phase 7's is `specs/dos.md`'s acceptance: the same run types a `makedir`, a
 `copy`, a `list` and a `type`, and each is a program read from `Sys:C` and
-resolving the session's namespace on the badge the terminal gave it -- while
+resolving the session's namespace on the badge the launcher gave it -- while
 `set`/`type`/`echo` stay the shell's own words.
 
 Phase 8's is the same run: a typed line runs `execute Sys:S/Interpreter-Test`,
@@ -440,7 +442,7 @@ proof. `make check-script` asserts the label and block jumps, the condition
 parse and the comparison directly.
 
 Phase 14's is the same run, typed after the DOS sequence: the runner types
-`type Sys:S/Shell-Startup | aegir-read`. The terminal starts both at once,
+`type Sys:S/Shell-Startup | aegir-read`. The launcher starts both at once,
 names the `PIPE:` between them, and the producer's output reaches the
 consumer's standard input, so `aegir-read` starting is the proof the
 concurrent spawn and the connection worked and its `pipeline exited` cue --

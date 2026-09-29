@@ -3,21 +3,21 @@
 Status: decided (2026-09), and it has landed through Phase 4: the text
 surface (`TerminalBuffer`, `TerminalView`, the generated Unicode widths, BiDi
 reordering), the terminal process with the line editor and the command line,
-the `con.stream` port the terminal serves, the session's spawn kit auth
-delegates, and a command resolved to `Initrd:`, spawned out of a reclaimable
-pool, printed to the grid, and reported through the runtime that routes its
-fd 1/2 and its exit to the stream. fd 0 is the stream's queued input: while a
-command runs the terminal routes the keyboard to the stream rather than the
-idle editor, and the command's `read` drains it (`aegir-read`). A `read` with
-nothing queued *holds its reply* (`specs/signal.md`) and is answered when bytes
-arrive, so a client waits inside the call rather than polling, and the held read
-is what marks the stream as the one the keyboard belongs to. The shell announces
-each line with `line` -- its stage count -- before the first command starts, so
-the terminal keeps the bracket and the `pipeline exited` cue. The shell is its
-own process now (`aegir-shell`): the terminal spawns it once from a pool of its
-own, it opens a cooked stream, runs the built-ins, and asks the
-terminal to run a command (the terminal holds the spawn authority today;
-`specs/signal.md`'s Phase 3 moves it to the session's launcher). This is the
+the `con.stream` port the terminal serves, and a command resolved by the
+session's launcher from `C:`, printed to the grid, and reported through the
+runtime that routes its fd 1/2 and its exit to the stream. fd 0 is the stream's
+queued input: while a command runs the terminal routes the keyboard to the
+stream rather than the idle editor, and the command's `read` drains it
+(`aegir-read`). A `read` with nothing queued *holds its reply*
+(`specs/signal.md`) and is answered when bytes arrive, so a client waits inside
+the call rather than polling, and the held read is what marks the stream as the
+one the keyboard belongs to. The shell announces each line with `line` -- its
+stage count -- before the first command starts, so the terminal keeps the
+bracket and the `pipeline exited` cue. The shell is its own process now
+(`aegir-shell`): the terminal spawns it once from a pool of its own, it opens a
+cooked stream, runs the built-ins, and launches a command through the session's
+launcher (`specs/launch.md`, specs/signal.md's Phase 3), which hands the command
+this stream. This is the
 spec
 the terminal arc lands under —the Amiga `CON:` handler and the text surface
 the shell (a later arc, `specs/shell.md`) runs in. `specs/environment.md` named "the shell and a
@@ -145,11 +145,12 @@ port does not know is answered by saying nothing.
 - `command_status`. Answer: one word, the status, when a command has finished;
   an empty answer otherwise. Reading it clears the finished state, so the
   shell prints one `return code` line and draws the next prompt.
-- Starting a program is *not* a stream method any more: it is the launcher's
-  protocol, served on the same endpoint in the first cut and read by the
-  shell through `aegir::launch` (`specs/launch.md`). `exit` and
-  `command_status` remain here, because the finished command's report and the
-  status the shell takes are the stream's.
+- Starting a program is *not* a stream method: it is the launcher's own
+  protocol, `launch.session`, read by the shell through `aegir::launch`
+  (`specs/launch.md`). The request carries the caller's stream as its one
+  capability, and the launcher hands it to the command, so the command writes
+  where its caller did. `exit` and `command_status` remain here, because the
+  finished command's report and the status the shell takes are the stream's.
 - `size`. Out: two words, the rows then the columns of the text area, so a
   pager sizes a page to the window rather than a constant. It is the one
   attribute of the `get`/`set` family (`title`, later color) that has landed.
@@ -183,19 +184,22 @@ helpers are `aegir/console_stream_client.h`; the handler's side,
 `ConsoleStreamServer`, owns the streams and their line editors in the
 terminal. One handler serves every client: the wire (the shell and its
 commands) and the terminal's own key path, which reaches the same stream
-directly because a process cannot call its own endpoint. The terminal also
-owns the shell's spawn: `SpawnKit::spawn_shell` starts `aegir-shell` once from
-auth's `shell-pool`, and the shell's `run` calls come back to the terminal as
-launch requests (`specs/launch.md`), which spawns each command on a mem.main
-copy badged for it (specs/memory.md).
+directly because a process cannot call its own endpoint. The terminal owns the
+shell's spawn -- `SpawnKit::spawn_shell` starts `aegir-shell` once from auth's
+`shell-pool` -- and nothing else: the shell's commands go to the session's
+launcher (`specs/launch.md`), which starts each on a mem.main copy badged for
+it (specs/memory.md), and the terminal learns of them only from the stream.
 
-**The terminal is a launcher as well as a command runner.** Auth delegates it
-the launcher kit -- an unbadged `spawn:console.gui` -- so a kind-3 launch
-(`NEWSHELL`) can mint the child its own console cap, draw the child's runtime
-and shell pool from `mem.main` under the terminal's badge, hand it a reserved
-badge range, and give it the session's namespace by copy. The child is a peer
-with its own window and shell, and a larger CSpace than a command
-(specs/authority.md), so it can launch in turn.
+**The terminal no longer launches.** A kind-3 launch (`NEWSHELL`) goes to the
+session's launcher, which mints the child its own console cap, draws the child's
+runtime and shell pool from `mem.main` under the launcher's badge, hands it a
+reserved badge range and the session's namespace by copy, and gives it the
+caller half of `launch.session` so its own shell launches in turn. The child is a
+peer with its own window and shell, and a larger CSpace than a command
+(specs/authority.md). What the terminal keeps is the stream, and it learns the
+line's state from the line -- the shell's announcement, the commands' exit
+reports, and the launcher's answer for whether an exit was the line's own or a
+background `Run`'s.
 
 ### The terminal's window and render
 
@@ -303,7 +307,7 @@ whole-run and exact.
 On target, the terminal process (`apps/hosted/aegir-terminal`) renders the
 grid and the prompt and the runner reads its window back; the runner then
 types a line at it through QMP, the shell resolves it to a command and the
-terminal spawns it with a caller copy of the console stream, and the runner
+launcher spawns it with a caller copy of the console stream, and the runner
 reads the command's exit cue (`specs/shell.md`'s acceptance) -- the whole
 Phase 3 and 4 path, the output on the same grid the shell writes to. The
 runner checks the window holds *ink* -- dark pixels in the text area, not only

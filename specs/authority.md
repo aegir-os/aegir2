@@ -127,9 +127,10 @@ service, the ASID pool, the log, the clock and timer, the unbadged console a
 launcher's own children mint from -- is one shape, built in one place
 (`libs/freestanding/aegir-spawn-kit`: `aegir::spawn::Kit` and the builders
 `command_ports`, `launcher_ports`, `shell_ports`). auth builds the session's and
-the boot terminal with it; the terminal builds its commands, its shell and
-nested terminals with it. The mint-or-copy decision is a property of the
-capability, not of the child: an unbadged source (log, console, memory service)
+the boot terminal with it; the launcher builds its commands and nested
+terminals with it, and the terminal its own shell. The mint-or-copy decision is
+a property of the capability, not of the child: an unbadged source (log, console,
+memory service)
 is minted with the child's badge, while the session's namespace -- which must
 carry the session's identity for `Home:` and `ENV:` to resolve -- is copied.
 No spawner reassembles the list, so a new launcher cannot get it subtly wrong

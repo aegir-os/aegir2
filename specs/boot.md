@@ -52,7 +52,10 @@ system authority and runs once, and a user's shell startup is the user's own
   runs.
 - **`C:` is bound for the boot badge; `Sys:` is waited for.** A command in the
   sequence resolves through `C:` (`Sys:C`, `specs/dos.md`), which auth binds
-  for the boot badge. `Sys:` is a filesystem's to register and comes up after
+  for the boot badge -- though the boot session has no launcher yet
+  (`specs/launch.md`'s later phase, where the terminal becomes the session's
+  first launch), so today the sequence runs built-ins only, its `EndCLI >NIL:`
+  among them. `Sys:` is a filesystem's to register and comes up after
   auth, so the bind is retried until the boot volume is there — the same wait
   the user database's resolve does.
 - **The firmware's boot flags are the device tree's `/chosen/bootargs`.** The

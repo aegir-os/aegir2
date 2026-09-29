@@ -41,13 +41,12 @@ sugar, and what it stands on is a volume a session can also reach by name.
   whole grant, so a pipe may be as large as the grant is and many pipes share
   it.
 - **`|` connects two programs that run at once.** The shell parses a line
-  into stages and hands them to the terminal, which holds the spawn authority
-  (`specs/shell.md`'s Phase 6). The terminal spawns every stage in one command
-  bracket, names a pipe between each pair, and gives stage *i*'s output to
-  stage *i+1*'s input. Both run concurrently: the producer writes, the
-  consumer reads, and the pipe buffers what separates their rates. A stage
-  that names its own redirection keeps it at the pipeline's ends -- the first
-  stage's input and the last stage's output -- and a middle redirection is
+  into stages and hands them to the session's launcher. The launcher spawns
+  every stage in one command bracket, names a pipe between each pair, and gives
+  stage *i*'s output to stage *i+1*'s input. Both run concurrently: the producer
+  writes, the consumer reads, and the pipe buffers what separates their rates. A
+  stage that names its own redirection keeps it at the pipeline's ends -- the
+  first stage's input and the last stage's output -- and a middle redirection is
   refused, because the pipe is what connects it.
 - **The pipeline's status is its last stage's.** Every stage reports its exit
   through the shell's console stream (`specs/shell.md`); the terminal counts

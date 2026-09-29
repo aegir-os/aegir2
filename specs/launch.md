@@ -4,7 +4,9 @@ Status: decided (2026-09). The request shape, the kinds and the authority are
 below. `Run` (kind 1) landed as specs/memory.md Phase 5; Phase 2 (`aegir::launch`
 over the runtime primitive, the shell routed through it) landed. Phase 3 has
 landed: the launcher kit and the reserved badge ranges, with `NEWSHELL`/`NEWCLI`
-starting a peer terminal and its `WINDOW=`/`FROM` arguments. A program opens a
+starting a peer terminal and its `WINDOW=`/`FROM` arguments -- served now by the
+session's launcher itself, with the terminal left to own the stream
+(specs/signal.md Phase 3). A program opens a
 window whenever it wants one -- a command carries its own `console.gui` among
 the grants, so nothing classifies it as "windowed" before it runs. `aegir-view`
 (the MultiView shape) is the first program to use it, started by its bare name.
@@ -137,13 +139,14 @@ window.
   is the terminal's own `run`, which this spec later generalizes.
 - **Phase 2 -- the launch request and the runtime API.** Landed. `aegir::launch`
   (C++) and the C runtime primitive `aegir_spawn` (over `aegir_launch_request`)
-  build a request from the caller's own context; the terminal serves it on the
-  same endpoint as con.stream for the first cut, under the method numbers
-  `kMethodSpawn`/`kMethodPipeline` (chosen clear of con.stream's, because one
-  process serves one port). The shell's command lines, `Run` and pipelines all
-  route through it, so the call site does not change when the launcher moves
-  out. `argv`, `cwd`, `environment`, `path`, the redirections, the window
-  specification and the stack ask all travel; the launcher fulfills kind 1.
+  build a request from the caller's own context; the terminal served it on the
+  same endpoint as con.stream for the first cut, and `launch.session` -- the
+  launcher's own endpoint -- serves it now (specs/signal.md Phase 3), under the
+  method numbers `kMethodSpawn`/`kMethodPipeline`. The shell's command lines,
+  `Run` and pipelines all route through it. `argv`, `cwd`, `environment`,
+  `path`, the redirections, the window specification and the stack ask all
+  travel, and the request carries the caller's con.stream as its one capability;
+  the launcher fulfills kind 1.
 - **Phase 3 -- the launcher kit and the windowed program.** Landed. A
   launching child is built from the launcher kit: auth delegates the first-cut
   launcher, the terminal, an unbadged `spawn:console.gui`, so the child mints
@@ -153,8 +156,10 @@ window.
   of a session's processes share a serial, hands it the session's namespace by
   copy, and gives it a larger CSpace (specs/authority.md) so it can launch in
   turn. The kit itself is one module (`libs/freestanding/aegir-spawn-kit`): the
-  terminal builds its commands, its shell and a nested terminal with the same
-  builders auth uses, so no launcher reassembles the list. `NEWSHELL`/`NEWCLI`
+  launcher builds its commands and a nested terminal, the terminal only its own
+  shell, all with the same builders auth uses, so no spawner reassembles the
+  list -- and since specs/signal.md Phase 3 it is the launcher that builds the
+  commands and the nested terminals. `NEWSHELL`/`NEWCLI`
   launch `aegir-terminal` this way, and a nested terminal stands up as a peer
   with its own window and shell; their `WINDOW=<spec>` (or a bare `CON:...`) is
   the child's window, carried in the request's own field for the child to

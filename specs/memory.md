@@ -3,10 +3,10 @@
 Status: decided (2026-09); the service, the runtime's source, the per-process
 spawner, the limits and `Run` are landed (phases 1-5), and the generic
 `aegir::launch` API (specs/launch.md Phase 2) is landed too.
-Aegir's memory is, today,
-a set of **static partitions**: director carves fixed untypeds for services,
-auth carves a fixed command pool and passes it to the terminal, and the
-terminal carves a fixed per-command untyped for each program. A program's
+Aegir's memory was, before this
+spec, a set of **static partitions**: director carves fixed untypeds for
+services, auth carves a fixed runtime for a terminal's spawn work, and the
+spawner carves a fixed per-command untyped for each program. A program's
 memory is decided before it runs, concurrency is decided by the pool, and
 every growth is a constant and a manifest edit. That cannot express "a program
 may take most of the machine's RAM", which a terminal -- or a desktop icon --
@@ -127,11 +127,11 @@ default, the machine).
   `mem.main`. The cxx-smoke client is spawned with a 256 KiB seed and
   heap-allocates past it, so its pages come from the service -- every hosted
   program given the port grows the same way.
-- **Phase 3 -- the spawner and the per-process badge.** Landed. The terminal
-  mints a `mem.main` copy badged for each command, so the command's objects,
-  image frames and runtime growth are all owned by its id and come back in one
-  `release`; the command pool is gone. Auth hands the terminal the delegatable
-  copy instead of carving a pool.
+- **Phase 3 -- the spawner and the per-process badge.** Landed. The spawner --
+  the session's launcher, or the boot terminal -- mints a `mem.main` copy badged
+  for each command, so the command's objects, image frames and runtime growth
+  are all owned by its id and come back in one `release`; the command pool is
+  gone. Auth hands the spawner the delegatable copy instead of carving a pool.
 - **Phase 4 -- limits.** Landed. `specs/limits.md`: the rule parser
   (`aegir-limits`, host-tested), the shipped `Sys:S/limits.manifest`, the user
   database's `class=` field (AUDB v3), and the enforcement at `alloc`. The
@@ -145,8 +145,8 @@ default, the machine).
 - **Phase 5 -- `Run`/`NewCLI`.** `Run` landed: with no per-command pool, a
   background command is one more process under its own limits, and `Run` is
   "spawn without waiting". Its exit carries the command's own badge, so the
-  terminal reaps it without a `return code` line, and the spawner keeps a pool
-  of live commands rather than one line's bracket. `NewCLI`/`NewShell` (a new
+  launcher reaps it, on the stream's word, without a `return code` line, and
+  the spawner keeps a pool of live commands rather than one line's bracket. `NewCLI`/`NewShell` (a new
   Shell in a new window) is not a memory feature: it is the generic launch
   mechanism of `specs/launch.md`, whose Phase 2 -- `aegir::launch` over the
   runtime primitive, and the shell's command lines, `Run` and pipelines routed

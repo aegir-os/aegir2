@@ -120,11 +120,12 @@ the line, instead of a spawn the terminal no longer performs.
 2. **`con.stream`.** `read` holds its reply; the doorbell is struck from the
    protocol, from `aegir-spawn-kit`'s `command_ports`, and from auth (the
    session doorbell); the `line` method is added.
-3. **The launcher.** The shell calls `launch.session` directly (the recorded
-   decision); the launcher hands a command the caller's stream capability, which
-   is the request's only capability. The terminal-to-launcher relay is dropped:
-   the terminal learns the stream's state from the stream, not from who spawned
-   whom.
+3. **The launcher.** Landed. The shell calls `launch.session` directly; the
+   launcher hands a command the caller's stream capability, which is the
+   request's only capability. The terminal-to-launcher relay is dropped: the
+   terminal learns the stream's state from the stream, not from who spawned
+   whom, and the spawn cues are the launcher's because only a spawner can give
+   them.
 4. **The rest.** `mem.main`'s release may publish a context so a waiting
    allocator is woken rather than retried; the drivers' interrupt notifications
    and the console's event channel become the same library.
@@ -136,8 +137,10 @@ the line, instead of a spawn the terminal no longer performs.
 - **Phase 2 -- the stream.** `read` holds its reply; the `line` method is added;
   the doorbell is removed end to end. This is the piece the launcher arc waits
   on.
-- **Phase 3 -- the launcher.** The shell calls `launch.session`; the relay is
-  removed.
+- **Phase 3 -- the launcher.** Landed. The shell calls `launch.session`; the
+  terminal stops spawning and keeps only the stream, and a command's exit is
+  released at the launcher and reported apart from the foreground line by the
+  launcher's answer.
 - **Phase 4 -- the field.** IRQ wakeups, `mem.main` release, the console's slice
   events, all on the library.
 
