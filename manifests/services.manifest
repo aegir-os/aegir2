@@ -266,7 +266,7 @@ binary     = aegir-font
 authority  = system
 account    = system
 owns       = font.main
-needs      = log.main, vfs.namespace, mem.main
+needs      = log.main, vfs.namespace, mem.main, timer.main
 maps       = true
 # A face in the CJK collection is CFF-based: its table is sixteen megabytes, so
 # the seed is sized for a face rather than for an empty service, and the CSpace

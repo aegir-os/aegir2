@@ -142,11 +142,15 @@ ascent minus descent, so they are checked apart). Over a boot it indexes all
 sixteen faces the volume holds, the CJK collection's ten among them, opening
 and closing one at a time.
 
-What that costs is worth knowing: indexing opens every face, and a CJK face's
-CFF is read through a VFS window of 936 bytes, so the boot pays for it. It fits
-the acceptance's budget today; a probe that read only the OpenType `name` table
-would make the index cheap, and if the boot's margin ever bites that is the
-change to make.
+What that costs is worth knowing, and it is measured: indexing opens every
+face, and a CJK face's CFF is read through a VFS window of 936 bytes, so the
+scan takes **about twenty seconds** -- `16 faces from Sys:Fonts in 19974 ms`,
+logged by the service itself with `timer.main`. That is most of the acceptance's
+margin at `BOOT_TIMEOUT=480`, where the run then depends on the console's
+timing; a probe that read only the OpenType `name` table and left FreeType the
+rendering would make the index cheap, and that is the change to make before
+this is comfortable. It is a change to the "name read through FreeType" clause
+above, which is why it is stated here and not taken.
 
 - `glyphs`. In: the id, a list of codepoints, and a capability to the client's
   transfer page. Out: each glyph's advance, bearing and rectangle within the

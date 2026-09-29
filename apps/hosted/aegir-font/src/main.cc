@@ -28,6 +28,7 @@
  * has C linkage already and seL4's plain redeclaration inherits it. FreeType's
  * own headers pull <string.h> in, so the order is fixed here. */
 #include <string.h>
+#include <time.h>
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
@@ -740,10 +741,18 @@ int main(int argc, char *argv[])
         seL4_Yield();
     }
 
+    timespec before {};
+    timespec after {};
+    static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &before));
     scan(kFontsRoot, g_index);
+    static_cast<void>(clock_gettime(CLOCK_MONOTONIC, &after));
 
     std::string found = std::to_string(g_index.size());
-    found += " faces from Sys:Fonts";
+    found += " faces from Sys:Fonts in ";
+    long const elapsed_ms = (after.tv_sec - before.tv_sec) * 1000 +
+                            (after.tv_nsec - before.tv_nsec) / 1000000;
+    found += std::to_string(elapsed_ms);
+    found += " ms";
     write(found.c_str());
     if (g_index.empty()) {
         write("FAIL Sys:Fonts holds no face this service can read");
