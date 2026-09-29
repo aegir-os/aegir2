@@ -854,6 +854,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 2, 10, 102, 136, 187),
                     ("gpu0", 100, 33, 240, 240, 240),
                 ),
+                # The Execute row's accelerator is drawn: `[Win] Space`, in the
+                # row's right half, past the label. A named key that drew
+                # nothing (a bare space) leaves this zone blank and fails.
+                dark=(("gpu0", 95, 66, 75, 22, 8),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 1352}},

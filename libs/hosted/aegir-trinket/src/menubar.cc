@@ -323,6 +323,35 @@ Size MenuBar::preferred_size() const {
 
 std::u32string MenuBar::keycode_to_string(KeyCode code) {
     switch (code) {
+        /* The keys with no character name themselves. The space is the reason
+         * this exists: a bare U' ' draws its advance and nothing else, so an
+         * accelerator read `[Win]` and a blank (specs/workbench.md). The
+         * arrows are glyphs the font has -- Terminus carries U+2190..2193 --
+         * while the rest are words, because a symbol the font lacks draws
+         * nothing at all and looks like this bug. */
+        case KeyCode::BACKSPACE: return U"Bksp";
+        case KeyCode::TAB: return U"Tab";
+        case KeyCode::ENTER: return U"Enter";
+        case KeyCode::ESCAPE: return U"Esc";
+        case KeyCode::SPACE: return U"Space";
+        case KeyCode::LEFT: return U"←";
+        case KeyCode::RIGHT: return U"→";
+        case KeyCode::UP: return U"↑";
+        case KeyCode::DOWN: return U"↓";
+        case KeyCode::HOME: return U"Home";
+        case KeyCode::END: return U"End";
+        case KeyCode::PAGE_UP: return U"PgUp";
+        case KeyCode::PAGE_DOWN: return U"PgDn";
+        case KeyCode::INSERT: return U"Ins";
+        case KeyCode::DELETE_KEY: return U"Del";
+        case KeyCode::SHIFT_L:
+        case KeyCode::SHIFT_R: return U"Shift";
+        case KeyCode::CTRL_L:
+        case KeyCode::CTRL_R: return U"Ctrl";
+        case KeyCode::ALT_L:
+        case KeyCode::ALT_R: return U"Alt";
+        case KeyCode::META_L:
+        case KeyCode::META_R: return U"Win";
         case KeyCode::F1: return U"F1";
         case KeyCode::F2: return U"F2";
         case KeyCode::F3: return U"F3";
@@ -335,8 +364,15 @@ std::u32string MenuBar::keycode_to_string(KeyCode code) {
         case KeyCode::F10: return U"F10";
         case KeyCode::F11: return U"F11";
         case KeyCode::F12: return U"F12";
-        default: return std::u32string(1, static_cast<char32_t>(code));
+        default: break;
     }
+    /* A printable key is its own character; anything else -- a control code,
+     * an unknown -- draws nothing rather than a stray glyph. */
+    char32_t const character = static_cast<char32_t>(code);
+    if (character >= 0x20 && character != 0x7F) {
+        return std::u32string(1, character);
+    }
+    return std::u32string();
 }
 
 namespace {

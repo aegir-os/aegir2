@@ -36,7 +36,12 @@ it painted once and exited. This arc makes it live and gives it the bar.
   wherever the focus is (`kEventScreenKey`, specs/console.md), because the
   screen bar is not a focus target and the key would otherwise reach the
   focused window; the Desktop matches it against the active menus'
-  accelerators.
+  accelerators. A key with no character **names itself**: `Space`, `Enter`,
+  `Tab`, `Esc`, the arrows -- a bare `U' '` draws its advance and nothing
+  else, so the item read `[Win]` and a blank, and the font has no space symbol
+  to use instead (Terminus carries the arrows, not U+2423). The font is the
+  reason the rest are words: a glyph it lacks draws nothing at all, which is
+  the bug being avoided, not a milder version of it.
 - **Menus are always visible, not on the right mouse button.** Workbench shows
   a screen's menus in the title bar only while the right button is held; Aegir
   draws them always, because a right-button drag is awkward on a modern
