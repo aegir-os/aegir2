@@ -118,10 +118,50 @@ uintptr_t brk_ = 0;
 uintptr_t mmap_ = 0;
 bool ready_ = false;
 
+/* Diagnosis only, off unless the heap is built with -DAEGIR_HEAP_TRACE: every
+ * mapping, release and refusal is logged, so the pairs can be replayed offline
+ * (scripts/heap_trace.py). The badge tags the lines, because two processes with
+ * the same image use the same addresses and a log without it cannot be
+ * attributed. It earned its place: it ruled the free list's logic out and left
+ * the storage and the reused contents as what to look at (specs/memory.md). */
+#ifdef AEGIR_HEAP_TRACE
+uint64_t trace_tag() noexcept
+{
+    static uint64_t tag = 0;
+    if (tag == 0) {
+        uint64_t badge = 0;
+        if (!aegir::bootstrap::badge(&badge) || badge == 0) {
+            badge = 1;
+        }
+        tag = badge;
+    }
+    return tag;
+}
+
+void trace(char const *kind, uintptr_t first, uintptr_t second) noexcept
+{
+    aegir::debug_write("DISPATCHER_TRACE ");
+    aegir::debug_write_hex(trace_tag());
+    aegir::debug_write(" ");
+    aegir::debug_write(kind);
+    aegir::debug_write(" ");
+    aegir::debug_write_hex(first);
+    aegir::debug_write(" ");
+    aegir::debug_write_hex(second);
+    aegir::debug_write("\n");
+}
+#else
+void trace(char const *kind, uintptr_t first, uintptr_t second) noexcept
+{
+    static_cast<void>(kind);
+    static_cast<void>(first);
+    static_cast<void>(second);
+}
+#endif
+
 /* Threads (musl's clone): where a new thread runs, what its objects are charged
  * to, and the ids it hands out. A library cannot know a process's VSpace on its
- * own, so init() fills this in from the window it was handed. */
-aegir::thread::Placement g_thread_placement{};
+ * own, so init() fills this in from the window it was handed. */aegir::thread::Placement g_thread_placement{};
 aegir::mem::Account g_thread_account{"thread", 0, 0, 0};
 int g_next_tid = 0;
 
@@ -320,6 +360,7 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     brk_ = base_;
     mmap_ = top;
     ready_ = true;
+    trace("region", base_, limit_);
 
     /* Seed again, in case a constructor ordering surprise ran seed_musl()
      * before sel4runtime had the auxv: init() is called from main, long
@@ -423,7 +464,10 @@ long sys_brk(uintptr_t new_break) noexcept
 /* SYS_mmap: anonymous private mappings, which is what mallocng asks for.
  * The address is ours to choose: grow down from the top of the region, past
  * the brk side. Frames are mapped at the addresses it hands out. Returns the
- * address, or a negative errno that __syscall_ret reads into MAP_FAILED. */
+ * address, or a negative errno that __syscall_ret reads into MAP_FAILED.
+ *
+ * The DISPATCHER_TRACE lines are diagnosis, not a feature: every mapping and
+ * release is logged so the pair can be checked offline. They are temporary. */
 long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
               off_t offset) noexcept
 {
@@ -437,15 +481,19 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     }
     uintptr_t const needed = align_up(length);
     if (needed > mmap_ - brk_) {
+        trace("mmap-refused", length, 0);
         return -ENOMEM;
     }
-    mmap_ -= needed;
+    uintptr_t const base = mmap_ - needed;
+    mmap_ = base;
     for (uintptr_t page = 0; page < needed / kPageBytes; ++page) {
-        if (!map_page(mmap_ + page * kPageBytes)) {
+        if (!map_page(base + page * kPageBytes)) {
+            trace("mmap-refused", length, 0);
             return -ENOMEM;
         }
     }
-    return static_cast<long>(mmap_);
+    trace("mmap", base, needed);
+    return static_cast<long>(base);
 }
 
 /* SYS_munmap: the pages stay mapped -- the address space is committed to the
@@ -453,9 +501,12 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
  * the same memory. The recycling that matters is musl's own: mallocng's
  * groups reuse the small pieces, and the large individually-mapped ones are
  * rare enough in a GUI that the virtual budget holds. Returning the frames to
- * the kernel is a later refinement, not a correctness need. */
+ * the kernel is a later refinement, not a correctness need.
+ *
+ * The DISPATCHER_TRACE line is temporary diagnosis (see sys_mmap). */
 long sys_munmap(void *addr, size_t length) noexcept
 {
+    trace("munmap", reinterpret_cast<uintptr_t>(addr), length);
     static_cast<void>(addr);
     static_cast<void>(length);
     return 0;

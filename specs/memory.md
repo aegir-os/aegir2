@@ -128,17 +128,29 @@ The measurements, so the next attempt starts further along:
   `mmap_` cursor it was *safe* but changed nothing (mallocng's releases are
   mostly of older regions, which the bound refused), and bounded by the
   region's `limit_` it accepted those older releases and **the demo and the
-  service faulted on a null access** -- a released address handed back out over
-  live memory. Which release that is, and why, is not yet understood, and
-  mallocng's `munmap` contract (`free.c`'s `nontrivial_free`, `malloc.c`'s
-  `alloc_meta`) is where the answer is.
+  service faulted on a null access**.
 
-The two directions, once that is settled: record the frame capabilities so
-`munmap` can unmap them and return them to the allocator (a bookkeeping page
-per region, magic-guarded, is one shape), or find why reusing an older region
-is unsafe and restore the free list with that guard. Until then a service's
-memory ceiling is the number of large allocations it makes, not the pool it was
-given -- and the font service waits for it (`specs/fonts.md`).
+The trace (`-DAEGIR_HEAP_TRACE` on `aegir-heap`, read back by
+`scripts/heap_trace.py`) says where the fault is **not**, which is progress:
+
+- **mallocng's releases pair exactly.** Over a whole boot, 378 releases of 378
+  name a range currently mapped by that process, with no overlap and no
+  sub-range. So there is no contract violation to find in mallocng; the pairs
+  the heap is handed are well-formed. (The handful the checker first called
+  unknown were console-split log lines, counted and shown.)
+- **The list's logic is sound for the real stream.** Replaying the logged
+  `mmap`/`munmap` sequence through a faithful port of the list hands out a live
+  region **zero** times.
+
+What follows from that is where to look next: not the list's arithmetic but
+**where the list is kept and what a reused region contains**. A node written
+into a released region can be clobbered after the release, and a region handed
+back *dirty* violates `mmap`'s promise that a mapping is zero-filled. So the
+next attempt keeps the free list in memory the heap owns -- nodes chained from
+pages mapped below the cursor, the way the allocator keeps its own -- and hands
+a reused region out zeroed. Until then a service's memory ceiling is the number
+of large allocations it makes, not the pool it was given -- and the font
+service waits for it (`specs/fonts.md`).
 
 ## What the spawner stops doing
 
