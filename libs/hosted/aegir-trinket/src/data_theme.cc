@@ -278,13 +278,14 @@ private:
     }
 
     /* Blit a sprite centred in the rectangle, skipping transparent pixels and
-     * anything outside the clip (specs/trinket/theming.md). */
+     * clipping to the rectangle and the canvas -- a sprite does not draw
+     * outside the gadget cell it is placed in (specs/trinket/theming.md). */
     void blit_sprite(Canvas& canvas, const Rect& rect, int index) {
         if (index < 0 || index >= static_cast<int>(kSpriteCount)) return;
         Sprite const& sprite = kSprites[index];
         int const x0 = rect.x + (rect.width - static_cast<int>(sprite.width)) / 2;
         int const y0 = rect.y + (rect.height - static_cast<int>(sprite.height)) / 2;
-        Rect const clip = canvas.clip_rect();
+        Rect const clip = rect.intersected(canvas.clip_rect());
         for (int y = 0; y < sprite.height; ++y) {
             for (int x = 0; x < sprite.width; ++x) {
                 uint32_t const pixel = sprite.pixels[y * sprite.width + x];

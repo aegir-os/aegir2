@@ -17,9 +17,9 @@
 namespace aegir::trinket {
 
 namespace {
-/* The bar's raised frame: outline, highlight and face, three pixels of the
- * XEN border (specs/trinket/scrollbar.md). */
-constexpr int kFrame = 3;
+/* The bar's raised frame: outline and highlight, two pixels of the XEN border
+ * (specs/trinket/scrollbar.md). */
+constexpr int kFrame = 2;
 }  // namespace
 
 Scrollbar::Scrollbar(Orientation orientation) : orientation_(orientation) {}
