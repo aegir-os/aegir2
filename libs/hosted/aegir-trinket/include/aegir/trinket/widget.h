@@ -97,6 +97,15 @@ public:
     // it with the size of what it draws.
     virtual Size preferred_size() const;
 
+    // The sizing contract (specs/trinket/layout.md): a layout sizes a child
+    // between these. The base is fixed -- the minimum and the maximum are the
+    // preferred size -- so a widget reports a range only when it can take one.
+    // All three are content-derived, never read back from the rectangle the
+    // widget currently holds, so a layout that runs twice computes the same
+    // rectangles and the second pass raises no damage.
+    virtual Size minimum_size() const;
+    virtual Size maximum_size() const;
+
     // Focus
     bool focused() const { return focused_; }
     void set_focused(bool f);
@@ -185,6 +194,13 @@ public:
 
     void set_layout(std::unique_ptr<class Layout> layout);
     class Layout* layout() const { return layout_.get(); }
+
+    // A container's size is its layout's: the three come from the children the
+    // layout arranges, so a group nested in a group reports the same kind of
+    // numbers a leaf does (specs/trinket/layout.md).
+    Size preferred_size() const override;
+    Size minimum_size() const override;
+    Size maximum_size() const override;
 
     // Find child at point (in container coords)
     Widget* child_at(Point p) const;

@@ -5,6 +5,7 @@
 #include <aegir/trinket/layout.h>
 #include <aegir/trinket/widget.h>
 #include <algorithm>
+#include <limits>
 
 namespace aegir::trinket {
 
@@ -402,6 +403,234 @@ Size AnchorLayout::preferred_size(const Container& container) const {
         max_size.height = std::max(max_size.height, pref.height);
     }
     return max_size;
+}
+
+// GroupLayout
+
+GroupLayout::GroupLayout(Orientation orientation, int spacing)
+    : orientation_(orientation), spacing_(spacing) {}
+
+GroupLayout::Child* GroupLayout::find(Widget* child) {
+    for (auto& c : children_) {
+        if (c.widget == child) return &c;
+    }
+    return nullptr;
+}
+
+GroupLayout::Child const* GroupLayout::find(Widget* child) const {
+    for (auto const& c : children_) {
+        if (c.widget == child) return &c;
+    }
+    return nullptr;
+}
+
+void GroupLayout::set_weight(Widget* child, int weight) {
+    Child* const c = find(child);
+    if (c == nullptr) {
+        children_.push_back({child, weight, Align::STRETCH});
+    } else {
+        c->weight = weight;
+    }
+}
+
+int GroupLayout::weight(Widget* child) const {
+    Child const* const c = find(child);
+    return c != nullptr ? c->weight : kDefaultWeight;
+}
+
+void GroupLayout::set_align(Widget* child, Align align) {
+    Child* const c = find(child);
+    if (c == nullptr) {
+        children_.push_back({child, kDefaultWeight, align});
+    } else {
+        c->align = align;
+    }
+}
+
+GroupLayout::Align GroupLayout::align(Widget* child) const {
+    Child const* const c = find(child);
+    return c != nullptr ? c->align : Align::STRETCH;
+}
+
+namespace {
+
+/* One visible child of a group: the sizes the contract reports and the
+ * parameters the layout holds for it. */
+struct GroupItem {
+    Widget* widget = nullptr;
+    Size min;
+    Size pref;
+    Size max;
+    int weight = GroupLayout::kDefaultWeight;
+    GroupLayout::Align align = GroupLayout::Align::STRETCH;
+};
+
+std::vector<GroupItem> group_items(Container const& container,
+                                   GroupLayout const& layout) {
+    std::vector<GroupItem> items;
+    for (auto const& child : container.children()) {
+        if (!child || !child->visible()) continue;
+        GroupItem item;
+        item.widget = child.get();
+        item.min = child->minimum_size();
+        item.pref = child->preferred_size();
+        item.max = child->maximum_size();
+        item.weight = layout.weight(item.widget);
+        item.align = layout.align(item.widget);
+        items.push_back(item);
+    }
+    return items;
+}
+
+/* Clamp a sum of sizes to int: a growable child may report a very large
+ * maximum, and a group of them must not overflow (specs/trinket/layout.md). */
+int add_sizes(int total, int part) {
+    long long const sum = static_cast<long long>(total) + part;
+    if (sum > std::numeric_limits<int>::max()) return std::numeric_limits<int>::max();
+    return static_cast<int>(sum);
+}
+
+struct GroupSizes {
+    Size minimum;
+    Size preferred;
+    Size maximum;
+};
+
+GroupSizes group_sizes(std::vector<GroupItem> const& items, bool horizontal,
+                       int spacing) {
+    int const gaps = items.empty() ? 0 : (static_cast<int>(items.size()) - 1) * spacing;
+    int min_main = 0, pref_main = 0, max_main = 0;
+    int min_cross = 0, pref_cross = 0, max_cross = 0;
+    for (auto const& item : items) {
+        int const min_m = horizontal ? item.min.width : item.min.height;
+        int const pref_m = horizontal ? item.pref.width : item.pref.height;
+        int const max_m = horizontal ? item.max.width : item.max.height;
+        int const min_c = horizontal ? item.min.height : item.min.width;
+        int const pref_c = horizontal ? item.pref.height : item.pref.width;
+        int const max_c = horizontal ? item.max.height : item.max.width;
+        min_main = add_sizes(min_main, min_m);
+        pref_main = add_sizes(pref_main, pref_m);
+        max_main = add_sizes(max_main, max_m);
+        min_cross = std::max(min_cross, min_c);
+        pref_cross = std::max(pref_cross, pref_c);
+        max_cross = std::max(max_cross, max_c);
+    }
+    min_main = add_sizes(min_main, gaps);
+    pref_main = add_sizes(pref_main, gaps);
+    max_main = add_sizes(max_main, gaps);
+
+    GroupSizes sizes;
+    if (horizontal) {
+        sizes.minimum = {min_main, min_cross};
+        sizes.preferred = {pref_main, pref_cross};
+        sizes.maximum = {max_main, max_cross};
+    } else {
+        sizes.minimum = {min_cross, min_main};
+        sizes.preferred = {pref_cross, pref_main};
+        sizes.maximum = {max_cross, max_main};
+    }
+    return sizes;
+}
+
+}  // namespace
+
+Size GroupLayout::preferred_size(Container const& container) const {
+    return group_sizes(group_items(container, *this),
+                       orientation_ == Orientation::HORIZONTAL, spacing_).preferred;
+}
+
+Size GroupLayout::minimum_size(Container const& container) const {
+    return group_sizes(group_items(container, *this),
+                       orientation_ == Orientation::HORIZONTAL, spacing_).minimum;
+}
+
+Size GroupLayout::maximum_size(Container const& container) const {
+    return group_sizes(group_items(container, *this),
+                       orientation_ == Orientation::HORIZONTAL, spacing_).maximum;
+}
+
+void GroupLayout::layout(Container& container) {
+    std::vector<GroupItem> const items = group_items(container, *this);
+    if (items.empty()) return;
+
+    bool const horizontal = orientation_ == Orientation::HORIZONTAL;
+    Rect const bounds = container.rect();
+    int const main_len = horizontal ? bounds.width : bounds.height;
+    int const cross_len = horizontal ? bounds.height : bounds.width;
+    int const main_origin = horizontal ? bounds.x : bounds.y;
+    int const cross_origin = horizontal ? bounds.y : bounds.x;
+
+    int const count = static_cast<int>(items.size());
+    int const gaps = (count - 1) * spacing_;
+
+    /* Each child starts at its minimum; the space above the minima is shared by
+     * weight, never past a child's maximum. */
+    std::vector<int> sizes(static_cast<size_t>(count));
+    int sum_min = 0;
+    for (int i = 0; i < count; ++i) {
+        sizes[i] = horizontal ? items[i].min.width : items[i].min.height;
+        sum_min = add_sizes(sum_min, sizes[i]);
+    }
+
+    int remaining = main_len - gaps - sum_min;
+    while (remaining > 0) {
+        int total_weight = 0;
+        for (int i = 0; i < count; ++i) {
+            int const max_main = horizontal ? items[i].max.width : items[i].max.height;
+            if (items[i].weight > 0 && sizes[i] < max_main) {
+                total_weight = add_sizes(total_weight, items[i].weight);
+            }
+        }
+        if (total_weight == 0) break;
+
+        int distributed = 0;
+        for (int i = 0; i < count; ++i) {
+            int const max_main = horizontal ? items[i].max.width : items[i].max.height;
+            if (items[i].weight <= 0 || sizes[i] >= max_main) continue;
+            long long const want =
+                static_cast<long long>(remaining) * items[i].weight / total_weight;
+            int const can_take = max_main - sizes[i];
+            int const give = static_cast<int>(std::min<long long>(want, can_take));
+            sizes[i] += give;
+            distributed += give;
+        }
+        if (distributed == 0) break;
+        remaining -= distributed;
+    }
+
+    /* Integer truncation can leave a few pixels; hand them out one at a time in
+     * child order until they are used (specs/trinket/layout.md). */
+    bool progress = true;
+    while (remaining > 0 && progress) {
+        progress = false;
+        for (int i = 0; i < count && remaining > 0; ++i) {
+            int const max_main = horizontal ? items[i].max.width : items[i].max.height;
+            if (sizes[i] < max_main) {
+                ++sizes[i];
+                --remaining;
+                progress = true;
+            }
+        }
+    }
+
+    int pos = main_origin;
+    for (int i = 0; i < count; ++i) {
+        int cross_size = cross_len;
+        int cross_pos = cross_origin;
+        if (items[i].align != Align::STRETCH) {
+            int const pref_cross = horizontal ? items[i].pref.height : items[i].pref.width;
+            cross_size = std::min(pref_cross, cross_len);
+            if (items[i].align == Align::CENTER) {
+                cross_pos = cross_origin + (cross_len - cross_size) / 2;
+            } else if (items[i].align == Align::END) {
+                cross_pos = cross_origin + cross_len - cross_size;
+            }
+        }
+        Rect const rect = horizontal ? Rect{pos, cross_pos, sizes[i], cross_size}
+                                     : Rect{cross_pos, pos, cross_size, sizes[i]};
+        items[i].widget->set_rect(rect);
+        pos += sizes[i] + spacing_;
+    }
 }
 
 } // namespace aegir::trinket

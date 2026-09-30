@@ -29,6 +29,10 @@ public:
 
     // Minimum size constraint
     virtual Size minimum_size(const Container& container) const { return preferred_size(container); }
+
+    // The largest useful size. The default is the preferred size: a layout
+    // with no opinion of its own does not grow (specs/trinket/layout.md).
+    virtual Size maximum_size(const Container& container) const { return preferred_size(container); }
 };
 
 class FlowLayout : public Layout {
@@ -109,6 +113,55 @@ public:
 private:
     struct Item { Widget* widget = nullptr; Anchor anchor = Anchor::NONE; Rect margins; };
     std::vector<Item> items_;
+};
+
+/* A MUI-style group (specs/trinket/layout.md): children in one orientation,
+ * spaced, each carrying a weight for the space above the group's minimum. The
+ * weight and the cross-axis alignment live here, per child, not on the widget:
+ * the same widget in two groups may be fixed in one and free in the other, and
+ * a widget need not know which group holds it. A child not named here keeps the
+ * defaults -- weight kDefaultWeight, cross-axis STRETCH. */
+class GroupLayout : public Layout {
+public:
+    enum class Orientation { HORIZONTAL, VERTICAL };
+    enum class Align { START, CENTER, END, STRETCH };
+
+    /* MUI's own weight is an integer and 100 is its default. A fixed widget
+     * cannot grow whatever its weight (its maximum equals its minimum); a
+     * weight of 0 drops a child that could grow out of the distribution. */
+    static constexpr int kDefaultWeight = 100;
+
+    explicit GroupLayout(Orientation orientation = Orientation::VERTICAL,
+                         int spacing = 0);
+
+    void set_orientation(Orientation o) { orientation_ = o; }
+    Orientation orientation() const { return orientation_; }
+    void set_spacing(int s) { spacing_ = s; }
+    int spacing() const { return spacing_; }
+
+    void set_weight(Widget* child, int weight);
+    int weight(Widget* child) const;
+    void set_align(Widget* child, Align align);
+    Align align(Widget* child) const;
+
+    void layout(Container& container) override;
+    Size preferred_size(const Container& container) const override;
+    Size minimum_size(const Container& container) const override;
+    Size maximum_size(const Container& container) const override;
+
+private:
+    struct Child {
+        Widget* widget = nullptr;
+        int weight = kDefaultWeight;
+        Align align = Align::STRETCH;
+    };
+
+    Child* find(Widget* child);
+    const Child* find(Widget* child) const;
+
+    Orientation orientation_ = Orientation::VERTICAL;
+    int spacing_ = 0;
+    std::vector<Child> children_;
 };
 
 /* `Anchor` is a bit set, so the tests in the layout are bitwise. A scoped enum

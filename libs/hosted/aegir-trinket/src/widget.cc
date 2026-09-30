@@ -61,6 +61,14 @@ Size Widget::preferred_size() const {
     return rect_.size();
 }
 
+Size Widget::minimum_size() const {
+    return preferred_size();
+}
+
+Size Widget::maximum_size() const {
+    return preferred_size();
+}
+
 void Widget::damage(const Rect& r) {
     if (r.empty()) return;
     /* Tier 1 repaints the window whole, so the rectangle is not tracked and
@@ -186,6 +194,18 @@ std::vector<Widget*> Container::children_ptrs() {
 
 void Container::set_layout(std::unique_ptr<Layout> layout) {
     layout_ = std::move(layout);
+}
+
+Size Container::preferred_size() const {
+    return layout_ ? layout_->preferred_size(*this) : Widget::preferred_size();
+}
+
+Size Container::minimum_size() const {
+    return layout_ ? layout_->minimum_size(*this) : Widget::minimum_size();
+}
+
+Size Container::maximum_size() const {
+    return layout_ ? layout_->maximum_size(*this) : Widget::maximum_size();
 }
 
 Widget* Container::child_at(Point p) const {
