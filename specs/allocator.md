@@ -36,6 +36,19 @@ splitting with that shape.
   cannot be made -- no nodes or no slots -- the whole piece is put back, because
   nothing was spent. The launcher's own allocator (`g_objects`, whose node source
   is the window's `grow_nodes_from_window`) hit this exactly, four times a boot.
+- **A multi-page window run is reserved before it is filled.** The arena maps a
+  contiguous region for a child's stack or startup frame, and the allocator's
+  node storage is mapped through the same window cursor
+  (`grow_nodes_from_window`, `Scratch::map`). A node taken *while* the run is
+  being filled would land inside it and the region would no longer be
+  contiguous. So `Arena::start_region` reserves the run first (`Scratch::reserve`,
+  advancing the cursor past it) and maps each page into the reserved address by
+  `map_at`; node growth then lands after the run. The greeter's sixteen-page
+  stack is where this bit: a ~9 KB image growth moved the node growth into the
+  run, and the spawn failed with "no memory for the child's stack" while the
+  untyped and the CSpace slots were both fine (neither `delegate_mib` nor
+  `cspace_bits` answered it). It is the kind of failure `Future: memory auditing`
+  below exists to make legible.
 - **Allocation pops and retypes; the node is consumed.** `alloc_object` refills
   the wanted size, takes a node, retypes the object out of its capability, and
   the node's storage is released (its memory is the object now).

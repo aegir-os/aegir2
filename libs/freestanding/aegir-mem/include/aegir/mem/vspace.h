@@ -75,6 +75,14 @@ public:
      *  the same throwaway account. */
     bool map_at(uintptr_t address, seL4_CPtr frame) noexcept;
 
+    /** Reserve `pages` consecutive window pages and return the first, advancing
+     *  the cursor past them. A caller that will fill a contiguous run (an arena
+     *  region) reserves it first, then maps into it by address: a mapping the
+     *  allocator makes while the run is being filled -- its node storage, which
+     *  goes through map() and moves the cursor -- must not land inside the run.
+     *  Zero when the window cannot give that many whole pages. */
+    uintptr_t reserve(unsigned pages) noexcept;
+
     /** Remove one mapping. The frame cap stays ours. Unmapping the *most recently*
      *  mapped frame hands its window page back: filling frames is a strict
      *  map-write-unmap rhythm (child_vspace.cc's populate), and a window that

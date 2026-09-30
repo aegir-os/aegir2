@@ -225,6 +225,20 @@ bool Scratch::map_at(uintptr_t address, seL4_CPtr frame) noexcept
     return true;
 }
 
+uintptr_t Scratch::reserve(unsigned pages) noexcept
+{
+    uint64_t const bytes = static_cast<uint64_t>(pages) * kPage;
+    while (next_ + bytes > limit_) {
+        if (!may_grow_) {
+            return 0;
+        }
+        limit_ += kLargePage;
+    }
+    uintptr_t const base = next_;
+    next_ += bytes;
+    return base;
+}
+
 void Scratch::unmap(seL4_CPtr frame) noexcept
 {
     if (frame == 0) {

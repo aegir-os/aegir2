@@ -49,13 +49,16 @@ void *Arena::allocate(uint64_t bytes) noexcept
 bool Arena::start_region(uint64_t bytes) noexcept
 {
     /* A request can be larger than one page -- the startup frame for a child is
-     * two -- so the region has to be taken as a whole. The window hands addresses
-     * out in order, so mapping the pages consecutively *here* is what makes them
-     * contiguous; between one request and the next something else may map in the
-     * window, which is why the old region is never extended and its tail is
-     * abandoned. */
+     * two -- so the region has to be taken as a whole. Reserve the run first,
+     * then map into it by address: the allocator's own node storage is mapped
+     * through the same window cursor, and a page it takes while the run is
+     * being filled would otherwise land inside it and the run would no longer
+     * be contiguous (the greeter's stack, sixteen pages, is where this bit). */
     unsigned const wanted_pages = static_cast<unsigned>((bytes + kPage - 1) / kPage);
-    unsigned char *region = nullptr;
+    uintptr_t const region = scratch_.reserve(wanted_pages);
+    if (region == 0) {
+        return false;
+    }
     for (unsigned page = 0; page < wanted_pages; ++page) {
         seL4_Error error = seL4_NoError;
         seL4_CPtr frame =
@@ -63,21 +66,12 @@ bool Arena::start_region(uint64_t bytes) noexcept
         if (frame == 0) {
             return false;
         }
-        void *mapped = scratch_.map(frame);
-        if (mapped == nullptr) {
-            return false;
-        }
-        auto *at = static_cast<unsigned char *>(mapped);
-        if (page == 0) {
-            region = at;
-        } else if (at != region + static_cast<uint64_t>(page) * kPage) {
-            /* Not in order: the pages are not contiguous, so one request could
-             * not span them, and pretending otherwise writes off the end. */
+        if (!scratch_.map_at(region + static_cast<uint64_t>(page) * kPage, frame)) {
             return false;
         }
         ++pages_;
     }
-    current_ = region;
+    current_ = reinterpret_cast<unsigned char *>(region);
     remaining_ = static_cast<uint64_t>(wanted_pages) * kPage;
     return true;
 }
