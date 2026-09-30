@@ -887,12 +887,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(r"bureau: Aegir, the Workbench"),
             # The Bureau's Execute (specs/launch.md): the Bureau has no console
             # stream of its own, so a command it starts goes to the launcher's
-            # read-only output view. Triggered on the last cue so nothing follows
-            # the requester's close (which leaves no window focused): the runner
-            # reopens the Bureau menu, clicks Execute..., types a command line,
-            # and reads the command start and the view's own start; the view cues
-            # when the command's exit has been seen, and the screendump there
-            # proves the text landed.
+            # read-only output view. The runner reopens the Bureau menu and
+            # clicks Execute...; the requester takes focus asynchronously, so the
+            # typing waits for the Bureau's own "execute ready" cue instead of
+            # racing it -- keys sent before the requester is focused land on the
+            # window focused before it, or nowhere, and the word loses its head
+            # (the "info" -> "nfo" flake). Then it reads the command start and
+            # the view's own start; the view cues when the command's exit has
+            # been seen, and the screendump there proves the text landed.
             QmpStep(
                 r"view: ready",
                 events=(
@@ -905,9 +907,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
-                # A leading space: the first key races the requester's focus, so
-                # it lands nowhere; a separator is dropped by the split anyway.
-                press=" info\n",
+            ),
+            # The requester is up and focused: the Bureau cued it after the
+            # blocking focus call, so the keys cannot land elsewhere.
+            QmpStep(
+                r"bureau: execute ready",
+                press="info\n",
             ),
             QmpStep(r"bureau: execute info"),
             QmpStep(r"launcher: command started info"),

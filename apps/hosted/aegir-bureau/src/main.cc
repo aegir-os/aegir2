@@ -296,6 +296,11 @@ int main(int argc, char *argv[])
             aegir::halt();
         } else if (action_id == 8) {
             execute->show();
+            /* The requester's focus is set before show() returns -- the focus
+             * call blocks until the console has it -- so this cue is race-free:
+             * the acceptance types only after reading it, and the keys land in
+             * the requester instead of the window focused before it. */
+            write("  bureau: execute ready\n");
         } else if (action_id == 4) {
             write("  bureau: clean up\n");
         } else if (action_id == 6) {

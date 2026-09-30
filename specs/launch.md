@@ -199,7 +199,12 @@ window.
   program that owns the `con.stream` endpoint the command writes to, draws what
   arrives in a window, and releases the command through `launch.session`
   (`kMethodRelease`) when it sees the exit, because no shell holds the command's
-  line to reap it. A dock and the desktop icons are still to come.
+  line to reap it. The requester takes focus through a blocking call, so the
+  Bureau prints `bureau: execute ready` once `show()` has returned and the focus
+  is the requester; the acceptance types only after reading that cue. Keys sent
+  before then land on the window focused before it -- or nowhere, since the
+  console drops a key with no focus -- and the command loses its head (the
+  `info` -> `nfo` flake). A dock and the desktop icons are still to come.
 
 ## What this is not
 
