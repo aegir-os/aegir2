@@ -52,6 +52,15 @@ consumer (the bureau, menus, dialogs) has a working base.
   that sizes itself from its rectangle (the terminal's grid) has nothing else to
   tell it. A window's content was the one widget it had, so nothing had needed
   the dispatch before; the demo's label put a second widget in the window.
+
+  The same rule has a second edge at the window: **a geometry change suppresses
+  the content's damage, and the flag must cover the paint**, because the paint is
+  where the content is laid out. During a resize or a zoom the window paints the
+  new frame *before* the console is told its size, so the console's resize is the
+  one composite -- that is what the flag is for. Cleared *before* the paint, it
+  let the layout's own damage out as a second repaint, sent to the console
+  before it knew the new size and composited against the old one: a drag-resized
+  window flickered and repainted the frame twice per motion event.
 - **The look is XEN/Workbench, in the theme.** `theme_xen.cc` already carries
   the palette and metrics; this arc makes them visible. The greeter's
   acceptance pixels change from its hand-picked greys to the theme's roles.

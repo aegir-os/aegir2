@@ -379,14 +379,21 @@ void Window::dispatch_pointer(uint64_t event) {
                      * its size, so the console's resize composites a backing
                      * already drawn at the new stride; the content's own
                      * damage is collected, not repainted (geometry_change_),
-                     * and the console's resize is the one composite. */
+                     * and the console's resize is the one composite. The flag
+                     * covers the paint for that reason: the paint lays the
+                     * content out, and a layout that moves a widget is a
+                     * damage the whole-frame paint already covers -- with the
+                     * flag already down, that damage became a second repaint,
+                     * sent to the console before it knew the new size and
+                     * composited against the old one. */
                     geometry_change_ = true;
                     rect_.width = w;
                     rect_.height = h;
                     if (content_) content_->set_rect({0, 0, w, h});
-                    geometry_change_ = false;
                     damage_rect_ = {};
                     paint();
+                    geometry_change_ = false;
+                    damage_rect_ = {};
                     if (aegir::console::resize(app_.gui_port(), console_window_id_,
                                                static_cast<uint64_t>(frame.width),
                                                static_cast<uint64_t>(frame.height))) {
@@ -568,9 +575,10 @@ void Window::zoom() {
         geometry_change_ = true;
         rect_ = target;
         if (content_) content_->set_rect({0, 0, target.width, target.height});
-        geometry_change_ = false;
         damage_rect_ = {};
         paint();
+        geometry_change_ = false;
+        damage_rect_ = {};
         if (!aegir::console::resize(app_.gui_port(), console_window_id_,
                                     static_cast<uint64_t>(target_frame.width),
                                     static_cast<uint64_t>(target_frame.height))) {
@@ -583,9 +591,10 @@ void Window::zoom() {
         geometry_change_ = true;
         rect_ = target;
         if (content_) content_->set_rect({0, 0, target.width, target.height});
-        geometry_change_ = false;
         damage_rect_ = {};
         paint();
+        geometry_change_ = false;
+        damage_rect_ = {};
         if (!aegir::console::resize(app_.gui_port(), console_window_id_,
                                     static_cast<uint64_t>(target_frame.width),
                                     static_cast<uint64_t>(target_frame.height))) {
