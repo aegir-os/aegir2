@@ -102,7 +102,7 @@ public:
     void on_focus_lost();
 
     // Widget focus within the content tree. A pointer-down focuses the
-    // focusable it lands in; Tab moves to the next (specs/trinket.md).
+    // focusable it lands in; Tab moves to the next (specs/trinket/overview.md).
     void set_focus(Widget* widget);
     Widget* focused_widget() const { return focused_; }
     void focus_next();

@@ -7,7 +7,7 @@ arcs that fix a row record their decisions in their own spec and strike the row
 here.
 
 The look of a row is settled against screenshots of Workbench and of the MUI
-XEN theme (the theme Aegir uses, `specs/trinket.md`), because some of it — the
+XEN theme (the theme Aegir uses, `specs/trinket/overview.md`), because some of it — the
 gadget fills, the bevels — is hard to describe in words.
 
 ## Fixed

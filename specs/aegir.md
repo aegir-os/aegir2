@@ -41,7 +41,7 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
   variables, and the current directory.
 - `specs/auth.md` — the user database's format and the login port's protocol.
 - `specs/console.md` — the display, the pointer, the windows, and the greeter.
-- `specs/trinket.md` — the GUI toolkit: console integration, the look, and the
+- `specs/trinket/overview.md` — the GUI toolkit: console integration, the look, and the
   greeter rebuilt on it.
 - `specs/fonts.md` — `Sys:Fonts`, the font catalog, and the service that will
   own FreeType: where the drawn faces come from and how they are found.

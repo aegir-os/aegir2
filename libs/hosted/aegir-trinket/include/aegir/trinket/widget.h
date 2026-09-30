@@ -42,7 +42,7 @@ struct KeyEvent {
 };
 
 /* The modifier bits `KeyEvent::modifiers` and a menu item's `shortcut_mods`
- * share. A menu accelerator draws these as keycaps (specs/trinket.md). */
+ * share. A menu accelerator draws these as keycaps (specs/trinket/overview.md). */
 constexpr uint32_t kModShift = 1u << 0;
 constexpr uint32_t kModControl = 1u << 1;
 constexpr uint32_t kModAlt = 1u << 2;

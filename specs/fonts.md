@@ -1,7 +1,7 @@
 # fonts: `Sys:Fonts` and the font service
 
 Status: decided (2026-09). Phase 1 (fonts on disk) lands with this spec;
-FreeType and the service are phases 2 and 3. `specs/trinket.md` owns the
+FreeType and the service are phases 2 and 3. `specs/trinket/overview.md` owns the
 toolkit's `Font` interface; this is where the fonts it draws come from.
 
 The toolkit has exactly one font: Terminus 12, compiled into

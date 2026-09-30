@@ -525,7 +525,7 @@ void Application::process_timers() {
      * (aegir-heap answers memory syscalls), and with exceptions off libc++'s
      * steady_clock terminates on the error. So the loop asks only when a
      * timer is actually pending -- tier 1 schedules none. A real clock source
-     * arrives with the threading milestone (specs/trinket.md). */
+     * arrives with the threading milestone (specs/trinket/overview.md). */
     {
         std::lock_guard<std::mutex> lock(posted_mutex_);
         bool timed = false;

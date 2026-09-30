@@ -103,7 +103,7 @@ void TextBox::on_paint(Canvas& canvas, const PaintEvent& event) {
     Color text_color = read_only_ ? theme.color(ColorRole::DISABLED_TEXT) : theme.color(ColorRole::INPUT_TEXT);
 
     /* The secret echoes as bullets: what is typed is the credential's, not
-     * the screen's (specs/trinket.md). */
+     * the screen's (specs/trinket/overview.md). */
     std::u32string const display =
         password_mode_ ? std::u32string(text_.size(), U'*') : text_;
 

@@ -10,7 +10,7 @@ visible slice: **client-side titlebars and drag-to-move**.
 The console composites rectangles; it has no idea what a titlebar is. So the
 decoration is drawn by the window's own client, into its own backing, and the
 console composites one rectangle as before. That keeps the console a
-compositor and puts the look where the look lives (`specs/trinket.md`'s
+compositor and puts the look where the look lives (`specs/trinket/overview.md`'s
 theme). A server-side WM — the bureau drawing frames around other processes'
 windows — would need the console to place frames it does not own, and is not
 this arc.
@@ -154,7 +154,7 @@ gadgets, clear of the others, that the runner clicks.
 ## What this is not
 
 Roll-up gadgets; a window list or TaskX; the `bureau.wm` server and the
-`bureau.menu` server (`specs/trinket.md`'s `MenuBar`); themed decorations
+`bureau.menu` server (`specs/trinket/overview.md`'s `MenuBar`); themed decorations
 beyond the XEN titlebar and gadgets the theme carries. Each is its own arc.
 
 ## Acceptance

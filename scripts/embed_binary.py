@@ -3,7 +3,7 @@
 
 The toolkit's font is vendored (projects/terminus-font, pinned in
 manifests/aegir.xml) and embedded rather than read at runtime, because the VFS
-is a service whose file syscalls are stubbed (specs/cxx.md, specs/trinket.md).
+is a service whose file syscalls are stubbed (specs/cxx.md, specs/trinket/overview.md).
 
     python3 scripts/embed_binary.py <input> <output.cc> <symbol>
 

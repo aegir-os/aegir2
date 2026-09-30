@@ -203,7 +203,7 @@ background `Run`'s.
 
 ### The terminal's window and render
 
-The terminal is a trinket client (`specs/trinket.md`): `Application`, one
+The terminal is a trinket client (`specs/trinket/overview.md`): `Application`, one
 decorated `Window`, the XEN theme, the embedded Terminus font. Its content
 is a `TerminalView`, a cell grid whose cell is the font's advance by its
 height (Terminus 12 is 6×12, strictly monospace). A cell holds a codepoint
@@ -261,7 +261,7 @@ border.
 
 ### The font, and what it cannot draw
 
-The embedded font is Terminus 12 (`specs/trinket.md`): 1356 glyphs,
+The embedded font is Terminus 12 (`specs/trinket/overview.md`): 1356 glyphs,
 Latin/Greek/Cyrillic/Hebrew and box drawing, **no CJK and no Arabic**. The
 width and BiDi tables are the Unicode data's, so the *layout* is correct for
 those scripts even though the glyph is not drawn. A fallback chain exists

@@ -26,7 +26,7 @@ it was.
   (`apps/aegir-director/src/services.cc`). The toolkit builds and the greeter is
   its first real client — it speaks the console protocol, loads an embedded
   Terminus font, and its form is drawn and read back by the acceptance script
-  (`specs/trinket.md`). The window-manager and menu servers are still stubs; the
+  (`specs/trinket/overview.md`). The window-manager and menu servers are still stubs; the
   switch is what keeps the runtime's own proof separate from that work.
 - **The C library is the vendored upstream musl, not seL4's fork.** The seL4
   build's `projects/musllibc` is a musl 1.2.5 fork configured without locale,

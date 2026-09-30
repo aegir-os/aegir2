@@ -7,7 +7,7 @@
  * A requester is a window whose content is the caller's and whose bottom
  * button row is the construction's, the message-box shape: the caller builds
  * what goes in the body -- a label, a text field, a file list -- and names the
- * buttons that close it (specs/trinket.md). A MessageBox, a file chooser and
+ * buttons that close it (specs/trinket/overview.md). A MessageBox, a file chooser and
  * an Execute prompt are each a Requester with a different content and set of
  * buttons; the Requester itself is the shared shell.
  *

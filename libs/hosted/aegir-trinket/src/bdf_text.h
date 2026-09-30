@@ -1,5 +1,5 @@
 /*
- * The BDF text a face's header is read with (specs/fonts.md, specs/trinket.md).
+ * The BDF text a face's header is read with (specs/fonts.md, specs/trinket/overview.md).
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT

@@ -640,7 +640,7 @@ Rect Window::paint() {
     int const bottom = bottombar_height();
     /* Only the region an event damaged is painted and handed the console:
      * repainting the whole frame on every keystroke is what made typing
-     * crawl (specs/trinket.md deferred this; specs/window-manager.md's
+     * crawl (specs/trinket/overview.md deferred this; specs/window-manager.md's
      * partial damage). An empty damage is the whole frame, window-local. */
     Rect const damage =
         damage_rect_.empty() ? Rect{0, 0, frame.width, frame.height} : damage_rect_;

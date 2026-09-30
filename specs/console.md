@@ -27,7 +27,7 @@ sees of the screen and the keyboard is what console serves.
   mechanism. Draggable screens, depth gadgets and the toolkit's look are
   later arcs; the greeter's look was deliberately basic here, and the toolkit
   that replaced it — its console integration, its XEN look, its embedded font
-  — is `specs/trinket.md`.
+  — is `specs/trinket/overview.md`.
 - **Pixels never cross a message.** The window protocol is the established
   shared-window shape (`specs/services.md`: bulk data never crosses the
   message), turned around: console carves one **arena** per client,

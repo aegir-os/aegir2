@@ -7,7 +7,7 @@
  * Auth starts one of these once the user database is read (specs/console.md's
  * login arc): auth's face, a system child badged from auth's own range
  * (specs/authority.md), asking on the screen what the serial line asked
- * before it. It is the toolkit's first client (specs/trinket.md): a trinket
+ * before it. It is the toolkit's first client (specs/trinket/overview.md): a trinket
  * Application adopts its spawn kit and the console's channel, a Window owns
  * the console window, and a Panel of Labels, TextBoxes and a Button is the
  * form. The name field takes the focus; Tab moves to the secret, which echoes

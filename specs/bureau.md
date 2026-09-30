@@ -8,7 +8,7 @@ that makes the bureau a trinket client.
 The bureau is the binary a login through the greeter starts
 (`specs/auth.md`). The stub it has been is a raw grey fill with the screen
 size hardcoded: it attaches its slice, paints 1280×800, and exits. The
-greeter's arc (`specs/trinket.md`) made the toolkit real; this arc gives the
+greeter's arc (`specs/trinket/overview.md`) made the toolkit real; this arc gives the
 bureau the same base and the one protocol method a full-screen window needs.
 
 ## The decisions
@@ -39,7 +39,7 @@ bureau the same base and the one protocol method a full-screen window needs.
   `wm::Client`, `menubar::Client` and `desktop::Backdrop` are stubs no caller
   reaches, and their protocol numbers were invented ahead of a server. They
   come back with the arcs that serve them, the way the toolkit's speculative
-  pieces did (`specs/trinket.md`).
+  pieces did (`specs/trinket/overview.md`).
 
 ## The shape
 
@@ -52,7 +52,7 @@ client walk, the same shape as `attach`.
 ### The bureau
 
 `Application::create` adopts the spawn kit and stands the heap up
-(`specs/trinket.md`'s ordering). The bureau finds `console.gui`, sets it as
+(`specs/trinket/overview.md`'s ordering). The bureau finds `console.gui`, sets it as
 the application's port, asks its size, and builds one `Window` at
 `{0, 0, width, height}` in backdrop mode. The content is a `Panel` whose
 background is the theme's `BACKGROUND`. `show()` before `exec`, and
