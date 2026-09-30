@@ -88,8 +88,8 @@ int main(int argc, char** argv) {
     theme->draw_panel(canvas, {260, 130, 100, 50}, Panel::Style::FRAME, U"", false);
 
     /* A vertical scrollbar, content 100 lines, 25 shown, scrolled to line 40. */
-    Parts const p = scrollbar_parts({380, 10, 16, 200}, 100, 25, 40, 16, 30);
-    theme->draw_scrollbar(canvas, {380, 10, 16, 200}, true, p.trough, p.thumb,
+    Parts const p = scrollbar_parts({386, 10, 24, 200}, 100, 25, 40, 21, 30);
+    theme->draw_scrollbar(canvas, {386, 10, 24, 200}, true, p.trough, p.thumb,
                           p.decrement, p.increment, false);
 
     std::FILE* out = std::fopen(path, "wb");

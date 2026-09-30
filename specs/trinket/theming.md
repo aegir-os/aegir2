@@ -63,7 +63,10 @@ against.
   C++ holds a look and there is no XEN-specific C++ file.
 - **Phase C (landed).** A recipe step may be `{ sprite = "name" }`: the named
   MUI artwork is embedded by the generator (its pixels as 0xAARRGGBB) and
-  blitted centred, transparent pixels skipped. The scrollbar's arrow buttons are
+  blitted into the step's cell, transparent pixels skipped. The sprite is scaled
+  to the cell (nearest neighbour), so art imported at one point size keeps its
+  proportion in a cell of another -- the scrollbar's buttons widen with the bar.
+  The scrollbar's arrow buttons are
   the MUI `ArrowUp`/`ArrowDown` sprites now, so the art is what the toolkit
   draws rather than a redrawing of it. Still to come: nine-slice scaling, and a
   converter that reads `XEN.prefs` to name the sprites per gadget instead of the

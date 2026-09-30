@@ -34,13 +34,17 @@ and nothing showed where in the scrollback it sat.
 - **The look is the theme's, and it is the XEN one.** The strip's near end is a
   single **trough container** -- a raised frame around a **sunken well** holding
   the MUI XEN **blue/grey dither** (the same checker the selection uses). Over
-  the dither slides a **raised thumb** (`#bfbfbf`) with the XEN **comma** mark.
-  The **two arrow buttons are separate cells below**, not inside the trough's
+  the dither slides a **raised thumb** (`#bfbfbf`) with the XEN **comma** mark,
+  drawn as its outline so the shape reads at a narrow width. The **two arrow
+  buttons are separate cells below**, not inside the trough's
   frame -- decrement above increment -- and they are the **MUI artwork**
-  (`ArrowUp`/`ArrowDown`), blitted, so the hollow 3-D mark is the art's own.
-  `SCROLLBAR_ARROW_SIZE` is the button's height; the widget and the theme agree
-  on it so a click and a drawn button line up. Read off the demo's XEN
-  screenshots.
+  (`ArrowUp`/`ArrowDown`), blitted into the cell and scaled to it, so the hollow
+  3-D mark is the art's own and the buttons keep their proportion as the bar
+  widens. `SCROLLBAR_WIDTH` is the window's resize-gadget width
+  (`TITLEBAR_HEIGHT`), so the bar is as wide as the gadget at the window's foot,
+  and `SCROLLBAR_ARROW_SIZE` is the button's height, the art's own height scaled
+  to that width. The widget and the theme agree on both so a click and a drawn
+  button line up. Read off the demo's XEN screenshots.
 - **The geometry is the widget's, the drawing the theme's.** `Scrollbar::parts()`
   returns the trough, the thumb and the two button rectangles: the trough is the
   whole strip above the buttons (its container frame is the theme's), the

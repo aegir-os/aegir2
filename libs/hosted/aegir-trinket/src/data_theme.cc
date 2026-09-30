@@ -255,10 +255,13 @@ private:
         int const half = std::max(1, short_side * num / den);
         Point const c = rect.center();
         if (kind == 4) {
-            /* A comma: the thumb's mark -- a dot with a short tail. */
-            canvas.fill_circle(c, half, light);
-            canvas.draw_line({c.x + half, c.y - half}, {c.x + 2 * half, c.y - 2 * half},
-                             light);
+            /* A comma: the thumb's mark -- the head is a hollow circle with a
+             * short tail at its foot, drawn as an outline so the shape reads at
+             * a narrow width instead of filling to a blob. */
+            Point const head{c.x, c.y - half};
+            canvas.draw_circle(head, half, light);
+            canvas.draw_line({head.x - half / 2, head.y + half},
+                             {head.x - half, head.y + half + half / 2}, light);
             return;
         }
         bool const vertical = kind <= 1;
@@ -284,25 +287,22 @@ private:
         }
     }
 
-    /* Blit a sprite centred in the rectangle, skipping transparent pixels and
-     * clipping to the rectangle and the canvas -- a sprite does not draw
-     * outside the gadget cell it is placed in (specs/trinket/theming.md). */
+    /* Blit a sprite into the rectangle, scaled to it (nearest neighbour) --
+     * the art is at one point size and the bar another, so the buttons keep
+     * their proportion -- skipping transparent pixels and clipping to the
+     * rectangle and the canvas (specs/trinket/theming.md). */
     void blit_sprite(Canvas& canvas, const Rect& rect, int index) {
         if (index < 0 || index >= static_cast<int>(kSpriteCount)) return;
         Sprite const& sprite = kSprites[index];
-        int const x0 = rect.x + (rect.width - static_cast<int>(sprite.width)) / 2;
-        int const y0 = rect.y + (rect.height - static_cast<int>(sprite.height)) / 2;
+        if (sprite.width == 0 || sprite.height == 0) return;
         Rect const clip = rect.intersected(canvas.clip_rect());
-        for (int y = 0; y < sprite.height; ++y) {
-            for (int x = 0; x < sprite.width; ++x) {
-                uint32_t const pixel = sprite.pixels[y * sprite.width + x];
+        if (clip.empty()) return;
+        for (int py = clip.y; py < clip.y + clip.height; ++py) {
+            int const sy = (py - rect.y) * sprite.height / rect.height;
+            for (int px = clip.x; px < clip.x + clip.width; ++px) {
+                int const sx = (px - rect.x) * sprite.width / rect.width;
+                uint32_t const pixel = sprite.pixels[sy * sprite.width + sx];
                 if ((pixel >> 24) == 0) continue;
-                int const px = x0 + x;
-                int const py = y0 + y;
-                if (px < clip.x || px >= clip.x + clip.width ||
-                    py < clip.y || py >= clip.y + clip.height) {
-                    continue;
-                }
                 canvas.pixel(px, py) = pixel & 0xFFFFFFu;
             }
         }
