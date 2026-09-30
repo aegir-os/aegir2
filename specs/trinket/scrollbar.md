@@ -33,12 +33,14 @@ and nothing showed where in the scrollback it sat.
 
 - **The look is the theme's, and it is the XEN one.** The strip's near end is
   the **trough**: the MUI XEN **blue/grey dither** (the same checker the
-  selection uses) under a black outline, with a **white raised thumb** over it.
-  The far end holds the **two arrow buttons stacked** -- decrement above
-  increment -- each a raised grey square whose mark is a **hollow 3-D triangle**
-  (light leading edge, dark trailing), not a solid one. A new
-  `SCROLLBAR_ARROW_SIZE` metric is the button; the widget and the theme agree on
-  it so a click and a drawn arrow line up. Read off the demo's XEN screenshots.
+  selection uses) in a **sunken bevel** -- dark top-left, light bottom-right --
+  so it reads as a recess. Over it slides a **raised thumb** (`#bfbfbf`), its
+  own bevel showing. The far end holds the **two arrow buttons stacked** --
+  decrement above increment; each is a raised grey square, and each mark is a
+  **hollow 3-D triangle**: its leading (left) edge light and its other two edges
+  dark, not a solid fill. A new `SCROLLBAR_ARROW_SIZE` metric is the button; the
+  widget and the theme agree on it so a click and a drawn arrow line up. Read
+  off the demo's XEN screenshots.
 
 - **The demo wires it to the terminal.** In the demo the scrollbar's value is
   the terminal buffer's first visible line and `page` its rows, and a scroll

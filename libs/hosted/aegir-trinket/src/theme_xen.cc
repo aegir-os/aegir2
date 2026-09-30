@@ -104,8 +104,8 @@ public:
 
             // Scrollbar
             case CR::SCROLLBAR_BG: return Color(0x00AAAAAA);
-            case CR::SCROLLBAR_HANDLE: return Color(0x00FFFFFF);
-            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00EEEEEE);
+            case CR::SCROLLBAR_HANDLE: return Color(0x00BFBFBF);
+            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00C9C9C9);
 
             // Link
             case CR::LINK: return Color(0x000000EE);
@@ -354,17 +354,20 @@ public:
         Color const ink = color(ColorRole::GADGET_SHADOW);
 
         /* The trough is the strip above the buttons: the MUI XEN blue/grey
-         * dither under a black outline. */
+         * dither in a sunken well, its bevel dark on the top-left and light on
+         * the bottom-right, so the scrollbar reads as the recess the thumb
+         * slides in. */
         Rect const trough_rect =
             vertical ? Rect{rect.x, rect.y, rect.width, rect.height - buttons}
                      : Rect{rect.x, rect.y, rect.width - buttons, rect.height};
         if (trough_rect.width > 0 && trough_rect.height > 0) {
             draw_dither(canvas, trough_rect, dither, trough);
-            canvas.draw_rect(trough_rect, ink);
+            draw_bevel(canvas, trough_rect, Bevel::SUNKEN);
         }
 
-        /* The thumb is a raised white block over the trough; handle_pos is from
-         * the trough's start. */
+        /* The thumb is a raised block over the trough, its own bevel showing --
+         * light leading edges, dark trailing -- so the gadget stands out of the
+         * well; handle_pos is from the trough's start. */
         Rect const thumb_rect =
             vertical ? Rect{rect.x, rect.y + handle_pos, rect.width, handle_size}
                      : Rect{rect.x + handle_pos, rect.y, handle_size, rect.height};
@@ -409,8 +412,8 @@ public:
     }
 
 private:
-    /* A hollow 3-D triangle: the leading edge light and the trailing edge dark,
-     * so it reads as the XEN arrow rather than a solid mark
+    /* A hollow 3-D triangle: the leading (left) edge light and the other two
+     * edges dark, so it reads as the XEN arrow rather than a solid mark
      * (specs/trinket/scrollbar.md). */
     void draw_arrow(Canvas& canvas, const Rect& button, bool vertical,
                     bool forward, Color dark) {
@@ -421,17 +424,21 @@ private:
         if (vertical) {
             int const base = forward ? c.y - size / 2 : c.y + size / 2;
             int const apex = forward ? c.y + size / 2 : c.y - size / 2;
-            canvas.draw_line({c.x - size, base}, {c.x, apex}, light);
-            canvas.draw_line({c.x, apex}, {c.x + size, base}, dark);
-            canvas.draw_hline(c.x - size, c.x, base, light);
-            canvas.draw_hline(c.x, c.x + size, base, dark);
+            Point const apex_pt{c.x, apex};
+            Point const left{c.x - size, base};
+            Point const right{c.x + size, base};
+            canvas.draw_line(left, apex_pt, light);
+            canvas.draw_line(apex_pt, right, dark);
+            canvas.draw_line(left, right, dark);
         } else {
             int const base = forward ? c.x - size / 2 : c.x + size / 2;
             int const apex = forward ? c.x + size / 2 : c.x - size / 2;
-            canvas.draw_line({base, c.y - size}, {apex, c.y}, light);
-            canvas.draw_line({apex, c.y}, {base, c.y + size}, dark);
-            canvas.draw_vline(c.y - size, c.y, base, light);
-            canvas.draw_vline(c.y, c.y + size, base, dark);
+            Point const apex_pt{apex, c.y};
+            Point const top{base, c.y - size};
+            Point const bottom{base, c.y + size};
+            canvas.draw_line(top, apex_pt, light);
+            canvas.draw_line(apex_pt, bottom, dark);
+            canvas.draw_line(top, bottom, dark);
         }
     }
 
