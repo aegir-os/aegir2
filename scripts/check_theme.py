@@ -47,6 +47,14 @@ def main() -> int:
     ppm = OUT / "render.ppm"
     with tempfile.TemporaryDirectory(prefix="aegir-theme-") as scratch:
         binary = Path(scratch) / "theme_conformance"
+        generated = Path(scratch) / "theme_data.cc"
+        gen = subprocess.run(
+            [sys.executable, str(pins.ROOT / "scripts" / "gen_theme.py"), str(generated)],
+            capture_output=True, text=True)
+        if gen.returncode != 0:
+            pins.report(False, "the theme data would not generate")
+            sys.stderr.write(gen.stderr)
+            return 1
         compile_command = [
             compiler, "-std=c++17", "-O2", "-Wall", "-Wextra", "-Werror",
             "-I", str(STUB),
@@ -60,6 +68,7 @@ def main() -> int:
             str(TRINKET / "src" / "theme_xen.cc"),
             str(TRINKET / "src" / "canvas.cc"),
             str(TRINKET / "src" / "unicode.cc"),
+            str(generated),
             "-o", str(binary),
         ]
         result = subprocess.run(compile_command, capture_output=True, text=True)

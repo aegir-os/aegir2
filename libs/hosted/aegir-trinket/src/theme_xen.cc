@@ -3,6 +3,7 @@
  */
 
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/theme_data.h>
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/unicode.h>
@@ -209,70 +210,38 @@ public:
                      bool hovered, bool pressed, bool focused,
                      bool checked, bool enabled) override {
         static_cast<void>(checked);  // checked buttons are the widget's to draw
-        Color const face = !enabled ? color(ColorRole::DISABLED_BG)
-                           : pressed ? color(ColorRole::BUTTON_PRESSED)
-                           : hovered ? color(ColorRole::BUTTON_HOVER)
-                                     : color(ColorRole::BUTTON_BG);
-        canvas.fill_rect(rect, face);
-        /* Focus is the gadget's active state (specs/trinket/theme-xen.md): a
-         * pressed or focused gadget is inset, a raised one is not. */
-        draw_bevel(canvas, rect,
-                   (pressed || focused) ? Bevel::SUNKEN : Bevel::RAISED);
+        /* The state picks the recipe (specs/trinket/theming.md): disabled beats
+         * pressed beats focused beats hovered beats normal. */
+        int const state = !enabled ? 4 : pressed ? 2 : focused ? 3 : hovered ? 1 : 0;
+        run(kRecipeButton[state], canvas, rect);
     }
 
     void draw_panel(Canvas& canvas, const Rect& rect,
                      Panel::Style style, std::u32string_view title,
                      bool focused) override {
         static_cast<void>(focused);  // the focus ring is drawn separately
-        Color const bg = color(ColorRole::PANEL_BG);
-        switch (style) {
-            case Panel::Style::FLAT:
-                canvas.fill_rect(rect, bg);
-                break;
-            case Panel::Style::RAISED:
-                canvas.fill_rect(rect, bg);
-                draw_bevel(canvas, rect, Bevel::RAISED);
-                break;
-            case Panel::Style::SUNKEN:
-                canvas.fill_rect(rect, bg);
-                draw_bevel(canvas, rect, Bevel::SUNKEN);
-                break;
-            case Panel::Style::FRAME:
-                canvas.fill_rect(rect, bg);
-                canvas.draw_rect(rect, color(ColorRole::BORDER),
-                                 metric(MetricRole::PANEL_BORDER_WIDTH));
-                break;
-            case Panel::Style::GROUP_BOX: {
-                canvas.fill_rect(rect, bg);
-                draw_bevel(canvas, rect, Bevel::RAISED);
-                if (title.empty()) break;
-                Font* const font = Application::instance()->default_font();
-                if (font == nullptr) break;
-                Size const size = font->measure(title);
-                int const gap_x = 8;
-                int const x = rect.x + gap_x;
-                int const y = rect.y - font->ascent() / 2;
-                /* The title sits in a notch in the top edge: clear its place,
-                 * then draw it there. */
-                canvas.fill_rect({x - 2, y, size.width + 4, font->height()}, bg);
-                canvas.draw_text({x, y}, title, font, color(ColorRole::TEXT));
-                break;
-            }
-        }
+        run(kRecipePanel[static_cast<int>(style)], canvas, rect);
+        if (style != Panel::Style::GROUP_BOX || title.empty()) return;
+        Font* const font = Application::instance()->default_font();
+        if (font == nullptr) return;
+        Size const size = font->measure(title);
+        int const gap_x = 8;
+        int const x = rect.x + gap_x;
+        int const y = rect.y - font->ascent() / 2;
+        /* The title sits in a notch in the top edge: clear its place, then draw
+         * it there. */
+        canvas.fill_rect({x - 2, y, size.width + 4, font->height()},
+                         color(ColorRole::PANEL_BG));
+        canvas.draw_text({x, y}, title, font, color(ColorRole::TEXT));
     }
 
     void draw_textbox(Canvas& canvas, const Rect& rect,
                        bool focused, bool read_only, bool password) override {
         static_cast<void>(password);  // the text is the widget's to obscure
-        Color const bg = read_only ? color(ColorRole::DISABLED_BG)
-                                   : color(ColorRole::INPUT_BG);
-        canvas.fill_rect(rect, bg);
-        draw_bevel(canvas, rect, Bevel::SUNKEN);
-        if (focused) {
-            /* The active state (specs/trinket/theme-xen.md): a full black
-             * outline inside the well, in place of the old blue ring. */
-            canvas.draw_rect(rect.inflated(-1),
-                             color(ColorRole::INPUT_FOCUS_BORDER));
+        if (read_only) {
+            run(kRecipeTextboxReadonly, canvas, rect);
+        } else {
+            run(kRecipeTextbox[focused ? 1 : 0], canvas, rect);
         }
     }
 
@@ -345,43 +314,23 @@ public:
                          const Rect& trough, const Rect& thumb,
                          const Rect& decrement, const Rect& increment,
                          bool hovered) override {
+        static_cast<void>(vertical);
         static_cast<void>(hovered);
-        Color const face = color(ColorRole::GADGET_FACE);
-        Color const frame_face = color(ColorRole::PANEL_BG);
-        Color const dither = color(ColorRole::SELECTION_BG);
-        Color const trough_bg = color(ColorRole::SCROLLBAR_BG);
-        Color const thumb_face = color(ColorRole::SCROLLBAR_HANDLE);
-        Color const ink = color(ColorRole::GADGET_SHADOW);
-
-        /* The scrollbar's own raised frame, around the whole strip: a black
-         * outline, then the light top-left bevel *inside* it, over the grey
-         * face -- drawing the outline last would flatten it. */
-        canvas.fill_rect(rect, frame_face);
-        canvas.draw_rect(rect, ink);
-        draw_bevel(canvas, rect.inflated(-1), Bevel::RAISED);
-
-        /* The trough: the MUI XEN dither in a sunken well. */
+        /* Each part is a recipe (specs/trinket/theming.md); the marks are in
+         * the buttons' own recipes. */
+        run(kRecipeScrollbarFrame, canvas, rect);
         if (trough.width > 0 && trough.height > 0) {
-            draw_dither(canvas, trough, dither, trough_bg);
-            draw_bevel(canvas, trough, Bevel::SUNKEN);
+            run(kRecipeScrollbarTrough, canvas, trough);
         }
-
-        /* The thumb, a raised block narrower than the bar, in the well. */
         if (thumb.width > 0 && thumb.height > 0) {
-            canvas.fill_rect(thumb, thumb_face);
-            draw_bevel(canvas, thumb, Bevel::RAISED);
+            run(kRecipeScrollbarThumb, canvas, thumb);
         }
-
-        /* The two raised buttons at the foot, each with a hollow 3-D mark. */
-        Rect const buttons[2] = {decrement, increment};
-        for (Rect const& button : buttons) {
-            if (button.width <= 0 || button.height <= 0) continue;
-            canvas.fill_rect(button, face);
-            canvas.draw_rect(button, ink);
-            draw_bevel(canvas, button.inflated(-1), Bevel::RAISED);
+        if (decrement.width > 0 && decrement.height > 0) {
+            run(kRecipeScrollbarDecrement, canvas, decrement);
         }
-        draw_arrow(canvas, decrement, vertical, false, ink);
-        draw_arrow(canvas, increment, vertical, true, ink);
+        if (increment.width > 0 && increment.height > 0) {
+            run(kRecipeScrollbarIncrement, canvas, increment);
+        }
     }
 
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
@@ -401,16 +350,44 @@ public:
     }
 
 private:
+    /* Run a gadget's recipe (specs/trinket/theming.md): each step draws one
+     * primitive into the gadget's rectangle, set in by its inset. */
+    void run(Recipe const& recipe, Canvas& canvas, Rect const& rect) {
+        for (int i = 0; i < recipe.count; ++i) {
+            Step const& step = recipe.steps[i];
+            Rect const r = rect.inflated(-step.inset);
+            switch (step.op) {
+                case Prim::FILL:
+                    canvas.fill_rect(r, Color(step.color));
+                    break;
+                case Prim::BEVEL:
+                    draw_bevel(canvas, r, step.kind ? Bevel::SUNKEN : Bevel::RAISED);
+                    break;
+                case Prim::OUTLINE:
+                    canvas.draw_rect(r, Color(step.color));
+                    break;
+                case Prim::DITHER:
+                    draw_dither(canvas, r, Color(step.color), Color(step.color2));
+                    break;
+                case Prim::MARK:
+                    draw_mark(canvas, r, step.kind, Color(step.color), Color(step.color2),
+                              step.num, step.den);
+                    break;
+            }
+        }
+    }
+
     /* A hollow 3-D triangle: the leading (left) edge light and the other two
-     * edges dark, inset from the button so it stays inside -- a half-extent of
-     * a quarter of the button leaves the margin the XEN art shows
+     * edges dark, inset from the rectangle -- the mark the XEN art shows
      * (specs/trinket/scrollbar.md). */
-    void draw_arrow(Canvas& canvas, const Rect& button, bool vertical,
-                    bool forward, Color dark) {
-        int const half = std::min(button.width, button.height) / 4;
+    void draw_mark(Canvas& canvas, const Rect& rect, int kind, Color light,
+                   Color dark, int num, int den) {
+        int const short_side = std::min(rect.width, rect.height);
+        int const half = den > 0 ? short_side * num / den : short_side / 4;
         if (half < 1) return;
-        Color const light = color(ColorRole::GADGET_HIGHLIGHT);
-        Point const c = button.center();
+        Point const c = rect.center();
+        bool const vertical = kind <= 1;
+        bool const forward = kind == 1 || kind == 3;  // down or right
         if (vertical) {
             int const base = forward ? c.y - half : c.y + half;
             int const apex = forward ? c.y + half : c.y - half;

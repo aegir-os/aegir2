@@ -97,6 +97,19 @@ add_custom_command(
   VERBATIM
 )
 
+# The theme's recipes: resources/themes/xen.toml -> theme_data.cc
+# (specs/trinket/theming.md). The theme file is the source of the look.
+set(AEGIR_THEME_DATA "${CMAKE_CURRENT_BINARY_DIR}/theme_data.cc")
+add_custom_command(
+  OUTPUT "${AEGIR_THEME_DATA}"
+  COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/gen_theme.py" "${AEGIR_THEME_DATA}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/themes/xen.toml"
+    "${CMAKE_SOURCE_DIR}/scripts/gen_theme.py"
+  COMMENT "Generating the theme data from resources/themes/xen.toml"
+  VERBATIM
+)
+
 add_library(aegir-trinket STATIC
     src/application.cc
     src/canvas.cc
@@ -127,6 +140,7 @@ add_library(aegir-trinket STATIC
     "${AEGIR_TRANSLATION_DATA}"
     src/theme.cc
     src/theme_xen.cc
+    "${AEGIR_THEME_DATA}"
     src/worker.cc
     "${AEGIR_TERMINUS_EMBED}"
 )

@@ -1,0 +1,88 @@
+# Trinket's theme: the XEN look as data (specs/trinket/theming.md).
+#
+# A gadget is an ordered list of primitive steps. Each step is an inline table
+# naming one primitive, with an optional `inset` (pixels in from the gadget's
+# rectangle):
+#
+#   { fill = "#rrggbb" }              fill the rectangle
+#   { bevel = "raised"|"sunken" }     a 1px 3-D edge
+#   { outline = "#rrggbb" }           a 1px rectangle
+#   { dither = ["#fg", "#bg"] }       a 50% checker
+#   { mark = "up"|"down"|"left"|"right", light = "#..", dark = "#..",
+#     size = [num, den] }             a hollow 3-D triangle
+#
+# The values are XEN's, from MUI's Presets/XEN.prefs and its artwork; the base
+# is 96 dpi (the Amiga's 75 dpi is how a screenshot of it is read).
+
+# ---- buttons ----
+# The face changes with the state; a pressed or focused button is inset.
+
+[gadgets.button.normal]
+steps = [{ fill = "#bfbfbf" }, { bevel = "raised" }]
+
+[gadgets.button.hovered]
+steps = [{ fill = "#c9c9c9" }, { bevel = "raised" }]
+
+[gadgets.button.pressed]
+steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" }]
+
+[gadgets.button.focused]
+steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" }]
+
+[gadgets.button.disabled]
+steps = [{ fill = "#e0e0e0" }, { bevel = "raised" }]
+
+# ---- text fields ----
+# A sunken #bfbfbf well; focus adds a black outline inside it.
+
+[gadgets.textbox.normal]
+steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" }]
+
+[gadgets.textbox.focused]
+steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" },
+         { outline = "#000000", inset = 1 }]
+
+[gadgets.textbox.readonly]
+steps = [{ fill = "#e0e0e0" }, { bevel = "sunken" }]
+
+# ---- panels ----
+# The face is the group grey; the frame style is the bevel.
+
+[gadgets.panel.flat]
+steps = [{ fill = "#aaaaaa" }]
+
+[gadgets.panel.raised]
+steps = [{ fill = "#aaaaaa" }, { bevel = "raised" }]
+
+[gadgets.panel.sunken]
+steps = [{ fill = "#aaaaaa" }, { bevel = "sunken" }]
+
+[gadgets.panel.frame]
+steps = [{ fill = "#aaaaaa" }, { outline = "#000000" }]
+
+[gadgets.panel.group_box]
+steps = [{ fill = "#aaaaaa" }, { bevel = "raised" }]
+
+# ---- the scrollbar ----
+# A raised frame around the strip; a sunken dither trough the wide thumb rides;
+# two raised arrow buttons at the foot, each a hollow 3-D mark.
+
+[gadgets.scrollbar.frame]
+steps = [{ fill = "#aaaaaa" }, { outline = "#000000" },
+         { bevel = "raised", inset = 1 }]
+
+[gadgets.scrollbar.trough]
+steps = [{ dither = ["#6688bb", "#aaaaaa"] }, { bevel = "sunken" }]
+
+[gadgets.scrollbar.thumb]
+steps = [{ fill = "#bfbfbf" }, { bevel = "raised" }]
+
+[gadgets.scrollbar.decrement]
+steps = [{ fill = "#bfbfbf" }, { outline = "#000000" },
+         { bevel = "raised", inset = 1 },
+         { mark = "up", light = "#ffffff", dark = "#000000", size = [1, 4] }]
+
+[gadgets.scrollbar.increment]
+steps = [{ fill = "#bfbfbf" }, { outline = "#000000" },
+         { bevel = "raised", inset = 1 },
+         { mark = "down", light = "#ffffff", dark = "#000000", size = [1, 4] }]

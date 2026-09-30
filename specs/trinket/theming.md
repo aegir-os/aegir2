@@ -52,12 +52,17 @@ against.
 
 ## What this is not (yet)
 
-- **Phase B**: the theme file and its interpreter; the `XENTheme` C++ becomes the
-  interpreter of `themes/xen.toml`, with the values taken from `XEN.prefs`.
+- **Phase B (landed).** `resources/themes/xen.toml` holds each gadget's recipe
+  -- an ordered list of primitive steps (`fill`, `bevel`, `outline`, `dither`,
+  `mark`), with per-state recipes for the button and the text field.
+  `scripts/gen_theme.py` emits `theme_data.cc` (wired into the CMake build and
+  the host check), and `XENTheme::draw_button`/`draw_panel`/`draw_textbox`/
+  `draw_scrollbar` are now recipe runners over those tables; the C++ no longer
+  holds the shapes. The **palette and metrics** still live in C++ and move next.
 - **Phase C**: sprite drawing (blit / nine-slice) so the imported art is what the
   toolkit draws for the buttons and marks, and a converter from `XEN.prefs`.
-- The scrollbar is re-done through the mechanism once B and C land; until then
-  the host loop is what makes that possible at all.
+- The scrollbar is re-done through the mechanism once C lands; B is what lets it
+  be a value in the file rather than a shape in code.
 
 ## Acceptance
 
