@@ -46,6 +46,10 @@ public:
 
     bool focusable() const override { return true; }
     Size preferred_size() const override;
+    /* A terminal fills whatever it is given: its grid resizes to the rectangle
+     * (on_layout), so extra room is extra cells. It is the free widget a group
+     * gives its slack to (specs/trinket/layout.md). */
+    Size maximum_size() const override;
 
     /* A key hook, ahead of the view's own scrolling: a line editor set here
      * consumes the keys it edits with and returns true, so the arrows do not

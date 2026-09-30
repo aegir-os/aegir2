@@ -15,23 +15,19 @@
 
 namespace aegir::trinket {
 
-namespace {
-
 /* How far a frame's edge reaches into the group: a bevel is one pixel, and a
  * group box leaves a little more so a child does not sit on the frame. */
-int frame_inset(Group::Frame frame) {
+int Group::frame_inset(Frame frame) noexcept {
     switch (frame) {
-        case Group::Frame::FLAT: return 0;
-        case Group::Frame::GROUP_BOX: return 4;
-        case Group::Frame::RAISED:
-        case Group::Frame::SUNKEN:
-        case Group::Frame::FRAME:
+        case Frame::FLAT: return 0;
+        case Frame::GROUP_BOX: return 4;
+        case Frame::RAISED:
+        case Frame::SUNKEN:
+        case Frame::FRAME:
             return 2;
     }
     return 0;
 }
-
-}  // namespace
 
 Group::Group(Orientation orientation, int spacing) {
     auto layout = std::make_unique<GroupLayout>(orientation, spacing);

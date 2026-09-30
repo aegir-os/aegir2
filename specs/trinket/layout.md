@@ -137,3 +137,8 @@ public:
   layout moves no rectangle).
 - **The existing acceptance is unchanged.** The greeter's and bureau's pixels
   are the proof that no existing rectangle moved.
+- **The demo is the toolkit's widget test-bed.** Its content is a raised `Group`
+  -- a free terminal over a fixed label band -- so the weighted layout runs on
+  the target and the runner reads it back, not only in the host check. The
+  widgets land in the demo as they arrive; its body sample moved with the
+  frame's two-pixel inset.

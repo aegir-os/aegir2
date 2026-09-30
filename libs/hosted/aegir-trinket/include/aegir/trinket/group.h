@@ -44,6 +44,10 @@ public:
     void set_frame(Frame frame);
     Frame frame() const { return frame_; }
 
+    /* How far a frame's edge reaches into the group; a client sizing a window
+     * around a framed group asks (the demo does, specs/trinket/layout.md). */
+    static int frame_inset(Frame frame) noexcept;
+
     void set_title(std::u32string_view title);
     void set_title(std::string_view title);
     const std::u32string& title() const { return title_; }

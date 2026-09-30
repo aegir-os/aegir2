@@ -10,6 +10,11 @@
  * creates its window and then waits: the runner clicks the gadgets, and each
  * act prints a cue. It asks for no focus; a click on a gadget focuses it, and
  * it does not want the boot's keyboard.
+ *
+ * It is also the toolkit's widget test-bed (specs/trinket/layout.md): its
+ * content is a framed Group -- a free terminal over a fixed label band -- and
+ * the widgets land here as they arrive, so the runner sees them on the target
+ * and not only in a host check.
  */
 
 #include <aegir/bootstrap.h>
@@ -20,8 +25,8 @@
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/group.h>
 #include <aegir/trinket/label.h>
-#include <aegir/trinket/layout.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/terminal_view.h>
@@ -152,10 +157,14 @@ int main(int argc, char *argv[])
     /* The band the outline line gets: the face's own line height, so the grid
      * keeps the geometry it had before the label and the acceptance's samples
      * of it stand (specs/fonts.md's phase 2 lands a widget beside the look, not
-     * over it). Not a number chosen here -- it is what the face measures. */
+     * over it). Not a number chosen here -- it is what the face measures. The
+     * content is a raised Group (specs/trinket/layout.md): its frame reaches two
+     * pixels in on each side, so the window is that much taller and the grid
+     * keeps its kWindowHeight. */
     Font* const label_font = outline != nullptr ? outline.get() : app.default_font();
     int const label_band = label_font != nullptr ? label_font->height() : 0;
-    int const window_height = kWindowHeight + label_band;
+    int const frame_inset = Group::frame_inset(Group::Frame::RAISED);
+    int const window_height = kWindowHeight + label_band + 2 * frame_inset;
 
     Window window(app);
     window.set_title("Demo");
@@ -178,8 +187,9 @@ int main(int argc, char *argv[])
     grid.scroll_to_bottom();
 
     /* The outline line sits in its own band at the window's foot, below the
-     * grid: the window is a band taller, so the grid is the grid it was
-     * (specs/fonts.md's phase 2 lands a widget beside the look). */
+     * grid. The content is a Group (specs/trinket/layout.md): a vertical group
+     * whose terminal is free and whose label is fixed, so the grid takes the
+     * slack and the band keeps the face's line height. */
     auto label = std::make_unique<Label>(
         U"Aegir fonts: a served .ttf face \u2014 \u0391\u03b2\u03b3 \u041f\u0440\u0438\u0432\u0435\u0442");
     if (outline != nullptr) {
@@ -187,13 +197,13 @@ int main(int argc, char *argv[])
     }
     label->set_text_color(app.theme().color(ColorRole::TEXT));
 
-    auto content = std::make_unique<Container>();
-    auto layout = std::make_unique<BorderLayout>(0);
-    layout->add_widget(terminal.get(), BorderLayout::Region::CENTER);
-    layout->add_widget(label.get(), BorderLayout::Region::SOUTH);
+    auto content = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
+    content->set_frame(Group::Frame::RAISED);
+    Label* const label_ptr = label.get();
     content->add_child(std::move(terminal));
     content->add_child(std::move(label));
-    content->set_layout(std::move(layout));
+    /* The label keeps its band; the terminal is free and takes the rest. */
+    content->set_weight(label_ptr, 0);
     window.set_content(std::move(content));
     window.show();
 

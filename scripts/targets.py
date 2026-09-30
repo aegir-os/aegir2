@@ -809,10 +809,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 910, 460, 170, 170, 170),),
+                pixels=(("gpu0", 1000, 600, 170, 170, 170),),
                 # The demo's terminal grid has text on it: a grid that wrapped
                 # every character into one column, or drew nothing, has far less
-                # ink than this.
+                # ink than this. The body sample is deep in the terminal, clear
+                # of the group frame the content draws now (specs/trinket/layout.md).
                 dark=(("gpu0", 902, 470, 240, 90, 100),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},

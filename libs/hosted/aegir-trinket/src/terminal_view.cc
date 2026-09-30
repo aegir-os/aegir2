@@ -12,6 +12,7 @@
 #include <aegir/trinket/font.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace aegir::trinket {
 
@@ -56,6 +57,13 @@ Size TerminalView::preferred_size() const {
     int const height = cell_height();
     return {buffer_.columns() * advance + 2 * kTextPadding,
             buffer_.rows() * height + 2 * kTextPadding};
+}
+
+Size TerminalView::maximum_size() const {
+    /* The type's bound, not a policy: the grid resizes to whatever rectangle it
+     * is given, so the terminal is as free as a group can make it
+     * (specs/trinket/layout.md). */
+    return {std::numeric_limits<int>::max(), std::numeric_limits<int>::max()};
 }
 
 void TerminalView::on_layout() {
