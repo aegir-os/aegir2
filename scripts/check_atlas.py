@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Run the toolkit's glyph atlas against its host conformance cases.
+"""Run the toolkit's glyph layout against its host conformance cases.
 
     python3 scripts/check_atlas.py
 
-Compiles libs/hosted/aegir-trinket/src/font.cc (with unicode.cc, which its
-measurement path converts through) and scripts/atlas_conformance.cc with the
-host compiler, then runs the assertions.
+Compiles libs/hosted/aegir-trinket/src/font.cc and canvas.cc (with unicode.cc,
+which font.cc's measurement path converts through) and
+scripts/atlas_conformance.cc with the host compiler, then runs the assertions.
 
 The atlas is where a glyph the font service rasterized lands and where the
-canvas reads it back, so its layout is the one thing a served face cannot get
-wrong quietly: a copy that scans the wrong stride, keeps the wrong row, or
-does not move what a grown atlas moved draws a smudge, and it draws it on a
-screen nobody is asserting. The cases are pure -- synthetic rasters and the
-canvas's own read expression -- so no filesystem and no rasterizer is needed
-(specs/fonts.md).
+canvas reads it back, and the pen is how far the canvas moves between glyphs, so
+the two are the one thing a served face cannot get wrong quietly: a copy that
+scans the wrong stride, keeps the wrong row, or does not move what a grown atlas
+moved draws a smudge, and a glyph with no box that does not advance runs the
+words together -- and both draw on a screen nobody is asserting. The cases are
+pure -- synthetic rasters, the canvas's own read expression, a pixel buffer --
+so no filesystem and no rasterizer is needed (specs/fonts.md).
 
 Host tools only (python3 and a C++ compiler); not part of any target build.
 Exit status: 0 success, 1 failure.
@@ -54,6 +55,7 @@ def main() -> int:
             str(TRINKET / "src"),
             str(DRIVER),
             str(TRINKET / "src" / "font.cc"),
+            str(TRINKET / "src" / "canvas.cc"),
             str(TRINKET / "src" / "unicode.cc"),
             "-o",
             str(binary),

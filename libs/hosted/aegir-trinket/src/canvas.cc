@@ -6,6 +6,7 @@
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/unicode.h>
 #include <algorithm>
+#include <cmath>
 
 namespace aegir::trinket {
 
@@ -267,7 +268,13 @@ void Canvas::draw_text(Point pos, std::u32string_view text, Font* font, Color co
 
         int gw = g->width;
         int gh = g->height;
-        if (gw <= 0 || gh <= 0) continue;
+        if (gw <= 0 || gh <= 0) {
+            /* A glyph with no box -- a space, and an outline face's space is one
+             * where a BDF's tends to carry a blank box -- draws no ink and still
+             * moves the pen: skipping the advance runs the words together. */
+            x += g->advance;
+            continue;
+        }
 
         int sx = g->atlas_x;
         int sy = g->atlas_y;

@@ -15,6 +15,7 @@
  * Run through scripts/check_atlas.py.
  */
 
+#include <aegir/trinket/canvas.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/locale.h>
 
@@ -37,6 +38,8 @@ extern const unsigned long terminus_12_bdf_size = 1;
 namespace {
 
 using aegir::trinket::BitmapFont;
+using aegir::trinket::Canvas;
+using aegir::trinket::Color;
 using aegir::trinket::Glyph;
 
 /* adopt_glyph is the subclass seam; a probe exposes it. */
@@ -45,6 +48,7 @@ public:
     bool adopt(uint32_t codepoint, const Glyph& glyph, const uint8_t* bits) {
         return adopt_glyph(codepoint, glyph, bits);
     }
+    void set_ascent(int ascent) { ascent_ = ascent; }
 };
 
 unsigned g_checks = 0;
@@ -153,6 +157,33 @@ int main() {
     Glyph const* const blank = font.glyph(' ');
     check(blank != nullptr && blank->valid && blank->advance == 4 && blank->width == 0,
           "a blank glyph is a valid advance and no box");
+
+    /* And the pen the canvas advances: a glyph with no box -- an outline
+     * face's space -- must still move it, or the words run together. Two
+     * one-pixel stems with a space between them: where the second lands is
+     * the pen's position after the first and the space. */
+    {
+        Probe drawn;
+        uint8_t const stem[8] = {255, 255, 255, 255, 255, 255, 255, 255};
+        drawn.set_ascent(8);
+        check(drawn.adopt('a', make_glyph(1, 8, 5), stem), "a stem is adopted");
+        check(drawn.adopt(' ', make_glyph(0, 0, 4), nullptr), "a space is adopted");
+        check(drawn.adopt('b', make_glyph(1, 8, 5), stem), "a second stem is adopted");
+
+        constexpr int kWidth = 32;
+        constexpr int kHeight = 16;
+        uint32_t pixels[kWidth * kHeight] = {};
+        Canvas canvas(pixels, kWidth, kHeight, kWidth);
+        canvas.clear(Color(255, 255, 255));
+        canvas.draw_text({0, 0}, U"a b", &drawn, Color(0, 0, 0));
+
+        /* 'a' at 0, the space 4 wide, 'b' at 5 + 4 = 9. */
+        uint32_t const background = Color(255, 255, 255).to_uint32();
+        bool const at_nine = pixels[0 * kWidth + 9] != background;
+        bool const at_five = pixels[0 * kWidth + 5] != background;
+        check(at_nine, "the pen after a space lands the next glyph at 9");
+        check(!at_five, "the pen after a space does not land it at 5");
+    }
 
     std::printf("atlas: %u checks, %u failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
