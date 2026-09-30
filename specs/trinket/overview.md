@@ -72,9 +72,10 @@ consumer (the bureau, menus, dialogs) has a working base.
   new and the loop ends. Measured by forcing a layout-raised damage from inside
   a paint: `nested 0, deferred 1` with the guard, `nested 1, deferred 0`
   without it.
-- **The look is XEN/Workbench, in the theme.** `theme_xen.cc` already carries
-  the palette and metrics; this arc makes them visible. The greeter's
-  acceptance pixels change from its hand-picked greys to the theme's roles.
+- **The look is XEN/Workbench, in the theme.** The theme carries the palette and
+  metrics; this arc makes them visible. The greeter's acceptance pixels change
+  from its hand-picked greys to the theme's roles. (They are data now, in
+  `resources/themes/xen.toml`; `specs/trinket/theming.md`.)
 - **The font is embedded and real.** Terminus 12 (`projects/terminus-font`,
   vendored per `specs/third_party.md`) is compiled into the library as a byte
   array by a small build step, and `BitmapFont::load_bdf` is fixed to parse it

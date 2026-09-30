@@ -139,7 +139,7 @@ add_library(aegir-trinket STATIC
     src/translation.cc
     "${AEGIR_TRANSLATION_DATA}"
     src/theme.cc
-    src/theme_xen.cc
+    src/data_theme.cc
     "${AEGIR_THEME_DATA}"
     src/worker.cc
     "${AEGIR_TERMINUS_EMBED}"

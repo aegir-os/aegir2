@@ -45,6 +45,9 @@ struct Recipe {
 };
 
 /* Generated from resources/themes/xen.toml -- see scripts/gen_theme.py. */
+extern const uint32_t kPalette[];      // indexed by ColorRole
+extern const int kMetrics[];           // indexed by MetricRole, at 96 dpi
+extern const uint8_t kMetricFixed[];   // 1 when a metric is not scaled
 extern const Recipe kRecipeButton[5];   // normal, hovered, pressed, focused, disabled
 extern const Recipe kRecipeTextbox[2];  // normal, focused
 extern const Recipe kRecipeTextboxReadonly;

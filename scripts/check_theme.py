@@ -3,7 +3,7 @@
 
     python3 scripts/check_theme.py
 
-Compiles scripts/theme_conformance.cc with the toolkit's theme.cc, theme_xen.cc,
+Compiles scripts/theme_conformance.cc with the toolkit's theme.cc, data_theme.cc,
 canvas.cc and unicode.cc and the host compiler, runs it, and writes the render
 to out/theme/preview.png (twice size, so the 1px bevels are legible). Beside it
 goes out/theme/reference.png: the imported XEN artwork at the same scale, for
@@ -65,7 +65,7 @@ def main() -> int:
             "-I", str(INPUT / "include"),
             str(DRIVER),
             str(TRINKET / "src" / "theme.cc"),
-            str(TRINKET / "src" / "theme_xen.cc"),
+            str(TRINKET / "src" / "data_theme.cc"),
             str(TRINKET / "src" / "canvas.cc"),
             str(TRINKET / "src" / "unicode.cc"),
             str(generated),

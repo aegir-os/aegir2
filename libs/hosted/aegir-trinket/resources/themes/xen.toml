@@ -1,8 +1,12 @@
 # Trinket's theme: the XEN look as data (specs/trinket/theming.md).
 #
-# A gadget is an ordered list of primitive steps. Each step is an inline table
-# naming one primitive, with an optional `inset` (pixels in from the gadget's
-# rectangle):
+# The theme is three tables: the palette (a colour per ColorRole), the metrics
+# (a size per MetricRole, at a 96 dpi base), and the gadgets (a recipe each --
+# an ordered list of primitive steps). scripts/gen_theme.py turns them into the
+# C++ tables the engine reads; the C++ no longer holds the look.
+#
+# A recipe step is an inline table naming one primitive, with an optional
+# `inset` (pixels in from the gadget's rectangle):
 #
 #   { fill = "#rrggbb" }              fill the rectangle
 #   { bevel = "raised"|"sunken" }     a 1px 3-D edge
@@ -14,75 +18,190 @@
 # The values are XEN's, from MUI's Presets/XEN.prefs and its artwork; the base
 # is 96 dpi (the Amiga's 75 dpi is how a screenshot of it is read).
 
+# ---- palette ----
+# A named colour per role in the toolkit's ColorRole enum.
+
+[palette]
+BACKGROUND = "#aaaaaa"
+WINDOW_BG = "#aaaaaa"
+PANEL_BG = "#aaaaaa"
+TEXT = "#000000"
+TEXT_DISABLED = "#808080"
+TEXT_SELECTED = "#ffffff"
+TEXT_INVERSE = "#ffffff"
+BUTTON_BG = "#bfbfbf"
+BUTTON_HOVER = "#c9c9c9"
+BUTTON_PRESSED = "#bfbfbf"
+BUTTON_FOCUS = "#000000"
+BUTTON_TEXT = "#000000"
+BUTTON_BORDER = "#000000"
+INPUT_BG = "#bfbfbf"
+INPUT_TEXT = "#000000"
+INPUT_PLACEHOLDER = "#808080"
+INPUT_BORDER = "#8c8c8c"
+INPUT_FOCUS_BORDER = "#000000"
+SELECTION_BG = "#6688bb"
+SELECTION_TEXT = "#ffffff"
+ACCENT = "#6688bb"
+ACCENT_HOVER = "#7799cc"
+ACCENT_PRESSED = "#446699"
+BORDER = "#000000"
+BORDER_LIGHT = "#ffffff"
+BORDER_DARK = "#000000"
+FOCUS_BORDER = "#000000"
+MENUBAR_BG = "#e0e0e0"
+MENUBAR_HOVER = "#0078d7"
+MENUBAR_TEXT = "#000000"
+MENU_BG = "#f0f0f0"
+MENU_HOVER = "#0078d7"
+MENU_TEXT = "#000000"
+MENU_BORDER = "#808080"
+MENU_SEPARATOR = "#808080"
+TITLEBAR_BG = "#6688bb"
+TITLEBAR_BG_INACTIVE = "#6688bb"
+TITLEBAR_TEXT = "#000000"
+TITLEBAR_TEXT_INACTIVE = "#000000"
+TITLEBAR_BUTTON_BG = "#6688bb"
+TITLEBAR_BUTTON_HOVER = "#ffffff"
+TITLEBAR_HIGHLIGHT = "#a4b8d7"
+TITLEBAR_SHADOW = "#43597b"
+BOTTOMBAR_HIGHLIGHT = "#b1c2dc"
+BOTTOMBAR_SHADOW = "#2a384d"
+GADGET_OUTLINE = "#030303"
+GADGET_GREY = "#aaaaaa"
+GADGET_WHITE = "#ffffff"
+FRAME_LIGHT = "#f7f7f7"
+FRAME_DARK = "#2a384d"
+GADGET_FACE = "#bfbfbf"
+GADGET_HIGHLIGHT = "#ffffff"
+GADGET_SHADOW = "#000000"
+GADGET_SOFT_SHADOW = "#8c8c8c"
+TOOLTIP_BG = "#ffff80"
+TOOLTIP_TEXT = "#000000"
+SCROLLBAR_BG = "#aaaaaa"
+SCROLLBAR_HANDLE = "#bfbfbf"
+SCROLLBAR_HANDLE_HOVER = "#c9c9c9"
+LINK = "#0000ee"
+LINK_VISITED = "#800080"
+LINK_HOVER = "#ff0000"
+ERROR = "#cc0000"
+WARNING = "#cc8800"
+SUCCESS = "#008800"
+INFO = "#0078d7"
+DISABLED_BG = "#e0e0e0"
+DISABLED_TEXT = "#808080"
+
+# ---- metrics ----
+# A size per role in the MetricRole enum, at a 96 dpi base; the engine scales
+# each by the display's scale unless it is named in `fixed`.
+
+[metrics]
+fixed = ["TOOLTIP_DELAY_MS", "TEXT_LINE_HEIGHT_MULTIPLIER"]
+BUTTON_PADDING_H = 12
+BUTTON_PADDING_V = 6
+BUTTON_MIN_WIDTH = 72
+BUTTON_MIN_HEIGHT = 24
+BUTTON_BORDER_WIDTH = 1
+BUTTON_RADIUS = 2
+PANEL_BORDER_WIDTH = 1
+PANEL_RADIUS = 0
+MENUBAR_HEIGHT = 22
+MENU_ITEM_HEIGHT = 22
+MENU_PADDING_H = 8
+MENU_PADDING_V = 3
+MENU_SEPARATOR_HEIGHT = 1
+MENU_BORDER_WIDTH = 1
+TITLEBAR_HEIGHT = 24
+TITLEBAR_BUTTON_SIZE = 16
+TITLEBAR_PADDING_H = 8
+WINDOW_BORDER_WIDTH = 1
+WINDOW_SHADOW_WIDTH = 0
+INPUT_PADDING_H = 8
+INPUT_PADDING_V = 4
+INPUT_BORDER_WIDTH = 1
+SCROLLBAR_WIDTH = 16
+SCROLLBAR_MIN_HANDLE = 30
+SCROLLBAR_ARROW_SIZE = 16
+SPACING_SMALL = 4
+SPACING_MEDIUM = 8
+SPACING_LARGE = 16
+FOCUS_RING_WIDTH = 2
+FOCUS_RING_OFFSET = 2
+ICON_SIZE_SMALL = 16
+ICON_SIZE_NORMAL = 24
+ICON_SIZE_LARGE = 32
+TOOLTIP_DELAY_MS = 500
+TEXT_LINE_HEIGHT_MULTIPLIER = 120
+
 # ---- buttons ----
 # The face changes with the state; a pressed or focused button is inset.
 
 [gadgets.button.normal]
-steps = [{ fill = "#bfbfbf" }, { bevel = "raised" }]
+steps = [{ fill = "$BUTTON_BG" }, { bevel = "raised" }]
 
 [gadgets.button.hovered]
-steps = [{ fill = "#c9c9c9" }, { bevel = "raised" }]
+steps = [{ fill = "$BUTTON_HOVER" }, { bevel = "raised" }]
 
 [gadgets.button.pressed]
-steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" }]
+steps = [{ fill = "$BUTTON_PRESSED" }, { bevel = "sunken" }]
 
 [gadgets.button.focused]
-steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" }]
+steps = [{ fill = "$BUTTON_BG" }, { bevel = "sunken" }]
 
 [gadgets.button.disabled]
-steps = [{ fill = "#e0e0e0" }, { bevel = "raised" }]
+steps = [{ fill = "$DISABLED_BG" }, { bevel = "raised" }]
 
 # ---- text fields ----
-# A sunken #bfbfbf well; focus adds a black outline inside it.
+# A sunken well; focus adds a black outline inside it.
 
 [gadgets.textbox.normal]
-steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" }]
+steps = [{ fill = "$INPUT_BG" }, { bevel = "sunken" }]
 
 [gadgets.textbox.focused]
-steps = [{ fill = "#bfbfbf" }, { bevel = "sunken" },
-         { outline = "#000000", inset = 1 }]
+steps = [{ fill = "$INPUT_BG" }, { bevel = "sunken" },
+         { outline = "$INPUT_FOCUS_BORDER", inset = 1 }]
 
 [gadgets.textbox.readonly]
-steps = [{ fill = "#e0e0e0" }, { bevel = "sunken" }]
+steps = [{ fill = "$DISABLED_BG" }, { bevel = "sunken" }]
 
 # ---- panels ----
 # The face is the group grey; the frame style is the bevel.
 
 [gadgets.panel.flat]
-steps = [{ fill = "#aaaaaa" }]
+steps = [{ fill = "$PANEL_BG" }]
 
 [gadgets.panel.raised]
-steps = [{ fill = "#aaaaaa" }, { bevel = "raised" }]
+steps = [{ fill = "$PANEL_BG" }, { bevel = "raised" }]
 
 [gadgets.panel.sunken]
-steps = [{ fill = "#aaaaaa" }, { bevel = "sunken" }]
+steps = [{ fill = "$PANEL_BG" }, { bevel = "sunken" }]
 
 [gadgets.panel.frame]
-steps = [{ fill = "#aaaaaa" }, { outline = "#000000" }]
+steps = [{ fill = "$PANEL_BG" }, { outline = "$BORDER" }]
 
 [gadgets.panel.group_box]
-steps = [{ fill = "#aaaaaa" }, { bevel = "raised" }]
+steps = [{ fill = "$PANEL_BG" }, { bevel = "raised" }]
 
 # ---- the scrollbar ----
 # A raised frame around the strip; a sunken dither trough the wide thumb rides;
 # two raised arrow buttons at the foot, each a hollow 3-D mark.
 
 [gadgets.scrollbar.frame]
-steps = [{ fill = "#aaaaaa" }, { outline = "#000000" },
+steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
          { bevel = "raised", inset = 1 }]
 
 [gadgets.scrollbar.trough]
-steps = [{ dither = ["#6688bb", "#aaaaaa"] }, { bevel = "sunken" }]
+steps = [{ dither = ["$SELECTION_BG", "$SCROLLBAR_BG"] }, { bevel = "sunken" }]
 
 [gadgets.scrollbar.thumb]
-steps = [{ fill = "#bfbfbf" }, { bevel = "raised" }]
+steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]
 
 [gadgets.scrollbar.decrement]
-steps = [{ fill = "#bfbfbf" }, { outline = "#000000" },
+steps = [{ fill = "$GADGET_FACE" }, { outline = "$GADGET_SHADOW" },
          { bevel = "raised", inset = 1 },
-         { mark = "up", light = "#ffffff", dark = "#000000", size = [1, 4] }]
+         { mark = "up", light = "$GADGET_HIGHLIGHT", dark = "$GADGET_SHADOW", size = [1, 4] }]
 
 [gadgets.scrollbar.increment]
-steps = [{ fill = "#bfbfbf" }, { outline = "#000000" },
+steps = [{ fill = "$GADGET_FACE" }, { outline = "$GADGET_SHADOW" },
          { bevel = "raised", inset = 1 },
-         { mark = "down", light = "#ffffff", dark = "#000000", size = [1, 4] }]
+         { mark = "down", light = "$GADGET_HIGHLIGHT", dark = "$GADGET_SHADOW", size = [1, 4] }]

@@ -1,5 +1,9 @@
 /*
- * Trinket XEN/Workbench theme implementation.
+ * Trinket's theme engine: it reads the palette, the metrics and the gadget
+ * recipes from the generated theme data and draws with them
+ * (specs/trinket/theming.md). Nothing here is a look of its own -- the XEN look
+ * is resources/themes/xen.toml -- so a theme is data and this is the one
+ * interpreter that draws it.
  */
 
 #include <aegir/trinket/theme.h>
@@ -12,161 +16,22 @@
 
 namespace aegir::trinket {
 
-class XENTheme : public Theme {
+class DataTheme : public Theme {
 public:
-    explicit XENTheme(float scale = 1.0f) : scale_(scale) {}
+    explicit DataTheme(float scale = 1.0f) : scale_(scale) {}
 
     Color color(ColorRole role) const override {
-        using CR = ColorRole;
-        // XEN/Workbench color palette (scaled for 96 DPI base)
-        switch (role) {
-            // Base
-            case CR::BACKGROUND: return Color(0x00AAAAAA);       // Workbench grey
-            case CR::WINDOW_BG: return Color(0x00AAAAAA);        // the body
-            case CR::PANEL_BG: return Color(0x00AAAAAA);         // a group's face
-
-            // Text
-            case CR::TEXT: return Color(0x00000000);             // Black
-            case CR::TEXT_DISABLED: return Color(0x00808080);    // Grey
-            case CR::TEXT_SELECTED: return Color(0x00FFFFFF);    // White
-            case CR::TEXT_INVERSE: return Color(0x00FFFFFF);
-
-            // Buttons (specs/trinket/theme-xen.md): a raised #bfbfbf face whose
-            // edge is the 3-D bevel, and focus is the gadget's active state.
-            case CR::BUTTON_BG: return Color(0x00BFBFBF);
-            case CR::BUTTON_HOVER: return Color(0x00C9C9C9);
-            case CR::BUTTON_PRESSED: return Color(0x00BFBFBF);
-            case CR::BUTTON_FOCUS: return Color(0x00000000);
-            case CR::BUTTON_TEXT: return Color(0x00000000);
-            case CR::BUTTON_BORDER: return Color(0x00000000);
-
-            // Input: a sunken #bfbfbf well.
-            case CR::INPUT_BG: return Color(0x00BFBFBF);
-            case CR::INPUT_TEXT: return Color(0x00000000);
-            case CR::INPUT_PLACEHOLDER: return Color(0x00808080);
-            case CR::INPUT_BORDER: return Color(0x008C8C8C);
-            case CR::INPUT_FOCUS_BORDER: return Color(0x00000000);
-
-            // Selection: the Amiga dithered blue (XEN chrome blue).
-            case CR::SELECTION_BG: return Color(0x006688BB);
-            case CR::SELECTION_TEXT: return Color(0x00FFFFFF);
-
-            // Accent
-            case CR::ACCENT: return Color(0x006688BB);
-            case CR::ACCENT_HOVER: return Color(0x007799CC);
-            case CR::ACCENT_PRESSED: return Color(0x00446699);
-
-            // Borders
-            case CR::BORDER: return Color(0x00000000);
-            case CR::BORDER_LIGHT: return Color(0x00FFFFFF);
-            case CR::BORDER_DARK: return Color(0x00000000);
-            case CR::FOCUS_BORDER: return Color(0x00000000);
-
-            // Menu
-            case CR::MENUBAR_BG: return Color(0x00E0E0E0);
-            case CR::MENUBAR_HOVER: return Color(0x000078D7);
-            case CR::MENUBAR_TEXT: return Color(0x00000000);
-            case CR::MENU_BG: return Color(0x00F0F0F0);
-            case CR::MENU_HOVER: return Color(0x000078D7);
-            case CR::MENU_TEXT: return Color(0x00000000);
-            case CR::MENU_BORDER: return Color(0x00808080);
-            case CR::MENU_SEPARATOR: return Color(0x00808080);
-
-            // Titlebar (Workbench XEN, specs/amiga-fidelity.md): the same
-            // fill active or not -- the active/inactive difference is the
-            // gadgets' fill (window.cc) -- and the title is black either way.
-            case CR::TITLEBAR_BG: return Color(0x006688BB);
-            case CR::TITLEBAR_BG_INACTIVE: return Color(0x006688BB);
-            case CR::TITLEBAR_TEXT: return Color(0x00000000);
-            case CR::TITLEBAR_TEXT_INACTIVE: return Color(0x00000000);
-            case CR::TITLEBAR_BUTTON_BG: return Color(0x006688BB);
-            case CR::TITLEBAR_BUTTON_HOVER: return Color(0x40FFFFFF);
-            case CR::TITLEBAR_HIGHLIGHT: return Color(0x00A4B8D7);
-            case CR::TITLEBAR_SHADOW: return Color(0x0043597B);
-            case CR::BOTTOMBAR_HIGHLIGHT: return Color(0x00B1C2DC);
-            case CR::BOTTOMBAR_SHADOW: return Color(0x002A384D);
-            case CR::GADGET_OUTLINE: return Color(0x00030303);
-            case CR::GADGET_GREY: return Color(0x00AAAAAA);
-            case CR::GADGET_WHITE: return Color(0x00FFFFFF);
-            case CR::FRAME_LIGHT: return Color(0x00F7F7F7);
-            case CR::FRAME_DARK: return Color(0x002A384D);
-
-            // Grey 3-D gadgets (specs/trinket/theme-xen.md): a raised face and
-            // the two edges its bevel is drawn from, plus the soft second
-            // shadow some frames carry. Read off the MUI XEN screenshots.
-            case CR::GADGET_FACE: return Color(0x00BFBFBF);
-            case CR::GADGET_HIGHLIGHT: return Color(0x00FFFFFF);
-            case CR::GADGET_SHADOW: return Color(0x00000000);
-            case CR::GADGET_SOFT_SHADOW: return Color(0x008C8C8C);
-
-            // Tooltip
-            case CR::TOOLTIP_BG: return Color(0xE0FFFF80);       // Yellow
-            case CR::TOOLTIP_TEXT: return Color(0x00000000);
-
-            // Scrollbar
-            case CR::SCROLLBAR_BG: return Color(0x00AAAAAA);
-            case CR::SCROLLBAR_HANDLE: return Color(0x00BFBFBF);
-            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00C9C9C9);
-
-            // Link
-            case CR::LINK: return Color(0x000000EE);
-            case CR::LINK_VISITED: return Color(0x00800080);
-            case CR::LINK_HOVER: return Color(0x00FF0000);
-
-            // Status
-            case CR::ERROR: return Color(0x00CC0000);
-            case CR::WARNING: return Color(0x00CC8800);
-            case CR::SUCCESS: return Color(0x00008800);
-            case CR::INFO: return Color(0x000078D7);
-
-            // Disabled
-            case CR::DISABLED_BG: return Color(0x00E0E0E0);
-            case CR::DISABLED_TEXT: return Color(0x00808080);
-        }
-        return Color::TRANSPARENT;
+        /* The palette is data (specs/trinket/theming.md): one colour per role,
+         * in the ColorRole enum's order, from resources/themes/xen.toml. */
+        return Color(kPalette[static_cast<int>(role)]);
     }
 
     int metric(MetricRole role) const override {
-        using MR = MetricRole;
-        int base = static_cast<int>(scale_ + 0.5f);
-        switch (role) {
-            case MR::BUTTON_PADDING_H: return 12 * base;
-            case MR::BUTTON_PADDING_V: return 6 * base;
-            case MR::BUTTON_MIN_WIDTH: return 72 * base;
-            case MR::BUTTON_MIN_HEIGHT: return 24 * base;
-            case MR::BUTTON_BORDER_WIDTH: return 1 * base;
-            case MR::BUTTON_RADIUS: return 2 * base;
-            case MR::PANEL_BORDER_WIDTH: return 1 * base;
-            case MR::PANEL_RADIUS: return 0;
-            case MR::MENUBAR_HEIGHT: return 22 * base;
-            case MR::MENU_ITEM_HEIGHT: return 22 * base;
-            case MR::MENU_PADDING_H: return 8 * base;
-            case MR::MENU_PADDING_V: return 3 * base;
-            case MR::MENU_SEPARATOR_HEIGHT: return 1 * base;
-            case MR::MENU_BORDER_WIDTH: return 1 * base;
-            case MR::TITLEBAR_HEIGHT: return 24 * base;
-            case MR::TITLEBAR_BUTTON_SIZE: return 16 * base;
-            case MR::TITLEBAR_PADDING_H: return 8 * base;
-            case MR::WINDOW_BORDER_WIDTH: return 1 * base;
-            case MR::WINDOW_SHADOW_WIDTH: return 0;
-            case MR::INPUT_PADDING_H: return 8 * base;
-            case MR::INPUT_PADDING_V: return 4 * base;
-            case MR::INPUT_BORDER_WIDTH: return 1 * base;
-            case MR::SCROLLBAR_WIDTH: return 16 * base;
-            case MR::SCROLLBAR_MIN_HANDLE: return 30 * base;
-            case MR::SCROLLBAR_ARROW_SIZE: return 16 * base;
-            case MR::SPACING_SMALL: return 4 * base;
-            case MR::SPACING_MEDIUM: return 8 * base;
-            case MR::SPACING_LARGE: return 16 * base;
-            case MR::FOCUS_RING_WIDTH: return 2 * base;
-            case MR::FOCUS_RING_OFFSET: return 2 * base;
-            case MR::ICON_SIZE_SMALL: return 16 * base;
-            case MR::ICON_SIZE_NORMAL: return 24 * base;
-            case MR::ICON_SIZE_LARGE: return 32 * base;
-            case MR::TOOLTIP_DELAY_MS: return 500;
-            case MR::TEXT_LINE_HEIGHT_MULTIPLIER: return 120;  // 1.2x
-        }
-        return 0;
+        /* The metrics are data (specs/trinket/theming.md): a base size per role
+         * at 96 dpi, scaled here unless the file marks it fixed. */
+        int const index = static_cast<int>(role);
+        int const base = static_cast<int>(scale_ + 0.5f);
+        return kMetricFixed[index] ? kMetrics[index] : kMetrics[index] * base;
     }
 
     Font* font() const override {
@@ -413,7 +278,7 @@ private:
 };
 
 std::unique_ptr<Theme> Theme::create_xen(float scale) {
-    return std::make_unique<XENTheme>(scale);
+    return std::make_unique<DataTheme>(scale);
 }
 
 std::unique_ptr<Theme> Theme::create_high_contrast(float scale) {

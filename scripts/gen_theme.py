@@ -3,24 +3,40 @@
 
     python3 scripts/gen_theme.py <output.cc>
 
-The theme file is the source of the look (specs/trinket/theming.md); this turns
-each gadget's list of primitive steps into the `Step` tables theme_data.h
-declares, so the toolkit interprets data instead of compiling the look in. Run
-by the build and by scripts/check_theme.py; not part of any target build itself.
+The theme file is the source of the look (specs/trinket/theming.md): a palette
+(a colour per ColorRole), metrics (a size per MetricRole), and a recipe per
+gadget. This turns them into the tables theme_data.h declares -- the palette and
+metrics in the enum's own order, the recipes as primitive steps -- so the engine
+interprets data instead of compiling the look in. A step colour may be a literal
+`#rrggbb` or `$NAME`, a palette entry.
+
+Run by the build and by scripts/check_theme.py; not part of any target build.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 import tomllib
 from pathlib import Path
 
 import pins
 
-THEME = pins.ROOT / "libs" / "hosted" / "aegir-trinket" / "resources" / "themes" / "xen.toml"
+TRINKET = pins.ROOT / "libs" / "hosted" / "aegir-trinket"
+THEME = TRINKET / "resources" / "themes" / "xen.toml"
+HEADER = TRINKET / "include" / "aegir" / "trinket" / "theme.h"
 
 BEVEL = {"raised": 0, "sunken": 1}
 MARK = {"up": 0, "down": 1, "left": 2, "right": 3}
+
+
+def enum_names(header: str, name: str) -> list[str]:
+    """The enumerators of `enum class NAME { ... }`, in order."""
+    match = re.search(r"enum class " + name + r"\s*\{(.*?)\}", header, re.S)
+    if match is None:
+        raise SystemExit(f"no enum class {name} in {HEADER.name}")
+    body = re.sub(r"//[^\n]*", "", match.group(1))
+    return [token.strip() for token in body.split(",") if token.strip()]
 
 
 def rgb(text: str) -> int:
@@ -30,49 +46,57 @@ def rgb(text: str) -> int:
     return int(text, 16)
 
 
-def parse_step(step: dict) -> tuple:
-    """A step table -> a Step's fields (op, kind, inset, num, den, color, color2)."""
+def resolve(value: str, palette: dict) -> int:
+    """A step colour: `$NAME` into the palette, or a literal hex."""
+    if value.startswith("$"):
+        name = value[1:]
+        if name not in palette:
+            raise SystemExit(f"no palette colour {name!r}")
+        return rgb(palette[name])
+    return rgb(value)
+
+
+def parse_step(step: dict, palette: dict) -> tuple:
     inset = int(step.get("inset", 0))
     if "fill" in step:
-        return ("FILL", 0, inset, 0, 1, rgb(step["fill"]), 0)
+        return ("FILL", 0, inset, 0, 1, resolve(step["fill"], palette), 0)
     if "bevel" in step:
         return ("BEVEL", BEVEL[step["bevel"]], inset, 0, 1, 0, 0)
     if "outline" in step:
-        return ("OUTLINE", 0, inset, 0, 1, rgb(step["outline"]), 0)
+        return ("OUTLINE", 0, inset, 0, 1, resolve(step["outline"], palette), 0)
     if "dither" in step:
         fg, bg = step["dither"]
-        return ("DITHER", 0, inset, 0, 1, rgb(fg), rgb(bg))
+        return ("DITHER", 0, inset, 0, 1, resolve(fg, palette), resolve(bg, palette))
     if "mark" in step:
         num, den = step.get("size", [1, 4])
         return ("MARK", MARK[step["mark"]], inset, num, den,
-                rgb(step.get("light", "#ffffff")), rgb(step.get("dark", "#000000")))
+                resolve(step.get("light", "#ffffff"), palette),
+                resolve(step.get("dark", "#000000"), palette))
     raise SystemExit(f"unknown step: {step}")
 
 
-def emit(name: str, recipe: dict) -> tuple[str, str]:
-    """Return (the static step array, the Recipe initializer)."""
+def emit_recipe(name: str, recipe: dict, palette: dict) -> tuple[str, str]:
     steps = recipe["steps"]
     lines = [f"static const Step {name}[] = {{"]
     for step in steps:
-        op, kind, inset, num, den, color, color2 = parse_step(step)
+        op, kind, inset, num, den, color, color2 = parse_step(step, palette)
         lines.append(f"    {{Prim::{op}, {kind}, {inset}, {num}, {den}, "
                      f"0x{color:06x}, 0x{color2:06x}}},")
     lines.append("};")
     return "\n".join(lines), f"{{{name}, {len(steps)}}}"
 
 
-def emit_array(var: str, recipes: list[dict]) -> str:
-    blocks = []
-    items = []
+def emit_array(var: str, recipes: list[dict], palette: dict) -> str:
+    blocks, items = [], []
     for i, recipe in enumerate(recipes):
-        block, item = emit(f"{var}_{i}", recipe)
+        block, item = emit_recipe(f"{var}_{i}", recipe, palette)
         blocks.append(block)
         items.append(f"    {item},")
     return "\n".join(blocks) + f"\nconst Recipe {var}[] = {{\n" + "\n".join(items) + "\n};"
 
 
-def emit_single(var: str, recipe: dict) -> str:
-    block, item = emit(f"{var}_steps", recipe)
+def emit_single(var: str, recipe: dict, palette: dict) -> str:
+    block, item = emit_recipe(f"{var}_steps", recipe, palette)
     return block + f"\nconst Recipe {var} = {item};"
 
 
@@ -81,7 +105,12 @@ def main() -> int:
     if output is None:
         print("usage: gen_theme.py <output.cc>", file=sys.stderr)
         return 2
+
     theme = tomllib.loads(THEME.read_text())
+    header = HEADER.read_text()
+    palette = theme["palette"]
+    metrics = theme["metrics"]
+    fixed = set(metrics.get("fixed", []))
     g = theme["gadgets"]
 
     parts = [
@@ -93,27 +122,53 @@ def main() -> int:
         "",
         "namespace aegir::trinket {",
         "",
+        "const uint32_t kPalette[] = {",
+    ]
+    color_roles = enum_names(header, "ColorRole")
+    for role in color_roles:
+        if role not in palette:
+            raise SystemExit(f"the palette has no colour for {role}")
+        parts.append(f"    0x{rgb(palette[role]):06x},  // {role}")
+    parts.append("};")
+    parts.append("")
+
+    metric_roles = enum_names(header, "MetricRole")
+    parts.append("const int kMetrics[] = {")
+    for role in metric_roles:
+        if role not in metrics:
+            raise SystemExit(f"the metrics have no value for {role}")
+        parts.append(f"    {int(metrics[role])},  // {role}")
+    parts.append("};")
+    parts.append("")
+    parts.append("const uint8_t kMetricFixed[] = {")
+    for role in metric_roles:
+        parts.append(f"    {1 if role in fixed else 0},  // {role}")
+    parts.append("};")
+    parts.append("")
+
+    parts += [
         emit_array("kRecipeButton",
                    [g["button"][n] for n in ("normal", "hovered", "pressed",
-                                             "focused", "disabled")]),
+                                             "focused", "disabled")], palette),
         "",
-        emit_array("kRecipeTextbox", [g["textbox"]["normal"], g["textbox"]["focused"]]),
+        emit_array("kRecipeTextbox", [g["textbox"]["normal"], g["textbox"]["focused"]],
+                   palette),
         "",
-        emit_single("kRecipeTextboxReadonly", g["textbox"]["readonly"]),
+        emit_single("kRecipeTextboxReadonly", g["textbox"]["readonly"], palette),
         "",
         emit_array("kRecipePanel",
                    [g["panel"][n] for n in ("flat", "raised", "sunken", "frame",
-                                            "group_box")]),
+                                            "group_box")], palette),
         "",
-        emit_single("kRecipeScrollbarFrame", g["scrollbar"]["frame"]),
+        emit_single("kRecipeScrollbarFrame", g["scrollbar"]["frame"], palette),
         "",
-        emit_single("kRecipeScrollbarTrough", g["scrollbar"]["trough"]),
+        emit_single("kRecipeScrollbarTrough", g["scrollbar"]["trough"], palette),
         "",
-        emit_single("kRecipeScrollbarThumb", g["scrollbar"]["thumb"]),
+        emit_single("kRecipeScrollbarThumb", g["scrollbar"]["thumb"], palette),
         "",
-        emit_single("kRecipeScrollbarDecrement", g["scrollbar"]["decrement"]),
+        emit_single("kRecipeScrollbarDecrement", g["scrollbar"]["decrement"], palette),
         "",
-        emit_single("kRecipeScrollbarIncrement", g["scrollbar"]["increment"]),
+        emit_single("kRecipeScrollbarIncrement", g["scrollbar"]["increment"], palette),
         "",
         "}  // namespace aegir::trinket",
         "",

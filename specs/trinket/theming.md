@@ -42,7 +42,7 @@ family of `check-atlas`/`check-layout`/`check-scrollbar`:
   is); `.image` files are Amiga programmes -- the scrollbar's drawing is one --
   and are skipped.
 - `scripts/theme_conformance.cc` + `scripts/check_theme.py` -- compile the
-  toolkit's real `theme.cc`/`theme_xen.cc`/`canvas.cc` with the host compiler,
+  toolkit's real `theme.cc`/`data_theme.cc`/`canvas.cc` with the host compiler,
   render every gadget onto one `Canvas`, and write `out/theme/preview.png`
   (twice size) beside `out/theme/reference.png` (the imported art, same scale).
 - `make theme-preview` (and `make check-theme`).
@@ -52,13 +52,15 @@ against.
 
 ## What this is not (yet)
 
-- **Phase B (landed).** `resources/themes/xen.toml` holds each gadget's recipe
-  -- an ordered list of primitive steps (`fill`, `bevel`, `outline`, `dither`,
-  `mark`), with per-state recipes for the button and the text field.
-  `scripts/gen_theme.py` emits `theme_data.cc` (wired into the CMake build and
-  the host check), and `XENTheme::draw_button`/`draw_panel`/`draw_textbox`/
-  `draw_scrollbar` are now recipe runners over those tables; the C++ no longer
-  holds the shapes. The **palette and metrics** still live in C++ and move next.
+- **Phase B (landed).** `resources/themes/xen.toml` is the whole look: the
+  **palette** (a colour per `ColorRole`), the **metrics** (a size per
+  `MetricRole`, at 96 dpi, with a `fixed` list for the few that are not scaled),
+  and a **recipe** per gadget -- an ordered list of primitive steps (`fill`,
+  `bevel`, `outline`, `dither`, `mark`), with per-state recipes for the button
+  and the field. `scripts/gen_theme.py` emits `theme_data.cc` (wired into the
+  CMake build and the host check), and `src/data_theme.cc` is the one engine
+  that reads them: `color`, `metric` and every `draw_*` are interpreted, so no
+  C++ holds a look and there is no XEN-specific C++ file.
 - **Phase C**: sprite drawing (blit / nine-slice) so the imported art is what the
   toolkit draws for the buttons and marks, and a converter from `XEN.prefs`.
 - The scrollbar is re-done through the mechanism once C lands; B is what lets it
