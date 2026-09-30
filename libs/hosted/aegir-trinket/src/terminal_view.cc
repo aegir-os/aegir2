@@ -59,6 +59,12 @@ Size TerminalView::preferred_size() const {
             buffer_.rows() * height + 2 * kTextPadding};
 }
 
+Size TerminalView::minimum_size() const {
+    int const advance = cell_advance();
+    int const height = cell_height();
+    return {advance + 2 * kTextPadding, height + 2 * kTextPadding};
+}
+
 Size TerminalView::maximum_size() const {
     /* The type's bound, not a policy: the grid resizes to whatever rectangle it
      * is given, so the terminal is as free as a group can make it

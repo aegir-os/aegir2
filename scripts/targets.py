@@ -814,7 +814,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # every character into one column, or drew nothing, has far less
                 # ink than this. The body sample is deep in the terminal, clear
                 # of the group frame the content draws now (specs/trinket/layout.md).
-                dark=(("gpu0", 902, 470, 240, 90, 100),),
+                dark=(
+                    ("gpu0", 902, 470, 240, 90, 100),
+                    # The outline label's band at the window's foot is ink too:
+                    # a group whose terminal overflowed would push the label off
+                    # and leave this blank (specs/trinket/layout.md).
+                    ("gpu0", 902, 654, 240, 20, 20),
+                ),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},

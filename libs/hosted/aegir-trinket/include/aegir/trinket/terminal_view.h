@@ -46,6 +46,11 @@ public:
 
     bool focusable() const override { return true; }
     Size preferred_size() const override;
+    /* The smallest usable grid, one cell: a group may shrink the terminal to it
+     * and hand the slack elsewhere (specs/trinket/layout.md). Without this the
+     * default 80x24 grid is the minimum, it does not fit a small window, and it
+     * overflows -- pushing a sibling off the group. */
+    Size minimum_size() const override;
     /* A terminal fills whatever it is given: its grid resizes to the rectangle
      * (on_layout), so extra room is extra cells. It is the free widget a group
      * gives its slack to (specs/trinket/layout.md). */
