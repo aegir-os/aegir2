@@ -139,6 +139,15 @@ public:
     void set_spacing(int s) { spacing_ = s; }
     int spacing() const { return spacing_; }
 
+    /* The frame's inner margin: children are placed inside it, and the group's
+     * three sizes include it (specs/trinket/layout.md). A framed Group sets it
+     * from its frame. */
+    void set_inset(int top, int left, int bottom, int right);
+    int inset_top() const { return inset_top_; }
+    int inset_left() const { return inset_left_; }
+    int inset_bottom() const { return inset_bottom_; }
+    int inset_right() const { return inset_right_; }
+
     void set_weight(Widget* child, int weight);
     int weight(Widget* child) const;
     void set_align(Widget* child, Align align);
@@ -161,6 +170,10 @@ private:
 
     Orientation orientation_ = Orientation::VERTICAL;
     int spacing_ = 0;
+    int inset_top_ = 0;
+    int inset_left_ = 0;
+    int inset_bottom_ = 0;
+    int inset_right_ = 0;
     std::vector<Child> children_;
 };
 

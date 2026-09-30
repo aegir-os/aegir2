@@ -183,13 +183,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up
-            # (specs/amiga-fidelity.md): the Workbench-blue backdrop, the
-            # window's raised frame and its #6688bb title bar (the greeter
-            # asks for the focus at startup, so the gadgets are filled), the
-            # black left-justified "Aegir" title, the box-in-box zoom and the
-            # cascaded depth gadgets, the window's light grey, the white name
-            # field with its focused blue border, the black label text, and
-            # the button's grey. Then the form
+            # (specs/amiga-fidelity.md, specs/trinket/theme-xen.md): the
+            # Workbench-blue backdrop, the window's raised frame and its
+            # #6688bb title bar (the greeter asks for the focus at startup, so
+            # the gadgets are filled), the black left-justified "Aegir" title,
+            # the box-in-box zoom and the cascaded depth gadgets, the window's
+            # grey body, the name field's sunken #bfbfbf well with the black
+            # outline focus gives it, the black label text, and the button's
+            # #bfbfbf face. Then the form
             # STANDS through the test bed: the login is the run's last
             # business, played after the boot marker.
             QmpStep(
@@ -203,11 +204,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 842, 206, 255, 255, 255),
                     ("gpu0", 862, 203, 170, 170, 170),
                     ("gpu0", 865, 207, 255, 255, 255),
-                    ("gpu0", 410, 230, 204, 204, 204),
-                    ("gpu0", 500, 290, 255, 255, 255),
-                    ("gpu0", 424, 288, 0, 120, 215),
+                    ("gpu0", 410, 230, 170, 170, 170),
+                    ("gpu0", 500, 290, 191, 191, 191),
+                    ("gpu0", 424, 288, 0, 0, 0),
                     ("gpu0", 424, 265, 0, 0, 0),
-                    ("gpu0", 434, 398, 224, 224, 224),
+                    ("gpu0", 434, 398, 191, 191, 191),
                 ),
             ),
             # The console owns the input devices (specs/console.md), so the
@@ -461,8 +462,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 60, 200, 204, 204, 204),
-                    ("gpu0", 500, 300, 204, 204, 204),
+                    ("gpu0", 60, 200, 170, 170, 170),
+                    ("gpu0", 500, 300, 170, 170, 170),
                 ),
             ),
             # The DOS toolset (specs/dos.md). Every command here is a program
@@ -747,7 +748,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"view: ready",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 600, 450, 204, 204, 204),),
+                pixels=(("gpu0", 600, 450, 170, 170, 170),),
                 dark=(("gpu0", 424, 204, 300, 24, 20),),
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
@@ -794,7 +795,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 1000, 10, 102, 136, 187),
-                    ("gpu0", 1000, 400, 204, 204, 204),
+                    ("gpu0", 1000, 400, 170, 170, 170),
                     ("gpu0", 1000, 795, 102, 136, 187),
                 ),
                 events=(
@@ -808,7 +809,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 910, 460, 204, 204, 204),),
+                pixels=(("gpu0", 910, 460, 170, 170, 170),),
                 # The demo's terminal grid has text on it: a grid that wrapped
                 # every character into one column, or drew nothing, has far less
                 # ink than this.
@@ -982,8 +983,8 @@ TARGETS: dict[str, Target] = {
                 # session terminal's would be, its grid grey, with the console's
                 # blue backdrop still around it.
                 pixels=(
-                    ("gpu0", 60, 200, 204, 204, 204),
-                    ("gpu0", 500, 300, 204, 204, 204),
+                    ("gpu0", 60, 200, 170, 170, 170),
+                    ("gpu0", 500, 300, 170, 170, 170),
                     ("gpu0", 10, 10, 0, 85, 170),
                 ),
             ),

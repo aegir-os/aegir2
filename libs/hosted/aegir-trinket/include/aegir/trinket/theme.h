@@ -14,6 +14,7 @@
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/panel.h>
 #include <memory>
+#include <string_view>
 
 namespace aegir::trinket {
 
@@ -47,6 +48,9 @@ enum class ColorRole {
     BOTTOMBAR_HIGHLIGHT, BOTTOMBAR_SHADOW,
     GADGET_OUTLINE, GADGET_GREY, GADGET_WHITE,
     FRAME_LIGHT, FRAME_DARK,
+    // Grey 3-D gadgets (specs/trinket/theme-xen.md): the face and the two bevel
+    // edges a button, a field or a group frame is drawn from.
+    GADGET_FACE, GADGET_HIGHLIGHT, GADGET_SHADOW, GADGET_SOFT_SHADOW,
     // Tooltip
     TOOLTIP_BG, TOOLTIP_TEXT,
     // Scrollbar
@@ -97,12 +101,18 @@ public:
     virtual Font* font_large() const = 0;
     virtual Font* font_monospace() const = 0;
 
+    // The grey 3-D edge (specs/trinket/theme-xen.md): 1px, square, hard-edged.
+    enum class Bevel { RAISED, SUNKEN };
+
     // Drawing primitives (can be overridden for custom look)
+    virtual void draw_bevel(Canvas& canvas, const Rect& rect, Bevel bevel);
+    virtual void draw_dither(Canvas& canvas, const Rect& rect, Color fg, Color bg);
     virtual void draw_button(Canvas& canvas, const Rect& rect,
                               bool hovered, bool pressed, bool focused,
                               bool checked, bool enabled);
     virtual void draw_panel(Canvas& canvas, const Rect& rect,
-                             Panel::Style style, bool focused);
+                             Panel::Style style, std::u32string_view title,
+                             bool focused);
     virtual void draw_textbox(Canvas& canvas, const Rect& rect,
                                bool focused, bool read_only, bool password);
     virtual void draw_menubar(Canvas& canvas, const Rect& rect);

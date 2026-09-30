@@ -13,6 +13,7 @@
  * Run through scripts/check_layout.py.
  */
 
+#include <aegir/trinket/group.h>
 #include <aegir/trinket/layout.h>
 #include <aegir/trinket/widget.h>
 #include <aegir/trinket/window.h>
@@ -28,6 +29,10 @@ namespace aegir::trinket {
  * (specs/trinket/layout.md). window.h is host-includable through the sel4 stub
  * beside this driver (scripts/layout_stub/sel4/sel4.h). */
 void Window::damage(const Rect&) {}
+
+/* group.cc's paint names the application; the check lays out but never draws,
+ * so a null instance that is never dereferenced is enough. */
+Application* Application::instance() { return nullptr; }
 }  // namespace aegir::trinket
 
 namespace {
@@ -76,7 +81,15 @@ public:
     void arrange() { on_layout(); }
 };
 
-Block* add(Bench& bench, Size minimum, Size preferred, Size maximum = {}) {
+/* A Group is a Container too, and `on_layout` is protected, so the check reaches
+ * it the same way. */
+class GroupBench : public Group {
+public:
+    using Group::Group;
+    void arrange() { on_layout(); }
+};
+
+Block* add(Container& bench, Size minimum, Size preferred, Size maximum = {}) {
     auto block = std::make_unique<Block>(minimum, preferred,
                                          maximum.width > 0 || maximum.height > 0
                                              ? maximum
@@ -226,6 +239,30 @@ int main() {
         expect_rect(inner_raw, {0, 20, 100, 10}, "nested group");
         expect_rect(left, {0, 20, 50, 10}, "nested left");
         expect_rect(right, {50, 20, 50, 10}, "nested right");
+    }
+
+    /* 7. A framed Group insets its children and reports the frame in its own
+     *    sizes; the inset is the layout's. */
+    {
+        GroupBench group(Group::Orientation::VERTICAL, 0);
+        group.set_frame(Group::Frame::GROUP_BOX);
+        Block* const child = add(group, {10, 10}, {10, 10});
+        group.set_rect({0, 0, 100, 50});
+        group.arrange();
+        expect_rect(child, {4, 4, 92, 10}, "group-box child is inset");
+        expect_size(group.preferred_size(), {18, 18},
+                    "group-box preferred includes the frame");
+
+        GroupBench raised(Group::Orientation::HORIZONTAL, 2);
+        raised.set_frame(Group::Frame::RAISED);
+        Block* const a = add(raised, {10, 10}, {10, 10}, {1000, 10});
+        Block* const b = add(raised, {10, 10}, {10, 10}, {1000, 10});
+        raised.set_rect({0, 0, 100, 20});
+        raised.arrange();
+        /* Inset 2 and spacing 2: the inner width is 96, the two share 74 above
+         * the minima evenly. */
+        expect_rect(a, {2, 2, 47, 16}, "raised group's first child");
+        expect_rect(b, {51, 2, 47, 16}, "raised group's second child");
     }
 
     /* An empty group has no size. */

@@ -20,8 +20,8 @@ public:
         switch (role) {
             // Base
             case CR::BACKGROUND: return Color(0x00AAAAAA);       // Workbench grey
-            case CR::WINDOW_BG: return Color(0x00CCCCCC);        // Light grey
-            case CR::PANEL_BG: return Color(0x00DDDDDD);         // Lighter grey
+            case CR::WINDOW_BG: return Color(0x00AAAAAA);        // the body
+            case CR::PANEL_BG: return Color(0x00AAAAAA);         // a group's face
 
             // Text
             case CR::TEXT: return Color(0x00000000);             // Black
@@ -29,35 +29,36 @@ public:
             case CR::TEXT_SELECTED: return Color(0x00FFFFFF);    // White
             case CR::TEXT_INVERSE: return Color(0x00FFFFFF);
 
-            // Buttons
-            case CR::BUTTON_BG: return Color(0x00E0E0E0);        // Button grey
-            case CR::BUTTON_HOVER: return Color(0x00D0D0D0);
-            case CR::BUTTON_PRESSED: return Color(0x00B0B0B0);
-            case CR::BUTTON_FOCUS: return Color(0x000078D7);     // Blue focus
+            // Buttons (specs/trinket/theme-xen.md): a raised #bfbfbf face whose
+            // edge is the 3-D bevel, and focus is the gadget's active state.
+            case CR::BUTTON_BG: return Color(0x00BFBFBF);
+            case CR::BUTTON_HOVER: return Color(0x00C9C9C9);
+            case CR::BUTTON_PRESSED: return Color(0x00BFBFBF);
+            case CR::BUTTON_FOCUS: return Color(0x00000000);
             case CR::BUTTON_TEXT: return Color(0x00000000);
-            case CR::BUTTON_BORDER: return Color(0x00808080);
+            case CR::BUTTON_BORDER: return Color(0x00000000);
 
-            // Input
-            case CR::INPUT_BG: return Color(0x00FFFFFF);
+            // Input: a sunken #bfbfbf well.
+            case CR::INPUT_BG: return Color(0x00BFBFBF);
             case CR::INPUT_TEXT: return Color(0x00000000);
             case CR::INPUT_PLACEHOLDER: return Color(0x00808080);
-            case CR::INPUT_BORDER: return Color(0x00808080);
-            case CR::INPUT_FOCUS_BORDER: return Color(0x000078D7);
+            case CR::INPUT_BORDER: return Color(0x008C8C8C);
+            case CR::INPUT_FOCUS_BORDER: return Color(0x00000000);
 
-            // Selection
-            case CR::SELECTION_BG: return Color(0x000078D7);
+            // Selection: the Amiga dithered blue (XEN chrome blue).
+            case CR::SELECTION_BG: return Color(0x006688BB);
             case CR::SELECTION_TEXT: return Color(0x00FFFFFF);
 
             // Accent
-            case CR::ACCENT: return Color(0x000078D7);           // Blue
-            case CR::ACCENT_HOVER: return Color(0x001084E8);
-            case CR::ACCENT_PRESSED: return Color(0x00005A9E);
+            case CR::ACCENT: return Color(0x006688BB);
+            case CR::ACCENT_HOVER: return Color(0x007799CC);
+            case CR::ACCENT_PRESSED: return Color(0x00446699);
 
             // Borders
-            case CR::BORDER: return Color(0x00808080);
+            case CR::BORDER: return Color(0x00000000);
             case CR::BORDER_LIGHT: return Color(0x00FFFFFF);
-            case CR::BORDER_DARK: return Color(0x00404040);
-            case CR::FOCUS_BORDER: return Color(0x000078D7);
+            case CR::BORDER_DARK: return Color(0x00000000);
+            case CR::FOCUS_BORDER: return Color(0x00000000);
 
             // Menu
             case CR::MENUBAR_BG: return Color(0x00E0E0E0);
@@ -87,6 +88,14 @@ public:
             case CR::GADGET_WHITE: return Color(0x00FFFFFF);
             case CR::FRAME_LIGHT: return Color(0x00F7F7F7);
             case CR::FRAME_DARK: return Color(0x002A384D);
+
+            // Grey 3-D gadgets (specs/trinket/theme-xen.md): a raised face and
+            // the two edges its bevel is drawn from, plus the soft second
+            // shadow some frames carry. Read off the MUI XEN screenshots.
+            case CR::GADGET_FACE: return Color(0x00BFBFBF);
+            case CR::GADGET_HIGHLIGHT: return Color(0x00FFFFFF);
+            case CR::GADGET_SHADOW: return Color(0x00000000);
+            case CR::GADGET_SOFT_SHADOW: return Color(0x008C8C8C);
 
             // Tooltip
             case CR::TOOLTIP_BG: return Color(0xE0FFFF80);       // Yellow
@@ -164,69 +173,105 @@ public:
     Font* font_large() const override { return font(); }
     Font* font_monospace() const override { return font(); }
 
+    /* The grey 3-D edge (specs/trinket/theme-xen.md): 1px, square, hard-edged,
+     * a light top-left and a dark bottom-right for a raised gadget and the
+     * reverse for a sunken one, over whatever face the caller filled. */
+    void draw_bevel(Canvas& canvas, const Rect& rect, Bevel bevel) override {
+        Color const light = color(ColorRole::GADGET_HIGHLIGHT);
+        Color const dark = color(ColorRole::GADGET_SHADOW);
+        Color const top = bevel == Bevel::RAISED ? light : dark;
+        Color const bottom = bevel == Bevel::RAISED ? dark : light;
+        canvas.draw_hline(rect.x, rect.x + rect.width - 1, rect.y, top);
+        canvas.draw_vline(rect.y, rect.y + rect.height - 1, rect.x, top);
+        canvas.draw_hline(rect.x, rect.x + rect.width - 1,
+                          rect.y + rect.height - 1, bottom);
+        canvas.draw_vline(rect.y, rect.y + rect.height - 1,
+                          rect.x + rect.width - 1, bottom);
+    }
+
+    /* The Amiga selection: one pixel of `fg` on one of `bg`, so a selected list
+     * or cycle row needs no blend (specs/trinket/theme-xen.md). */
+    void draw_dither(Canvas& canvas, const Rect& rect, Color fg, Color bg) override {
+        canvas.fill_rect(rect, bg);
+        Rect const clip = rect.intersected(canvas.clip_rect());
+        uint32_t const on = fg.to_uint32();
+        for (int y = clip.y; y < clip.y + clip.height; ++y) {
+            for (int x = clip.x + ((y - rect.y) & 1); x < clip.x + clip.width;
+                 x += 2) {
+                canvas.pixel(x, y) = on;
+            }
+        }
+    }
+
     void draw_button(Canvas& canvas, const Rect& rect,
                      bool hovered, bool pressed, bool focused,
                      bool checked, bool enabled) override {
         static_cast<void>(checked);  // checked buttons are the widget's to draw
-        Color bg = enabled ? (pressed ? color(ColorRole::BUTTON_PRESSED)
-                                      : hovered ? color(ColorRole::BUTTON_HOVER)
-                                                : color(ColorRole::BUTTON_BG))
-                           : color(ColorRole::DISABLED_BG);
-
-        canvas.fill_rounded_rect(rect, metric(MetricRole::BUTTON_RADIUS), bg);
-
-        Color border = focused ? color(ColorRole::FOCUS_BORDER)
-                              : color(ColorRole::BUTTON_BORDER);
-        canvas.draw_rounded_rect(rect, metric(MetricRole::BUTTON_RADIUS), border,
-                                 metric(MetricRole::BUTTON_BORDER_WIDTH));
+        Color const face = !enabled ? color(ColorRole::DISABLED_BG)
+                           : pressed ? color(ColorRole::BUTTON_PRESSED)
+                           : hovered ? color(ColorRole::BUTTON_HOVER)
+                                     : color(ColorRole::BUTTON_BG);
+        canvas.fill_rect(rect, face);
+        /* Focus is the gadget's active state (specs/trinket/theme-xen.md): a
+         * pressed or focused gadget is inset, a raised one is not. */
+        draw_bevel(canvas, rect,
+                   (pressed || focused) ? Bevel::SUNKEN : Bevel::RAISED);
     }
 
     void draw_panel(Canvas& canvas, const Rect& rect,
-                     Panel::Style style, bool focused) override {
+                     Panel::Style style, std::u32string_view title,
+                     bool focused) override {
         static_cast<void>(focused);  // the focus ring is drawn separately
-        Color bg = color(ColorRole::PANEL_BG);
-        Color border = color(ColorRole::BORDER);
-        int bw = metric(MetricRole::PANEL_BORDER_WIDTH);
-
+        Color const bg = color(ColorRole::PANEL_BG);
         switch (style) {
             case Panel::Style::FLAT:
                 canvas.fill_rect(rect, bg);
                 break;
             case Panel::Style::RAISED:
                 canvas.fill_rect(rect, bg);
-                canvas.draw_hline(rect.x, rect.x + rect.width - 1, rect.y, Color::WHITE);
-                canvas.draw_vline(rect.y, rect.y + rect.height - 1, rect.x, Color::WHITE);
-                canvas.draw_hline(rect.x + 1, rect.x + rect.width - 1, rect.y + rect.height - 1, Color::DARK_GRAY);
-                canvas.draw_vline(rect.y + 1, rect.y + rect.height - 1, rect.x + rect.width - 1, Color::DARK_GRAY);
+                draw_bevel(canvas, rect, Bevel::RAISED);
                 break;
             case Panel::Style::SUNKEN:
                 canvas.fill_rect(rect, bg);
-                canvas.draw_hline(rect.x, rect.x + rect.width - 1, rect.y, Color::DARK_GRAY);
-                canvas.draw_vline(rect.y, rect.y + rect.height - 1, rect.x, Color::DARK_GRAY);
-                canvas.draw_hline(rect.x + 1, rect.x + rect.width - 1, rect.y + rect.height - 1, Color::WHITE);
-                canvas.draw_vline(rect.y + 1, rect.y + rect.height - 1, rect.x + rect.width - 1, Color::WHITE);
+                draw_bevel(canvas, rect, Bevel::SUNKEN);
                 break;
             case Panel::Style::FRAME:
                 canvas.fill_rect(rect, bg);
-                canvas.draw_rect(rect, border, bw);
+                canvas.draw_rect(rect, color(ColorRole::BORDER),
+                                 metric(MetricRole::PANEL_BORDER_WIDTH));
                 break;
-            case Panel::Style::GROUP_BOX:
-                // Handled in Panel::on_paint
+            case Panel::Style::GROUP_BOX: {
+                canvas.fill_rect(rect, bg);
+                draw_bevel(canvas, rect, Bevel::RAISED);
+                if (title.empty()) break;
+                Font* const font = Application::instance()->default_font();
+                if (font == nullptr) break;
+                Size const size = font->measure(title);
+                int const gap_x = 8;
+                int const x = rect.x + gap_x;
+                int const y = rect.y - font->ascent() / 2;
+                /* The title sits in a notch in the top edge: clear its place,
+                 * then draw it there. */
+                canvas.fill_rect({x - 2, y, size.width + 4, font->height()}, bg);
+                canvas.draw_text({x, y}, title, font, color(ColorRole::TEXT));
                 break;
+            }
         }
     }
 
     void draw_textbox(Canvas& canvas, const Rect& rect,
                        bool focused, bool read_only, bool password) override {
         static_cast<void>(password);  // the text is the widget's to obscure
-        Color bg = read_only ? color(ColorRole::DISABLED_BG) : color(ColorRole::INPUT_BG);
-        Color border = focused ? color(ColorRole::INPUT_FOCUS_BORDER)
-                              : color(ColorRole::INPUT_BORDER);
-        int bw = metric(MetricRole::INPUT_BORDER_WIDTH);
-        int radius = 2;
-
-        canvas.fill_rounded_rect(rect, radius, bg);
-        canvas.draw_rounded_rect(rect, radius, border, bw);
+        Color const bg = read_only ? color(ColorRole::DISABLED_BG)
+                                   : color(ColorRole::INPUT_BG);
+        canvas.fill_rect(rect, bg);
+        draw_bevel(canvas, rect, Bevel::SUNKEN);
+        if (focused) {
+            /* The active state (specs/trinket/theme-xen.md): a full black
+             * outline inside the well, in place of the old blue ring. */
+            canvas.draw_rect(rect.inflated(-1),
+                             color(ColorRole::INPUT_FOCUS_BORDER));
+        }
     }
 
     void draw_menubar(Canvas& canvas, const Rect& rect) override {
@@ -308,12 +353,9 @@ public:
         canvas.fill_rounded_rect(handle_rect, rect.width / 2, handle);
     }
 
-    void draw_focus_ring(Canvas& canvas, const Rect& rect) override {
-        int w = metric(MetricRole::FOCUS_RING_WIDTH);
-        int offset = metric(MetricRole::FOCUS_RING_OFFSET);
-        Rect r = rect.inflated(offset);
-        canvas.draw_rounded_rect(r, 4, color(ColorRole::FOCUS_BORDER), w);
-    }
+    /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
+     * button and the field draw it, so there is no separate ring. */
+    void draw_focus_ring(Canvas&, const Rect&) override {}
 
     void draw_tooltip(Canvas& canvas, const Rect& rect,
                        const char* text) override {

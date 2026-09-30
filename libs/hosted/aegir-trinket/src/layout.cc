@@ -410,6 +410,13 @@ Size AnchorLayout::preferred_size(const Container& container) const {
 GroupLayout::GroupLayout(Orientation orientation, int spacing)
     : orientation_(orientation), spacing_(spacing) {}
 
+void GroupLayout::set_inset(int top, int left, int bottom, int right) {
+    inset_top_ = top;
+    inset_left_ = left;
+    inset_bottom_ = bottom;
+    inset_right_ = right;
+}
+
 GroupLayout::Child* GroupLayout::find(Widget* child) {
     for (auto& c : children_) {
         if (c.widget == child) return &c;
@@ -496,8 +503,20 @@ struct GroupSizes {
     Size maximum;
 };
 
+/* The four insets split by the group's orientation: the two edges along the
+ * main axis, and the two along the cross. */
+int main_inset(GroupLayout const& layout, bool horizontal) {
+    return horizontal ? layout.inset_left() + layout.inset_right()
+                      : layout.inset_top() + layout.inset_bottom();
+}
+
+int cross_inset(GroupLayout const& layout, bool horizontal) {
+    return horizontal ? layout.inset_top() + layout.inset_bottom()
+                      : layout.inset_left() + layout.inset_right();
+}
+
 GroupSizes group_sizes(std::vector<GroupItem> const& items, bool horizontal,
-                       int spacing) {
+                       int spacing, int inset_main, int inset_cross) {
     int const gaps = items.empty() ? 0 : (static_cast<int>(items.size()) - 1) * spacing;
     int min_main = 0, pref_main = 0, max_main = 0;
     int min_cross = 0, pref_cross = 0, max_cross = 0;
@@ -515,9 +534,12 @@ GroupSizes group_sizes(std::vector<GroupItem> const& items, bool horizontal,
         pref_cross = std::max(pref_cross, pref_c);
         max_cross = std::max(max_cross, max_c);
     }
-    min_main = add_sizes(min_main, gaps);
-    pref_main = add_sizes(pref_main, gaps);
-    max_main = add_sizes(max_main, gaps);
+    min_main = add_sizes(min_main, gaps + inset_main);
+    pref_main = add_sizes(pref_main, gaps + inset_main);
+    max_main = add_sizes(max_main, gaps + inset_main);
+    min_cross = add_sizes(min_cross, inset_cross);
+    pref_cross = add_sizes(pref_cross, inset_cross);
+    max_cross = add_sizes(max_cross, inset_cross);
 
     GroupSizes sizes;
     if (horizontal) {
@@ -535,18 +557,24 @@ GroupSizes group_sizes(std::vector<GroupItem> const& items, bool horizontal,
 }  // namespace
 
 Size GroupLayout::preferred_size(Container const& container) const {
-    return group_sizes(group_items(container, *this),
-                       orientation_ == Orientation::HORIZONTAL, spacing_).preferred;
+    bool const horizontal = orientation_ == Orientation::HORIZONTAL;
+    return group_sizes(group_items(container, *this), horizontal, spacing_,
+                       main_inset(*this, horizontal),
+                       cross_inset(*this, horizontal)).preferred;
 }
 
 Size GroupLayout::minimum_size(Container const& container) const {
-    return group_sizes(group_items(container, *this),
-                       orientation_ == Orientation::HORIZONTAL, spacing_).minimum;
+    bool const horizontal = orientation_ == Orientation::HORIZONTAL;
+    return group_sizes(group_items(container, *this), horizontal, spacing_,
+                       main_inset(*this, horizontal),
+                       cross_inset(*this, horizontal)).minimum;
 }
 
 Size GroupLayout::maximum_size(Container const& container) const {
-    return group_sizes(group_items(container, *this),
-                       orientation_ == Orientation::HORIZONTAL, spacing_).maximum;
+    bool const horizontal = orientation_ == Orientation::HORIZONTAL;
+    return group_sizes(group_items(container, *this), horizontal, spacing_,
+                       main_inset(*this, horizontal),
+                       cross_inset(*this, horizontal)).maximum;
 }
 
 void GroupLayout::layout(Container& container) {
@@ -554,7 +582,14 @@ void GroupLayout::layout(Container& container) {
     if (items.empty()) return;
 
     bool const horizontal = orientation_ == Orientation::HORIZONTAL;
-    Rect const bounds = container.rect();
+    /* Children live inside the frame's inset (specs/trinket/layout.md). */
+    Rect const outer = container.rect();
+    Rect const bounds{
+        outer.x + inset_left_,
+        outer.y + inset_top_,
+        std::max(0, outer.width - inset_left_ - inset_right_),
+        std::max(0, outer.height - inset_top_ - inset_bottom_),
+    };
     int const main_len = horizontal ? bounds.width : bounds.height;
     int const cross_len = horizontal ? bounds.height : bounds.width;
     int const main_origin = horizontal ? bounds.x : bounds.y;

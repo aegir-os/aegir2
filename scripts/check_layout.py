@@ -66,6 +66,7 @@ def main() -> int:
             str(DRIVER),
             str(TRINKET / "src" / "layout.cc"),
             str(TRINKET / "src" / "widget.cc"),
+            str(TRINKET / "src" / "group.cc"),
             str(TRINKET / "src" / "canvas.cc"),
             str(TRINKET / "src" / "unicode.cc"),
             "-o",

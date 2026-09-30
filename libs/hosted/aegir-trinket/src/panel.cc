@@ -30,62 +30,15 @@ void Panel::on_paint(Canvas& canvas, const PaintEvent& event) {
     Widget::on_paint(canvas, event);
 
     Theme& theme = Application::instance()->theme();
-    Rect r = rect_;
 
-    Color bg = background_.a > 0 ? background_ : theme.color(ColorRole::PANEL_BG);
-    int bw = border_width_;
-
-    switch (style_) {
-        case Style::FLAT:
-            canvas.fill_rect(r, bg);
-            break;
-        case Style::RAISED:
-            canvas.fill_rect(r, bg);
-            // Top/left highlight
-            canvas.draw_hline(r.x, r.x + r.width - 1, r.y, Color::WHITE);
-            canvas.draw_vline(r.y, r.y + r.height - 1, r.x, Color::WHITE);
-            // Bottom/right shadow
-            canvas.draw_hline(r.x + 1, r.x + r.width - 1, r.y + r.height - 1, Color::DARK_GRAY);
-            canvas.draw_vline(r.y + 1, r.y + r.height - 1, r.x + r.width - 1, Color::DARK_GRAY);
-            break;
-        case Style::SUNKEN:
-            canvas.fill_rect(r, bg);
-            // Top/left shadow
-            canvas.draw_hline(r.x, r.x + r.width - 1, r.y, Color::DARK_GRAY);
-            canvas.draw_vline(r.y, r.y + r.height - 1, r.x, Color::DARK_GRAY);
-            // Bottom/right highlight
-            canvas.draw_hline(r.x + 1, r.x + r.width - 1, r.y + r.height - 1, Color::WHITE);
-            canvas.draw_vline(r.y + 1, r.y + r.height - 1, r.x + r.width - 1, Color::WHITE);
-            break;
-        case Style::FRAME:
-            canvas.fill_rect(r, bg);
-            canvas.draw_rect(r, Application::instance()->theme().color(ColorRole::BORDER), bw);
-            break;
-        case Style::GROUP_BOX:
-            if (!title_.empty()) {
-                // Draw frame with title gap
-                Font* font = Application::instance()->default_font();
-                Size title_size = font ? font->measure(title_) : Size{0, 0};
-                int gap_x = 8;
-                int title_w = title_size.width;
-
-                // Top line with title gap
-                canvas.draw_hline(r.x, r.x + gap_x - 1, r.y, Application::instance()->theme().color(ColorRole::BORDER));
-                canvas.draw_hline(r.x + gap_x + title_w + 4, r.x + r.width - 1, r.y,
-                                  Application::instance()->theme().color(ColorRole::BORDER));
-                // Title text
-                if (font) {
-                    canvas.draw_text({r.x + gap_x + 2, r.y - font->ascent() / 2},
-                                     title_, font, Application::instance()->theme().color(ColorRole::TEXT));
-                }
-                // Other sides
-                canvas.draw_vline(r.y, r.y + r.height - 1, r.x, Application::instance()->theme().color(ColorRole::BORDER));
-                canvas.draw_vline(r.y, r.y + r.height - 1, r.x + r.width - 1, Application::instance()->theme().color(ColorRole::BORDER));
-                canvas.draw_hline(r.x, r.x + r.width - 1, r.y + r.height - 1, Application::instance()->theme().color(ColorRole::BORDER));
-            } else {
-                canvas.draw_rect(r, Application::instance()->theme().color(ColorRole::BORDER));
-            }
-            break;
+    /* A flat panel with its own background keeps it; every frame is the
+     * theme's (specs/trinket/theme-xen.md). In the trees in use the flat
+     * background is PANEL_BG's own value, so this is the same pixel either
+     * way. */
+    if (style_ == Style::FLAT && background_.a > 0) {
+        canvas.fill_rect(rect_, background_);
+    } else {
+        theme.draw_panel(canvas, rect_, style_, title_, focused());
     }
 
     // Paint children

@@ -106,6 +106,7 @@ add_library(aegir-trinket STATIC
     src/button.cc
     src/textbox.cc
     src/panel.cc
+    src/group.cc
     src/requester.cc
     src/menubar.cc
     src/window.cc
