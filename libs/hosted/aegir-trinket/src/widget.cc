@@ -214,6 +214,16 @@ void Container::on_layout() {
     if (layout_) {
         layout_->layout(*this);
     }
+    /* A child that reacts to the rectangle it was given wants its own layout
+     * once the arrangement has settled -- the terminal resizes its grid to the
+     * size it now has. `on_layout` is "called after parent layout" (widget.h),
+     * so the parent is what calls it; without this a Container's children keep
+     * the size they were built with and only `set_rect` happens. */
+    for (const auto& child : children_) {
+        if (child && child->visible()) {
+            child->dispatch_layout();
+        }
+    }
 }
 
 } // namespace aegir::trinket

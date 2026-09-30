@@ -37,6 +37,21 @@ consumer (the bureau, menus, dialogs) has a working base.
   `aegir/framebuffer.h`). The composite still walks the windows bottom-to-top
   for every changed pixel, because a window's slice lookup per pixel was the
   other half of the lag.
+- **A layout is idempotent, because a rectangle is a damage.** `Widget::set_rect`
+  damages the widget and its parent when the rectangle differs from the one it
+  holds, `Window::damage` repaints, and a repaint lays the content out again --
+  so a layout that gives a child a *different* rectangle each time it runs never
+  stops, and it does not fail loudly: it consumes the stack, one paint at a time,
+  until the process faults in whatever ran last. `BorderLayout` gave *every* item
+  `set_rect`, the CENTER one included, whose rectangle it leaves to a second pass
+  and had therefore never computed -- so CENTER was handed the zero rect and then
+  the real one, two damages a layout, forever. The demo is the first user
+  `BorderLayout` has had, and it found it. The rule the code keeps: a layout
+  computes a child's rectangle, or leaves it alone -- and a container
+  *dispatches* the child's own layout once the rectangle is set, because a child
+  that sizes itself from its rectangle (the terminal's grid) has nothing else to
+  tell it. A window's content was the one widget it had, so nothing had needed
+  the dispatch before; the demo's label put a second widget in the window.
 - **The look is XEN/Workbench, in the theme.** `theme_xen.cc` already carries
   the palette and metrics; this arc makes them visible. The greeter's
   acceptance pixels change from its hand-picked greys to the theme's roles.

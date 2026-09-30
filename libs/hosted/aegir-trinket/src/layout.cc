@@ -291,7 +291,13 @@ void BorderLayout::layout(Container& container) {
                 remaining.width -= pref.width + spacing_;
                 break;
             case Region::CENTER:
-                break;  // Handle in second pass
+                /* The second pass is where a center child is placed, and it is
+                 * the only place: setting it here too would hand it the
+                 * zero rect this switch left `rect` as, and the next layout
+                 * would change it back -- a rect change is a damage, a damage
+                 * is a repaint, and a repaint lays out again, so the two
+                 * passes would repaint each other forever. */
+                continue;
         }
         widget->set_rect(rect);
     }
