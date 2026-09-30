@@ -131,11 +131,11 @@ Scrollbar::Parts Scrollbar::parts() const {
     }
     int const track = vertical ? parts.trough.height : parts.trough.width;
     Thumb const thumb = thumb_for(track, total_, page_, value_, min_handle());
+    /* The thumb is as wide as the frame's inner area -- wider than the narrow
+     * dither trough it slides along (specs/trinket/scrollbar.md). */
     parts.thumb =
-        vertical ? Rect{parts.trough.x, parts.trough.y + thumb.pos, parts.trough.width,
-                        thumb.size}
-                 : Rect{parts.trough.x + thumb.pos, parts.trough.y, thumb.size,
-                        parts.trough.height};
+        vertical ? Rect{content.x, parts.trough.y + thumb.pos, content.width, thumb.size}
+                 : Rect{parts.trough.x + thumb.pos, content.y, thumb.size, content.height};
     return parts;
 }
 
@@ -192,17 +192,14 @@ void Scrollbar::on_mouse_down(const MouseEvent& event) {
         scroll_to(value_ + 1);
         return;
     }
-    if (!p.trough.contains(event.pos)) return;
-
     /* The thumb is grabbed where it was pressed, so it does not jump under the
-     * pointer; elsewhere in the trough a page toward the click. */
-    int const in_thumb = vertical ? event.pos.y - p.thumb.y : event.pos.x - p.thumb.x;
-    int const thumb_size = vertical ? p.thumb.height : p.thumb.width;
-    if (in_thumb >= 0 && in_thumb < thumb_size) {
+     * pointer; a click elsewhere in the narrow trough pages toward it. */
+    if (p.thumb.contains(event.pos)) {
         dragging_ = true;
-        grab_ = in_thumb;
+        grab_ = vertical ? event.pos.y - p.thumb.y : event.pos.x - p.thumb.x;
         return;
     }
+    if (!p.trough.contains(event.pos)) return;
     int const step = page_ > 0 ? page_ : 1;
     bool const before = vertical ? event.pos.y < p.thumb.y : event.pos.x < p.thumb.x;
     scroll_to(before ? value_ - step : value_ + step);
