@@ -14,6 +14,9 @@
 
 #include <aegir/debug.h>
 
+#include <aegir/bootstrap.h>
+#include <aegir/log.h>
+
 #include <sel4/sel4.h>
 
 extern "C" {
@@ -55,6 +58,109 @@ int before_exit(int code) noexcept
     aegir::halt();
 }
 
+/* --- the serial's one writer (specs/console.md) ---------------------------
+ *
+ * The kernel's debug console takes one character a syscall, and the kernel
+ * reschedules inside a syscall -- so a service that became runnable in the
+ * middle of another's line wrote into the middle of it, and a line-based
+ * reader saw two half-lines. The logger is the serial's one writer now: a
+ * service hands it the lines it produces, and the logger -- single-threaded --
+ * writes them whole. The runtime does the coalescing, so a line is a line
+ * however many calls it took to say it.
+ */
+
+/* The line being assembled, handed over at its newline. The capacity is one
+ * message's worth of bytes: a longer line travels as a run of messages, which
+ * is the transport's own bound rather than a chosen limit. */
+constexpr uint32_t kLineBytes =
+    (seL4_MsgMaxLength - aegir::log::kConsoleBytesMr) * sizeof(seL4_Word);
+char g_line[kLineBytes];
+uint32_t g_line_at = 0;
+
+bool same_text(char const *text, uint32_t length, char const *other,
+               uint32_t other_length) noexcept
+{
+    if (length != other_length) {
+        return false;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        if (text[i] != other[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The logger's port, resolved the once. Zero when this process must write the
+ * serial itself: the logger (it holds the owning half of its own port), the
+ * root task (which has no bootstrap block), and any service not given the
+ * port. */
+seL4_CPtr console_port() noexcept
+{
+    static seL4_CPtr port = 0;
+    static bool resolved = false;
+    if (resolved) {
+        return port;
+    }
+    resolved = true;
+    uint32_t name_length = 0;
+    char const *name = aegir::bootstrap::name(&name_length);
+    if (name != nullptr &&
+        same_text(name, name_length, aegir::log::kWriterName,
+                  aegir::log::kWriterNameLength)) {
+        return port;
+    }
+    uint64_t slot = 0;
+    if (aegir::bootstrap::capability(aegir::log::kPortName, aegir::log::kPortNameLength,
+                                     &slot)) {
+        port = static_cast<seL4_CPtr>(slot);
+    }
+    return port;
+}
+
+void console_send(char const *bytes, uint32_t length) noexcept
+{
+    seL4_CPtr const port = console_port();
+    if (port == 0) {
+        for (uint32_t i = 0; i < length; ++i) {
+            seL4_DebugPutChar(bytes[i]);
+        }
+        return;
+    }
+    constexpr uint32_t kRunBytes =
+        (seL4_MsgMaxLength - aegir::log::kConsoleBytesMr) * sizeof(seL4_Word);
+    for (uint32_t at = 0; at < length; at += kRunBytes) {
+        uint32_t const run = length - at < kRunBytes ? length - at : kRunBytes;
+        uint32_t const words = (run + sizeof(seL4_Word) - 1) / sizeof(seL4_Word);
+        seL4_SetMR(0, aegir::log::kMethodConsole);
+        seL4_SetMR(aegir::log::kConsoleCountMr, run);
+        for (uint32_t w = 0; w < words; ++w) {
+            seL4_Word word = 0;
+            for (uint32_t b = 0; b < sizeof(seL4_Word); ++b) {
+                uint32_t const index = w * sizeof(seL4_Word) + b;
+                if (index < run) {
+                    word |= static_cast<seL4_Word>(
+                                static_cast<unsigned char>(bytes[at + index]))
+                            << (8 * b);
+                }
+            }
+            seL4_SetMR(aegir::log::kConsoleBytesMr + w, word);
+        }
+        seL4_MessageInfo_t const info =
+            seL4_MessageInfo_new(0, 0, 0, aegir::log::kConsoleBytesMr + words);
+        (void)seL4_Call(port, info);
+    }
+}
+
+void console_put(char c) noexcept
+{
+    g_line[g_line_at++] = c;
+    if (c == '\n' || g_line_at == kLineBytes) {
+        console_send(g_line, g_line_at);
+        g_line_at = 0;
+    }
+}
+
 }  // namespace
 
 /* A low priority, so the bridge is in place however early a constructor wants
@@ -69,15 +175,18 @@ namespace aegir {
 
 void debug_write(char const *text) noexcept
 {
-    for (char const *cursor = text; cursor != nullptr && *cursor != '\0'; ++cursor) {
-        seL4_DebugPutChar(*cursor);
+    if (text == nullptr) {
+        return;
+    }
+    for (char const *cursor = text; *cursor != '\0'; ++cursor) {
+        console_put(*cursor);
     }
 }
 
 void debug_write(char const *text, uint32_t length) noexcept
 {
     for (uint32_t i = 0; i < length; ++i) {
-        seL4_DebugPutChar(text[i]);
+        console_put(text[i]);
     }
 }
 
@@ -90,7 +199,7 @@ void debug_write_unsigned(uint64_t value) noexcept
         value /= 10;
     } while (value != 0 && length < static_cast<int>(sizeof(digits)));
     while (length > 0) {
-        seL4_DebugPutChar(digits[--length]);
+        console_put(digits[--length]);
     }
 }
 
@@ -104,7 +213,7 @@ void debug_write_hex(uint64_t value) noexcept
             continue;
         }
         leading = false;
-        seL4_DebugPutChar(static_cast<char>(digit < 10 ? ('0' + digit) : ('a' + digit - 10)));
+        console_put(static_cast<char>(digit < 10 ? ('0' + digit) : ('a' + digit - 10)));
     }
 }
 

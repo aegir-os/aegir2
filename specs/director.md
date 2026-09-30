@@ -256,6 +256,17 @@ Two boundaries are recorded rather than solved:
   printing enabled — true in this configuration, false in a release build
   (`settings.cmake`, `specs/build.md`). A release build therefore *depends* on the
   logger being up. The logger is not optional furniture.
+- **The logger is the serial's one writer.** The kernel console takes one
+  character a syscall and the kernel reschedules inside a syscall, so a service
+  that became runnable in the middle of another's line spliced its own output
+  into it — a line-based reader saw two half-lines. So no service after the
+  logger writes the serial itself: `debug_write` finds `log.main` in the
+  bootstrap block, coalesces a line, and hands it over as `kMethodConsole`
+  (`libs/aegir-runtime/src/debug.cc`), and the logger — single-threaded —
+  writes it whole (`apps/aegir-logger/src/main.cc`). A process with no
+  `log.main` (the root task, the logger itself) still writes
+  `seL4_DebugPutChar` directly; the logger is excluded by name because it holds
+  the owning half of its own port.
 
 ## Boot report
 

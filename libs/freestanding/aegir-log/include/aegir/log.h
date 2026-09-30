@@ -23,8 +23,25 @@ namespace aegir::log {
 constexpr char const kPortName[] = "log.main";
 constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
+/** The service name of the port's owner: the one writer of the serial, which
+ *  must not hand its own output back to itself. */
+constexpr char const kWriterName[] = "logger";
+constexpr uint32_t kWriterNameLength = sizeof(kWriterName) - 1;
+
 /** Method 1: an event happened. One word: the event code. */
 constexpr uint32_t kMethodEvent = 1;
+
+/** Method 2: console bytes. The caller's own output, handed to the logger --
+ *  the one writer of the serial (specs/console.md) -- so a line cannot be
+ *  spliced by a service that became runnable in the middle of it. MR1 is the
+ *  byte count and MR2.. carry the bytes, eight to a word, low byte first. A
+ *  line longer than one message travels as a run of messages; the caller hands
+ *  over complete lines wherever it can. */
+constexpr uint32_t kMethodConsole = 2;
+/** The message register carrying a console message's byte count. */
+constexpr uint32_t kConsoleCountMr = 1;
+/** The first message register carrying console bytes. */
+constexpr uint32_t kConsoleBytesMr = 2;
 
 /** What the logger knows how to say. The logger reports the caller's badge
  *  alongside, so an event is "who" as well as "what" -- and words rather than

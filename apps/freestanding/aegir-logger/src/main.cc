@@ -86,6 +86,21 @@ int main(int argc, char *argv[])
         uint64_t event = 0;
         seL4_Word badge = 0;
         uint32_t const method = port.receive(&event, &badge);
+        if (method == aegir::log::kMethodConsole) {
+            /* A client's line. We are the serial's one writer, so writing it
+             * here -- whole, from one thread -- is what keeps it from being
+             * spliced (specs/console.md). MR1 is the count and MR2.. the bytes,
+             * eight to a word, low byte first (aegir/log.h). */
+            uint32_t const count = static_cast<uint32_t>(event);
+            for (uint32_t i = 0; i < count; ++i) {
+                seL4_Word const word =
+                    seL4_GetMR(aegir::log::kConsoleBytesMr + i / sizeof(seL4_Word));
+                seL4_DebugPutChar(
+                    static_cast<char>((word >> (8 * (i % sizeof(seL4_Word)))) & 0xFFu));
+            }
+            port.reply(aegir::log::kRecorded);
+            continue;
+        }
         render(method, event, badge);
         port.reply(aegir::log::kRecorded);
     }

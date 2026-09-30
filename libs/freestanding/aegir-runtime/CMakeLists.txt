@@ -26,4 +26,7 @@ target_include_directories(aegir-runtime PUBLIC include)
 # the archive to its consumers -- every one of which already links its own C
 # library explicitly.
 target_link_libraries(aegir-runtime PUBLIC aegir-cxx-policy sel4 sel4runtime)
-target_link_libraries(aegir-runtime PRIVATE aegir-c-headers)
+# The console route: debug.cc finds the logger's port in the bootstrap block
+# and calls it, so a line travels whole (specs/console.md). PRIVATE: the
+# headers are debug.cc's to see, not a dependency of every consumer.
+target_link_libraries(aegir-runtime PRIVATE aegir-c-headers aegir-bootstrap aegir-log)

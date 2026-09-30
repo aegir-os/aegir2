@@ -4,11 +4,13 @@
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * Writes go to the kernel's debug console (seL4_DebugPutChar), which needs a
- * kernel built with CONFIG_PRINTING. This is deliberately the smallest useful
- * thing: no buffering, no formatting beyond what the caller does, no libc. A
- * real console service comes later; this exists so that early userland and our
- * own assertion failures have somewhere to speak.
+ * Writes go to the serial, whose one writer is the logger (specs/console.md):
+ * the runtime hands it complete lines, so a line cannot be spliced by a service
+ * that became runnable in the middle of it. A process that holds no `log.main`
+ * -- the root task, the logger itself, or a service given none -- writes the
+ * kernel's debug console directly (seL4_DebugPutChar), which needs a kernel
+ * built with CONFIG_PRINTING. No buffering beyond the line, no formatting
+ * beyond what the caller does, no libc.
  */
 
 #ifndef AEGIR_DEBUG_H
