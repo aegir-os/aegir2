@@ -92,6 +92,12 @@ int main(int argc, char** argv) {
     theme->draw_scrollbar(canvas, {386, 10, 24, 200}, true, p.trough, p.thumb,
                           p.decrement, p.increment, false);
 
+    /* The toggle indicators: a checkmark button and a radio ring, off and on. */
+    theme->draw_check(canvas, {10, 198, 23, 18}, false, true);
+    theme->draw_check(canvas, {45, 198, 23, 18}, true, true);
+    theme->draw_radio(canvas, {85, 201, 17, 12}, false, true);
+    theme->draw_radio(canvas, {115, 201, 17, 12}, true, true);
+
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {
         std::fprintf(stderr, "cannot write %s\n", path);

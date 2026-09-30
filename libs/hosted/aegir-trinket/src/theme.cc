@@ -25,6 +25,10 @@ void Theme::draw_dither(Canvas&, const Rect&, Color, Color) {}
 
 void Theme::draw_button(Canvas&, const Rect&, bool, bool, bool, bool, bool) {}
 
+void Theme::draw_check(Canvas&, const Rect&, bool, bool) {}
+
+void Theme::draw_radio(Canvas&, const Rect&, bool, bool) {}
+
 void Theme::draw_panel(Canvas&, const Rect&, Panel::Style, std::u32string_view, bool) {}
 
 void Theme::draw_textbox(Canvas&, const Rect&, bool, bool, bool) {}

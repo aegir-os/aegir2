@@ -61,6 +61,8 @@ extern const uint8_t kMetricFixed[];   // 1 when a metric is not scaled
 extern const Sprite kSprites[];        // the imported artwork, by index
 extern const unsigned kSpriteCount;
 extern const Recipe kRecipeButton[5];   // normal, hovered, pressed, focused, disabled
+extern const Recipe kRecipeCheck[2];    // unchecked, checked
+extern const Recipe kRecipeRadio[2];    // unchecked, checked
 extern const Recipe kRecipeTextbox[2];  // normal, focused
 extern const Recipe kRecipeTextboxReadonly;
 extern const Recipe kRecipePanel[5];    // Panel::Style: FLAT, RAISED, SUNKEN, FRAME, GROUP_BOX

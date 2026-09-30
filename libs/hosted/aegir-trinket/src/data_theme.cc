@@ -81,6 +81,18 @@ public:
         run(kRecipeButton[state], canvas, rect);
     }
 
+    void draw_check(Canvas& canvas, const Rect& rect, bool checked,
+                    bool enabled) override {
+        static_cast<void>(enabled);  // the artwork has no disabled frame
+        run(kRecipeCheck[checked ? 1 : 0], canvas, rect);
+    }
+
+    void draw_radio(Canvas& canvas, const Rect& rect, bool checked,
+                    bool enabled) override {
+        static_cast<void>(enabled);
+        run(kRecipeRadio[checked ? 1 : 0], canvas, rect);
+    }
+
     void draw_panel(Canvas& canvas, const Rect& rect,
                      Panel::Style style, std::u32string_view title,
                      bool focused) override {

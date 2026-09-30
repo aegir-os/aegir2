@@ -25,6 +25,7 @@
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/button.h>
 #include <aegir/trinket/group.h>
 #include <aegir/trinket/label.h>
 #include <aegir/trinket/locale.h>
@@ -165,7 +166,16 @@ int main(int argc, char *argv[])
     Font* const label_font = outline != nullptr ? outline.get() : app.default_font();
     int const label_band = label_font != nullptr ? label_font->height() : 0;
     int const frame_inset = Group::frame_inset(Group::Frame::RAISED);
-    int const window_height = kWindowHeight + label_band + 2 * frame_inset;
+    /* The toggle row's band comes out of the same arithmetic: the window grows
+     * by it, so the grid keeps its kWindowHeight and only the label band moves
+     * down (specs/trinket/checkbox.md). The taller of the two indicators and the
+     * button's own vertical padding is what the row needs. */
+    int const check_h = app.theme().metric(MetricRole::CHECK_INDICATOR_HEIGHT);
+    int const radio_h = app.theme().metric(MetricRole::RADIO_INDICATOR_HEIGHT);
+    int const toggle_band = (check_h > radio_h ? check_h : radio_h) +
+                            2 * app.theme().metric(MetricRole::BUTTON_PADDING_V);
+    int const window_height =
+        kWindowHeight + toggle_band + label_band + 2 * frame_inset;
 
     Window window(app);
     window.set_title("Demo");
@@ -209,13 +219,32 @@ int main(int argc, char *argv[])
     row->add_child(std::move(scrollbar));
     row->set_weight(scrollbar_ptr, 0);
 
+    /* The toggle gadgets (specs/trinket/checkbox.md): a checkbox and a radio,
+     * drawn from the MUI checkmark and radio artwork. A fixed row between the
+     * terminal and the label band, so the terminal's slack shrinks by its
+     * height. */
+    auto toggles = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
+    auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
+    check->set_checked(true);
+    auto radio = std::make_unique<Button>("Radio", Button::Type::RADIO);
+    Button* const check_ptr = check.get();
+    Button* const radio_ptr = radio.get();
+    Group* const toggles_ptr = toggles.get();
+    toggles->add_child(std::move(check));
+    toggles->add_child(std::move(radio));
+    toggles->set_weight(check_ptr, 0);
+    toggles->set_weight(radio_ptr, 0);
+
     auto content = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     content->set_frame(Group::Frame::RAISED);
     Label* const label_ptr = label.get();
     content->add_child(std::move(row));
+    content->add_child(std::move(toggles));
     content->add_child(std::move(label));
-    /* The label keeps its band; the row is free and takes the rest. */
+    /* The label and the toggles keep their bands; the row is free and takes the
+     * rest. */
     content->set_weight(label_ptr, 0);
+    content->set_weight(toggles_ptr, 0);
     window.set_content(std::move(content));
     window.show();
 

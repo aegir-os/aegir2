@@ -81,6 +81,10 @@ enum class MetricRole {
     INPUT_PADDING_H, INPUT_PADDING_V, INPUT_BORDER_WIDTH,
     // Scrollbar
     SCROLLBAR_WIDTH, SCROLLBAR_MIN_HANDLE, SCROLLBAR_ARROW_SIZE,
+    // Toggle gadgets (specs/trinket/checkbox.md): the checkmark's and the
+    // radio's indicator, the MUI artwork's own size.
+    CHECK_INDICATOR_WIDTH, CHECK_INDICATOR_HEIGHT,
+    RADIO_INDICATOR_WIDTH, RADIO_INDICATOR_HEIGHT,
     // General
     SPACING_SMALL, SPACING_MEDIUM, SPACING_LARGE,
     FOCUS_RING_WIDTH, FOCUS_RING_OFFSET,
@@ -110,6 +114,13 @@ public:
     virtual void draw_button(Canvas& canvas, const Rect& rect,
                               bool hovered, bool pressed, bool focused,
                               bool checked, bool enabled);
+    // The toggle gadgets' indicators (specs/trinket/checkbox.md): the MUI
+    // checkmark or radio artwork, in its unchecked or checked frame. The rect is
+    // the indicator's own.
+    virtual void draw_check(Canvas& canvas, const Rect& rect, bool checked,
+                             bool enabled);
+    virtual void draw_radio(Canvas& canvas, const Rect& rect, bool checked,
+                             bool enabled);
     virtual void draw_panel(Canvas& canvas, const Rect& rect,
                              Panel::Style style, std::u32string_view title,
                              bool focused);
