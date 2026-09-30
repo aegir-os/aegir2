@@ -5,7 +5,9 @@
 
 The theme file is the source of the look (specs/trinket/theming.md): a palette
 (a colour per ColorRole), metrics (a size per MetricRole), a set of sprites (the
-imported MUI artwork), and a recipe per gadget. This turns them into the tables
+imported MUI artwork), and a recipe per gadget. The sprites come from the
+generated preset (resources/themes/xen-preset.toml, scripts/convert_prefs.py);
+the theme may still add or override one. This turns them into the tables
 theme_data.h declares -- the palette and metrics in the enum's own order, the
 recipes as primitive steps, and the sprites as 0xAARRGGBB pixel arrays -- so the
 engine interprets data instead of compiling the look in. A step colour may be a
@@ -26,6 +28,7 @@ import pins
 
 TRINKET = pins.ROOT / "libs" / "hosted" / "aegir-trinket"
 THEME = TRINKET / "resources" / "themes" / "xen.toml"
+PRESET = TRINKET / "resources" / "themes" / "xen-preset.toml"
 RESOURCES = TRINKET / "resources" / "themes" / "xen"
 HEADER = TRINKET / "include" / "aegir" / "trinket" / "theme.h"
 
@@ -159,7 +162,12 @@ def main() -> int:
     g = theme["gadgets"]
 
     sprite_names = collect_sprites(g)
-    sprite_table = theme.get("sprites", {})
+    # The sprites come from the generated preset (scripts/convert_prefs.py); the
+    # theme may still add or override one by hand.
+    sprite_table: dict[str, str] = {}
+    if PRESET.exists():
+        sprite_table.update(tomllib.loads(PRESET.read_text()).get("sprites", {}))
+    sprite_table.update(theme.get("sprites", {}))
     sprite_index = {name: i for i, name in enumerate(sprite_names)}
 
     parts = [

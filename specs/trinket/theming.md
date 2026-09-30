@@ -1,6 +1,6 @@
 # trinket/theming: the theme as data, and the host loop
 
-Status: decided (2026-09). Phase A is landed; B and C follow.
+Status: decided (2026-09). Phases A, B, C and D are landed.
 
 ## The problem
 
@@ -68,9 +68,22 @@ against.
   proportion in a cell of another -- the scrollbar's buttons widen with the bar.
   The scrollbar's arrow buttons are
   the MUI `ArrowUp`/`ArrowDown` sprites now, so the art is what the toolkit
-  draws rather than a redrawing of it. Still to come: nine-slice scaling, and a
-  converter that reads `XEN.prefs` to name the sprites per gadget instead of the
-  theme file listing them.
+  draws rather than a redrawing of it. Still to come: nine-slice scaling.
+- **Phase D (landed).** The theme's sprites are no longer listed by hand. MUI
+  stores a preset as an IFF `FORM PREF` with a `PRHD` header and a `MUIC` entry
+  table -- four-byte key, four-byte length, value, no padding -- and the keys are
+  MUI's preference-item ids: `55..97` are the 43 standard `MUII_*` images, low
+  keys are the settings the preferences program shows. `scripts/prefs.py` reads
+  the file; `scripts/convert_prefs.py` writes `resources/themes/xen-preset.toml`
+  (committed, like the converted PNGs): a `[sprites]` table naming each image
+  role MUI gives it (`ArrowUp`, `CheckMark`, `RadioButton`, the volume icons, ...)
+  and pointing at the imported PNG, plus a `preset` catalogue of the preset's
+  other values -- patterns (`2:m1`, `0:135`), colours (six hex digits) and fonts
+  (`Name/Size`) -- under their item ids, which the SDK header does not name. The
+  theme file adds or overrides a sprite if it wants; `gen_theme.py` otherwise
+  takes them from the preset. A pattern or colour can be drawn on where the theme
+  wants it, and the preset's fonts stand as the theme's defaults until a user
+  overrides them.
 - The scrollbar is re-done through the mechanism once C lands; B is what lets it
   be a value in the file rather than a shape in code.
 

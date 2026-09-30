@@ -134,13 +134,9 @@ TOOLTIP_DELAY_MS = 500
 TEXT_LINE_HEIGHT_MULTIPLIER = 120
 
 # ---- sprites ----
-# The imported MUI artwork, by name; the path is relative to this theme's
-# resource directory (libs/hosted/aegir-trinket/resources/themes/xen). The
-# generator embeds only the sprites a recipe names.
-
-[sprites]
-ArrowUp = "Plain/11pt/ArrowUp.mf0.png"
-ArrowDown = "Plain/11pt/ArrowDown.mf0.png"
+# The artwork comes from the generated preset (resources/themes/xen-preset.toml,
+# scripts/convert_prefs.py), named by MUI's own image roles. A sprite may still
+# be added or overridden here; the generator embeds only the ones a recipe names.
 
 # ---- buttons ----
 # The face changes with the state; a pressed or focused button is inset.

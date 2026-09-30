@@ -98,14 +98,17 @@ add_custom_command(
 )
 
 # The theme's recipes: resources/themes/xen.toml -> theme_data.cc
-# (specs/trinket/theming.md). The theme file is the source of the look.
+# (specs/trinket/theming.md). The theme file is the source of the look; the
+# sprites it names come from the generated preset beside it.
 set(AEGIR_THEME_DATA "${CMAKE_CURRENT_BINARY_DIR}/theme_data.cc")
 add_custom_command(
   OUTPUT "${AEGIR_THEME_DATA}"
   COMMAND python3 "${CMAKE_SOURCE_DIR}/scripts/gen_theme.py" "${AEGIR_THEME_DATA}"
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/themes/xen.toml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/themes/xen-preset.toml"
     "${CMAKE_SOURCE_DIR}/scripts/gen_theme.py"
+    "${CMAKE_SOURCE_DIR}/scripts/prefs.py"
   COMMENT "Generating the theme data from resources/themes/xen.toml"
   VERBATIM
 )

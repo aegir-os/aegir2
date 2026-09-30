@@ -36,7 +36,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-theme theme-preview build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
 
 all: help
 
@@ -113,6 +113,9 @@ check-theme: ## render the toolkit's gadgets on the host and compare to the refe
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_theme.py
 
 theme-preview: check-theme ## alias for check-theme: render the theme and write the preview (host)
+
+theme-preset: ## regenerate the theme's artwork table from MUI's XEN preset (host)
+	$(PYTHON) scripts/convert_prefs.py
 
 build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only
