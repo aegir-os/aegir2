@@ -41,6 +41,13 @@ and nothing showed where in the scrollback it sat.
   dark, not a solid fill. A new `SCROLLBAR_ARROW_SIZE` metric is the button; the
   widget and the theme agree on it so a click and a drawn arrow line up. Read
   off the demo's XEN screenshots.
+- **The geometry is the widget's, the drawing the theme's.** `Scrollbar::parts()`
+  returns the trough, the thumb and the two button rectangles: a two-pixel
+  raised frame around the whole strip, the buttons at the foot inside it, and
+  the trough and thumb set in two pixels more -- so the thumb is about half the
+  bar's width, not edge to edge, which is what the screenshots show. The pointer
+  handlers hit-test the same rectangles the theme draws, so a click cannot miss
+  its button, and the theme never computes geometry of its own.
 
 - **The demo wires it to the terminal.** In the demo the scrollbar's value is
   the terminal buffer's first visible line and `page` its rows, and a scroll

@@ -64,10 +64,21 @@ protected:
     void on_key_down(const KeyEvent& event) override;
 
 private:
-    int along() const;         // the scrollbar's length
+    /* The scrollbar's geometry: a raised frame, then the buttons at the foot,
+     * and the trough and thumb set in from the frame -- so the thumb is
+     * narrower than the bar (specs/trinket/scrollbar.md). The widget owns the
+     * rectangles because the pointer handlers hit-test them; the theme only
+     * draws what it is handed. */
+    struct Parts {
+        Rect trough;
+        Rect thumb;
+        Rect decrement;
+        Rect increment;
+    };
+    Parts parts() const;
+
     int arrow() const;         // the arrow button size (the theme's)
     int min_handle() const;    // the least thumb length (the theme's)
-    int track_length() const;  // along() minus the two arrows
     void scroll_to(int value);
 
     Orientation orientation_ = Orientation::VERTICAL;

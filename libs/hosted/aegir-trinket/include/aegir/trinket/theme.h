@@ -123,8 +123,9 @@ public:
                                 const char* title, bool active);
     virtual void draw_window_frame(Canvas& canvas, const Rect& rect,
                                     bool active);
-    virtual void draw_scrollbar(Canvas& canvas, const Rect& rect,
-                                 bool vertical, int handle_pos, int handle_size,
+    virtual void draw_scrollbar(Canvas& canvas, const Rect& rect, bool vertical,
+                                 const Rect& trough, const Rect& thumb,
+                                 const Rect& decrement, const Rect& increment,
                                  bool hovered);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,

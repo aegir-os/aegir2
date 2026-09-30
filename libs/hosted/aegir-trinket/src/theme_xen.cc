@@ -341,51 +341,39 @@ public:
                           rect.x + rect.width - 1, dark);
     }
 
-    void draw_scrollbar(Canvas& canvas, const Rect& rect,
-                         bool vertical, int handle_pos, int handle_size,
+    void draw_scrollbar(Canvas& canvas, const Rect& rect, bool vertical,
+                         const Rect& trough, const Rect& thumb,
+                         const Rect& decrement, const Rect& increment,
                          bool hovered) override {
         static_cast<void>(hovered);
-        int const arrow = metric(MetricRole::SCROLLBAR_ARROW_SIZE);
-        int const buttons = 2 * arrow;
         Color const face = color(ColorRole::GADGET_FACE);
+        Color const frame_face = color(ColorRole::PANEL_BG);
         Color const dither = color(ColorRole::SELECTION_BG);
-        Color const trough = color(ColorRole::SCROLLBAR_BG);
-        Color const thumb = color(ColorRole::SCROLLBAR_HANDLE);
+        Color const trough_bg = color(ColorRole::SCROLLBAR_BG);
+        Color const thumb_face = color(ColorRole::SCROLLBAR_HANDLE);
         Color const ink = color(ColorRole::GADGET_SHADOW);
 
-        /* The trough is the strip above the buttons: the MUI XEN blue/grey
-         * dither in a sunken well, its bevel dark on the top-left and light on
-         * the bottom-right, so the scrollbar reads as the recess the thumb
-         * slides in. */
-        Rect const trough_rect =
-            vertical ? Rect{rect.x, rect.y, rect.width, rect.height - buttons}
-                     : Rect{rect.x, rect.y, rect.width - buttons, rect.height};
-        if (trough_rect.width > 0 && trough_rect.height > 0) {
-            draw_dither(canvas, trough_rect, dither, trough);
-            draw_bevel(canvas, trough_rect, Bevel::SUNKEN);
+        /* The scrollbar's own raised frame, around the whole strip: a black
+         * outline and a light top-left edge over the grey face. */
+        canvas.fill_rect(rect, frame_face);
+        draw_bevel(canvas, rect, Bevel::RAISED);
+        canvas.draw_rect(rect, ink);
+
+        /* The trough: the MUI XEN dither in a sunken well. */
+        if (trough.width > 0 && trough.height > 0) {
+            draw_dither(canvas, trough, dither, trough_bg);
+            draw_bevel(canvas, trough, Bevel::SUNKEN);
         }
 
-        /* The thumb is a raised block over the trough, its own bevel showing --
-         * light leading edges, dark trailing -- so the gadget stands out of the
-         * well; handle_pos is from the trough's start. */
-        Rect const thumb_rect =
-            vertical ? Rect{rect.x, rect.y + handle_pos, rect.width, handle_size}
-                     : Rect{rect.x + handle_pos, rect.y, handle_size, rect.height};
-        if (thumb_rect.width > 0 && thumb_rect.height > 0) {
-            canvas.fill_rect(thumb_rect, thumb);
-            draw_bevel(canvas, thumb_rect, Bevel::RAISED);
+        /* The thumb, a raised block narrower than the bar, in the well. */
+        if (thumb.width > 0 && thumb.height > 0) {
+            canvas.fill_rect(thumb, thumb_face);
+            draw_bevel(canvas, thumb, Bevel::RAISED);
         }
 
-        /* The two arrow buttons, stacked at the far end: decrement above
-         * increment, the XEN arrangement. */
-        Rect const decrement =
-            vertical ? Rect{rect.x, rect.y + rect.height - buttons, rect.width, arrow}
-                     : Rect{rect.x + rect.width - buttons, rect.y, arrow, rect.height};
-        Rect const increment =
-            vertical ? Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow}
-                     : Rect{rect.x + rect.width - arrow, rect.y, arrow, rect.height};
-        Rect const stack[2] = {decrement, increment};
-        for (Rect const& button : stack) {
+        /* The two raised buttons at the foot, each with a hollow 3-D mark. */
+        Rect const buttons[2] = {decrement, increment};
+        for (Rect const& button : buttons) {
             if (button.width <= 0 || button.height <= 0) continue;
             canvas.fill_rect(button, face);
             draw_bevel(canvas, button, Bevel::RAISED);

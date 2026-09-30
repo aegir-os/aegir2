@@ -16,6 +16,13 @@
 
 namespace aegir::trinket {
 
+namespace {
+/* The bar's raised frame, and the well the trough and thumb are set in from it,
+ * so the thumb is narrower than the bar (specs/trinket/scrollbar.md). */
+constexpr int kFrame = 2;
+constexpr int kWell = 2;
+}  // namespace
+
 Scrollbar::Scrollbar(Orientation orientation) : orientation_(orientation) {}
 
 Scrollbar::~Scrollbar() = default;
@@ -91,10 +98,6 @@ int Scrollbar::value_for_pos(int track, int total, int page, int pos, int min_ha
     return static_cast<int>(static_cast<long long>(p) * (total - page) / travel);
 }
 
-int Scrollbar::along() const {
-    return orientation_ == Orientation::VERTICAL ? rect_.height : rect_.width;
-}
-
 int Scrollbar::arrow() const {
     return Application::instance()->theme().metric(MetricRole::SCROLLBAR_ARROW_SIZE);
 }
@@ -103,14 +106,42 @@ int Scrollbar::min_handle() const {
     return Application::instance()->theme().metric(MetricRole::SCROLLBAR_MIN_HANDLE);
 }
 
-int Scrollbar::track_length() const {
-    int const track = along() - 2 * arrow();
-    return track > 0 ? track : 0;
+Scrollbar::Parts Scrollbar::parts() const {
+    bool const vertical = orientation_ == Orientation::VERTICAL;
+    Rect const content = rect_.inflated(-kFrame);
+    int const arrow = this->arrow();
+    int const buttons = 2 * arrow;
+    Parts parts;
+    if (vertical) {
+        parts.decrement =
+            Rect{content.x, content.y + content.height - buttons, content.width, arrow};
+        parts.increment =
+            Rect{content.x, content.y + content.height - arrow, content.width, arrow};
+        parts.trough =
+            Rect{content.x + kWell, content.y + kWell, content.width - 2 * kWell,
+                 content.height - buttons - 2 * kWell};
+    } else {
+        parts.decrement =
+            Rect{content.x + content.width - buttons, content.y, arrow, content.height};
+        parts.increment =
+            Rect{content.x + content.width - arrow, content.y, arrow, content.height};
+        parts.trough =
+            Rect{content.x + kWell, content.y + kWell, content.width - buttons - 2 * kWell,
+                 content.height - 2 * kWell};
+    }
+    int const track = vertical ? parts.trough.height : parts.trough.width;
+    Thumb const thumb = thumb_for(track, total_, page_, value_, min_handle());
+    parts.thumb =
+        vertical ? Rect{parts.trough.x, parts.trough.y + thumb.pos, parts.trough.width,
+                        thumb.size}
+                 : Rect{parts.trough.x + thumb.pos, parts.trough.y, thumb.size,
+                        parts.trough.height};
+    return parts;
 }
 
 Size Scrollbar::preferred_size() const {
     int const width = Application::instance()->theme().metric(MetricRole::SCROLLBAR_WIDTH);
-    int const along = 2 * arrow() + min_handle();
+    int const along = 2 * kFrame + 2 * kWell + 2 * arrow() + min_handle();
     return orientation_ == Orientation::VERTICAL ? Size{width, along} : Size{along, width};
 }
 
@@ -127,9 +158,9 @@ Size Scrollbar::maximum_size() const {
 void Scrollbar::on_paint(Canvas& canvas, const PaintEvent& event) {
     Widget::on_paint(canvas, event);
     Theme& theme = Application::instance()->theme();
-    bool const vertical = orientation_ == Orientation::VERTICAL;
-    Thumb const thumb = thumb_for(track_length(), total_, page_, value_, min_handle());
-    theme.draw_scrollbar(canvas, rect_, vertical, thumb.pos, thumb.size, hovered_);
+    Parts const p = parts();
+    theme.draw_scrollbar(canvas, rect_, orientation_ == Orientation::VERTICAL, p.trough,
+                         p.thumb, p.decrement, p.increment, hovered_);
 }
 
 void Scrollbar::on_mouse_enter(const MouseEvent&) {
@@ -149,44 +180,40 @@ void Scrollbar::on_mouse_leave(const MouseEvent&) {
 void Scrollbar::on_mouse_down(const MouseEvent& event) {
     if (event.button != MouseButton::LEFT) return;
     bool const vertical = orientation_ == Orientation::VERTICAL;
-    int const origin = vertical ? rect_.y : rect_.x;
-    int const local = (vertical ? event.pos.y : event.pos.x) - origin;
-    int const length = along();
-    if (local < 0 || local >= length) return;
+    Parts const p = parts();
 
-    int const a = arrow();
-    int const buttons = 2 * a;
     /* The buttons are stacked at the far end: increment is the last one,
      * decrement just above it (specs/trinket/scrollbar.md). */
-    if (local >= length - a) {
-        scroll_to(value_ + 1);
-        return;
-    }
-    if (local >= length - buttons) {
+    if (p.decrement.contains(event.pos)) {
         scroll_to(value_ - 1);
         return;
     }
-
-    /* The trough is the rest, from the near end. */
-    int const track = track_length();
-    int const in_track = local;
-    Thumb const thumb = thumb_for(track, total_, page_, value_, min_handle());
-    if (in_track >= thumb.pos && in_track < thumb.pos + thumb.size) {
-        dragging_ = true;
-        grab_ = in_track - thumb.pos;
+    if (p.increment.contains(event.pos)) {
+        scroll_to(value_ + 1);
         return;
     }
-    /* A click in the trough pages toward the click. */
+    if (!p.trough.contains(event.pos)) return;
+
+    /* The thumb is grabbed where it was pressed, so it does not jump under the
+     * pointer; elsewhere in the trough a page toward the click. */
+    int const in_thumb = vertical ? event.pos.y - p.thumb.y : event.pos.x - p.thumb.x;
+    int const thumb_size = vertical ? p.thumb.height : p.thumb.width;
+    if (in_thumb >= 0 && in_thumb < thumb_size) {
+        dragging_ = true;
+        grab_ = in_thumb;
+        return;
+    }
     int const step = page_ > 0 ? page_ : 1;
-    scroll_to(in_track < thumb.pos ? value_ - step : value_ + step);
+    bool const before = vertical ? event.pos.y < p.thumb.y : event.pos.x < p.thumb.x;
+    scroll_to(before ? value_ - step : value_ + step);
 }
 
 void Scrollbar::on_mouse_move(const MouseEvent& event) {
     if (!dragging_) return;
     bool const vertical = orientation_ == Orientation::VERTICAL;
-    int const origin = vertical ? rect_.y : rect_.x;
-    int const local = (vertical ? event.pos.y : event.pos.x) - origin;
-    int const track = track_length();
+    Parts const p = parts();
+    int const track = vertical ? p.trough.height : p.trough.width;
+    int const local = vertical ? event.pos.y - p.trough.y : event.pos.x - p.trough.x;
     int const pos = local - grab_;
     scroll_to(value_for_pos(track, total_, page_, pos, min_handle()));
 }
