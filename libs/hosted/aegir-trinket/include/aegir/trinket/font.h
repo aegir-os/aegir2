@@ -16,6 +16,7 @@
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/point.h>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -116,15 +117,25 @@ public:
     };
     const Atlas& atlas() const { return atlas_; }
 
-private:
+protected:
+    /* Lay one glyph's coverage into the atlas and record it: a row of its own,
+     * with the atlas widened when a wider glyph arrives (specs/fonts.md). A
+     * subclass whose glyphs are rasterized one at a time -- ServerFont, over
+     * the font service -- fills its atlas this way; `load_bdf` lays its whole
+     * face out in one pass instead. False when the atlas could not grow. */
+    bool adopt_glyph(uint32_t codepoint, const Glyph& glyph, const uint8_t* bits);
+
+    /* The atlas and the glyphs a subclass fills. `glyph_map_` is a map and not
+     * a sorted vector because a pointer it hands out must survive the next
+     * glyph's arrival: a vector's growth would dangle it. */
     int height_ = 0;
     int ascent_ = 0;
     int descent_ = 0;
     int line_gap_ = 0;
     Atlas atlas_;
-    std::vector<Glyph> glyphs_;  // Indexed by codepoint (sparse: use unordered_map for large fonts)
-    std::vector<std::pair<uint32_t, Glyph>> glyph_map_;  // Sorted for binary search
+    std::map<uint32_t, Glyph> glyph_map_;
 
+private:
     // BDF parse state: ENCODING and BBX arrive before the BITMAP lines that
     // belong to them, so they are carried between lines.
     uint32_t current_encoding_ = 0;

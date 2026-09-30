@@ -179,6 +179,18 @@ public:
                          seL4_Word size_bits = seL4_PageBits) noexcept;
 
     /**
+     * A page frame, retyped from the untyped that has the room -- the caller's
+     * seed, or a chunk grown through the untyped source. The frame's size names
+     * the kernel's object *type*, and which type that is is the architecture's
+     * to know: a caller asks for a page and gets one, rather than naming
+     * `seL4_RISCV_4K_Page` from a hosted library that should not know which
+     * machine it is on (AGENTS.md). `carve_page` above is the same rule for a
+     * frame carved from an untyped the caller holds directly.
+     */
+    seL4_CPtr alloc_page(Account &account, seL4_Error *error,
+                         seL4_Word size_bits = seL4_PageBits) noexcept;
+
+    /**
      * Adopt a run of slots this process may put capabilities in, and the depth that
      * addresses them. A service's CSpace is its own -- the slots the block did not
      * name are nobody else's -- and its allocator has to be told where they are and

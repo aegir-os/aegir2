@@ -152,6 +152,13 @@ Rights rights_for(PortGraph::Name name) noexcept
          * doorbell capability -- the namespace's reason, above. */
         return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "font.main", 9)) {
+        /* The caller hands over its transfer page on every glyph call
+         * (specs/fonts.md), so its half needs Grant -- the namespace's and the
+         * console's reason. The owner answers in words only: it maps the page
+         * and writes it, and needs no grant of its own. */
+        return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 

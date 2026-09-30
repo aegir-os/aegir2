@@ -246,7 +246,7 @@ bool BitmapFont::load_bdf(const void* data, size_t size) {
                 }
             }
         }
-        glyph_map_.emplace_back(g.encoding, g.glyph);
+        glyph_map_.emplace(g.encoding, g.glyph);
     }
 
     height_ = ascent_ + descent_;
@@ -261,12 +261,53 @@ bool BitmapFont::load_pcf(const void* data, size_t size) {
 }
 
 const Glyph* BitmapFont::glyph(uint32_t codepoint) const {
-    auto it = std::lower_bound(glyph_map_.begin(), glyph_map_.end(), codepoint,
-                               [](const auto& a, uint32_t val) { return a.first < val; });
-    if (it != glyph_map_.end() && it->first == codepoint) {
+    auto const it = glyph_map_.find(codepoint);
+    if (it != glyph_map_.end()) {
         return &it->second;
     }
     return nullptr;
+}
+
+bool BitmapFont::adopt_glyph(uint32_t codepoint, const Glyph& glyph, const uint8_t* bits) {
+    if (glyph.width <= 0 || glyph.height <= 0) {
+        /* An advance-only glyph: a space, or one whose bitmap did not fit the
+         * page the rasterizer wrote into (specs/fonts.md). It still advances. */
+        glyph_map_[codepoint] = glyph;
+        return true;
+    }
+    /* A wider glyph widens every row -- a copy -- and a taller one appends
+     * rows at the end, so a glyph already placed keeps its atlas_x/atlas_y.
+     * The width is rounded up to a multiple of 8 so that a run of
+     * one-pixel-wider glyphs does not copy the atlas for each one: a growth
+     * policy, not a limit. */
+    if (static_cast<uint32_t>(glyph.width) > atlas_.width) {
+        uint32_t const wider = (static_cast<uint32_t>(glyph.width) + 7u) & ~7u;
+        std::vector<uint8_t> grown(static_cast<size_t>(wider) * atlas_.height, 0);
+        for (uint32_t y = 0; y < atlas_.height; ++y) {
+            std::memcpy(&grown[static_cast<size_t>(y) * wider],
+                        &atlas_.pixels[static_cast<size_t>(y) * atlas_.width],
+                        atlas_.width);
+        }
+        atlas_.pixels = std::move(grown);
+        atlas_.width = wider;
+    }
+    uint32_t const row = atlas_.height;
+    uint32_t const needed = row + static_cast<uint32_t>(glyph.height);
+    if (static_cast<size_t>(atlas_.width) * needed > atlas_.pixels.size()) {
+        atlas_.pixels.resize(static_cast<size_t>(atlas_.width) * needed, 0);
+    }
+    atlas_.height = needed;
+    for (int y = 0; y < glyph.height; ++y) {
+        std::memcpy(&atlas_.pixels[static_cast<size_t>(row) + static_cast<size_t>(y) *
+                                       atlas_.width],
+                    bits + static_cast<size_t>(y) * glyph.width,
+                    static_cast<size_t>(glyph.width));
+    }
+    Glyph placed = glyph;
+    placed.atlas_x = 0;
+    placed.atlas_y = static_cast<int>(row);
+    glyph_map_[codepoint] = placed;
+    return true;
 }
 
 // Helpers

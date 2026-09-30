@@ -111,6 +111,7 @@ add_library(aegir-trinket STATIC
     src/window.cc
     src/font.cc
     src/fonts.cc
+    src/server_font.cc
     src/unicode.cc
     src/locale.cc
     "${AEGIR_LOCALE_DATA}"
@@ -134,10 +135,12 @@ target_include_directories(aegir-trinket PUBLIC include)
 target_include_directories(aegir-trinket PRIVATE src)
 
 # Dependencies: the hosted policy (which brings libc++ and full musl), the
-# console window protocol, input's event words, the log, and the memory the
-# application adopts -- aegir-bootstrap for the spawn kit's block, aegir-mem
-# for the allocator and the window the slice is mapped through, and aegir-heap
-# for the freeing heap the standard library allocates from.
+# console window protocol, input's event words, the log, the font service's
+# protocol (ServerFont is a client of font.main, specs/fonts.md), the
+# namespace's string wire shape the calls carry, and the memory the application
+# adopts -- aegir-bootstrap for the spawn kit's block, aegir-mem for the
+# allocator and the window the slice and the transfer page are mapped through,
+# and aegir-heap for the freeing heap the standard library allocates from.
 target_link_libraries(aegir-trinket PUBLIC
     aegir-cxx-policy-hosted
     aegir-cxxabi-shim
@@ -146,6 +149,8 @@ target_link_libraries(aegir-trinket PUBLIC
     aegir-input
     aegir-log
     aegir-ipc
+    aegir-font-protocol
+    aegir-namespace
     aegir-bootstrap
     aegir-mem
     aegir-heap

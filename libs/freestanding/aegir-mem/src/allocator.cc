@@ -710,6 +710,16 @@ seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
     return slot;
 }
 
+seL4_CPtr Allocator::alloc_page(Account &account, seL4_Error *error,
+                                seL4_Word size_bits) noexcept
+{
+    /* The object type names the frame's size, the rule carve_page states
+     * above; the size_bits the retype also carries agree. */
+    seL4_Word const type =
+        size_bits == seL4_PageBits ? seL4_RISCV_4K_Page : seL4_RISCV_Mega_Page;
+    return alloc_object(type, size_bits, account, error);
+}
+
 seL4_CPtr Allocator::make_asid_pool(Account &account, seL4_Error *error) noexcept
 {
     *error = seL4_NoError;

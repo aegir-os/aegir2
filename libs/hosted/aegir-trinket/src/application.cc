@@ -7,12 +7,14 @@
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/fonts.h>
+#include <aegir/trinket/server_font.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/translation.h>
 #include <aegir/trinket/window.h>
 #include <aegir/bootstrap.h>
 #include <aegir/console.h>
 #include <aegir/debug.h>
+#include <aegir/font.h>
 #include <aegir/heap.h>
 #include <aegir/input.h>
 #include <aegir/ipc/port.h>
@@ -437,6 +439,19 @@ std::unique_ptr<Font> Application::load_builtin_font(std::string_view name, int 
         return Font::load_terminus(size_pts, display_info_.scale);
     }
     return nullptr;
+}
+
+std::unique_ptr<Font> Application::load_service_font(std::string_view family, int size_pts,
+                                                     bool bold, bool italic) {
+    /* The font service's port, when this process was given one (the manifest's
+     * `needs`). No port is not an error: a process that never draws a face the
+     * toolkit cannot parse simply keeps the font it has (specs/fonts.md). */
+    aegir::ipc::Consumer const service =
+        aegir::ipc::Consumer::find(aegir::font::kPortName, aegir::font::kPortNameLength);
+    if (!service.valid()) {
+        return nullptr;
+    }
+    return ServerFont::open(service, g_objects, g_scratch, family, size_pts, bold, italic);
 }
 
 std::string Application::resource_path(std::string_view relative) const {

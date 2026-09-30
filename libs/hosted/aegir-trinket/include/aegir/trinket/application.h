@@ -169,6 +169,14 @@ public:
     std::unique_ptr<Font> load_font(std::string_view family, int size_pts);
     std::unique_ptr<Font> load_builtin_font(std::string_view name, int size_pts);
 
+    /* A face drawn through the font service (specs/fonts.md): the toolkit's
+     * `Font` seam on the serving side, so a `.ttf`, `.otf` or collection face
+     * is drawn without the app carrying a rasterizer. Null when the process
+     * was given no `font.main`, the service has no such face, or the transfer
+     * page cannot be made -- the caller keeps the font it has, and says so. */
+    std::unique_ptr<Font> load_service_font(std::string_view family, int size_pts,
+                                            bool bold = false, bool italic = false);
+
     // Resource paths
     std::string resource_path(std::string_view relative) const;
 

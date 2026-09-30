@@ -179,6 +179,24 @@ the call is answered, so the page is the client's alone between calls -- which
 is what makes a client-owned page cheaper than a server-owned one, which would
 need a lease or a generation to answer the same question.
 
+**Landed, both sides.** The service's half is above. The client's is
+`ServerFont` (`libs/hosted/aegir-trinket/src/server_font.cc`), the toolkit's
+`Font` on the serving side: it opens a family through the service, takes a
+transfer page of its own -- retyped with `Allocator::alloc_page`, so the
+toolkit names no architecture -- maps it, and makes the unmapped copy each call
+hands over. A glyph is fetched on first use and copied from the page into the
+client's own atlas, which the canvas blits from, so a widget draws a `.ttf`
+face with no rasterizer of its own. `measure` fetches a run's codepoints in
+batches, so a label that measures its text and then draws it pays one call per
+batch rather than one per glyph.
+
+A process reaches the service through the manifest: `font.main` in a client's
+`needs` is what puts the caller half in its bootstrap block, and director's
+`rights_for` gives that caller **Grant** -- without it the transfer page
+silently does not cross and the service refuses the call (`ipc/port.h`). The
+demo's label is the first client: it draws Noto Sans 16 beside its grid, and
+its cue is the box of the glyph the service sent back.
+
 ### Shaping (phase 3)
 
 HarfBuzz, BiDi and the Noto faces by script: a shaped run (positioned glyphs,
@@ -193,12 +211,12 @@ service-backed client does not otherwise hold.
    vendored trees with the magic check; the toolkit scans it, loads the
    default from it, and falls back to the embedded Terminus with a log when a
    family is missing. BDF/PCF only. No service, no FreeType.
-2. **Phase 2 -- FreeType and the service.** The signed-tarball pin, the build
-   script and the service have landed: `aegir-font` reads the volume's faces
-   directly and serves `open`, `metrics`, `close` and `glyphs`, all sixteen
-   indexed in 429 ms, and it rasterizes a glyph into the caller's own page.
-   What remains is the client `ServerFont` that draws a `.ttf`/`.otf`/`.ttc`
-   face through them -- the client side of the seam phase 1 left open.
+2. **Phase 2 -- FreeType and the service. Landed.** The signed-tarball pin, the
+   build script and the service: `aegir-font` reads the volume's faces directly
+   and serves `open`, `metrics`, `close` and `glyphs`, all sixteen indexed in
+   429 ms, and it rasterizes a glyph into the caller's own page. The client is
+   `ServerFont`, so the toolkit draws a `.ttf`/`.otf`/`.ttc` face through it,
+   and the demo's label is the first caller.
 3. **Phase 3 -- shaping and the fallback chain.** HarfBuzz, BiDi, and the Noto
    faces chosen per script.
 
@@ -209,7 +227,8 @@ loader, a shared text segment and relocations; the service gives one copy
 without them, and libraries want their own arc with more than one client. Also
 not: a font *manager* (installing, enabling, disabling faces -- the scan finds
 what is there), a text stack that lays out paragraphs, or DPI-scaled rendering
-(the bitmap faces are fixed; scalable faces arrive with phase 2).
+(a bitmap face is fixed; a scalable one is drawn at the size asked, and DPI
+scaling is the scale arc's).
 
 ## Acceptance
 
@@ -219,3 +238,12 @@ style, the nearest size, the miss); the existing look is unchanged, because
 the Terminus the disk carries is the byte-for-byte face the embedded array
 held. A site that unpacks a face into `Sys:Fonts` gets it drawn without a
 rebuild -- that is the property the phase exists for.
+
+Phase 2: the service's own cues are its scan count, its metrics check on Noto
+Sans 16 and the box of a rasterized glyph; the client's is the demo's
+`outline A <box> advance <n>`, which is a glyph crossing a client-owned transfer
+page and landing in the client's atlas -- the seam, end to end. A host
+conformance asserts the name probe over the real faces (`check-font-probe`).
+The look is unchanged by design: the outline face lands in a widget beside the
+grid, so the phase lands the mechanism without moving the samples the
+acceptance reads.

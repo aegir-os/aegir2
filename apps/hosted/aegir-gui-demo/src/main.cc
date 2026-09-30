@@ -19,7 +19,9 @@
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/font.h>
 #include <aegir/trinket/label.h>
+#include <aegir/trinket/layout.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/terminal_view.h>
@@ -121,9 +123,43 @@ int main(int argc, char *argv[])
     aegir::ipc::Consumer const bureau = aegir::ipc::Consumer::find(
         aegir::bureau::menu::kPortName, aegir::bureau::menu::kPortNameLength);
 
+    /* The face the label draws: a real TrueType face served by font.main, not
+     * the embedded bitmap (specs/fonts.md). The Greek and Cyrillic words are
+     * the visible part of the proof -- the Terminus the toolkit embeds has
+     * neither -- and the cue below is the certain one: the client asks the
+     * service for a glyph, gets a box back across its own transfer page, and
+     * prints it. Declared before the window so it outlives the label that
+     * points at it. */
+    std::unique_ptr<Font> outline = app.load_service_font("Noto Sans", 16);
+    if (outline != nullptr) {
+        Glyph const *const a = outline->glyph(U'A');
+        std::string line("  demo: outline A ");
+        if (a != nullptr) {
+            line += std::to_string(a->width);
+            line += "x";
+            line += std::to_string(a->height);
+            line += " advance ";
+            line += std::to_string(a->advance);
+        } else {
+            line += "missing";
+        }
+        line += "\n";
+        write(line.c_str());
+    } else {
+        write("  demo: no font.main face for the outline label\n");
+    }
+
+    /* The band the outline line gets: the face's own line height, so the grid
+     * keeps the geometry it had before the label and the acceptance's samples
+     * of it stand (specs/fonts.md's phase 2 lands a widget beside the look, not
+     * over it). Not a number chosen here -- it is what the face measures. */
+    Font* const label_font = outline != nullptr ? outline.get() : app.default_font();
+    int const label_band = label_font != nullptr ? label_font->height() : 0;
+    int const window_height = kWindowHeight + label_band;
+
     Window window(app);
     window.set_title("Demo");
-    window.set_rect({kWindowX, kWindowY, kWindowWidth, kWindowHeight});
+    window.set_rect({kWindowX, kWindowY, kWindowWidth, window_height});
     window.set_gadgets(kGadgetClose | kGadgetZoom | kGadgetDepth);
 
     auto terminal = std::make_unique<TerminalView>();
@@ -140,7 +176,25 @@ int main(int argc, char *argv[])
         grid.write(line);
     }
     grid.scroll_to_bottom();
-    window.set_content(std::move(terminal));
+
+    /* The outline line sits in its own band at the window's foot, below the
+     * grid: the window is a band taller, so the grid is the grid it was
+     * (specs/fonts.md's phase 2 lands a widget beside the look). */
+    auto label = std::make_unique<Label>(
+        U"Aegir fonts: a served .ttf face \u2014 \u0391\u03b2\u03b3 \u041f\u0440\u0438\u0432\u0435\u0442");
+    if (outline != nullptr) {
+        label->set_font(outline.get());
+    }
+    label->set_text_color(app.theme().color(ColorRole::TEXT));
+
+    auto content = std::make_unique<Container>();
+    auto layout = std::make_unique<BorderLayout>(0);
+    layout->add_widget(terminal.get(), BorderLayout::Region::CENTER);
+    layout->add_widget(label.get(), BorderLayout::Region::SOUTH);
+    content->add_child(std::move(terminal));
+    content->add_child(std::move(label));
+    content->set_layout(std::move(layout));
+    window.set_content(std::move(content));
     window.show();
 
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
@@ -153,15 +207,15 @@ int main(int argc, char *argv[])
      * size, and a plain move must not read as a restore -- the demo is moved
      * before the bureau exists (specs/workbench.md). */
     int last_width = kWindowWidth;
-    int last_height = kWindowHeight;
-    window.on_moved_resized = [app_ptr, &last_width, &last_height](Rect r) {
+    int last_height = window_height;
+    window.on_moved_resized = [app_ptr, &last_width, &last_height, window_height](Rect r) {
         if (r.width == last_width && r.height == last_height) return;
         last_width = r.width;
         last_height = r.height;
         int const screen_width = static_cast<int>(app_ptr->display_info().width_px);
         if (screen_width > 0 && r.width >= screen_width) {
             write("  demo: zoomed\n");
-        } else if (r.width == kWindowWidth && r.height == kWindowHeight) {
+        } else if (r.width == kWindowWidth && r.height == window_height) {
             write("  demo: restored\n");
         }
     };

@@ -175,6 +175,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(r"font: open Noto Sans 16 is sane"),
             QmpStep(r"font: glyph A \d+x\d+ at -?\d+,-?\d+, advance \d+"),
             QmpStep(r"font: ready, serving font.main"),
+            # The toolkit's ServerFont (specs/fonts.md): the demo's label draws
+            # a Noto Sans face through the service, and prints the box of the
+            # first glyph it got back -- proof a glyph crossed the client's own
+            # transfer page and into the client's atlas, not only the service's.
+            QmpStep(r"demo: outline A \d+x\d+ advance \d+"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up
