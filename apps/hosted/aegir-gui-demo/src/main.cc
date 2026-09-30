@@ -29,6 +29,7 @@
 #include <aegir/trinket/label.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
+#include <aegir/trinket/scrollbar.h>
 #include <aegir/trinket/terminal_view.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/translation.h>
@@ -179,7 +180,7 @@ int main(int argc, char *argv[])
     grid.write("Aegir terminal\n");
     grid.write("wide: \u65E5\u672C  combining: e\u0301\n");
     grid.write("rtl:  \u05E9\u05DC\u05D5\u05DD\n");
-    for (int i = 1; i <= 16; ++i) {
+    for (int i = 1; i <= 100; ++i) {
         char line[24];
         std::snprintf(line, sizeof(line), "line %d\n", i);
         grid.write(line);
@@ -197,15 +198,46 @@ int main(int argc, char *argv[])
     }
     label->set_text_color(app.theme().color(ColorRole::TEXT));
 
+    /* The terminal and its scrollbar in a row (specs/trinket/scrollbar.md):
+     * the terminal free across the row, the scrollbar a fixed strip. A vertical
+     * Group holds the row over the label band. */
+    auto row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
+    TerminalView* const terminal_ptr = terminal.get();
+    auto scrollbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
+    Scrollbar* const scrollbar_ptr = scrollbar.get();
+    row->add_child(std::move(terminal));
+    row->add_child(std::move(scrollbar));
+    row->set_weight(scrollbar_ptr, 0);
+
     auto content = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     content->set_frame(Group::Frame::RAISED);
     Label* const label_ptr = label.get();
-    content->add_child(std::move(terminal));
+    content->add_child(std::move(row));
     content->add_child(std::move(label));
-    /* The label keeps its band; the terminal is free and takes the rest. */
+    /* The label keeps its band; the row is free and takes the rest. */
     content->set_weight(label_ptr, 0);
     window.set_content(std::move(content));
     window.show();
+
+    /* The scrollbar drives the terminal's scrollback (specs/trinket/scrollbar.md):
+     * its value is the first visible line, and a scroll sets the buffer's offset
+     * to match. It re-syncs each poll, so a resize that moved the grid is
+     * reflected too. A *user* scroll sets a flag the poll prints, so a resize is
+     * not mistaken for one. */
+    bool scrolled = false;
+    auto sync_scrollbar = [terminal_ptr, scrollbar_ptr]() {
+        TerminalBuffer const& buffer = terminal_ptr->buffer();
+        scrollbar_ptr->set_range(buffer.line_count(), buffer.rows());
+        scrollbar_ptr->set_value(buffer.visible_first_line());
+    };
+    scrollbar_ptr->on_scroll = [terminal_ptr, &sync_scrollbar, &scrolled](int first) {
+        TerminalBuffer& buffer = terminal_ptr->buffer();
+        buffer.scroll_by(buffer.visible_first_line() - first);
+        terminal_ptr->damage();
+        sync_scrollbar();
+        scrolled = true;
+    };
+    sync_scrollbar();
 
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
      * close. The runner paces its dumps on them (scripts/targets.py). */
@@ -275,6 +307,11 @@ int main(int argc, char *argv[])
     /* The bureau rings the doorbell for an action; fetch it and print the cue
      * the runner reads. Nothing to fetch until the tree is registered. */
     app.on_poll = [&]() {
+        if (scrolled) {
+            scrolled = false;
+            write("  demo: scrolled\n");
+        }
+        sync_scrollbar();
         if (!registered) return;
         uint32_t const action = aegir::bureau::menu::take_action(bureau);
         if (action == 1) {

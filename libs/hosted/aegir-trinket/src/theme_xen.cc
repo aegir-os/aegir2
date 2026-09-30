@@ -6,6 +6,7 @@
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/unicode.h>
+#include <algorithm>
 #include <memory>
 
 namespace aegir::trinket {
@@ -102,9 +103,9 @@ public:
             case CR::TOOLTIP_TEXT: return Color(0x00000000);
 
             // Scrollbar
-            case CR::SCROLLBAR_BG: return Color(0x00E0E0E0);
-            case CR::SCROLLBAR_HANDLE: return Color(0x00808080);
-            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00606060);
+            case CR::SCROLLBAR_BG: return Color(0x00AAAAAA);
+            case CR::SCROLLBAR_HANDLE: return Color(0x00BFBFBF);
+            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00C9C9C9);
 
             // Link
             case CR::LINK: return Color(0x000000EE);
@@ -152,6 +153,7 @@ public:
             case MR::INPUT_BORDER_WIDTH: return 1 * base;
             case MR::SCROLLBAR_WIDTH: return 16 * base;
             case MR::SCROLLBAR_MIN_HANDLE: return 30 * base;
+            case MR::SCROLLBAR_ARROW_SIZE: return 16 * base;
             case MR::SPACING_SMALL: return 4 * base;
             case MR::SPACING_MEDIUM: return 8 * base;
             case MR::SPACING_LARGE: return 16 * base;
@@ -342,15 +344,44 @@ public:
     void draw_scrollbar(Canvas& canvas, const Rect& rect,
                          bool vertical, int handle_pos, int handle_size,
                          bool hovered) override {
-        Color bg = color(ColorRole::SCROLLBAR_BG);
-        Color handle = hovered ? color(ColorRole::SCROLLBAR_HANDLE_HOVER)
-                              : color(ColorRole::SCROLLBAR_HANDLE);
-        canvas.fill_rect(rect, bg);
+        static_cast<void>(hovered);
+        int const arrow = metric(MetricRole::SCROLLBAR_ARROW_SIZE);
+        Color const face = color(ColorRole::SCROLLBAR_HANDLE);
+        Color const trough = color(ColorRole::SCROLLBAR_BG);
+        Color const ink = color(ColorRole::GADGET_SHADOW);
 
-        Rect handle_rect = vertical
-            ? Rect{rect.x, rect.y + handle_pos, rect.width, handle_size}
-            : Rect{rect.x + handle_pos, rect.y, handle_size, rect.height};
-        canvas.fill_rounded_rect(handle_rect, rect.width / 2, handle);
+        /* Two arrow buttons at the ends and a sunken trough between them. */
+        Rect const first = vertical
+                               ? Rect{rect.x, rect.y, rect.width, arrow}
+                               : Rect{rect.x, rect.y, arrow, rect.height};
+        Rect const last =
+            vertical ? Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow}
+                     : Rect{rect.x + rect.width - arrow, rect.y, arrow, rect.height};
+        Rect const trough_rect =
+            vertical ? Rect{rect.x, rect.y + arrow, rect.width, rect.height - 2 * arrow}
+                     : Rect{rect.x + arrow, rect.y, rect.width - 2 * arrow, rect.height};
+        if (trough_rect.width > 0 && trough_rect.height > 0) {
+            canvas.fill_rect(trough_rect, trough);
+            draw_bevel(canvas, trough_rect, Bevel::SUNKEN);
+        }
+
+        /* The thumb, raised over the trough. */
+        Rect const thumb =
+            vertical ? Rect{rect.x, rect.y + handle_pos, rect.width, handle_size}
+                     : Rect{rect.x + handle_pos, rect.y, handle_size, rect.height};
+        if (thumb.width > 0 && thumb.height > 0) {
+            canvas.fill_rect(thumb, face);
+            draw_bevel(canvas, thumb, Bevel::RAISED);
+        }
+
+        Rect const buttons[2] = {first, last};
+        for (Rect const& button : buttons) {
+            if (button.width <= 0 || button.height <= 0) continue;
+            canvas.fill_rect(button, face);
+            draw_bevel(canvas, button, Bevel::RAISED);
+        }
+        draw_arrow(canvas, first, vertical, false, ink);
+        draw_arrow(canvas, last, vertical, true, ink);
     }
 
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
@@ -370,6 +401,25 @@ public:
     }
 
 private:
+    /* A small solid triangle inside an arrow button, the apex toward the way
+     * the scroll moves (specs/trinket/scrollbar.md). */
+    void draw_arrow(Canvas& canvas, const Rect& button, bool vertical,
+                    bool forward, Color ink) {
+        int const size = std::min(button.width, button.height) * 2 / 5;
+        if (size < 1) return;
+        Point const c = button.center();
+        for (int i = 0; i < size; ++i) {
+            int const half = i;
+            if (vertical) {
+                int const y = forward ? c.y + size / 2 - i : c.y - size / 2 + i;
+                canvas.draw_hline(c.x - half, c.x + half, y, ink);
+            } else {
+                int const x = forward ? c.x + size / 2 - i : c.x - size / 2 + i;
+                canvas.draw_vline(c.y - half, c.y + half, x, ink);
+            }
+        }
+    }
+
     float scale_ = 1.0f;
 };
 
