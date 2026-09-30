@@ -30,6 +30,7 @@
 #include <aegir/trinket/label.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
+#include <aegir/trinket/radio_group.h>
 #include <aegir/trinket/scrollbar.h>
 #include <aegir/trinket/terminal_view.h>
 #include <aegir/trinket/theme.h>
@@ -166,14 +167,30 @@ int main(int argc, char *argv[])
     Font* const label_font = outline != nullptr ? outline.get() : app.default_font();
     int const label_band = label_font != nullptr ? label_font->height() : 0;
     int const frame_inset = Group::frame_inset(Group::Frame::RAISED);
-    /* The toggle row's band comes out of the same arithmetic: the window grows
-     * by it, so the grid keeps its kWindowHeight and only the label band moves
-     * down (specs/trinket/checkbox.md). The taller of the two indicators and the
-     * button's own vertical padding is what the row needs. */
-    int const check_h = app.theme().metric(MetricRole::CHECK_INDICATOR_HEIGHT);
-    int const radio_h = app.theme().metric(MetricRole::RADIO_INDICATOR_HEIGHT);
-    int const toggle_band = (check_h > radio_h ? check_h : radio_h) +
-                            2 * app.theme().metric(MetricRole::BUTTON_PADDING_V);
+    /* The toggle row's band comes from what it holds (specs/trinket/checkbox.md,
+     * specs/trinket/radio_group.md): the window grows by it, so the grid keeps
+     * its kWindowHeight and only the label band moves down. A checkbox beside a
+     * radio group -- three states, one of them exclusive. */
+    int radio_changed = -1;
+    auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
+    check->set_checked(true);
+    auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
+    radios->set_frame(Group::Frame::GROUP_BOX);
+    radios->set_title(U"Pick");
+    radios->add("One");
+    radios->add("Two");
+    /* The cue is set after the members are added, so the group's first selection
+     * does not read as a user's. */
+    radios->on_changed = [&radio_changed](int index) { radio_changed = index; };
+    auto toggles = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 12);
+    Button* const check_ptr = check.get();
+    RadioGroup* const radios_ptr = radios.get();
+    Group* const toggles_ptr = toggles.get();
+    toggles->add_child(std::move(check));
+    toggles->add_child(std::move(radios));
+    toggles->set_weight(check_ptr, 0);
+    toggles->set_weight(radios_ptr, 0);
+    int const toggle_band = toggles->preferred_size().height;
     int const window_height =
         kWindowHeight + toggle_band + label_band + 2 * frame_inset;
 
@@ -218,22 +235,6 @@ int main(int argc, char *argv[])
     row->add_child(std::move(terminal));
     row->add_child(std::move(scrollbar));
     row->set_weight(scrollbar_ptr, 0);
-
-    /* The toggle gadgets (specs/trinket/checkbox.md): a checkbox and a radio,
-     * drawn from the MUI checkmark and radio artwork. A fixed row between the
-     * terminal and the label band, so the terminal's slack shrinks by its
-     * height. */
-    auto toggles = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
-    auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
-    check->set_checked(true);
-    auto radio = std::make_unique<Button>("Radio", Button::Type::RADIO);
-    Button* const check_ptr = check.get();
-    Button* const radio_ptr = radio.get();
-    Group* const toggles_ptr = toggles.get();
-    toggles->add_child(std::move(check));
-    toggles->add_child(std::move(radio));
-    toggles->set_weight(check_ptr, 0);
-    toggles->set_weight(radio_ptr, 0);
 
     auto content = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     content->set_frame(Group::Frame::RAISED);
@@ -339,6 +340,15 @@ int main(int argc, char *argv[])
         if (scrolled) {
             scrolled = false;
             write("  demo: scrolled\n");
+        }
+        if (radio_changed >= 0) {
+            /* The radio group's selection is a cue (specs/trinket/radio_group.md):
+             * choosing a member clears the others, and the runner reads which. */
+            std::string line("  demo: radio ");
+            line += std::to_string(radio_changed + 1);
+            line += "\n";
+            write(line.c_str());
+            radio_changed = -1;
         }
         sync_scrollbar();
         if (!registered) return;

@@ -103,9 +103,11 @@ void Button::on_mouse_up(const MouseEvent& event) {
         pressed_ = false;
         damage();
         if (on_released) on_released();
-        if (type_ == Type::PUSH && on_click) {
-            on_click(checked_);
-        }
+        /* A toggle took its new state on the press; a push reports on the
+         * release. Either way the click is reported, as the key path (on_key_up)
+         * does too -- a toggle whose click was never reported is a toggle whose
+         * group never heard it (specs/trinket/radio_group.md). */
+        if (on_click) on_click(checked_);
     }
 }
 
