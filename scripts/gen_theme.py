@@ -30,7 +30,7 @@ RESOURCES = TRINKET / "resources" / "themes" / "xen"
 HEADER = TRINKET / "include" / "aegir" / "trinket" / "theme.h"
 
 BEVEL = {"raised": 0, "sunken": 1}
-MARK = {"up": 0, "down": 1, "left": 2, "right": 3}
+MARK = {"up": 0, "down": 1, "left": 2, "right": 3, "comma": 4}
 
 
 def enum_names(header: str, name: str) -> list[str]:
@@ -84,9 +84,10 @@ def parse_step(step: dict, palette: dict, sprites: dict[str, int]) -> tuple:
         return ("DITHER", 0, inset, 0, 1, resolve(fg, palette), resolve(bg, palette), 0)
     if "mark" in step:
         num, den = step.get("size", [1, 4])
+        light = step.get("light", step.get("color", "#ffffff"))
+        dark = step.get("dark", step.get("color", "#000000"))
         return ("MARK", MARK[step["mark"]], inset, num, den,
-                resolve(step.get("light", "#ffffff"), palette),
-                resolve(step.get("dark", "#000000"), palette), 0)
+                resolve(light, palette), resolve(dark, palette), 0)
     if "sprite" in step:
         name = step["sprite"]
         if name not in sprites:
@@ -210,8 +211,6 @@ def main() -> int:
         emit_array("kRecipePanel",
                    [g["panel"][n] for n in ("flat", "raised", "sunken", "frame",
                                             "group_box")], palette, sprite_index),
-        "",
-        emit_single("kRecipeScrollbarFrame", g["scrollbar"]["frame"], palette, sprite_index),
         "",
         emit_single("kRecipeScrollbarTrough", g["scrollbar"]["trough"], palette, sprite_index),
         "",

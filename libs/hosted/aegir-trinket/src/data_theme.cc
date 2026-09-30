@@ -181,9 +181,9 @@ public:
                          bool hovered) override {
         static_cast<void>(vertical);
         static_cast<void>(hovered);
-        /* Each part is a recipe (specs/trinket/theming.md); the marks are in
-         * the buttons' own recipes. */
-        run(kRecipeScrollbarFrame, canvas, rect);
+        static_cast<void>(rect);  // the trough and the buttons are the whole strip
+        /* Each part is a recipe (specs/trinket/theming.md); the buttons are
+         * separate cells below the trough, their marks in their own recipes. */
         if (trough.width > 0 && trough.height > 0) {
             run(kRecipeScrollbarTrough, canvas, trough);
         }
@@ -251,9 +251,16 @@ private:
     void draw_mark(Canvas& canvas, const Rect& rect, int kind, Color light,
                    Color dark, int num, int den) {
         int const short_side = std::min(rect.width, rect.height);
-        int const half = den > 0 ? short_side * num / den : short_side / 4;
-        if (half < 1) return;
+        if (short_side <= 0 || den <= 0) return;
+        int const half = std::max(1, short_side * num / den);
         Point const c = rect.center();
+        if (kind == 4) {
+            /* A comma: the thumb's mark -- a dot with a short tail. */
+            canvas.fill_circle(c, half, light);
+            canvas.draw_line({c.x + half, c.y - half}, {c.x + 2 * half, c.y - 2 * half},
+                             light);
+            return;
+        }
         bool const vertical = kind <= 1;
         bool const forward = kind == 1 || kind == 3;  // down or right
         if (vertical) {

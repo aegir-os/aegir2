@@ -17,9 +17,10 @@
 namespace aegir::trinket {
 
 namespace {
-/* The bar's raised frame: outline and highlight, two pixels of the XEN border
+/* The trough container's frame, and the well the dither and thumb are set in
+ * from it. The buttons below are separate cells, not inside this frame
  * (specs/trinket/scrollbar.md). */
-constexpr int kFrame = 2;
+constexpr int kWell = 3;
 }  // namespace
 
 Scrollbar::Scrollbar(Orientation orientation) : orientation_(orientation) {}
@@ -107,39 +108,35 @@ int Scrollbar::min_handle() const {
 
 Scrollbar::Parts Scrollbar::parts() const {
     bool const vertical = orientation_ == Orientation::VERTICAL;
-    Rect const content = rect_.inflated(-kFrame);
     int const arrow = this->arrow();
     int const buttons = 2 * arrow;
     Parts parts;
+    /* The trough is the whole strip above the buttons, and the buttons are
+     * separate cells below it, the same width -- the XEN scrollbar has no frame
+     * around the two together (specs/trinket/scrollbar.md). */
     if (vertical) {
         parts.decrement =
-            Rect{content.x, content.y + content.height - buttons, content.width, arrow};
-        parts.increment =
-            Rect{content.x, content.y + content.height - arrow, content.width, arrow};
-        /* The trough fills the frame's inner width, like the thumb and the
-         * buttons: the XEN scrollbar has no narrower well
-         * (specs/trinket/scrollbar.md). */
-        parts.trough = Rect{content.x, content.y, content.width, content.height - buttons};
+            Rect{rect_.x, rect_.y + rect_.height - buttons, rect_.width, arrow};
+        parts.increment = Rect{rect_.x, rect_.y + rect_.height - arrow, rect_.width, arrow};
+        parts.trough = Rect{rect_.x, rect_.y, rect_.width, rect_.height - buttons};
     } else {
         parts.decrement =
-            Rect{content.x + content.width - buttons, content.y, arrow, content.height};
-        parts.increment =
-            Rect{content.x + content.width - arrow, content.y, arrow, content.height};
-        parts.trough = Rect{content.x, content.y, content.width - buttons, content.height};
+            Rect{rect_.x + rect_.width - buttons, rect_.y, arrow, rect_.height};
+        parts.increment = Rect{rect_.x + rect_.width - arrow, rect_.y, arrow, rect_.height};
+        parts.trough = Rect{rect_.x, rect_.y, rect_.width - buttons, rect_.height};
     }
-    int const track = vertical ? parts.trough.height : parts.trough.width;
+    /* The thumb rides in the trough's well, set in from its container frame. */
+    Rect const well = parts.trough.inflated(-kWell);
+    int const track = vertical ? well.height : well.width;
     Thumb const thumb = thumb_for(track, total_, page_, value_, min_handle());
-    /* The thumb is as wide as the frame's inner area -- wider than the narrow
-     * dither trough it slides along (specs/trinket/scrollbar.md). */
-    parts.thumb =
-        vertical ? Rect{content.x, parts.trough.y + thumb.pos, content.width, thumb.size}
-                 : Rect{parts.trough.x + thumb.pos, content.y, thumb.size, content.height};
+    parts.thumb = vertical ? Rect{well.x, well.y + thumb.pos, well.width, thumb.size}
+                           : Rect{well.x + thumb.pos, well.y, thumb.size, well.height};
     return parts;
 }
 
 Size Scrollbar::preferred_size() const {
     int const width = Application::instance()->theme().metric(MetricRole::SCROLLBAR_WIDTH);
-    int const along = 2 * kFrame + 2 * arrow() + min_handle();
+    int const along = 2 * kWell + 2 * arrow() + min_handle();
     return orientation_ == Orientation::VERTICAL ? Size{width, along} : Size{along, width};
 }
 

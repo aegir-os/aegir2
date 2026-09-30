@@ -121,7 +121,7 @@ INPUT_PADDING_V = 4
 INPUT_BORDER_WIDTH = 1
 SCROLLBAR_WIDTH = 16
 SCROLLBAR_MIN_HANDLE = 30
-SCROLLBAR_ARROW_SIZE = 16
+SCROLLBAR_ARROW_SIZE = 14
 SPACING_SMALL = 4
 SPACING_MEDIUM = 8
 SPACING_LARGE = 16
@@ -192,18 +192,20 @@ steps = [{ fill = "$PANEL_BG" }, { outline = "$BORDER" }]
 steps = [{ fill = "$PANEL_BG" }, { bevel = "raised" }]
 
 # ---- the scrollbar ----
-# A raised frame around the strip; a sunken dither trough the wide thumb rides;
-# two raised arrow buttons at the foot, each a hollow 3-D mark.
-
-[gadgets.scrollbar.frame]
-steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
-         { bevel = "raised", inset = 1 }]
+# The trough is one beveled container -- a raised frame around a sunken dither
+# well the thumb rides in -- and the two arrow buttons are separate cells below
+# it, not inside the same frame (specs/trinket/scrollbar.md). The buttons are the
+# MUI artwork, so the mark is the art's own.
 
 [gadgets.scrollbar.trough]
-steps = [{ dither = ["$SELECTION_BG", "$SCROLLBAR_BG"] }, { bevel = "sunken" }]
+steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
+         { bevel = "raised", inset = 1 },
+         { dither = ["$SELECTION_BG", "$SCROLLBAR_BG"], inset = 3 },
+         { bevel = "sunken", inset = 3 }]
 
 [gadgets.scrollbar.thumb]
-steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]
+steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" },
+         { mark = "comma", color = "$GADGET_SHADOW", size = [1, 4] }]
 
 [gadgets.scrollbar.decrement]
 steps = [{ sprite = "ArrowUp" }]

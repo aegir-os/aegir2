@@ -31,24 +31,23 @@ and nothing showed where in the scrollback it sat.
   Up/Down and Home/End move it. All of them funnel through one `scroll_to`,
   which clamps and reports.
 
-- **The look is the theme's, and it is the XEN one.** The strip's near end is
-  the **trough**: the MUI XEN **blue/grey dither** (the same checker the
-  selection uses) in a **sunken bevel** -- dark top-left, light bottom-right --
-  so it reads as a recess. Over it slides a **raised thumb** (`#bfbfbf`), its
-  own bevel showing. The far end holds the **two arrow buttons stacked** --
-  decrement above increment; each is a raised grey square, and each mark is a
-  **hollow 3-D triangle**: its leading (left) edge light and its other two edges
-  dark, not a solid fill. A new `SCROLLBAR_ARROW_SIZE` metric is the button; the
-  widget and the theme agree on it so a click and a drawn arrow line up. Read
-  off the demo's XEN screenshots.
+- **The look is the theme's, and it is the XEN one.** The strip's near end is a
+  single **trough container** -- a raised frame around a **sunken well** holding
+  the MUI XEN **blue/grey dither** (the same checker the selection uses). Over
+  the dither slides a **raised thumb** (`#bfbfbf`) with the XEN **comma** mark.
+  The **two arrow buttons are separate cells below**, not inside the trough's
+  frame -- decrement above increment -- and they are the **MUI artwork**
+  (`ArrowUp`/`ArrowDown`), blitted, so the hollow 3-D mark is the art's own.
+  `SCROLLBAR_ARROW_SIZE` is the button's height; the widget and the theme agree
+  on it so a click and a drawn button line up. Read off the demo's XEN
+  screenshots.
 - **The geometry is the widget's, the drawing the theme's.** `Scrollbar::parts()`
-  returns the trough, the thumb and the two button rectangles: a two-pixel
-  raised frame around the whole strip, and everything inside it -- the trough,
-  the thumb, the buttons -- filling the frame's inner width. The dither trough
-  is not narrower than the thumb: the XEN scrollbar has one inner column, and
-  the thumb rides down it over the dither. The pointer handlers hit-test the
-  same rectangles the theme draws, so a click cannot miss its button, and the
-  theme never computes geometry of its own.
+  returns the trough, the thumb and the two button rectangles: the trough is the
+  whole strip above the buttons (its container frame is the theme's), the
+  buttons are separate cells below it at the same width, and the thumb rides in
+  the trough's well, set in from the container by `kWell`. The pointer handlers
+  hit-test the same rectangles the theme draws, so a click cannot miss its
+  button, and the theme never computes geometry of its own.
 
 - **The demo wires it to the terminal.** In the demo the scrollbar's value is
   the terminal buffer's first visible line and `page` its rows, and a scroll

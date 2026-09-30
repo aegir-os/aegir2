@@ -64,7 +64,6 @@ extern const Recipe kRecipeButton[5];   // normal, hovered, pressed, focused, di
 extern const Recipe kRecipeTextbox[2];  // normal, focused
 extern const Recipe kRecipeTextboxReadonly;
 extern const Recipe kRecipePanel[5];    // Panel::Style: FLAT, RAISED, SUNKEN, FRAME, GROUP_BOX
-extern const Recipe kRecipeScrollbarFrame;
 extern const Recipe kRecipeScrollbarTrough;
 extern const Recipe kRecipeScrollbarThumb;
 extern const Recipe kRecipeScrollbarDecrement;

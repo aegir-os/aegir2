@@ -40,20 +40,20 @@ struct Parts {
 
 Parts scrollbar_parts(Rect const& rect, int total, int page, int value, int arrow,
                       int min_handle) {
-    int const frame = 3;
-    Rect const content = rect.inflated(-frame);
+    int const well = 3;  // the trough container's frame, matching the theme
     int const buttons = 2 * arrow;
     Parts p;
-    p.decrement = Rect{content.x, content.y + content.height - buttons, content.width, arrow};
-    p.increment = Rect{content.x, content.y + content.height - arrow, content.width, arrow};
-    p.trough = Rect{content.x, content.y, content.width, content.height - buttons};
-    int const track = p.trough.height;
+    p.decrement = Rect{rect.x, rect.y + rect.height - buttons, rect.width, arrow};
+    p.increment = Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow};
+    p.trough = Rect{rect.x, rect.y, rect.width, rect.height - buttons};
+    Rect const well_rect = p.trough.inflated(-well);
+    int const track = well_rect.height;
     int size = track * page / total;
     if (size < min_handle) size = min_handle;
     if (size > track) size = track;
     int const travel = track - size;
     int pos = travel <= 0 ? 0 : travel * value / (total - page);
-    p.thumb = Rect{p.trough.x, p.trough.y + pos, p.trough.width, size};
+    p.thumb = Rect{well_rect.x, well_rect.y + pos, well_rect.width, size};
     return p;
 }
 
