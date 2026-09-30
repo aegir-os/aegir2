@@ -238,6 +238,9 @@ private:
                     draw_mark(canvas, r, step.kind, Color(step.color), Color(step.color2),
                               step.num, step.den);
                     break;
+                case Prim::SPRITE:
+                    blit_sprite(canvas, r, step.sprite);
+                    break;
             }
         }
     }
@@ -271,6 +274,29 @@ private:
             canvas.draw_line(top, apex_pt, light);
             canvas.draw_line(apex_pt, bottom, dark);
             canvas.draw_line(top, bottom, dark);
+        }
+    }
+
+    /* Blit a sprite centred in the rectangle, skipping transparent pixels and
+     * anything outside the clip (specs/trinket/theming.md). */
+    void blit_sprite(Canvas& canvas, const Rect& rect, int index) {
+        if (index < 0 || index >= static_cast<int>(kSpriteCount)) return;
+        Sprite const& sprite = kSprites[index];
+        int const x0 = rect.x + (rect.width - static_cast<int>(sprite.width)) / 2;
+        int const y0 = rect.y + (rect.height - static_cast<int>(sprite.height)) / 2;
+        Rect const clip = canvas.clip_rect();
+        for (int y = 0; y < sprite.height; ++y) {
+            for (int x = 0; x < sprite.width; ++x) {
+                uint32_t const pixel = sprite.pixels[y * sprite.width + x];
+                if ((pixel >> 24) == 0) continue;
+                int const px = x0 + x;
+                int const py = y0 + y;
+                if (px < clip.x || px >= clip.x + clip.width ||
+                    py < clip.y || py >= clip.y + clip.height) {
+                    continue;
+                }
+                canvas.pixel(px, py) = pixel & 0xFFFFFFu;
+            }
         }
     }
 

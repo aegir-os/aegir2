@@ -133,6 +133,15 @@ ICON_SIZE_LARGE = 32
 TOOLTIP_DELAY_MS = 500
 TEXT_LINE_HEIGHT_MULTIPLIER = 120
 
+# ---- sprites ----
+# The imported MUI artwork, by name; the path is relative to this theme's
+# resource directory (libs/hosted/aegir-trinket/resources/themes/xen). The
+# generator embeds only the sprites a recipe names.
+
+[sprites]
+ArrowUp = "Plain/11pt/ArrowUp.mf0.png"
+ArrowDown = "Plain/11pt/ArrowDown.mf0.png"
+
 # ---- buttons ----
 # The face changes with the state; a pressed or focused button is inset.
 
@@ -197,11 +206,7 @@ steps = [{ dither = ["$SELECTION_BG", "$SCROLLBAR_BG"] }, { bevel = "sunken" }]
 steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]
 
 [gadgets.scrollbar.decrement]
-steps = [{ fill = "$GADGET_FACE" }, { outline = "$GADGET_SHADOW" },
-         { bevel = "raised", inset = 1 },
-         { mark = "up", light = "$GADGET_HIGHLIGHT", dark = "$GADGET_SHADOW", size = [1, 4] }]
+steps = [{ sprite = "ArrowUp" }]
 
 [gadgets.scrollbar.increment]
-steps = [{ fill = "$GADGET_FACE" }, { outline = "$GADGET_SHADOW" },
-         { bevel = "raised", inset = 1 },
-         { mark = "down", light = "$GADGET_HIGHLIGHT", dark = "$GADGET_SHADOW", size = [1, 4] }]
+steps = [{ sprite = "ArrowDown" }]

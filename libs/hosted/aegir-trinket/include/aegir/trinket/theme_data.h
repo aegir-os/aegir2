@@ -25,9 +25,10 @@ namespace aegir::trinket {
  *   MARK    kind (0 up, 1 down, 2 left, 3 right), color (light), color2 (dark),
  *           and num/den, the mark's half-extent as a fraction of the smaller
  *           side of the rectangle
+ *   SPRITE  index into kSprites, blitted centred
  * Every step also carries `inset`, the number of pixels its rectangle is set in
  * from the gadget's. */
-enum class Prim : uint8_t { FILL, BEVEL, OUTLINE, DITHER, MARK };
+enum class Prim : uint8_t { FILL, BEVEL, OUTLINE, DITHER, MARK, SPRITE };
 
 struct Step {
     Prim op;
@@ -37,6 +38,15 @@ struct Step {
     uint8_t den = 1;
     uint32_t color = 0;
     uint32_t color2 = 0;
+    uint16_t sprite = 0;
+};
+
+/* A bitmap sprite: the theme's imported art (specs/trinket/theming.md). Pixels
+ * are 0xAARRGGBB, top-left first; alpha 0 is transparent. */
+struct Sprite {
+    uint16_t width;
+    uint16_t height;
+    const uint32_t* pixels;
 };
 
 struct Recipe {
@@ -48,6 +58,8 @@ struct Recipe {
 extern const uint32_t kPalette[];      // indexed by ColorRole
 extern const int kMetrics[];           // indexed by MetricRole, at 96 dpi
 extern const uint8_t kMetricFixed[];   // 1 when a metric is not scaled
+extern const Sprite kSprites[];        // the imported artwork, by index
+extern const unsigned kSpriteCount;
 extern const Recipe kRecipeButton[5];   // normal, hovered, pressed, focused, disabled
 extern const Recipe kRecipeTextbox[2];  // normal, focused
 extern const Recipe kRecipeTextboxReadonly;

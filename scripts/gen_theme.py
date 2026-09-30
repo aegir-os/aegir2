@@ -4,11 +4,13 @@
     python3 scripts/gen_theme.py <output.cc>
 
 The theme file is the source of the look (specs/trinket/theming.md): a palette
-(a colour per ColorRole), metrics (a size per MetricRole), and a recipe per
-gadget. This turns them into the tables theme_data.h declares -- the palette and
-metrics in the enum's own order, the recipes as primitive steps -- so the engine
-interprets data instead of compiling the look in. A step colour may be a literal
-`#rrggbb` or `$NAME`, a palette entry.
+(a colour per ColorRole), metrics (a size per MetricRole), a set of sprites (the
+imported MUI artwork), and a recipe per gadget. This turns them into the tables
+theme_data.h declares -- the palette and metrics in the enum's own order, the
+recipes as primitive steps, and the sprites as 0xAARRGGBB pixel arrays -- so the
+engine interprets data instead of compiling the look in. A step colour may be a
+literal `#rrggbb` or `$NAME`, a palette entry; a sprite step names an entry of
+[sprites].
 
 Run by the build and by scripts/check_theme.py; not part of any target build.
 """
@@ -24,6 +26,7 @@ import pins
 
 TRINKET = pins.ROOT / "libs" / "hosted" / "aegir-trinket"
 THEME = TRINKET / "resources" / "themes" / "xen.toml"
+RESOURCES = TRINKET / "resources" / "themes" / "xen"
 HEADER = TRINKET / "include" / "aegir" / "trinket" / "theme.h"
 
 BEVEL = {"raised": 0, "sunken": 1}
@@ -56,48 +59,89 @@ def resolve(value: str, palette: dict) -> int:
     return rgb(value)
 
 
-def parse_step(step: dict, palette: dict) -> tuple:
+def collect_sprites(gadgets: dict) -> list[str]:
+    """Every sprite the recipes name, in first-seen order."""
+    names: list[str] = []
+    for group in gadgets.values():
+        for recipe in group.values():
+            for step in recipe["steps"]:
+                name = step.get("sprite")
+                if name is not None and name not in names:
+                    names.append(name)
+    return names
+
+
+def parse_step(step: dict, palette: dict, sprites: dict[str, int]) -> tuple:
     inset = int(step.get("inset", 0))
     if "fill" in step:
-        return ("FILL", 0, inset, 0, 1, resolve(step["fill"], palette), 0)
+        return ("FILL", 0, inset, 0, 1, resolve(step["fill"], palette), 0, 0)
     if "bevel" in step:
-        return ("BEVEL", BEVEL[step["bevel"]], inset, 0, 1, 0, 0)
+        return ("BEVEL", BEVEL[step["bevel"]], inset, 0, 1, 0, 0, 0)
     if "outline" in step:
-        return ("OUTLINE", 0, inset, 0, 1, resolve(step["outline"], palette), 0)
+        return ("OUTLINE", 0, inset, 0, 1, resolve(step["outline"], palette), 0, 0)
     if "dither" in step:
         fg, bg = step["dither"]
-        return ("DITHER", 0, inset, 0, 1, resolve(fg, palette), resolve(bg, palette))
+        return ("DITHER", 0, inset, 0, 1, resolve(fg, palette), resolve(bg, palette), 0)
     if "mark" in step:
         num, den = step.get("size", [1, 4])
         return ("MARK", MARK[step["mark"]], inset, num, den,
                 resolve(step.get("light", "#ffffff"), palette),
-                resolve(step.get("dark", "#000000"), palette))
+                resolve(step.get("dark", "#000000"), palette), 0)
+    if "sprite" in step:
+        name = step["sprite"]
+        if name not in sprites:
+            raise SystemExit(f"no sprite {name!r} in [sprites]")
+        return ("SPRITE", 0, inset, 0, 1, 0, 0, sprites[name])
     raise SystemExit(f"unknown step: {step}")
 
 
-def emit_recipe(name: str, recipe: dict, palette: dict) -> tuple[str, str]:
+def emit_recipe(name: str, recipe: dict, palette: dict, sprites: dict[str, int]) -> tuple[str, str]:
     steps = recipe["steps"]
     lines = [f"static const Step {name}[] = {{"]
     for step in steps:
-        op, kind, inset, num, den, color, color2 = parse_step(step, palette)
+        op, kind, inset, num, den, color, color2, sprite = parse_step(step, palette, sprites)
         lines.append(f"    {{Prim::{op}, {kind}, {inset}, {num}, {den}, "
-                     f"0x{color:06x}, 0x{color2:06x}}},")
+                     f"0x{color:06x}, 0x{color2:06x}, {sprite}}},")
     lines.append("};")
     return "\n".join(lines), f"{{{name}, {len(steps)}}}"
 
 
-def emit_array(var: str, recipes: list[dict], palette: dict) -> str:
+def emit_array(var, recipes, palette, sprites) -> str:
     blocks, items = [], []
     for i, recipe in enumerate(recipes):
-        block, item = emit_recipe(f"{var}_{i}", recipe, palette)
+        block, item = emit_recipe(f"{var}_{i}", recipe, palette, sprites)
         blocks.append(block)
         items.append(f"    {item},")
     return "\n".join(blocks) + f"\nconst Recipe {var}[] = {{\n" + "\n".join(items) + "\n};"
 
 
-def emit_single(var: str, recipe: dict, palette: dict) -> str:
-    block, item = emit_recipe(f"{var}_steps", recipe, palette)
+def emit_single(var, recipe, palette, sprites) -> str:
+    block, item = emit_recipe(f"{var}_steps", recipe, palette, sprites)
     return block + f"\nconst Recipe {var} = {item};"
+
+
+def emit_sprites(names: list[str], table: dict, index: dict[str, int]) -> list[str]:
+    import png
+
+    lines = []
+    dims = []
+    for i, name in enumerate(names):
+        path = RESOURCES / table[name]
+        if not path.exists():
+            raise SystemExit(f"sprite {name!r} is missing: {path}")
+        width, height, pixels = png.decode(path)
+        dims.append((width, height))
+        lines.append(f"static const uint32_t sprite_{i}[] = {{")
+        for r, g, b, a in pixels:
+            lines.append(f"    0x{a:02x}{r:02x}{g:02x}{b:02x},")
+        lines.append("};")
+    lines.append("")
+    lines.append("const Sprite kSprites[] = {")
+    for i, (width, height) in enumerate(dims):
+        lines.append(f"    {{{width}, {height}, sprite_{i}}},  // {names[i]}")
+    lines.append("};")
+    lines.append(f"const unsigned kSpriteCount = {len(names)};")
+    return lines
 
 
 def main() -> int:
@@ -113,6 +157,10 @@ def main() -> int:
     fixed = set(metrics.get("fixed", []))
     g = theme["gadgets"]
 
+    sprite_names = collect_sprites(g)
+    sprite_table = theme.get("sprites", {})
+    sprite_index = {name: i for i, name in enumerate(sprite_names)}
+
     parts = [
         "/* Generated by scripts/gen_theme.py from",
         " * libs/hosted/aegir-trinket/resources/themes/xen.toml. Do not edit; the",
@@ -122,10 +170,10 @@ def main() -> int:
         "",
         "namespace aegir::trinket {",
         "",
-        "const uint32_t kPalette[] = {",
     ]
-    color_roles = enum_names(header, "ColorRole")
-    for role in color_roles:
+
+    parts.append("const uint32_t kPalette[] = {")
+    for role in enum_names(header, "ColorRole"):
         if role not in palette:
             raise SystemExit(f"the palette has no colour for {role}")
         parts.append(f"    0x{rgb(palette[role]):06x},  // {role}")
@@ -146,29 +194,32 @@ def main() -> int:
     parts.append("};")
     parts.append("")
 
+    parts += emit_sprites(sprite_names, sprite_table, sprite_index)
+    parts.append("")
+
     parts += [
         emit_array("kRecipeButton",
                    [g["button"][n] for n in ("normal", "hovered", "pressed",
-                                             "focused", "disabled")], palette),
+                                             "focused", "disabled")], palette, sprite_index),
         "",
         emit_array("kRecipeTextbox", [g["textbox"]["normal"], g["textbox"]["focused"]],
-                   palette),
+                   palette, sprite_index),
         "",
-        emit_single("kRecipeTextboxReadonly", g["textbox"]["readonly"], palette),
+        emit_single("kRecipeTextboxReadonly", g["textbox"]["readonly"], palette, sprite_index),
         "",
         emit_array("kRecipePanel",
                    [g["panel"][n] for n in ("flat", "raised", "sunken", "frame",
-                                            "group_box")], palette),
+                                            "group_box")], palette, sprite_index),
         "",
-        emit_single("kRecipeScrollbarFrame", g["scrollbar"]["frame"], palette),
+        emit_single("kRecipeScrollbarFrame", g["scrollbar"]["frame"], palette, sprite_index),
         "",
-        emit_single("kRecipeScrollbarTrough", g["scrollbar"]["trough"], palette),
+        emit_single("kRecipeScrollbarTrough", g["scrollbar"]["trough"], palette, sprite_index),
         "",
-        emit_single("kRecipeScrollbarThumb", g["scrollbar"]["thumb"], palette),
+        emit_single("kRecipeScrollbarThumb", g["scrollbar"]["thumb"], palette, sprite_index),
         "",
-        emit_single("kRecipeScrollbarDecrement", g["scrollbar"]["decrement"], palette),
+        emit_single("kRecipeScrollbarDecrement", g["scrollbar"]["decrement"], palette, sprite_index),
         "",
-        emit_single("kRecipeScrollbarIncrement", g["scrollbar"]["increment"], palette),
+        emit_single("kRecipeScrollbarIncrement", g["scrollbar"]["increment"], palette, sprite_index),
         "",
         "}  // namespace aegir::trinket",
         "",

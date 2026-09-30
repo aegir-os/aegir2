@@ -61,8 +61,13 @@ against.
   CMake build and the host check), and `src/data_theme.cc` is the one engine
   that reads them: `color`, `metric` and every `draw_*` are interpreted, so no
   C++ holds a look and there is no XEN-specific C++ file.
-- **Phase C**: sprite drawing (blit / nine-slice) so the imported art is what the
-  toolkit draws for the buttons and marks, and a converter from `XEN.prefs`.
+- **Phase C (landed).** A recipe step may be `{ sprite = "name" }`: the named
+  MUI artwork is embedded by the generator (its pixels as 0xAARRGGBB) and
+  blitted centred, transparent pixels skipped. The scrollbar's arrow buttons are
+  the MUI `ArrowUp`/`ArrowDown` sprites now, so the art is what the toolkit
+  draws rather than a redrawing of it. Still to come: nine-slice scaling, and a
+  converter that reads `XEN.prefs` to name the sprites per gadget instead of the
+  theme file listing them.
 - The scrollbar is re-done through the mechanism once C lands; B is what lets it
   be a value in the file rather than a shape in code.
 

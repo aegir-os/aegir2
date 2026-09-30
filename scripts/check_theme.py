@@ -82,7 +82,11 @@ def main() -> int:
             sys.stderr.write(ran.stderr)
             return 1
 
-    from PIL import Image
+    try:
+        from PIL import Image
+    except ImportError:
+        pins.report(True, "the theme render (no Pillow: no preview written)")
+        return 0
 
     scale = 2
     render = Image.open(ppm).convert("RGB")
