@@ -31,8 +31,10 @@ and nothing showed where in the scrollback it sat.
   Up/Down and Home/End move it. All of them funnel through one `scroll_to`,
   which clamps and reports.
 
-- **The look is the theme's.** `draw_scrollbar` draws two raised arrow buttons,
-  a sunken trough, and a raised thumb -- all from the bevel primitive
+- **The look is the theme's.** `draw_scrollbar` draws two raised arrow buttons
+  at the ends, the trough between them as the MUI XEN **blue/grey dither** (the
+  same checker the selection uses) under a black outline, and a **white raised
+  thumb** over it -- the bevel primitive and the dither, both
   (`specs/trinket/theme-xen.md`). A new `SCROLLBAR_ARROW_SIZE` metric is the
   button; the widget and the theme agree on it so a click and a drawn arrow line
   up.

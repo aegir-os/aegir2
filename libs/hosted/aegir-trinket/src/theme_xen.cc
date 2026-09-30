@@ -104,8 +104,8 @@ public:
 
             // Scrollbar
             case CR::SCROLLBAR_BG: return Color(0x00AAAAAA);
-            case CR::SCROLLBAR_HANDLE: return Color(0x00BFBFBF);
-            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00C9C9C9);
+            case CR::SCROLLBAR_HANDLE: return Color(0x00FFFFFF);
+            case CR::SCROLLBAR_HANDLE_HOVER: return Color(0x00EEEEEE);
 
             // Link
             case CR::LINK: return Color(0x000000EE);
@@ -346,11 +346,13 @@ public:
                          bool hovered) override {
         static_cast<void>(hovered);
         int const arrow = metric(MetricRole::SCROLLBAR_ARROW_SIZE);
-        Color const face = color(ColorRole::SCROLLBAR_HANDLE);
+        Color const button = color(ColorRole::GADGET_FACE);
         Color const trough = color(ColorRole::SCROLLBAR_BG);
+        Color const dither = color(ColorRole::SELECTION_BG);
+        Color const thumb = color(ColorRole::SCROLLBAR_HANDLE);
         Color const ink = color(ColorRole::GADGET_SHADOW);
 
-        /* Two arrow buttons at the ends and a sunken trough between them. */
+        /* The two arrow buttons at the ends. */
         Rect const first = vertical
                                ? Rect{rect.x, rect.y, rect.width, arrow}
                                : Rect{rect.x, rect.y, arrow, rect.height};
@@ -360,25 +362,28 @@ public:
         Rect const trough_rect =
             vertical ? Rect{rect.x, rect.y + arrow, rect.width, rect.height - 2 * arrow}
                      : Rect{rect.x + arrow, rect.y, rect.width - 2 * arrow, rect.height};
+
+        /* The trough is the MUI XEN dither -- the same blue/grey checker the
+         * selection uses -- under a black outline, between the two arrows. */
         if (trough_rect.width > 0 && trough_rect.height > 0) {
-            canvas.fill_rect(trough_rect, trough);
-            draw_bevel(canvas, trough_rect, Bevel::SUNKEN);
+            draw_dither(canvas, trough_rect, dither, trough);
+            canvas.draw_rect(trough_rect, ink);
         }
 
-        /* The thumb, raised over the trough. */
-        Rect const thumb =
+        /* The thumb is a raised white block over the trough. */
+        Rect const thumb_rect =
             vertical ? Rect{rect.x, rect.y + handle_pos, rect.width, handle_size}
                      : Rect{rect.x + handle_pos, rect.y, handle_size, rect.height};
-        if (thumb.width > 0 && thumb.height > 0) {
-            canvas.fill_rect(thumb, face);
-            draw_bevel(canvas, thumb, Bevel::RAISED);
+        if (thumb_rect.width > 0 && thumb_rect.height > 0) {
+            canvas.fill_rect(thumb_rect, thumb);
+            draw_bevel(canvas, thumb_rect, Bevel::RAISED);
         }
 
         Rect const buttons[2] = {first, last};
-        for (Rect const& button : buttons) {
-            if (button.width <= 0 || button.height <= 0) continue;
-            canvas.fill_rect(button, face);
-            draw_bevel(canvas, button, Bevel::RAISED);
+        for (Rect const& button_rect : buttons) {
+            if (button_rect.width <= 0 || button_rect.height <= 0) continue;
+            canvas.fill_rect(button_rect, button);
+            draw_bevel(canvas, button_rect, Bevel::RAISED);
         }
         draw_arrow(canvas, first, vertical, false, ink);
         draw_arrow(canvas, last, vertical, true, ink);

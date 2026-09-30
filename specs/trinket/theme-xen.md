@@ -75,8 +75,9 @@ draws through `draw_panel`, so a group box and a panel are the same pixels.
 
 ## What this is not
 
-- **The scrollbar and slider looks.** `draw_scrollbar` still draws the old
-  rounded handle; the widgets arrive in the next batch and take the bevel then.
+- **The slider look.** The scrollbar has landed (`specs/trinket/scrollbar.md`):
+  a dithered trough, a white raised thumb, and the beveled arrow buttons. The
+  slider arrives in the next batch.
 - **The window manager's look.** Chrome, per `specs/amiga-fidelity.md`.
 - **Hover beyond a lightening.** A hovered button's face is a shade lighter; the
   screenshots show no hover state.
