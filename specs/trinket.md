@@ -61,6 +61,17 @@ consumer (the bureau, menus, dialogs) has a working base.
   let the layout's own damage out as a second repaint, sent to the console
   before it knew the new size and composited against the old one: a drag-resized
   window flickered and repainted the frame twice per motion event.
+
+  That flag is the geometry half. The general rule, which now holds across the
+  board, is that **a repaint asked for from inside a paint is deferred, not
+  run**. `repaint()` marks `painting_` around `paint()`, and a damage that
+  arrives while it is set -- a layout moving a widget without any geometry
+  change involved -- only raises `repaint_pending_`. When the paint returns, one
+  more pass picks up the unioned damage and pushes it, sequentially rather than
+  nested, and the layout being idempotent means the second pass raises nothing
+  new and the loop ends. Measured by forcing a layout-raised damage from inside
+  a paint: `nested 0, deferred 1` with the guard, `nested 1, deferred 0`
+  without it.
 - **The look is XEN/Workbench, in the theme.** `theme_xen.cc` already carries
   the palette and metrics; this arc makes them visible. The greeter's
   acceptance pixels change from its hand-picked greys to the theme's roles.

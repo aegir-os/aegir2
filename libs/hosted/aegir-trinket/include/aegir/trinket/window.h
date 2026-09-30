@@ -145,6 +145,15 @@ private:
     // the whole frame; one event's damages are unioned before the repaint.
     Rect damage_rect_;
 
+    // A repaint asked for while the frame is being painted. paint() lays the
+    // content out, and a layout that moves a widget raises damage from inside
+    // it; running that repaint then would recurse and hand the console a region
+    // this very paint is about to cover. It is deferred instead: the pass after
+    // this one sees damage_rect_ whole again. The layout is idempotent, so one
+    // extra pass settles it.
+    bool painting_ = false;
+    bool repaint_pending_ = false;
+
     // The widget within the content tree that keys go to.
     Widget* focused_ = nullptr;
 
@@ -181,7 +190,8 @@ private:
     // Paint the frame into the backing and answer the region painted; repaint
     // also pushes that region to the console. A resize paints first and lets
     // the console's own resize composite it, so the backing is never read at
-    // a stride it was not drawn at.
+    // a stride it was not drawn at. A repaint asked for from inside a paint --
+    // a layout moving a widget -- is deferred to a pass after it.
     Rect paint();
     // The gadget at `p` (frame-local): 0 none, 1 close, 2 zoom, 3 depth.
     int gadget_at(Point p) const;

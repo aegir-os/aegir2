@@ -733,13 +733,31 @@ Rect Window::paint() {
 }
 
 void Window::repaint() {
-    Rect const damage = paint();
-    if (damage.empty()) return;
-    (void)aegir::console::damage(app_.gui_port(), console_window_id_,
-                                 static_cast<uint64_t>(damage.x),
-                                 static_cast<uint64_t>(damage.y),
-                                 static_cast<uint64_t>(damage.width),
-                                 static_cast<uint64_t>(damage.height));
+    /* A repaint asked for while the frame is being painted is deferred, not
+     * run: paint() lays the content out, a layout that moves a widget raises
+     * damage, and repainting from inside would recurse and hand the console a
+     * region the current paint is about to cover. The damage is already in
+     * damage_rect_, so one pass after this one picks it up. The loop runs
+     * until a paint raises nothing new -- the layout is idempotent, so that is
+     * one extra pass, never a spin. */
+    if (painting_) {
+        repaint_pending_ = true;
+        return;
+    }
+    for (;;) {
+        painting_ = true;
+        Rect const damage = paint();
+        painting_ = false;
+        if (!damage.empty()) {
+            (void)aegir::console::damage(app_.gui_port(), console_window_id_,
+                                         static_cast<uint64_t>(damage.x),
+                                         static_cast<uint64_t>(damage.y),
+                                         static_cast<uint64_t>(damage.width),
+                                         static_cast<uint64_t>(damage.height));
+        }
+        if (!repaint_pending_) break;
+        repaint_pending_ = false;
+    }
 }
 
 void Window::create_bureau_window() {
