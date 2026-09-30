@@ -254,40 +254,6 @@ private:
         if (short_side <= 0 || den <= 0) return;
         int const half = std::max(1, short_side * num / den);
         Point const c = rect.center();
-        if (kind == 4) {
-            /* A circle outline, centred in the rectangle: the top and left of
-             * the ring take the dark colour and the bottom and right the light,
-             * so it reads as a recessed punch hole (specs/trinket/scrollbar.md). */
-            Rect const clip = canvas.clip_rect();
-            auto put = [&](int px, int py) {
-                if (px < clip.x || px >= clip.x + clip.width ||
-                    py < clip.y || py >= clip.y + clip.height) {
-                    return;
-                }
-                Color const colour = (px < c.x || py < c.y) ? dark : light;
-                canvas.pixel(px, py) = colour.to_uint32();
-            };
-            int x = half;
-            int y = 0;
-            int err = 0;
-            while (x >= y) {
-                put(c.x + x, c.y + y);
-                put(c.x + y, c.y + x);
-                put(c.x - y, c.y + x);
-                put(c.x - x, c.y + y);
-                put(c.x - x, c.y - y);
-                put(c.x - y, c.y - x);
-                put(c.x + y, c.y - x);
-                put(c.x + x, c.y - y);
-                y += 1;
-                err += 1 + 2 * y;
-                if (2 * (err - x) + 1 > 0) {
-                    x -= 1;
-                    err += 1 - 2 * x;
-                }
-            }
-            return;
-        }
         bool const vertical = kind <= 1;
         bool const forward = kind == 1 || kind == 3;  // down or right
         if (vertical) {

@@ -34,9 +34,9 @@ and nothing showed where in the scrollback it sat.
 - **The look is the theme's, and it is the XEN one.** The strip's near end is a
   single **trough container** -- a raised frame around a **sunken well** holding
   the MUI XEN **blue/grey dither** (the same checker the selection uses). Over
-  the dither slides a **raised thumb** (`#bfbfbf`) with a **recessed circle** as
-  its mark -- the ring drawn dark on the top and left and light on the bottom
-  and right, centred in the thumb. The **two arrow
+  the dither slides a **raised thumb** (`#bfbfbf`), plain: a circle mark was
+  tried and dropped, because a small circle cannot be drawn legibly without
+  antialiasing, which the toolkit has none of. The **two arrow
   buttons are separate cells below**, not inside the trough's
   frame -- decrement above increment -- and they are the **MUI artwork**
   (`ArrowUp`/`ArrowDown`), blitted into the cell and scaled to it, so the hollow

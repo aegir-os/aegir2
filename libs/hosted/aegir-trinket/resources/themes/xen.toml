@@ -204,8 +204,7 @@ steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
          { bevel = "sunken", inset = 4 }]
 
 [gadgets.scrollbar.thumb]
-steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" },
-         { mark = "circle", light = "$GADGET_HIGHLIGHT", dark = "$GADGET_SHADOW", size = [1, 4] }]
+steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]
 
 [gadgets.scrollbar.decrement]
 steps = [{ sprite = "ArrowUp" }]

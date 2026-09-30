@@ -30,7 +30,7 @@ RESOURCES = TRINKET / "resources" / "themes" / "xen"
 HEADER = TRINKET / "include" / "aegir" / "trinket" / "theme.h"
 
 BEVEL = {"raised": 0, "sunken": 1}
-MARK = {"up": 0, "down": 1, "left": 2, "right": 3, "circle": 4}
+MARK = {"up": 0, "down": 1, "left": 2, "right": 3}
 
 
 def enum_names(header: str, name: str) -> list[str]:

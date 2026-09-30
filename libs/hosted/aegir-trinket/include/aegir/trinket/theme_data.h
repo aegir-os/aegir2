@@ -22,8 +22,7 @@ namespace aegir::trinket {
  *   BEVEL   kind (0 raised, 1 sunken)
  *   OUTLINE color
  *   DITHER  color (foreground), color2 (background)
- *   MARK    kind (0 up, 1 down, 2 left, 3 right, 4 circle), color (light),
- *           color2 (dark),
+ *   MARK    kind (0 up, 1 down, 2 left, 3 right), color (light), color2 (dark),
  *           and num/den, the mark's half-extent as a fraction of the smaller
  *           side of the rectangle
  *   SPRITE  index into kSprites, blitted centred
