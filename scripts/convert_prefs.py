@@ -5,19 +5,17 @@
 
 Reads the MUI package's `Presets/XEN.prefs` -- the preset the XEN screenshots
 were drawn with -- and writes the generated fragment the theme build consumes
-(default: libs/hosted/aegir-trinket/resources/themes/xen-preset.toml):
+(default: libs/hosted/aegir-trinket/resources/themes/xen-preset.toml): a
+`[sprites]` table naming every standard MUI image the preset assigns, by the
+`MUII_*` role its key stands for (scripts/prefs.py), and pointing at the imported
+PNG (scripts/import_theme_art.py). The theme file no longer lists its own
+sprites; this is where they come from.
 
-  - `[sprites]`: every standard MUI image the preset assigns, named by its
-    `MUII_*` role (the key's image item, via scripts/prefs.py) and pointed at the
-    imported PNG (scripts/import_theme_art.py). The theme file no longer lists
-    its own sprites; this is where they come from.
-
-  - `[preset.patterns]`, `[preset.colors]`, `[preset.fonts]`: the preset's other
-    values -- a background pattern (`2:m1`, `0:135`), a colour (six hex digits)
-    or a font (`Name/Size`) -- under the MUI preference-item id that names them.
-    The id is MUI's own (its preferences program's item order); the SDK header
-    names only the images, so the rest stay under their id for the theme to draw
-    on where it wants them.
+Only the images are taken. The preset's other values -- background patterns
+(`2:m1`, `0:135`), colours (six hex digits) and fonts (`Name/Size`) -- are keyed
+by MUI preference-item ids, and the SDK header names only the images, so there is
+no way to say what each one *is*. A number with no name is not a migration, so
+they are left behind: the theme's palette, patterns and fonts stay ours.
 
 The generated file is committed, like the converted PNGs: the MUI package itself
 never is. Run this again only when the preset changes.
@@ -28,7 +26,6 @@ Exit status: 0 success, 1 failure.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -38,48 +35,25 @@ import prefs
 # The XEN artwork lives under `Images/xen`; a value's `XEN/` prefix is that
 # drawer, and the rest is relative to it (scripts/import_theme_art.py).
 SKIN = "XEN"
-PPP = pins.ROOT / "libs" / "hosted" / "aegir-trinket" / "resources" / "themes"
-DEFAULT_OUTPUT = PPP / "xen-preset.toml"
+THEMES = pins.ROOT / "libs" / "hosted" / "aegir-trinket" / "resources" / "themes"
+DEFAULT_OUTPUT = THEMES / "xen-preset.toml"
 DEFAULT_PRESET = Path.home() / "src" / "MUI" / "MUI" / "Presets" / "XEN.prefs"
 
+# The bitmap suffixes the importer converts; `.image` values are Amiga
+# programmes (the scrollbar is one), not bitmaps, so they name no PNG.
 ART_SUFFIXES = (".mf0", ".mf1", ".mbr")
-PATTERN = re.compile(r"^\d+:(?:\d+|m\d+)$")
-COLOR = re.compile(r"^[0-9A-Fa-f]{6}$")
-FONT = re.compile(r"^[^/:]+/\d+$")
-
-# MUI's object/config ids (`MUIA_*`, `MUICFG_*` and the config-data items) share
-# the top bit set; they are not the numbered preference items and do not belong
-# in the preset's catalogue.
-CONFIG_KEY_BASE = 0x8000_0000
 
 
 def art_path(value: str) -> str | None:
     """The imported PNG a preset image value names, or None if it is not XEN art.
 
     A value is `<class>:<drawer>/<path>`; the drawer is the skin under Images/.
-    `.image` values are Amiga programmes (the scrollbar is one), not bitmaps, so
-    they are not imported and name no PNG.
     """
     text = value.split(":", 1)[1] if ":" in value else value
     drawer, _, rest = text.partition("/")
     if drawer.upper() != SKIN or not rest or not rest.lower().endswith(ART_SUFFIXES):
         return None
     return f"{rest}.png"
-
-
-def classify(key: int, value: bytes) -> tuple[str, str]:
-    """What a preset entry is: ('sprite'|'pattern'|'color'|'font'|'setting', text)."""
-    text = value.rstrip(b"\x00").decode("ascii", errors="replace")
-    name = prefs.image_name(key)
-    if name is not None:
-        return ("sprite", text) if art_path(text) is not None else ("pattern", text)
-    if PATTERN.match(text):
-        return ("pattern", text)
-    if COLOR.match(text):
-        return ("color", text)
-    if FONT.match(text):
-        return ("font", text)
-    return ("setting", text)
 
 
 def main(argv: list[str]) -> int:
@@ -94,27 +68,18 @@ def main(argv: list[str]) -> int:
         return 1
 
     sprites: list[tuple[str, str]] = []
-    catalogs: dict[str, list[tuple[int, str]]] = {"pattern": [], "color": [], "font": []}
-    skipped = 0
     for key, value in found:
-        if key >= CONFIG_KEY_BASE:
+        name = prefs.image_name(key)
+        if name is None:
             continue
-        kind, text = classify(key, value)
-        if kind == "sprite":
-            name = prefs.image_name(key)
-            assert name is not None  # classify only says sprite for an image item
-            path = art_path(text)
-            assert path is not None
+        path = art_path(value.rstrip(b"\x00").decode("ascii", errors="replace"))
+        if path is not None:
             sprites.append((name, path))
-        elif kind in catalogs:
-            catalogs[kind].append((key, text))
-        else:
-            skipped += 1
 
     lines = [
         "# Generated by scripts/convert_prefs.py from MUI's Presets/XEN.prefs.",
         "# Do not edit: run the converter again instead. The XEN preset is MUI's;",
-        "# this is what it assigns, so the look comes from the preset and not this",
+        "# this is what it assigns, so the art comes from the preset and not this",
         "# repository (specs/trinket/theming.md).",
         "",
         "# The standard MUI images the preset assigns, an `MUII_*` role to the",
@@ -123,22 +88,12 @@ def main(argv: list[str]) -> int:
     ]
     for name, path in sprites:
         lines.append(f'{name} = "{path}"')
-    for kind, heading in (
-        ("pattern", "Backgrounds: an MUI pattern (`2:m1`, `0:135`), by item id."),
-        ("color", "Colours: six hex digits, by item id."),
-        ("font", "Fonts: `Name/Size`, by item id -- defaults a user may override."),
-    ):
-        lines += ["", f"# {heading}", f"[preset.{kind}]"]
-        for key, text in catalogs[kind]:
-            lines.append(f"'{key:#06x}' = \"{text}\"")
     lines.append("")
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines))
     pins.report(True, f"wrote {output.relative_to(pins.ROOT)}")
-    print(f"    {len(sprites)} sprites, "
-          + ", ".join(f"{len(v)} {k}s" for k, v in catalogs.items())
-          + (f", {skipped} settings skipped" if skipped else ""))
+    print(f"    {len(sprites)} sprites")
     return 0
 
 

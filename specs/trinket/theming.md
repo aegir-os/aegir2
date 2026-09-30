@@ -77,13 +77,12 @@ against.
   the file; `scripts/convert_prefs.py` writes `resources/themes/xen-preset.toml`
   (committed, like the converted PNGs): a `[sprites]` table naming each image
   role MUI gives it (`ArrowUp`, `CheckMark`, `RadioButton`, the volume icons, ...)
-  and pointing at the imported PNG, plus a `preset` catalogue of the preset's
-  other values -- patterns (`2:m1`, `0:135`), colours (six hex digits) and fonts
-  (`Name/Size`) -- under their item ids, which the SDK header does not name. The
-  theme file adds or overrides a sprite if it wants; `gen_theme.py` otherwise
-  takes them from the preset. A pattern or colour can be drawn on where the theme
-  wants it, and the preset's fonts stand as the theme's defaults until a user
-  overrides them.
+  and pointing at the imported PNG. The theme file adds or overrides a sprite if
+  it wants; `gen_theme.py` otherwise takes them from the preset. Only the images
+  are taken: the preset's colours, patterns and fonts are keyed by MUI
+  preference-item ids the SDK header does not name (it names only the `MUII_*`
+  images), and a number with no name is not a migration -- so the theme's
+  palette, patterns and fonts stay ours.
 - The scrollbar is re-done through the mechanism once C lands; B is what lets it
   be a value in the file rather than a shape in code.
 
