@@ -354,10 +354,11 @@ public:
         Color const ink = color(ColorRole::GADGET_SHADOW);
 
         /* The scrollbar's own raised frame, around the whole strip: a black
-         * outline and a light top-left edge over the grey face. */
+         * outline, then the light top-left bevel *inside* it, over the grey
+         * face -- drawing the outline last would flatten it. */
         canvas.fill_rect(rect, frame_face);
-        draw_bevel(canvas, rect, Bevel::RAISED);
         canvas.draw_rect(rect, ink);
+        draw_bevel(canvas, rect.inflated(-1), Bevel::RAISED);
 
         /* The trough: the MUI XEN dither in a sunken well. */
         if (trough.width > 0 && trough.height > 0) {
@@ -376,8 +377,8 @@ public:
         for (Rect const& button : buttons) {
             if (button.width <= 0 || button.height <= 0) continue;
             canvas.fill_rect(button, face);
-            draw_bevel(canvas, button, Bevel::RAISED);
             canvas.draw_rect(button, ink);
+            draw_bevel(canvas, button.inflated(-1), Bevel::RAISED);
         }
         draw_arrow(canvas, decrement, vertical, false, ink);
         draw_arrow(canvas, increment, vertical, true, ink);
@@ -405,7 +406,7 @@ private:
      * (specs/trinket/scrollbar.md). */
     void draw_arrow(Canvas& canvas, const Rect& button, bool vertical,
                     bool forward, Color dark) {
-        int const size = std::min(button.width, button.height) * 2 / 5;
+        int const size = std::min(button.width, button.height) * 3 / 5;
         if (size < 1) return;
         Color const light = color(ColorRole::GADGET_HIGHLIGHT);
         Point const c = button.center();

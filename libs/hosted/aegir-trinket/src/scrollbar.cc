@@ -17,10 +17,9 @@
 namespace aegir::trinket {
 
 namespace {
-/* The bar's raised frame, and the well the trough and thumb are set in from it,
- * so the thumb is narrower than the bar (specs/trinket/scrollbar.md). */
-constexpr int kFrame = 2;
-constexpr int kWell = 2;
+/* The bar's raised frame: outline, highlight and face, three pixels of the
+ * XEN border (specs/trinket/scrollbar.md). */
+constexpr int kFrame = 3;
 }  // namespace
 
 Scrollbar::Scrollbar(Orientation orientation) : orientation_(orientation) {}
@@ -117,17 +116,16 @@ Scrollbar::Parts Scrollbar::parts() const {
             Rect{content.x, content.y + content.height - buttons, content.width, arrow};
         parts.increment =
             Rect{content.x, content.y + content.height - arrow, content.width, arrow};
-        parts.trough =
-            Rect{content.x + kWell, content.y + kWell, content.width - 2 * kWell,
-                 content.height - buttons - 2 * kWell};
+        /* The trough fills the frame's inner width, like the thumb and the
+         * buttons: the XEN scrollbar has no narrower well
+         * (specs/trinket/scrollbar.md). */
+        parts.trough = Rect{content.x, content.y, content.width, content.height - buttons};
     } else {
         parts.decrement =
             Rect{content.x + content.width - buttons, content.y, arrow, content.height};
         parts.increment =
             Rect{content.x + content.width - arrow, content.y, arrow, content.height};
-        parts.trough =
-            Rect{content.x + kWell, content.y + kWell, content.width - buttons - 2 * kWell,
-                 content.height - 2 * kWell};
+        parts.trough = Rect{content.x, content.y, content.width - buttons, content.height};
     }
     int const track = vertical ? parts.trough.height : parts.trough.width;
     Thumb const thumb = thumb_for(track, total_, page_, value_, min_handle());
@@ -141,7 +139,7 @@ Scrollbar::Parts Scrollbar::parts() const {
 
 Size Scrollbar::preferred_size() const {
     int const width = Application::instance()->theme().metric(MetricRole::SCROLLBAR_WIDTH);
-    int const along = 2 * kFrame + 2 * kWell + 2 * arrow() + min_handle();
+    int const along = 2 * kFrame + 2 * arrow() + min_handle();
     return orientation_ == Orientation::VERTICAL ? Size{width, along} : Size{along, width};
 }
 

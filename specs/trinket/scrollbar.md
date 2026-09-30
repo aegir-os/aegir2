@@ -43,12 +43,12 @@ and nothing showed where in the scrollback it sat.
   off the demo's XEN screenshots.
 - **The geometry is the widget's, the drawing the theme's.** `Scrollbar::parts()`
   returns the trough, the thumb and the two button rectangles: a two-pixel
-  raised frame around the whole strip; the buttons and the **wide** thumb fill
-  the frame's inner width; and the **trough is the narrow one**, a dither strip
-  set in two pixels more that the thumb slides along -- the proportions the
-  screenshots show. The pointer handlers hit-test the same rectangles the theme
-  draws, so a click cannot miss its button, and the theme never computes
-  geometry of its own.
+  raised frame around the whole strip, and everything inside it -- the trough,
+  the thumb, the buttons -- filling the frame's inner width. The dither trough
+  is not narrower than the thumb: the XEN scrollbar has one inner column, and
+  the thumb rides down it over the dither. The pointer handlers hit-test the
+  same rectangles the theme draws, so a click cannot miss its button, and the
+  theme never computes geometry of its own.
 
 - **The demo wires it to the terminal.** In the demo the scrollbar's value is
   the terminal buffer's first visible line and `page` its rows, and a scroll
