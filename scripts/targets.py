@@ -809,12 +809,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(
-                    ("gpu0", 1000, 600, 170, 170, 170),
-                    # The scrollbar beside the terminal (specs/trinket/scrollbar.md):
-                    # its top arrow's raised face, clear of the mark.
-                    ("gpu0", 1145, 455, 191, 191, 191),
-                ),
+                pixels=(("gpu0", 1000, 600, 170, 170, 170),),
                 # The demo's terminal grid has text on it: a grid that wrapped
                 # every character into one column, or drew nothing, has far less
                 # ink than this. The body sample is deep in the terminal, clear
@@ -825,14 +820,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     # a group whose terminal overflowed would push the label off
                     # and leave this blank (specs/trinket/layout.md).
                     ("gpu0", 902, 654, 240, 20, 20),
-                    # The scrollbar's down arrow draws its black mark.
-                    ("gpu0", 1145, 640, 11, 11, 8),
+                    # The scrollbar's two arrow buttons stack at its foot; each
+                    # draws a hollow mark, whose dark trailing edges are the ink
+                    # (specs/trinket/scrollbar.md).
+                    ("gpu0", 1144, 625, 12, 23, 8),
                 ),
                 events=(
-                    # The scrollbar's top arrow, inside the demo window: a click
-                    # scrolls the terminal up a line (specs/trinket/scrollbar.md).
+                    # The scrollbar's decrement (up) button, at its foot inside
+                    # the demo window: a click scrolls the terminal up a line
+                    # (specs/trinket/scrollbar.md).
                     {"type": "abs", "data": {"axis": "x", "value": 29437}},
-                    {"type": "abs", "data": {"axis": "y", "value": 18840}},
+                    {"type": "abs", "data": {"axis": "y", "value": 25722}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                     # Then the screen bar's first title: the demo's menu.

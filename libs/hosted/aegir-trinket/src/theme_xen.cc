@@ -346,31 +346,25 @@ public:
                          bool hovered) override {
         static_cast<void>(hovered);
         int const arrow = metric(MetricRole::SCROLLBAR_ARROW_SIZE);
-        Color const button = color(ColorRole::GADGET_FACE);
-        Color const trough = color(ColorRole::SCROLLBAR_BG);
+        int const buttons = 2 * arrow;
+        Color const face = color(ColorRole::GADGET_FACE);
         Color const dither = color(ColorRole::SELECTION_BG);
+        Color const trough = color(ColorRole::SCROLLBAR_BG);
         Color const thumb = color(ColorRole::SCROLLBAR_HANDLE);
         Color const ink = color(ColorRole::GADGET_SHADOW);
 
-        /* The two arrow buttons at the ends. */
-        Rect const first = vertical
-                               ? Rect{rect.x, rect.y, rect.width, arrow}
-                               : Rect{rect.x, rect.y, arrow, rect.height};
-        Rect const last =
-            vertical ? Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow}
-                     : Rect{rect.x + rect.width - arrow, rect.y, arrow, rect.height};
+        /* The trough is the strip above the buttons: the MUI XEN blue/grey
+         * dither under a black outline. */
         Rect const trough_rect =
-            vertical ? Rect{rect.x, rect.y + arrow, rect.width, rect.height - 2 * arrow}
-                     : Rect{rect.x + arrow, rect.y, rect.width - 2 * arrow, rect.height};
-
-        /* The trough is the MUI XEN dither -- the same blue/grey checker the
-         * selection uses -- under a black outline, between the two arrows. */
+            vertical ? Rect{rect.x, rect.y, rect.width, rect.height - buttons}
+                     : Rect{rect.x, rect.y, rect.width - buttons, rect.height};
         if (trough_rect.width > 0 && trough_rect.height > 0) {
             draw_dither(canvas, trough_rect, dither, trough);
             canvas.draw_rect(trough_rect, ink);
         }
 
-        /* The thumb is a raised white block over the trough. */
+        /* The thumb is a raised white block over the trough; handle_pos is from
+         * the trough's start. */
         Rect const thumb_rect =
             vertical ? Rect{rect.x, rect.y + handle_pos, rect.width, handle_size}
                      : Rect{rect.x + handle_pos, rect.y, handle_size, rect.height};
@@ -379,14 +373,23 @@ public:
             draw_bevel(canvas, thumb_rect, Bevel::RAISED);
         }
 
-        Rect const buttons[2] = {first, last};
-        for (Rect const& button_rect : buttons) {
-            if (button_rect.width <= 0 || button_rect.height <= 0) continue;
-            canvas.fill_rect(button_rect, button);
-            draw_bevel(canvas, button_rect, Bevel::RAISED);
+        /* The two arrow buttons, stacked at the far end: decrement above
+         * increment, the XEN arrangement. */
+        Rect const decrement =
+            vertical ? Rect{rect.x, rect.y + rect.height - buttons, rect.width, arrow}
+                     : Rect{rect.x + rect.width - buttons, rect.y, arrow, rect.height};
+        Rect const increment =
+            vertical ? Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow}
+                     : Rect{rect.x + rect.width - arrow, rect.y, arrow, rect.height};
+        Rect const stack[2] = {decrement, increment};
+        for (Rect const& button : stack) {
+            if (button.width <= 0 || button.height <= 0) continue;
+            canvas.fill_rect(button, face);
+            draw_bevel(canvas, button, Bevel::RAISED);
+            canvas.draw_rect(button, ink);
         }
-        draw_arrow(canvas, first, vertical, false, ink);
-        draw_arrow(canvas, last, vertical, true, ink);
+        draw_arrow(canvas, decrement, vertical, false, ink);
+        draw_arrow(canvas, increment, vertical, true, ink);
     }
 
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
@@ -406,22 +409,29 @@ public:
     }
 
 private:
-    /* A small solid triangle inside an arrow button, the apex toward the way
-     * the scroll moves (specs/trinket/scrollbar.md). */
+    /* A hollow 3-D triangle: the leading edge light and the trailing edge dark,
+     * so it reads as the XEN arrow rather than a solid mark
+     * (specs/trinket/scrollbar.md). */
     void draw_arrow(Canvas& canvas, const Rect& button, bool vertical,
-                    bool forward, Color ink) {
+                    bool forward, Color dark) {
         int const size = std::min(button.width, button.height) * 2 / 5;
         if (size < 1) return;
+        Color const light = color(ColorRole::GADGET_HIGHLIGHT);
         Point const c = button.center();
-        for (int i = 0; i < size; ++i) {
-            int const half = i;
-            if (vertical) {
-                int const y = forward ? c.y + size / 2 - i : c.y - size / 2 + i;
-                canvas.draw_hline(c.x - half, c.x + half, y, ink);
-            } else {
-                int const x = forward ? c.x + size / 2 - i : c.x - size / 2 + i;
-                canvas.draw_vline(c.y - half, c.y + half, x, ink);
-            }
+        if (vertical) {
+            int const base = forward ? c.y - size / 2 : c.y + size / 2;
+            int const apex = forward ? c.y + size / 2 : c.y - size / 2;
+            canvas.draw_line({c.x - size, base}, {c.x, apex}, light);
+            canvas.draw_line({c.x, apex}, {c.x + size, base}, dark);
+            canvas.draw_hline(c.x - size, c.x, base, light);
+            canvas.draw_hline(c.x, c.x + size, base, dark);
+        } else {
+            int const base = forward ? c.x - size / 2 : c.x + size / 2;
+            int const apex = forward ? c.x + size / 2 : c.x - size / 2;
+            canvas.draw_line({base, c.y - size}, {apex, c.y}, light);
+            canvas.draw_line({apex, c.y}, {base, c.y + size}, dark);
+            canvas.draw_vline(c.y - size, c.y, base, light);
+            canvas.draw_vline(c.y, c.y + size, base, dark);
         }
     }
 

@@ -129,7 +129,7 @@ void Scrollbar::on_paint(Canvas& canvas, const PaintEvent& event) {
     Theme& theme = Application::instance()->theme();
     bool const vertical = orientation_ == Orientation::VERTICAL;
     Thumb const thumb = thumb_for(track_length(), total_, page_, value_, min_handle());
-    theme.draw_scrollbar(canvas, rect_, vertical, arrow() + thumb.pos, thumb.size, hovered_);
+    theme.draw_scrollbar(canvas, rect_, vertical, thumb.pos, thumb.size, hovered_);
 }
 
 void Scrollbar::on_mouse_enter(const MouseEvent&) {
@@ -155,17 +155,21 @@ void Scrollbar::on_mouse_down(const MouseEvent& event) {
     if (local < 0 || local >= length) return;
 
     int const a = arrow();
-    if (local < a) {
-        scroll_to(value_ - 1);
-        return;
-    }
+    int const buttons = 2 * a;
+    /* The buttons are stacked at the far end: increment is the last one,
+     * decrement just above it (specs/trinket/scrollbar.md). */
     if (local >= length - a) {
         scroll_to(value_ + 1);
         return;
     }
+    if (local >= length - buttons) {
+        scroll_to(value_ - 1);
+        return;
+    }
 
+    /* The trough is the rest, from the near end. */
     int const track = track_length();
-    int const in_track = local - a;
+    int const in_track = local;
     Thumb const thumb = thumb_for(track, total_, page_, value_, min_handle());
     if (in_track >= thumb.pos && in_track < thumb.pos + thumb.size) {
         dragging_ = true;
@@ -183,7 +187,7 @@ void Scrollbar::on_mouse_move(const MouseEvent& event) {
     int const origin = vertical ? rect_.y : rect_.x;
     int const local = (vertical ? event.pos.y : event.pos.x) - origin;
     int const track = track_length();
-    int const pos = local - arrow() - grab_;
+    int const pos = local - grab_;
     scroll_to(value_for_pos(track, total_, page_, pos, min_handle()));
 }
 
