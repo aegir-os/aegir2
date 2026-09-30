@@ -200,8 +200,8 @@ steps = [{ fill = "$PANEL_BG" }, { bevel = "raised" }]
 [gadgets.scrollbar.trough]
 steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
          { bevel = "raised", inset = 1 },
-         { dither = ["$SELECTION_BG", "$SCROLLBAR_BG"], inset = 3 },
-         { bevel = "sunken", inset = 3 }]
+         { dither = ["$SELECTION_BG", "$SCROLLBAR_BG"], inset = 4 },
+         { bevel = "sunken", inset = 4 }]
 
 [gadgets.scrollbar.thumb]
 steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" },

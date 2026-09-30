@@ -40,7 +40,7 @@ struct Parts {
 
 Parts scrollbar_parts(Rect const& rect, int total, int page, int value, int arrow,
                       int min_handle) {
-    int const well = 3;  // the trough container's frame, matching the theme
+    int const well = 4;  // the trough container's frame, matching the theme
     int const buttons = 2 * arrow;
     Parts p;
     p.decrement = Rect{rect.x, rect.y + rect.height - buttons, rect.width, arrow};

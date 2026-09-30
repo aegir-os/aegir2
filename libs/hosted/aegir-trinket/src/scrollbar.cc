@@ -20,7 +20,7 @@ namespace {
 /* The trough container's frame, and the well the dither and thumb are set in
  * from it. The buttons below are separate cells, not inside this frame
  * (specs/trinket/scrollbar.md). */
-constexpr int kWell = 3;
+constexpr int kWell = 4;
 }  // namespace
 
 Scrollbar::Scrollbar(Orientation orientation) : orientation_(orientation) {}
