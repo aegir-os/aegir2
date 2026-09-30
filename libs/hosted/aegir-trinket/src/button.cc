@@ -43,38 +43,37 @@ void Button::on_paint(Canvas& canvas, const PaintEvent&) {
     Theme& theme = Application::instance()->theme();
     Rect r = rect_;
 
-    // Button background
-    Color bg = theme.color(ColorRole::BUTTON_BG);
-    if (pressed_) bg = theme.color(ColorRole::BUTTON_PRESSED);
-    else if (hovered_) bg = theme.color(ColorRole::BUTTON_HOVER);
-    if (!enabled_) bg = theme.color(ColorRole::DISABLED_BG);
-
-    canvas.fill_rounded_rect(r, theme.metric(MetricRole::BUTTON_RADIUS), bg);
-
-    // Border
-    Color border = focused_ ? theme.color(ColorRole::FOCUS_BORDER)
-                            : theme.color(ColorRole::BORDER);
     if (type_ == Type::CHECK || type_ == Type::RADIO) {
-        // Draw checkbox/radio indicator
-        int size = std::min(r.width, r.height) - 4;
-        int ix = r.x + 4;
-        int iy = r.y + (r.height - size) / 2;
-        Rect ir = {ix, iy, size, size};
-        canvas.draw_rounded_rect(ir, 2, border);
-        if (checked_) {
-            canvas.fill_rounded_rect(ir.inflated(-2), 1, theme.color(ColorRole::ACCENT));
+        /* The indicator only -- a checkmark's square well or a radio's round
+         * one, with its mark when checked (specs/trinket/theme-xen.md). */
+        int side = std::min(r.width, r.height) - 4;
+        if (side < 1) side = 1;
+        Rect const box{r.x + 2, r.y + (r.height - side) / 2, side, side};
+        Color const ink = enabled_ ? theme.color(ColorRole::TEXT)
+                                   : theme.color(ColorRole::DISABLED_TEXT);
+        if (type_ == Type::RADIO) {
+            canvas.fill_circle(box.center(), side / 2,
+                               theme.color(ColorRole::INPUT_BG));
+            canvas.draw_circle(box.center(), side / 2, ink);
+            if (checked_) {
+                canvas.fill_circle(box.center(), std::max(1, side / 4),
+                                   theme.color(ColorRole::ACCENT));
+            }
+        } else {
+            canvas.fill_rect(box, theme.color(ColorRole::INPUT_BG));
+            theme.draw_bevel(canvas, box, Theme::Bevel::SUNKEN);
+            if (checked_) {
+                canvas.draw_line({box.x + 3, box.y + side / 2},
+                                 {box.x + side / 2, box.y + side - 4}, ink);
+                canvas.draw_line({box.x + side / 2, box.y + side - 4},
+                                 {box.x + side - 3, box.y + 3}, ink);
+            }
         }
     } else {
-        canvas.draw_rounded_rect(r, theme.metric(MetricRole::BUTTON_RADIUS), border);
-        if (pressed_) {
-            canvas.draw_rounded_rect(r.inflated(-1), theme.metric(MetricRole::BUTTON_RADIUS) - 1,
-                                     theme.color(ColorRole::BUTTON_PRESSED));
-        }
-    }
-
-    // Focus ring
-    if (focused_) {
-        theme.draw_focus_ring(canvas, r);
+        /* The button's frame is the theme's (specs/trinket/theme-xen.md): a
+         * raised #bfbfbf face with a 1px bevel, not a rounded rect drawn
+         * here. */
+        theme.draw_button(canvas, r, hovered_, pressed_, focused_, checked_, enabled_);
     }
 
     // Text

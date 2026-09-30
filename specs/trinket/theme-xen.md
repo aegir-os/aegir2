@@ -38,6 +38,11 @@ means to wear (`specs/amiga-fidelity.md`) -- are a different look: the Workbench
   `GROUP_BOX` title is the theme's: the frame is drawn raised, and the title sits
   in a notch cut from its top edge. `Panel::on_paint` now delegates to it (a flat
   panel with its own background keeps that background).
+- **A widget carries no frame of its own.** `Button` and `TextBox` call
+  `draw_button` and `draw_textbox`; before this they still drew their own
+  rounded rects, which left the radius of the old look on a square bevel -- the
+  "folded-over" corner on the name field and on the buttons. The widget draws
+  its text, its mark and its caret; the frame is the theme's.
 
 - **Focus is the gadget's active state, not a ring.** There is no blue ring: a
   focused or pressed button is drawn inset (a sunken bevel) and a focused field

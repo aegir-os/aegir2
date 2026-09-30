@@ -71,13 +71,9 @@ void TextBox::on_paint(Canvas& canvas, const PaintEvent& event) {
     if (!font) return;
 
     Rect r = rect_;
-    Color bg = read_only_ ? theme.color(ColorRole::DISABLED_BG) : theme.color(ColorRole::INPUT_BG);
-    Color border = focused_ ? theme.color(ColorRole::INPUT_FOCUS_BORDER) : theme.color(ColorRole::INPUT_BORDER);
-    int bw = theme.metric(MetricRole::INPUT_BORDER_WIDTH);
-    int radius = 2;
-
-    canvas.fill_rounded_rect(r, radius, bg);
-    canvas.draw_rounded_rect(r, radius, border, bw);
+    /* The field's frame is the theme's (specs/trinket/theme-xen.md): a sunken
+     * beveled well, square, not a rounded rect drawn here. */
+    theme.draw_textbox(canvas, r, focused_, read_only_, password_mode_);
 
     // Text rendering
     int padding_h = theme.metric(MetricRole::INPUT_PADDING_H);
