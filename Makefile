@@ -36,7 +36,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas build run run-ui envelope test clean distclean
 
 all: help
 
@@ -99,6 +99,9 @@ check-regions: ## run the heap's free-region list against its host conformance c
 
 check-font-probe: ## run the font service's probe over the vendored faces (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_font_probe.py
+
+check-atlas: ## run the toolkit's glyph atlas against its host conformance cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_atlas.py
 
 build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only

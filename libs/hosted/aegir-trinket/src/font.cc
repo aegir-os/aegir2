@@ -298,8 +298,8 @@ bool BitmapFont::adopt_glyph(uint32_t codepoint, const Glyph& glyph, const uint8
     }
     atlas_.height = needed;
     for (int y = 0; y < glyph.height; ++y) {
-        std::memcpy(&atlas_.pixels[static_cast<size_t>(row) + static_cast<size_t>(y) *
-                                       atlas_.width],
+        std::memcpy(&atlas_.pixels[(static_cast<size_t>(row) + static_cast<size_t>(y)) *
+                                   atlas_.width],
                     bits + static_cast<size_t>(y) * glyph.width,
                     static_cast<size_t>(glyph.width));
     }

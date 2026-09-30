@@ -14,6 +14,7 @@
 #include <sel4/sel4.h>
 
 #include <cstring>
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -94,7 +95,13 @@ std::unique_ptr<ServerFont> ServerFont::open(aegir::ipc::Consumer service,
     font->ascent_ = static_cast<int>(metrics[1]);
     font->descent_ = static_cast<int>(metrics[2]);
     font->line_gap_ = static_cast<int>(metrics[3]);
-    font->height_ = static_cast<int>(metrics[4]);
+    /* The service's fourth word is the line height the face recommends, and for
+     * a face whose line gap is negative (Noto Sans') that is *shorter* than the
+     * glyphs it draws -- a line sized to it shaves their descenders. A line
+     * height is a floor for what the line must hold, so the greater of the two
+     * is what the toolkit lays out with (the same notion BitmapFont's BDF path
+     * uses, where there is no line gap to add). */
+    font->height_ = std::max(static_cast<int>(metrics[4]), font->ascent_ - font->descent_);
     return font;
 }
 

@@ -242,8 +242,11 @@ rebuild -- that is the property the phase exists for.
 Phase 2: the service's own cues are its scan count, its metrics check on Noto
 Sans 16 and the box of a rasterized glyph; the client's is the demo's
 `outline A <box> advance <n>`, which is a glyph crossing a client-owned transfer
-page and landing in the client's atlas -- the seam, end to end. A host
-conformance asserts the name probe over the real faces (`check-font-probe`).
-The look is unchanged by design: the outline face lands in a widget beside the
-grid, so the phase lands the mechanism without moving the samples the
-acceptance reads.
+page and landing in the client's atlas -- the seam, end to end. Host
+conformances assert the name probe over the real faces (`check-font-probe`) and
+the atlas's layout (`check-atlas`): where a served glyph lands is what the
+canvas reads back, and a copy that scans the wrong stride or keeps the wrong row
+draws a smudge on a screen no cue is asserting -- which is exactly what the
+first one did. The look is unchanged by design: the outline face lands in a
+widget beside the grid, so the phase lands the mechanism without moving the
+samples the acceptance reads.
