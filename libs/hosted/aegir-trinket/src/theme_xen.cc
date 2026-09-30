@@ -402,29 +402,30 @@ public:
 
 private:
     /* A hollow 3-D triangle: the leading (left) edge light and the other two
-     * edges dark, so it reads as the XEN arrow rather than a solid mark
+     * edges dark, inset from the button so it stays inside -- a half-extent of
+     * a quarter of the button leaves the margin the XEN art shows
      * (specs/trinket/scrollbar.md). */
     void draw_arrow(Canvas& canvas, const Rect& button, bool vertical,
                     bool forward, Color dark) {
-        int const size = std::min(button.width, button.height) * 3 / 5;
-        if (size < 1) return;
+        int const half = std::min(button.width, button.height) / 4;
+        if (half < 1) return;
         Color const light = color(ColorRole::GADGET_HIGHLIGHT);
         Point const c = button.center();
         if (vertical) {
-            int const base = forward ? c.y - size / 2 : c.y + size / 2;
-            int const apex = forward ? c.y + size / 2 : c.y - size / 2;
+            int const base = forward ? c.y - half : c.y + half;
+            int const apex = forward ? c.y + half : c.y - half;
             Point const apex_pt{c.x, apex};
-            Point const left{c.x - size, base};
-            Point const right{c.x + size, base};
+            Point const left{c.x - half, base};
+            Point const right{c.x + half, base};
             canvas.draw_line(left, apex_pt, light);
             canvas.draw_line(apex_pt, right, dark);
             canvas.draw_line(left, right, dark);
         } else {
-            int const base = forward ? c.x - size / 2 : c.x + size / 2;
-            int const apex = forward ? c.x + size / 2 : c.x - size / 2;
+            int const base = forward ? c.x - half : c.x + half;
+            int const apex = forward ? c.x + half : c.x - half;
             Point const apex_pt{apex, c.y};
-            Point const top{base, c.y - size};
-            Point const bottom{base, c.y + size};
+            Point const top{base, c.y - half};
+            Point const bottom{base, c.y + half};
             canvas.draw_line(top, apex_pt, light);
             canvas.draw_line(apex_pt, bottom, dark);
             canvas.draw_line(top, bottom, dark);
