@@ -2,7 +2,10 @@
 
 Status: decided (2026-09); the service, the runtime's source, the per-process
 spawner, the limits and `Run` are landed (phases 1-5), and the generic
-`aegir::launch` API (specs/launch.md Phase 2) is landed too.
+`aegir::launch` API (specs/launch.md Phase 2) is landed too. Phase 6 -- the
+region interface every service sees, below -- is decided and being built,
+because the raw sequence it replaces is hand-rolled in seven services and the
+failures land on applications that never touch it.
 Aegir's memory was, before this
 spec, a set of **static partitions**: director carves fixed untypeds for
 services, auth carves a fixed runtime for a terminal's spawn work, and the
@@ -156,6 +159,62 @@ its last owner's bytes. The split, the first fit and the neighbour merge are
 unchanged. `scripts/check_regions.py` asserts 297 cases, and the boot the fix
 was measured against is green (specs/fonts.md picks the font service back up).
 
+## What every service sees: a region, not a capability
+
+The memory service hands out **pristine untyped**, and that is the right unit
+for a *runtime*: a process's allocator retypes its whole heap and page tables
+from one untyped, so it wants the untyped. But a service that needs memory for
+a *purpose* -- a framebuffer, a filesystem's frame, a virtqueue, a child's
+runtime -- does not. It needs a run of frames it can map or hand on, and it
+should not have to retype them itself. Today every such service hand-rolls the
+same sequence
+
+    carve_untyped(bits) -> carve_page(untyped, bits) x N -> map -> revoke -> free
+
+and each copy must get the capability lifecycle right: a piece is handed back
+with `Revoke`, never `Delete` (a delete leaves its derived caps alive); the
+capability it was carved from is the allocator's, not the caller's; and the
+kernel's free index lives *in the capability*, so a copied capability and the
+original disagree about how much is left. Seven services carry that sequence
+(`auth`, `console`, `device-manager`, `director`, `memory`, `partmgr`, the
+spawn service), and the failure when one gets it wrong surfaces far away as
+"0 bytes available" -- the console's slice, a demo's window.
+
+The invariant all of that is trying to keep is one sentence:
+
+> **A piece the allocator lists or hands out is childless, so the kernel will
+> reset its free index on the next retype** (`kernel/src/object/untyped.c:182-
+> 189`: `ensureNoChildren` decides the reset).
+
+It is not in the capability, it is not checkable by a caller, and it is the one
+thing that must hold. So it is the allocator's job, not the caller's:
+
+- **The allocator makes every piece whole at every boundary it owns** -- before
+  a split, before an object retype, and before a hand-out -- by revoking the
+  piece's capability. A revoke deletes every capability derived from the piece,
+  so the piece is childless whatever a caller did; it costs no slot and no
+  retype, and it is a no-op when the piece is already whole. A caller's
+  revoke/delete discipline then cannot corrupt the pool. (The hand-out half is
+  landed: `carve_untyped` revokes before it gives the piece away.)
+- **A service names a region, not a capability.** `aegir-mem` grows a
+  `FrameRegion`: the caller asks for *N* frames of a given size and provides the
+  capability array (a capacity, so no table lives in the library), and the
+  region carves the untyped, retypes the frames, and on release deletes them and
+  gives the piece back -- whole, because the allocator revoked it. The service
+  never sees an untyped capability, and the sequence above lives in one place.
+
+This is `malloc`'s promise applied to a service: the caller names what it needs
+and the mechanism is somebody else's job. The runtime's `mmap`/`malloc` edge
+does not change; a service that needs a region stops hand-rolling one.
+
+### The conformance must model the hand-off
+
+The host conformance models **one CSpace and no IPC**, so it cannot see the bug
+this section is about: a piece whose capability was copied to another process,
+used there, and handed back. It gains a two-level model -- a service allocator
+whose source is another allocator, with capabilities *copied* between them --
+so a spent piece is reproduced in seconds, not a six-minute boot.
+
 ## What the spawner stops doing
 
 `SpawnKit` stops carving a per-command untyped from a per-command pool. For a
@@ -202,12 +261,20 @@ default, the machine).
   mechanism of `specs/launch.md`, whose Phase 2 -- `aegir::launch` over the
   runtime primitive, and the shell's command lines, `Run` and pipelines routed
   through it -- has landed.
+- **Phase 6 -- the region interface.** Decided, being built. `aegir-mem` gains
+  `FrameRegion`, and the allocator revokes every piece whole at the boundaries
+  it owns, so a service asks for a region rather than carving and retyping. The
+  seven services that hand-roll `carve_untyped`/`carve_page` move onto it, and
+  the host conformance grows the two-level hand-off model. The console's slice
+  is the first caller.
 
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
-- **A general frame broker.** What a process gets is untyped it retypes from;
-  a device's frames stay the device manager's (`specs/services.md`).
+- **A general frame broker.** The service still hands out pristine untyped; a
+  *service* that needs frames asks the `FrameRegion` library for them, which is
+  what keeps the retype sequence out of the service. A device's frames stay the
+  device manager's (`specs/services.md`).
 - **A complete policy engine.** One resource, two actions and three subjects
   are the first cut; per-service and per-session subjects, a growth a supervisor
   confirms (`confirm`), and `signal`/`throttle` are later (`specs/limits.md`).
