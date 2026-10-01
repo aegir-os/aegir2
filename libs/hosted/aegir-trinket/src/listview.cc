@@ -101,13 +101,29 @@ int ListView::row_at(Point p) const {
     return index < count() ? index : -1;
 }
 
+int ListView::height_for_rows(int rows) const {
+    /* The well is the list's own chrome: a host that adds a frame adds that on
+     * top, and a host that counts rows for one of these and forgets the well
+     * gets a list one row shorter than it asked for -- which is how the menu
+     * first came up showing two of its three entries. */
+    return 2 * kWell + std::max(0, rows) * row_height();
+}
+
 Size ListView::preferred_size() const {
     Theme& theme = Application::instance()->theme();
     int const rows = std::max(1, theme.metric(MetricRole::LIST_PREFERRED_ROWS));
-    return {theme.metric(MetricRole::LIST_MIN_WIDTH), 2 * kWell + rows * row_height()};
+    return {theme.metric(MetricRole::LIST_MIN_WIDTH), height_for_rows(rows)};
 }
 
-Size ListView::minimum_size() const { return preferred_size(); }
+Size ListView::minimum_size() const {
+    /* One row and no wider than it must be: a list in a popup is given the
+     * popup's height, and one that insists on its preferred -- four rows -- is
+     * laid out taller than the frame it is in and paints over the frame's foot
+     * (specs/trinket/listview.md). A list that wants its preferred says so with
+     * its weight, which a host may leave at its default. */
+    return {Application::instance()->theme().metric(MetricRole::LIST_MIN_WIDTH),
+            height_for_rows(1)};
+}
 
 Size ListView::maximum_size() const {
     return {std::numeric_limits<int>::max(), std::numeric_limits<int>::max()};

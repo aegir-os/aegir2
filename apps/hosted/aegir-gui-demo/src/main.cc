@@ -298,20 +298,21 @@ int main(int argc, char *argv[])
         for (std::u32string_view name : {U"Open", U"Save", U"Print"}) {
             object->add(name);
         }
-        int const row_height = object->row_height();
+        int const height = object->height_for_rows(3);
         object->on_select = [&window, &popup_pick](int index) {
             window.close_popup();
             popup_pick = index;
         };
         int const inset = Group::frame_inset(Group::Frame::FRAME);
         int const width = app.theme().metric(MetricRole::LIST_MIN_WIDTH) + 2 * inset;
+        ListView* const object_ptr = object.get();
         auto frame = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
         frame->set_frame(Group::Frame::FRAME);
         frame->add_child(std::move(object));
+        frame->set_weight(object_ptr, 1);
         Rect const bounds{0, 0, window.rect().width, window.rect().height};
         window.open_popup(std::move(frame),
-                          popup_rect(popup_ptr->rect(), {width, 3 * row_height + 2 * inset},
-                                     bounds));
+                          popup_rect(popup_ptr->rect(), {width, height + 2 * inset}, bounds));
     };
     auto cycle_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
     Group* const cycle_row_ptr = cycle_row.get();

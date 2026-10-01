@@ -23,12 +23,17 @@ label, the list below. It is the window's own layer instead.
   `close_popup()` gives it up. One at a time: MUI stacks them, and nothing here
   wants a stack yet.
 
-- **It is painted after the content, inside the content's area.** `paint()` runs
-  the content tree, then the popup through the same offset canvas, in the same
-  damage region. It is clipped to the content's rectangle -- a popup that
-  overflows the window is a second console window, which is its own arc -- and
-  it takes no titlebar or frame of its own. The console composites per window,
-  so the popup cannot leave the window and does not need to.
+- **It is painted after the content, inside the content's area, and opening it
+  damages its own rectangle.** `paint()` runs the content tree, then the popup
+  through the same offset canvas, in the same damage region. That region is the
+  one an *event* damaged, so the click that opens a popup damages only the widget
+  it landed on, and a popup painted into that region alone comes up with
+  everything outside that widget missing -- its foot, the first time this was
+  tried. Opening damages the popup's whole rectangle for this reason. It is
+  clipped to the content's rectangle -- a popup that overflows the window is a
+  second console window, which is its own arc -- and it takes no titlebar or
+  frame of its own. The console composites per window, so the popup cannot leave
+  the window and does not need to.
 
 - **The pointer goes to it first.** With a popup up, a pointer down inside it
   goes to the widget under the point; a pointer down *outside* dismisses the
@@ -59,8 +64,10 @@ label, the list below. It is the window's own layer instead.
 
 - **The cycle uses it for its entries.** MUI's split, now that there is a popup:
   a click on the cycle's **button cell** advances, and a click on its **text**
-  opens a list of the entries anchored to the cycle. Picking one sets the active
-  entry and reports it, as the keys already do; the menu closes either way.
+  opens a list of the entries. It hangs **under that text, just past the button
+  cell** -- anchored to the box's left edge it would sit under the mark, which is
+  not what the entry's own text is under. Picking one sets the active entry and
+  reports it, as the keys already do; the menu closes either way.
 
 ## The shape
 

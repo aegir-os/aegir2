@@ -174,6 +174,11 @@ void Window::open_popup(std::unique_ptr<Widget> content, Rect rect) {
         focused_ = popup_focus_;
         popup_focus_->set_focused(true);
     }
+    /* The popup's whole rectangle is damaged before the repaint: a paint covers
+     * the region an event damaged, and the click that opened this one damaged
+     * only the widget it landed on -- so without this the popup's edges outside
+     * that widget were never painted, and it came up with a foot missing. */
+    damage(rect);
     repaint();
     if (on_popup) on_popup(true);
 }

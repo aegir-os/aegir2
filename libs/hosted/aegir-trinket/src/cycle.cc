@@ -194,7 +194,9 @@ void Cycle::open_menu() {
         if (font != nullptr) text = std::max(text, font->measure(entry).width);
     }
     list->set_active(active_);
-    int const row_height = list->row_height();
+    /* The list's own height for its entries, plus the frame's inset: counting
+     * the rows without the list's well asks for one row less than it needs. */
+    int const height = list->height_for_rows(count()) + 2 * inset;
     /* A pick is the cycle's change to make, so it goes through the same door
      * the keys do; the menu is the window's to close. */
     list->on_select = [this, win](int index) {
@@ -204,13 +206,23 @@ void Cycle::open_menu() {
 
     auto frame = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     frame->set_frame(Group::Frame::FRAME);
+    ListView* const list_ptr = list.get();
     frame->add_child(std::move(list));
+    /* The list takes the popup's height, so a menu of three entries is three
+     * rows and not the list's preferred four (specs/trinket/listview.md). */
+    frame->set_weight(list_ptr, 1);
 
     int const width = std::max(theme.metric(MetricRole::LIST_MIN_WIDTH), text + 2 * pad) +
                       2 * inset;
-    int const height = count() * row_height + 2 * inset;
+    /* The menu hangs under the entry's text, just past the button cell -- not
+     * from the box's left edge, which would put it under the mark
+     * (specs/trinket/cycle.md). Its height is the box's, so `popup_rect` places
+     * it at the box's foot. */
+    Rect const anchor{divider_rect().x + 1, rect_.y,
+                      std::max(0, rect_.x + rect_.width - divider_rect().x - 1),
+                      rect_.height};
     Rect const bounds{0, 0, win->rect().width, win->rect().height};
-    win->open_popup(std::move(frame), popup_rect(rect_, {width, height}, bounds));
+    win->open_popup(std::move(frame), popup_rect(anchor, {width, height}, bounds));
 }
 
 void Cycle::on_mouse_enter(const MouseEvent&) {

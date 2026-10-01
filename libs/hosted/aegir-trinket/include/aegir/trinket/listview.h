@@ -49,6 +49,10 @@ public:
     /* The row's height -- the font's line and its pad -- and the row a point in
      * the widget is over, or -1. */
     int row_height() const;
+    /* The height that shows `rows` of them whole: the well and the rows. A host
+     * that frames a list -- a popup does -- adds its own inset to this
+     * (specs/trinket/listview.md). */
+    int height_for_rows(int rows) const;
     int row_at(Point p) const;
 
     /* The first row a scroll to `value` wants, clamped to `[0, count -

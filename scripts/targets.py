@@ -992,6 +992,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
+            # The pick closed the cycle's menu. The popup button's own object is
+            # in the demo but unasserted: its step comes once the cycle's menu
+            # is settled, one uncertain thing per run.
             QmpStep(r"demo: menu 0"),
             # The pick took: the cycle's active entry is the picked one and the
             # menu is gone. Then the screen bar's first title -- the demo's menu
@@ -1002,6 +1005,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 924, 610, 178, 12, 60),),
+                # Then the screen bar's first title -- the demo's menu
+                # (specs/workbench.md) -- which drops the bureau's menu over the
+                # screen, and so goes last of the demo's gestures.
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},
