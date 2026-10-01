@@ -65,14 +65,24 @@ Owned by the `vfs` service (boot-set order 3, before the partition manager, so
 filesystems have somewhere to register — `specs/services.md`).
 
 - **register** — words: the volume name, flags (read-only; boot — the
-  system volume, see Aliases), and the filesystem's type (`BFS`, `FAT16`,
-  `FAT32`, `INITRD`); one cap: the
+  system volume, see Aliases; no-directory — a volume with nothing to
+  browse, below), and the filesystem's type (`BFS`, `FAT16`, `FAT32`,
+  `INITRD`, `NIL`, `PIPE`); one cap: the
   volume port's caller half, unbadged. Reply: the assigned name after `_N`
   dedup, or an error. Whoever spawns the filesystem registers for it, or the
   filesystem registers itself if it is a manifest service (see below). The
   type names the filesystem on the volume so a client can tell why a call was
   refused — `filenote` says which filesystem has no attributes
   (`specs/dos.md`).
+- **A volume says whether it has a directory to browse.** `kFlagNoDir`
+  (`aegir/nmspace.h`) is set by a filesystem whose volume is not a
+  directory tree: `NIL:` (a read is EOF, a write is dropped) and `PIPE:` (a
+  stream) set it; `Initrd:`, `BFS` and `FAT` do not. A file browser lists
+  the volumes *without* it, so the choice is the volume's own and not a
+  name list kept in the browser (`specs/trinket/file_requester.md`). The
+  flag travels in the describe `Row` every caller already reads
+  (`nmspace::Row.flags`), so nothing else in the VFS changes — the volume
+  is still resolvable and usable by path (`EndCLI >NIL:`).
 - **resolve** — words: a path, `Volume:rest`, where the volume part may be
   an alias (see Aliases). Reply: one cap, the volume port minted with the
   caller's badge, and **the volume-relative path the argument truly names,
