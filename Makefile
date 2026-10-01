@@ -33,7 +33,10 @@ export AEGIR_TOOLKIT := $(TOOLKIT)
 TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800
 DEPS_TIMEOUT ?= 3600
-BOOT_TIMEOUT ?= 300
+# The run's wall clock covers the boot *and* its acceptance, which grows as the
+# acceptance does; the runner bounds each step of it on its own (--timeout), so
+# this is the outer belt for a wedged run, not the boot's own limit.
+RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
 .PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-slider check-cycle check-listview check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
@@ -133,7 +136,7 @@ build: ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only
 
 run: ## boot Aegir under QEMU, stopping once it reports online
-	timeout $(BOOT_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET)
+	timeout $(RUN_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET)
 
 # run-ui is attended: QEMU's GTK window shows the gpu heads (one tab each),
 # the serial console stays here, and the guest's test bed paces itself on

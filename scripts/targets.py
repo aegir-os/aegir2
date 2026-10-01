@@ -1177,7 +1177,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
 TARGETS: dict[str, Target] = {
     # The floor of the envelope: the smallest machine Aegir supports, and where
     # capacity problems are meant to show up first.
-    "aegir": _aegir(2048, 1, "aegir"),
+    # Two cores: the boot's own work is the run's long pole (the serial is
+    # seconds of it, not minutes), so the baseline is the floor with the
+    # parallelism the tree is meant to use (specs/aegir.md).
+    "aegir": _aegir(2048, 2, "aegir"),
     # The boot failure view (specs/boot.md): the same machine, booted with
     # aegir.fail on the firmware's command line, so the boot session's sequence
     # is forced to fail and auth leaves the read-only view standing instead of
@@ -1247,6 +1250,8 @@ TARGETS: dict[str, Target] = {
     ),
 }
 
-# The envelope, in the order it is worth trying: the floor first, then the same
-# machine with more cores, then the upper end of the expected memory range.
-ENVELOPE: tuple[str, ...] = ("aegir", "aegir-2g-smp2", "aegir-2g-smp4", "aegir-8g-smp4")
+# The envelope, in the order it is worth trying: the floor first (two cores
+# now), then the same machine with more, then the upper end of the expected
+# memory range. The floor's own core count is the baseline's, so there is no
+# second entry for it.
+ENVELOPE: tuple[str, ...] = ("aegir", "aegir-2g-smp4", "aegir-8g-smp4")
