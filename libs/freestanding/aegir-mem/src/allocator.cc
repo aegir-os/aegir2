@@ -173,6 +173,10 @@ void Allocator::insert(bool device, Node *node) noexcept
     }
     *link = node;
     node->free = 1;
+    if (trace_ != nullptr) {
+        trace_(trace_context_, "insert", node->size_bits, node->physical,
+               node->parent != nullptr, node->cap);
+    }
 }
 
 void Allocator::unlink(Node *node) noexcept
@@ -276,6 +280,10 @@ void Allocator::reset() noexcept
     slots_next_ = 0;
     slots_end_ = 0;
     slots_used_ = 0;
+    /* The probe's slot reservation goes with the cursor: after a re-adopt the
+     * cursor can hand the same slot to a piece, and a probe retyping into it
+     * would land on a live cap (the kernel's "destination slot is occupied"). */
+    probe_slot_ = 0;
     allocated_bytes_ = 0;
     last_request_bits_ = 0;
     last_candidate_bits_ = 0;
@@ -404,6 +412,10 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
          * "0 bytes available". Off the list first, the re-entrant call takes a
          * different piece. */
         unlink(parent);
+        if (trace_ != nullptr) {
+            trace_(trace_context_, "split", parent->size_bits, parent->physical,
+                   parent->parent != nullptr, parent->cap);
+        }
         Node *const left = alloc_node();
         Node *const right = alloc_node();
         if (left == nullptr || right == nullptr) {
@@ -505,6 +517,10 @@ Allocator::Node *Allocator::take(bool device, seL4_Word size_bits) noexcept
         return nullptr;
     }
     unlink(node);
+    if (trace_ != nullptr) {
+        trace_(trace_context_, "take", node->size_bits, node->physical,
+               node->parent != nullptr, node->cap);
+    }
     return node;
 }
 
@@ -542,6 +558,39 @@ void Allocator::free_piece(Node *node) noexcept
     } else {
         insert(node->device != 0, node);
     }
+}
+
+bool Allocator::piece_is_whole(Node *node) noexcept
+{
+    if (node->device != 0) {
+        /* A device untyped's frames are carved by address, not a free index. */
+        return true;
+    }
+    if (node->size_bits < seL4_PageBits) {
+        /* The probe is a page; a piece smaller than one cannot hold it, and a
+         * refusal would say nothing about whether the piece is whole. */
+        return true;
+    }
+    if (probe_slot_ == 0) {
+        probe_slot_ = alloc_slot();
+        if (probe_slot_ == 0) {
+            /* No slot to probe in: take the piece on trust. */
+            return true;
+        }
+    }
+    seL4_Error const retyped =
+        seL4_Untyped_Retype(node->cap, seL4_RISCV_4K_Page, seL4_PageBits,
+                            seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
+                            cnode_depth_, probe_slot_, 1);
+    if (retyped != seL4_NoError) {
+        return false;
+    }
+    /* The probe made a child, so delete it: the piece is childless again and the
+     * next retype resets its free index. */
+    seL4_Word const del_depth =
+        cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
+    seL4_CNode_Delete(seL4_CapInitThreadCNode, probe_slot_, del_depth);
+    return true;
 }
 
 bool Allocator::free_object(void *cookie, seL4_Word size_bits) noexcept
@@ -584,7 +633,13 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
                                  seL4_CapInitThreadCNode, cnode_depth_, slot, 1);
     if (*error != seL4_NoError) {
         slot_failed(slot);
-        insert(false, node);
+        /* The piece cannot yield the object, so it is not a usable piece: it is
+         * dropped, not put back. Putting a piece back whose retype was refused
+         * -- a spent piece -- leaves it on the free list for the next caller,
+         * and that is how a spent piece reaches a carve (specs/memory.md). The
+         * piece is already off the list (take), so this only gives its node
+         * back. */
+        free_node(node);
         return 0;
     }
     /* The piece is the object now. The node stays as the object's identity: a
@@ -677,14 +732,31 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
                                    uint64_t *physical_out, void **cookie) noexcept
 {
     *error = seL4_NoError;
-    if (!refill(false, size_bits)) {
-        *error = seL4_NotEnoughMemory;
-        return 0;
-    }
-    Node *const node = take(false, size_bits);
-    if (node == nullptr) {
-        *error = seL4_NotEnoughMemory;
-        return 0;
+    Node *node = nullptr;
+    for (;;) {
+        if (!refill(false, size_bits)) {
+            *error = seL4_NotEnoughMemory;
+            return 0;
+        }
+        node = take(false, size_bits);
+        if (node == nullptr) {
+            *error = seL4_NotEnoughMemory;
+            return 0;
+        }
+        /* A piece on the free list is meant to be whole -- its untyped never
+         * retyped from -- but the kernel's free index is not in the cap, so the
+         * only way to tell is to ask: retype a page from it. A refusal is the
+         * kernel's "0 bytes available", so the piece is spent. It cannot be
+         * handed out, and re-listing it would only be taken again, so it is
+         * dropped and the search continues (specs/memory.md). */
+        if (piece_is_whole(node)) {
+            break;
+        }
+        if (trace_ != nullptr) {
+            trace_(trace_context_, "spent", node->size_bits, node->physical,
+                   node->parent != nullptr, node->cap);
+        }
+        free_node(node);
     }
     /* What is handed out is a piece the splitting made, so it has nothing
      * derived from it and the kernel will let the caller copy it -- giving it

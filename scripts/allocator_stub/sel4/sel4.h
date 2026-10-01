@@ -100,10 +100,24 @@ inline std::array<Cap, kMaxCaps> g_caps{};
 inline seL4_CPtr g_next_root = 100000;
 inline unsigned g_refusals = 0;
 inline unsigned g_retypes = 0;
+/* A refusal where the cap's free index was already past its start -- a retype
+ * from an untyped that has been used since it was handed out. The allocator's
+ * `piece_is_whole` probe provokes exactly this to detect a spent free-list
+ * piece; a retype that is not a probe and hits it is the bug. */
+inline unsigned g_spent = 0;
 /* Caps deleted while capabilities derived from them were still alive: the
  * memory is orphaned (a delete does not take its children), which is what a
  * piece handed back without its objects revoked leaves behind. */
 inline unsigned g_orphans = 0;
+/* A retype that landed in a slot already holding a live cap: the allocator
+ * handed the same slot out twice, so the model's cap no longer tracks the
+ * allocator's piece. The kernel refuses this -- the destination slot is
+ * occupied (`seL4_DeleteFirst`) -- so a correct allocator answers zero. */
+inline unsigned g_collisions = 0;
+/* A retype naming a cap the model no longer holds (invalid, or not an untyped):
+ * the allocator kept a piece whose cap is gone. The kernel's answer is
+ * `seL4_InvalidArgument`; a correct allocator answers zero. */
+inline unsigned g_invalid = 0;
 inline bool g_log = false;
 
 inline seL4_CPtr take_root()
@@ -118,6 +132,9 @@ inline void reset()
     g_refusals = 0;
     g_retypes = 0;
     g_orphans = 0;
+    g_spent = 0;
+    g_collisions = 0;
+    g_invalid = 0;
     g_log = false;
 }
 
@@ -140,6 +157,9 @@ inline seL4_CPtr make_root_untyped(unsigned bits)
 inline unsigned refusals() { return g_refusals; }
 inline unsigned retypes() { return g_retypes; }
 inline unsigned orphans() { return g_orphans; }
+inline unsigned spent() { return g_spent; }
+inline unsigned collisions() { return g_collisions; }
+inline unsigned invalid() { return g_invalid; }
 inline void log_refusals(bool on) { g_log = on; }
 
 /** The kernel's `getObjectSize`: a CNode's memory is its slot bits plus the
@@ -157,6 +177,15 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
 {
     ++g_retypes;
     if (service >= kMaxCaps || !g_caps[service].valid || !g_caps[service].untyped) {
+        ++g_invalid;
+        if (g_invalid <= 8) {
+            std::printf("  invalid retype: cap %llu valid=%d untyped=%d (type=%llu size=%llu)\n",
+                        static_cast<unsigned long long>(service),
+                        service < kMaxCaps ? g_caps[service].valid : -1,
+                        service < kMaxCaps ? g_caps[service].untyped : -1,
+                        static_cast<unsigned long long>(type),
+                        static_cast<unsigned long long>(size_bits));
+        }
         return seL4_InvalidArgument;
     }
     Cap &parent = g_caps[service];
@@ -165,7 +194,11 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
         (uint64_t{1} << parent.block_bits) - uint64_t{free_index} * 16;
     unsigned const bits = object_bits_for(type, size_bits);
     if (bits >= 64 || (free_bytes >> bits) < 1) {
-        ++g_refusals;
+        if (free_index != 0) {
+            ++g_spent;
+        } else {
+            ++g_refusals;
+        }
         if (g_log) {
             std::printf("  refused: cap=%llu type=%llu size=%llu block=%u free_index=%u "
                         "children=%u free_bytes=%llu\n",
@@ -182,6 +215,20 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
     parent.free_index = static_cast<uint32_t>((offset + width) / 16);
     parent.children += 1;
     seL4_CPtr const child = slot;
+    /* A retype lands in a slot the allocator named; that slot must be free, or
+     * the model's cap for it no longer tracks the allocator's piece. The kernel
+     * refuses an occupied destination, so a collision here is the allocator
+     * handing one slot out twice. */
+    if (g_caps[child].valid) {
+        ++g_collisions;
+        if (g_collisions <= 4) {
+            std::printf("  collision: slot %llu already holds cap(valid=%d untyped=%d block=%u "
+                        "children=%u parent=%llu)\n",
+                        static_cast<unsigned long long>(child), g_caps[child].valid,
+                        g_caps[child].untyped, g_caps[child].block_bits, g_caps[child].children,
+                        static_cast<unsigned long long>(g_caps[child].parent));
+        }
+    }
     g_caps[child] = Cap{true, type == seL4_UntypedObject, static_cast<uint32_t>(size_bits),
                         0, 0, service};
     return seL4_NoError;

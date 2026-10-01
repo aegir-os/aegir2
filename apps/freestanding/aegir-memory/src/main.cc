@@ -45,6 +45,24 @@ void write_word(uint64_t value) noexcept
     aegir::debug_write_unsigned(value);
 }
 
+/* A trace of the pool's pieces, for the "0 bytes available" hunt: only the
+ * chunks' sizes (>= 20 bits), so a chunk that appears spent stands out. */
+void memory_trace(void *context, char const *event, unsigned size_bits,
+                  uint64_t physical, bool split_child, seL4_CPtr cap) noexcept
+{
+    static_cast<void>(context);
+    static_cast<void>(physical);
+    static_cast<void>(cap);
+    if (size_bits < 20) {
+        return;
+    }
+    write("  memory: mem ");
+    write(event);
+    write(" bits ");
+    write_word(size_bits);
+    write(split_child ? " split\n" : " root\n");
+}
+
 uint32_t field_length(char const *field, uint32_t bound) noexcept
 {
     uint32_t length = 0;
@@ -408,6 +426,9 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
+    /* Trace the pool's chunks while the "0 bytes available" hunt is on
+     * (specs/memory.md). */
+    g_pool.set_trace(memory_trace, nullptr);
 
     /* The window this service reads its configuration through: the service was
      * given its own VSpace and a window of free addresses (maps), and the

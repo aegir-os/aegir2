@@ -39,6 +39,27 @@ void write_line(char const *text) noexcept
     aegir::debug_write("\n");
 }
 
+/* A trace of the pieces the slices come out of, for the "0 bytes available"
+ * hunt: only the large ones (a slice's untyped is 21..24 bits), so the log
+ * stays short and a piece that appears without a split stands out. */
+void console_trace(void *context, char const *event, unsigned size_bits,
+                   uint64_t physical, bool split_child, seL4_CPtr cap) noexcept
+{
+    static_cast<void>(context);
+    static_cast<void>(cap);
+    if (size_bits < 20) {
+        return;
+    }
+    aegir::debug_write("      console: mem ");
+    aegir::debug_write(event);
+    aegir::debug_write(" bits ");
+    aegir::debug_write_unsigned(size_bits);
+    aegir::debug_write(" at ");
+    aegir::debug_write_hex(physical);
+    aegir::debug_write(split_child ? " split" : " root");
+    aegir::debug_write("\n");
+}
+
 /* The backdrop: Workbench blue, one word a pixel in the driver's B8G8R8X8
  * (aegir/framebuffer.h). */
 constexpr uint32_t kBackdrop = 0x000055AA;
@@ -895,6 +916,9 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    /* Trace the slices' pieces while the "0 bytes available" hunt is on
+     * (specs/memory.md); a healthy build's trace prints nothing small. */
+    g_objects.set_trace(console_trace, nullptr);
     /* Slices beyond the delegated pool come from the memory service on demand
      * (specs/console.md): when the allocator's own memory runs out it asks
      * mem.main for another chunk. Optional -- a console given no port still

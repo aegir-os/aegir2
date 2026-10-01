@@ -325,6 +325,20 @@ public:
     };
     Piece piece_state(void *cookie) const noexcept;
 
+    /** A trace of a piece's movement through the allocator, for a boot
+     *  diagnostic: `event` is "insert" (a piece became free) or "take" (a piece
+     *  was handed out), with the piece's size, physical base and whether it was
+     *  split from something. A task that lists a piece that is not whole shows
+     *  here -- a small size appearing without a matching split. Off by default;
+     *  a caller turns it on while chasing a specific failure (specs/memory.md). */
+    using Trace = void (*)(void *context, char const *event, unsigned size_bits,
+                           uint64_t physical, bool split_child, seL4_CPtr cap);
+    void set_trace(Trace trace, void *context) noexcept
+    {
+        trace_ = trace;
+        trace_context_ = context;
+    }
+
     /* What the machine gave us, for the boot report. */
     unsigned untyped_count() const noexcept { return node_used_; }
     unsigned untyped_free() const noexcept;
@@ -400,6 +414,13 @@ private:
      *  (allocman's `_utspace_split_free`). */
     void free_piece(Node *node) noexcept;
 
+    /** Whether a piece's untyped has nothing derived from it, so a retype from
+     *  it starts at the beginning. The kernel's free index is not in the cap, so
+     *  the only way to tell is to ask: retype a page and delete it. A refusal is
+     *  the kernel's "0 bytes available" and the piece is spent. A device untyped
+     *  and a piece with no slot to probe in are taken as whole. */
+    bool piece_is_whole(Node *node) noexcept;
+
     /** Give back the most recent reservation, if `slot` is it. A cursor that keeps
      *  walking past a failed retype leaves it behind the slots actually in use, and a
      *  later allocation lands on top of one (seL4_DeleteFirst, "the destination slot is
@@ -434,6 +455,11 @@ private:
      * was handed at spawn. */
     UntypedSource untyped_source_ = nullptr;
     void *untyped_context_ = nullptr;
+    Trace trace_ = nullptr;
+    void *trace_context_ = nullptr;
+    /* The slot `piece_is_whole` retypes its probe into, kept and reused so a
+     * probe costs no slot of its own. */
+    seL4_CPtr probe_slot_ = 0;
     /* A small built-in region, so an allocator whose caller does not adopt one
      * still works; a caller that knows its grant adopts a bigger one and/or a
      * source, and this is not touched. It is a floor, not the size. */

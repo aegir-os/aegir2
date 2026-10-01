@@ -15,6 +15,8 @@
 #include <aegir/mem/slot_pool.h>
 
 #include <cstdio>
+#include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -45,6 +47,11 @@ struct Live {
     seL4_CPtr cap;
     void *cookie;
     seL4_Word wanted;
+    /* A carved untyped is a *piece* the allocator still owns: the caller hands
+     * it back with its cap intact (aegir-console revokes the objects retyped
+     * from it and does not delete the cap). An object the caller retyped is the
+     * caller's own, and it deletes that before giving the piece back. */
+    bool carve = false;
 };
 
 /* The untyped source: a memory service handing out 21-bit chunks, bounded the
@@ -192,14 +199,16 @@ bool carve_and_frames_hold()
         for (unsigned f = 0; f < kFrames; ++f) {
             frames[f] = allocator.carve_page(untyped, g_account, &error, kFrameBits);
         }
-        /* The console reaps a slice: the frames die, then the piece goes back
-         * and merges with its buddy (specs/console.md). */
+        /* The console reaps a slice: the frames die in the revoke of the piece's
+         * cap; the cap is the allocator's and is not deleted; then the piece
+         * goes back and merges with its buddy (aegir-console's reap says why the
+         * cap must survive). */
         for (unsigned f = 0; f < kFrames; ++f) {
-            if (frames[f] != 0) {
-                (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, frames[f], 12);
+            if (frames[f] == 0) {
+                return false;
             }
         }
-        (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, untyped, 12);
+        (void)seL4_CNode_Revoke(seL4_CapInitThreadCNode, untyped, 12);
         (void)allocator.free_object(cookie, kSliceBits);
     }
     return host_sel4::refusals() == before && allocator.check_free_lists() == 0;
@@ -241,6 +250,61 @@ bool free_without_revoke_holds()
     }
     return host_sel4::refusals() == before && host_sel4::orphans() == 0 &&
            allocator.check_free_lists() == 0;
+}
+
+/* A ring of the allocator's piece movements, so the moment a piece is found
+ * spent can be read back: what was inserted, split and taken before it. */
+struct Event {
+    char event[8];
+    unsigned bits;
+    uint64_t physical;
+    bool split;
+    seL4_CPtr cap;
+};
+constexpr unsigned kRing = 4096;
+Event g_ring[kRing];
+unsigned g_ring_at = 0;
+unsigned g_ring_count = 0;
+
+void dump_ring()
+{
+    for (unsigned i = 0; i < g_ring_count; ++i) {
+        unsigned const index = (g_ring_at + kRing - g_ring_count + i) % kRing;
+        std::printf("   %-6s bits %u at %llx cap %llu %s\n", g_ring[index].event, g_ring[index].bits,
+                    static_cast<unsigned long long>(g_ring[index].physical),
+                    static_cast<unsigned long long>(g_ring[index].cap),
+                    g_ring[index].split ? "split" : "root");
+    }
+}
+
+void ring_trace(void *, char const *event, unsigned size_bits, uint64_t physical,
+                bool split_child, seL4_CPtr cap)
+{
+    Event &e = g_ring[g_ring_at];
+    std::snprintf(e.event, sizeof(e.event), "%s", event);
+    e.bits = size_bits;
+    e.physical = physical;
+    e.split = split_child;
+    e.cap = cap;
+    g_ring_at = (g_ring_at + 1) % kRing;
+    if (g_ring_count < kRing) {
+        ++g_ring_count;
+    }
+    /* A listed piece must be childless: the kernel resets a childless untyped's
+     * free index, so only a childless piece is whole. A piece inserted with
+     * children is the spent piece that later refuses a retype. */
+    if (std::string(event) == "insert" && cap < host_sel4::kMaxCaps &&
+        host_sel4::g_caps[cap].children != 0) {
+        std::printf("-- INSERTED A NON-WHOLE PIECE: bits %u cap %llu children %u\n",
+                    size_bits, static_cast<unsigned long long>(cap),
+                    host_sel4::g_caps[cap].children);
+    }
+    if (std::string(event) == "spent") {
+        std::printf("-- a piece was spent: bits %u physical %llx cap %llu split %d; history:\n",
+                    size_bits, static_cast<unsigned long long>(physical),
+                    static_cast<unsigned long long>(cap), split_child ? 1 : 0);
+        dump_ring();
+    }
 }
 
 }  // namespace
@@ -289,6 +353,7 @@ int main()
     aegir::mem::Allocator allocator(&info);
     expect(allocator.initialise(), "the bootinfo is adopted");
     allocator.set_untyped_source(source, nullptr);
+    allocator.set_trace(ring_trace, nullptr);
 
     std::vector<Live> live;
     constexpr unsigned kOps = 2000000;
@@ -298,6 +363,9 @@ int main()
 
     for (unsigned op = 0; op < kOps; ++op) {
         unsigned const before = host_sel4::refusals();
+        unsigned const before_spent = host_sel4::spent();
+        unsigned const before_collisions = host_sel4::collisions();
+        unsigned const before_invalid = host_sel4::invalid();
         unsigned const roll = static_cast<unsigned>(rng() % 100);
         if (roll < 55 || live.empty()) {
             Shape const &shape = kShapes[rng() % (sizeof(kShapes) / sizeof(kShapes[0]))];
@@ -316,8 +384,14 @@ int main()
             auto const entry = live[index];
             /* A caller revokes the objects it retyped from a piece before
              * handing the piece back -- aegir-console does exactly this -- so
-             * the piece is childless when the allocator deletes it. */
-            (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, entry.cap, 12);
+             * the piece is childless when the allocator deletes it. A carved
+             * untyped is the piece itself, and its cap is the allocator's: the
+             * caller revokes it but must not delete it (aegir-console's reap). */
+            if (entry.carve) {
+                (void)seL4_CNode_Revoke(seL4_CapInitThreadCNode, entry.cap, 12);
+            } else {
+                (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, entry.cap, 12);
+            }
             (void)allocator.free_object(entry.cookie, entry.wanted);
             live.erase(live.begin() + static_cast<std::ptrdiff_t>(index));
             ++frees;
@@ -327,7 +401,7 @@ int main()
             void *cookie = nullptr;
             seL4_CPtr const cap = allocator.carve_untyped(bits, g_account, &error, nullptr, &cookie);
             if (cap != 0) {
-                live.push_back(Live{cap, cookie, bits});
+                live.push_back(Live{cap, cookie, bits, true});
                 ++allocs;
             }
         } else {
@@ -341,8 +415,15 @@ int main()
             allocator.adopt_slots(1, 7999, 12);
             live.clear();
         }
-        if (host_sel4::refusals() != before) {
-            std::printf("refused retype at op %u (roll %u, %zu live)\n", op, roll, live.size());
+        if (host_sel4::refusals() != before || host_sel4::spent() != before_spent ||
+            host_sel4::collisions() != before_collisions || host_sel4::invalid() != before_invalid) {
+            std::printf("a retype was refused at op %u (roll %u, %zu live): refusals %u spent %u "
+                        "collisions %u invalid %u\n",
+                        op, roll, live.size(), host_sel4::refusals() - before,
+                        host_sel4::spent() - before_spent,
+                        host_sel4::collisions() - before_collisions,
+                        host_sel4::invalid() - before_invalid);
+            dump_ring();
             break;
         }
         if ((op % 500u) == 0u) {
@@ -358,7 +439,10 @@ int main()
 
     std::printf("allocator: %u ops, %u allocations, %u frees, %u retypes, %u refused\n", kOps,
                 allocs, frees, host_sel4::retypes(), host_sel4::refusals());
-    expect(host_sel4::refusals() == 0, "no retype was ever made from a spent untyped");
+    expect(host_sel4::refusals() == 0, "no retype ever ran out of a whole untyped");
+    expect(host_sel4::spent() == 0, "no free-list piece was ever spent");
+    expect(host_sel4::collisions() == 0, "no slot was ever handed out twice");
+    expect(host_sel4::invalid() == 0, "no piece kept a cap the kernel no longer holds");
     std::printf("allocator: %u checks, %u failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
