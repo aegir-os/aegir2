@@ -809,13 +809,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 1000, 600, 170, 170, 170),),
+                # The point the window's body used to hold is the list's well
+                # now -- it took that band (specs/trinket/listview.md) -- so the
+                # sample is the gadget face the list is drawn on.
+                pixels=(("gpu0", 1000, 600, 191, 191, 191),),
                 # The demo's terminal grid has text on it: a grid that wrapped
                 # every character into one column, or drew nothing, has far less
                 # ink than this. The body sample is deep in the terminal, clear
                 # of the group frame the content draws now (specs/trinket/layout.md).
                 dark=(
-                    ("gpu0", 902, 470, 240, 90, 100),
+                    # The list took a band off the terminal's height
+                    # (specs/trinket/listview.md), so the body sample is the top
+                    # of it; it still reads 455 dark pixels against this 100.
+                    ("gpu0", 902, 470, 240, 50, 100),
                     # The outline label's band at the window's foot is ink too:
                     # a group whose terminal overflowed would push the label off
                     # and leave this blank (specs/trinket/layout.md).
@@ -864,6 +870,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 25067}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
+                    # Then the list (specs/trinket/listview.md): a click on its
+                    # third row chooses it, a move over the fourth leaves the
+                    # cursor there, and its scrollbar's foot arrow scrolls the
+                    # rows up one. Each cue is a later step's trigger.
+                    {"type": "abs", "data": {"axis": "x", "value": 24319}},
+                    {"type": "abs", "data": {"axis": "y", "value": 23142}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 24319}},
+                    {"type": "abs", "data": {"axis": "y", "value": 23756}},
+                    # The list's scrollbar arrow goes in the step the click's cue
+                    # triggers, not here: a step's whole burst is sent before the
+                    # next step's dump, so a scroll in this list would move the
+                    # rows out from under that dump.
                     # Then the screen bar's first title: the demo's menu.
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},
@@ -917,6 +937,35 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 1123, 607, 96, 128, 176),),
+            ),
+            # The list's click took: its third row is chosen and the first is
+            # plain again (specs/trinket/listview.md). The rows are sixteen
+            # pixels at 525, 541, 557 and 573.
+            QmpStep(
+                r"demo: list 3",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 950, 565, 102, 136, 187),
+                    ("gpu0", 950, 530, 191, 191, 191),
+                ),
+                # Then the list's scrollbar, its foot arrow: a scroll moves the
+                # rows up one, and the cue that prints is the next step's
+                # trigger.
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 28722}},
+                    {"type": "abs", "data": {"axis": "y", "value": 24248}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The list's scrollbar arrow took: the rows moved up one, so the
+            # chosen row now sits a row higher than it did.
+            QmpStep(
+                r"demo: listed 1",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 950, 550, 102, 136, 187),),
             ),
             # The bureau.menu server (specs/workbench.md), while the demo is
             # still up: it registered its tree when it gained the focus, so the

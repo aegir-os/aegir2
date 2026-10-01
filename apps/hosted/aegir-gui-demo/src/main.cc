@@ -29,6 +29,7 @@
 #include <aegir/trinket/cycle.h>
 #include <aegir/trinket/group.h>
 #include <aegir/trinket/label.h>
+#include <aegir/trinket/listview.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/popup_button.h>
@@ -183,6 +184,10 @@ int main(int argc, char *argv[])
      * (specs/trinket/cycle.md, popup_button.md). Both are printed from on_poll. */
     int cycle_index = -1;
     bool popup_clicked = false;
+    /* The list's chosen row and whether the *user* scrolled it
+     * (specs/trinket/listview.md); both are printed from on_poll. */
+    int list_selected = -1;
+    bool list_scrolled = false;
     auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
     check->set_checked(true);
     auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
@@ -288,10 +293,33 @@ int main(int argc, char *argv[])
     cycle_row->add_child(std::move(popup));
     cycle_row->set_weight(popup_ptr, 0);
 
+    /* The list and its scrollbar (specs/trinket/listview.md): rows with one
+     * chosen, and the same Scrollbar the terminal uses as the control. It sits
+     * above the cycle's row -- the fixed rows are bottom-anchored -- so the
+     * cycle and the slider keep the rectangles the acceptance reads and the
+     * terminal gives up the band, which is why its ink sample shrank. */
+    auto list = std::make_unique<ListView>();
+    for (std::u32string_view name : {U"C:", U"Fonts", U"Libs", U"Prefs", U"System",
+                                     U"Tests", U"Tools", U"Users"}) {
+        list->add(name);
+    }
+    ListView* const list_ptr = list.get();
+    list->set_active(0);  // chosen, but not by the user: no cue
+    list->on_select = [&list_selected](int index) { list_selected = index; };
+    auto list_scrollbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
+    Scrollbar* const list_scrollbar_ptr = list_scrollbar.get();
+    auto list_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
+    Group* const list_row_ptr = list_row.get();
+    list_row->add_child(std::move(list));
+    list_row->add_child(std::move(list_scrollbar));
+    list_row->set_weight(list_scrollbar_ptr, 0);
+
     auto terminal_column = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     terminal_column->add_child(std::move(terminal));
+    terminal_column->add_child(std::move(list_row));
     terminal_column->add_child(std::move(cycle_row));
     terminal_column->add_child(std::move(slider_row));
+    terminal_column->set_weight(list_row_ptr, 0);
     terminal_column->set_weight(cycle_row_ptr, 0);
     terminal_column->set_weight(slider_row_ptr, 0);
 
@@ -331,6 +359,20 @@ int main(int argc, char *argv[])
         scrolled = true;
     };
     sync_scrollbar();
+
+    /* The list's scrollbar is its control, as the terminal's is
+     * (specs/trinket/listview.md): a user scroll sets the list's first visible
+     * row, and it re-syncs each poll so a resize is reflected too. */
+    auto sync_list = [list_ptr, list_scrollbar_ptr]() {
+        list_scrollbar_ptr->set_range(list_ptr->count(), list_ptr->visible_rows());
+        list_scrollbar_ptr->set_value(list_ptr->first());
+    };
+    list_scrollbar_ptr->on_scroll = [list_ptr, &sync_list, &list_scrolled](int first) {
+        list_ptr->set_first(first);
+        sync_list();
+        list_scrolled = true;
+    };
+    sync_list();
 
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
      * close. The runner paces its dumps on them (scripts/targets.py). */
@@ -437,7 +479,26 @@ int main(int argc, char *argv[])
             popup_clicked = false;
             write("  demo: popup\n");
         }
+        if (list_selected >= 0) {
+            /* The list's chosen row is a cue (specs/trinket/listview.md): the
+             * runner reads which one it landed on. */
+            std::string line("  demo: list ");
+            line += std::to_string(list_selected + 1);
+            line += "\n";
+            write(line.c_str());
+            list_selected = -1;
+        }
+        if (list_scrolled) {
+            /* The user scrolled the list: its first visible row is a cue, as the
+             * terminal's scroll is (specs/trinket/scrollbar.md). */
+            list_scrolled = false;
+            std::string line("  demo: listed ");
+            line += std::to_string(list_ptr->first());
+            line += "\n";
+            write(line.c_str());
+        }
         sync_scrollbar();
+        sync_list();
         if (!registered) return;
         uint32_t const action = aegir::bureau::menu::take_action(bureau);
         if (action == 1) {

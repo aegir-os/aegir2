@@ -112,7 +112,11 @@ virtual void draw_list_row(Canvas&, const Rect& rect, ListRow state);
 - **`make check-theme`** renders the well, a normal row, a cursor row and a
   selected row, so the solid selection and the dithered cursor are seen on the
   host beside the reference art.
-- **The demo** carries a list beside the terminal. The runner clicks a row,
-  reads `demo: list N` back, checks the solid selection's pixel and the dithered
-  cursor on the row it then points at, and clicks the scrollbar's arrow to see
-  the rows move.
+- **The demo** carries a list above the cycle's row, with its own scrollbar. The
+  runner clicks a row and reads `demo: list N` back, checking the pixels: the
+  chosen row is the solid bar and the row that gave it up is the face again.
+  Then it moves over another row, scrolls with the arrow and reads
+  `demo: listed N` back, checking that the chosen row moved up with the rows.
+  The **dithered cursor** is `check-theme`'s to prove rather than the target's: a
+  cue follows the *choice* and the *scroll*, never the pointing, so a dump cannot
+  catch the cursor between them.
