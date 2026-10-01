@@ -252,6 +252,12 @@ def main() -> int:
                                             "drawer_normal", "drawer_selected")],
                    palette, sprite_index),
         "",
+        emit_single("kRecipeListWell", g["list"]["well"], palette, sprite_index),
+        "",
+        emit_single("kRecipeListCursor", g["list"]["cursor"], palette, sprite_index),
+        "",
+        emit_single("kRecipeListSelected", g["list"]["selected"], palette, sprite_index),
+        "",
         "}  // namespace aegir::trinket",
         "",
     ]

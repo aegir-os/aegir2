@@ -50,6 +50,10 @@ void Theme::draw_cycle(Canvas&, const Rect&, const Rect&, const Rect&, bool, boo
 
 void Theme::draw_popup(Canvas&, const Rect&, PopupButton::Role, bool) {}
 
+void Theme::draw_list(Canvas&, const Rect&) {}
+
+void Theme::draw_list_row(Canvas&, const Rect&, ListRow) {}
+
 void Theme::draw_focus_ring(Canvas&, const Rect&) {}
 
 void Theme::draw_tooltip(Canvas&, const Rect&, const char*) {}

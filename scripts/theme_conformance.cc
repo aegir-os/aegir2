@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     char const* path = argc > 1 ? argv[1] : "render.ppm";
 
     constexpr int kWidth = 420;
-    constexpr int kHeight = 280;
+    constexpr int kHeight = 352;
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
     Canvas canvas(pixels.data(), kWidth, kHeight, kWidth);
 
@@ -127,6 +127,20 @@ int main(int argc, char** argv) {
     theme->draw_popup(canvas, {312, 250, 22, 17}, PopupButton::Role::POPUP, true);
     theme->draw_popup(canvas, {340, 250, 22, 17}, PopupButton::Role::FILE, true);
     theme->draw_popup(canvas, {368, 250, 22, 17}, PopupButton::Role::DRAWER, true);
+
+    /* A list: the well, then a plain row, the row being pointed at (the dither)
+     * and the chosen row (the solid bar), which are the theme's own rows
+     * (specs/trinket/listview.md). */
+    Rect const list{10, 278, 200, 66};
+    theme->draw_list(canvas, list);
+    Rect const row_area = list.inflated(-1);
+    int const row_h = row_area.height / 3;
+    theme->draw_list_row(canvas, {row_area.x, row_area.y, row_area.width, row_h},
+                         Theme::ListRow::NORMAL);
+    theme->draw_list_row(canvas, {row_area.x, row_area.y + row_h, row_area.width, row_h},
+                         Theme::ListRow::CURSOR);
+    theme->draw_list_row(canvas, {row_area.x, row_area.y + 2 * row_h, row_area.width, row_h},
+                         Theme::ListRow::SELECTED);
 
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {

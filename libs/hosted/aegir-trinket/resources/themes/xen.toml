@@ -129,6 +129,10 @@ CYCLE_BUTTON_WIDTH = 20
 CYCLE_MARK_SIZE = 8
 POPUP_BUTTON_WIDTH = 22
 POPUP_BUTTON_HEIGHT = 17
+LIST_ROW_PADDING_V = 2
+LIST_PADDING_H = 4
+LIST_MIN_WIDTH = 120
+LIST_PREFERRED_ROWS = 4
 CHECK_INDICATOR_WIDTH = 23
 CHECK_INDICATOR_HEIGHT = 18
 RADIO_INDICATOR_WIDTH = 17
@@ -294,3 +298,18 @@ steps = [{ sprite = "PopDrawer" }]
 
 [gadgets.popup.drawer_selected]
 steps = [{ sprite = "PopDrawerSelected" }]
+
+# ---- the list ----
+# A black outline around the gadget face, and one row in one of three states
+# (specs/trinket/listview.md). The preset gives the cursor a *pattern* and the
+# selection a *colour*: the row being pointed at is the blue/grey dither, and
+# the chosen row is a solid bar with its text still black.
+
+[gadgets.list.well]
+steps = [{ fill = "$GADGET_FACE" }, { outline = "$GADGET_SHADOW" }]
+
+[gadgets.list.cursor]
+steps = [{ dither = ["$SELECTION_BG", "$GADGET_FACE"] }]
+
+[gadgets.list.selected]
+steps = [{ fill = "$SELECTION_BG" }]

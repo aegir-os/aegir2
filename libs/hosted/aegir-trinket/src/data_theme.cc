@@ -247,6 +247,22 @@ public:
         run(kRecipePopup[index], canvas, rect);
     }
 
+    void draw_list(Canvas& canvas, const Rect& rect) override {
+        /* The well: a black outline around the gadget face
+         * (specs/trinket/listview.md). */
+        run(kRecipeListWell, canvas, rect);
+    }
+
+    void draw_list_row(Canvas& canvas, const Rect& rect, ListRow state) override {
+        /* The row being pointed at is the dither and the chosen one a solid bar
+         * (specs/trinket/theme-xen.md); a plain row shows the well's face. */
+        if (state == ListRow::CURSOR) {
+            run(kRecipeListCursor, canvas, rect);
+        } else if (state == ListRow::SELECTED) {
+            run(kRecipeListSelected, canvas, rect);
+        }
+    }
+
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
      * button and the field draw it, so there is no separate ring. */
     void draw_focus_ring(Canvas&, const Rect&) override {}

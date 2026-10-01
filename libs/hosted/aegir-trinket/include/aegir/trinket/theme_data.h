@@ -79,6 +79,9 @@ extern const Recipe kRecipeCycleMark;
 // The popup button's three roles (POPUP, FILE, DRAWER), each in a normal and a
 // selected frame: index role * 2 + (selected ? 1 : 0).
 extern const Recipe kRecipePopup[6];
+extern const Recipe kRecipeListWell;
+extern const Recipe kRecipeListCursor;
+extern const Recipe kRecipeListSelected;
 
 }  // namespace aegir::trinket
 

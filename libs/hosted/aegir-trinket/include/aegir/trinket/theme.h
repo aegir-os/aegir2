@@ -88,6 +88,10 @@ enum class MetricRole {
     // Cycle and popup button (specs/trinket/cycle.md, popup_button.md): the
     // cycle's button cell and its mark, and the popup button's own size.
     CYCLE_BUTTON_WIDTH, CYCLE_MARK_SIZE, POPUP_BUTTON_WIDTH, POPUP_BUTTON_HEIGHT,
+    // List (specs/trinket/listview.md): the row's padding, the text's inset and
+    // the width and row count a list asks for. The row's height is the font's
+    // line plus twice LIST_ROW_PADDING_V, so it follows the font.
+    LIST_ROW_PADDING_V, LIST_PADDING_H, LIST_MIN_WIDTH, LIST_PREFERRED_ROWS,
     // Toggle gadgets (specs/trinket/checkbox.md): the checkmark's and the
     // radio's indicator, the MUI artwork's own size.
     CHECK_INDICATOR_WIDTH, CHECK_INDICATOR_HEIGHT,
@@ -157,6 +161,12 @@ public:
     // whole button, in its normal or selected frame.
     virtual void draw_popup(Canvas& canvas, const Rect& rect,
                             PopupButton::Role role, bool selected);
+    // The list (specs/trinket/listview.md): its well, and one row in its state
+    // -- the row being pointed at is the dither and the chosen row a solid
+    // selection (theme-xen.md).
+    enum class ListRow { NORMAL, CURSOR, SELECTED };
+    virtual void draw_list(Canvas& canvas, const Rect& rect);
+    virtual void draw_list_row(Canvas& canvas, const Rect& rect, ListRow state);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,
                                const char* text);

@@ -128,6 +128,7 @@ add_library(aegir-trinket STATIC
     src/slider.cc
     src/cycle.cc
     src/popup_button.cc
+    src/listview.cc
     src/requester.cc
     src/menubar.cc
     src/window.cc

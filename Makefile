@@ -36,7 +36,7 @@ DEPS_TIMEOUT ?= 3600
 BOOT_TIMEOUT ?= 300
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-slider check-cycle check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-slider check-cycle check-listview check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
 
 all: help
 
@@ -114,6 +114,9 @@ check-slider: ## run the slider's knob geometry against its host cases (host)
 
 check-cycle: ## run the cycle's stepping against its host cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_cycle.py
+
+check-listview: ## run the list's scroll offset against its host cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_listview.py
 
 check-theme: ## render the toolkit's gadgets on the host and compare to the reference (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_theme.py

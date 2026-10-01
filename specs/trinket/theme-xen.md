@@ -50,10 +50,15 @@ means to wear (`specs/amiga-fidelity.md`) -- are a different look: the Workbench
   under XEN. This is provisional -- the screenshots show no keyboard focus, so
   the marker is Aegir's choice and easy to change.
 
-- **Selection is dithered.** `Theme::draw_dither(rect, fg, bg)` lays one pixel of
-  `fg` on one of `bg`, the Amiga selection, so a list or cycle row is selected by
-  a blue/grey checker rather than a blend. No list draws yet; the primitive is
-  here for the widget that will.
+- **The cursor is dithered; the selection is solid.** The preset gives
+  `ListCursor`/`ListSelCur` a *pattern* (`2:m1`, `2:m7`) and `ListSelect` a
+  *colour* (`0:144`), and the screenshot of a cycle's popped-up list shows
+  exactly that: the row being pointed at is the blue/grey **dither**, and the
+  selected row is a **solid** `SELECTION_BG` bar with its text still black
+  (`specs/trinket/listview.md`). So `Theme::draw_dither(rect, fg, bg)` -- one
+  pixel of `fg` on one of `bg` -- is the **cursor**, and the selection is a
+  plain fill. The bar's thumb and the slider's trough are the dither too, from
+  `PropBack`'s pattern.
 
 - **The window chrome stays Workbench.** MUI restyles the window's *interior*,
   not its border; the titlebar, gadgets and frame remain `specs/amiga-fidelity.md`'s
