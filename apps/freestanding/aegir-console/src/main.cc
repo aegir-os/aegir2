@@ -916,6 +916,12 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
     g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    /* A slot delete/revoke addresses the slot at our CNode's radix, not at the
+     * retype depth above (allocator.h's set_cnode_size_bits). Without this the
+     * merge's deletes and the whole-piece revoke run at depth 0 and take
+     * nothing, so a piece comes back spent -- the "0 bytes available" the
+     * attach refused (specs/memory.md). */
+    g_objects.set_cnode_size_bits(aegir::bootstrap::cnode_bits());
     /* Trace the slices' pieces while the "0 bytes available" hunt is on
      * (specs/memory.md); a healthy build's trace prints nothing small. */
     g_objects.set_trace(console_trace, nullptr);
