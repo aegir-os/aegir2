@@ -356,8 +356,10 @@ this arc's record of the order.
   decides. Substitution turns a
   line into words and acts; a `*` escape for a literal quote or variable, and
   a full quoting rule, are later.
-- **Globbing and tab completion.** Completion belongs to the handler's line
-  editor, and is deferred with the rest of the editor's polish.
+- **Globbing and tab completion.** The matcher itself has landed
+  (`specs/pattern.md`); the shell's use of it -- expanding a pattern in a
+  command line -- and completion, which belongs to the handler's line editor,
+  are deferred with the rest of the editor's polish.
 - **A POSIX shell.** No POSIX expressions or operators: `$(...)`, `$?`,
   `&&`, `|`, `exec`. Variables are the Amiga's `$name` and `{name}`, not
   POSIX's; Aegir is not POSIX (`specs/userland.md`), and the Amiga's single
