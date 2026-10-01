@@ -42,6 +42,22 @@ palette screen; nothing is inverted). That is a correction to what
   asks for one row less than it needs, which is how the cycle's menu first came
   up two rows tall with the entry the pick aimed at below the fold.
 
+- **Columns, titles and a row image.** A row is one text cell by default; a
+  *column table* (`set_columns`) gives it a titles row inside the well and
+  per-column cells (`set_row`), each cell placed and aligned in its column. A
+  column's width is pixels, or 0 for an equal share of what the fixed columns
+  leave -- the free column is the one that grows, which is how a file list's
+  name column takes the width its size and date columns do not. The titles row
+  is the list's own band: `height_for_rows` counts it and `row_at`/
+  `visible_rows` leave it out. The arithmetic is pure (`column_layout`), so the
+  host check pins it.
+
+  A row may carry an `Icon` (`aegir/trinket/icon.h`): the theme draws the
+  imported MUI drawer/volume art in a leading strip the columns start after.
+  The art is a small *wide* bitmap, so `draw_icon` fits it to the strip rather
+  than stretching it to a square. The requester's file list is the client
+  (`specs/trinket/file_requester.md`).
+
 - **The look is the theme's, the rectangles the widget's.** `Theme::draw_list`
   draws the well (a black outline around the gadget face), and
   `Theme::draw_list_row(rect, state)` draws one row in its state
@@ -68,10 +84,20 @@ palette screen; nothing is inverted). That is a correction to what
 // listview.h
 class ListView : public Widget {
 public:
-    void add(std::u32string_view text);
-    void clear();
-    int count() const;
+    void add(std::u32string_view text);        // the simple shape: one text cell
     const std::u32string& row(int index) const;
+
+    // The columned shape (specs/trinket/file_requester.md): a titles row and
+    // per-column cells, with an optional row image.
+    struct Column { std::u32string title; int width; Alignment align; };
+    void set_columns(std::vector<Column> columns);
+    void set_row(int index, std::vector<std::u32string> cells, Icon icon = Icon::NONE);
+    std::u32string const& cell(int index, int column) const;
+    Icon row_icon(int index) const;
+
+    // The columns' x and width across a row: pure, so the host check pins it.
+    struct ColumnLayout { std::vector<int> x; std::vector<int> width; };
+    static ColumnLayout column_layout(std::vector<Column> const&, int width, int padding);
 
     void set_active(int index);   // programmatic: no on_select; -1 for none
     int active() const;
@@ -100,10 +126,13 @@ virtual void draw_list_row(Canvas&, const Rect& rect, ListRow state);
 
 ## What this is not
 
-- **Columns, titles and row images.** The MUI listview has a format string, a
-  titles row, per-column widths and a per-row image (the imported
-  `Drawer2`/`Harddisk`/`Disk`/`Chip`/`Volume` art). A single column of text is
-  what the popup needs; the rest belongs with the requester that wants them.
+- **A format string.** MUI configures its listview's columns with one
+  (`MUIA_List_Format`); Aegir names them explicitly, which is what a file list
+  needs. A string that builds a column table waits for a client that wants to
+  configure one.
+- **The image as a column.** MUI's row image is the first format column's;
+  Aegir's is a row's own, drawn in a leading strip, which is what a file list's
+  drawer/volume icons want.
 - **The popup.** A list drawn *above* a window's content -- what the cycle's
   menu and the popup button want -- needs an overlay the window composites
   last, which is its own piece (`specs/trinket/cycle.md`,
@@ -116,10 +145,12 @@ virtual void draw_list_row(Canvas&, const Rect& rect, ListRow state);
 - **`make check-listview`** (`scripts/check_listview.py` +
   `scripts/listview_conformance.cc`): the scroll mapping -- `first` clamped to
   the range, an empty list, a list shorter than the view, and a count that shrank
-  under the scroll offset.
+  under the scroll offset -- and the columns' layout: fixed widths in order, a
+  free column taking what they leave, two free columns sharing it, a fixed
+  column past the width leaving nothing, and the padding at either end.
 - **`make check-theme`** renders the well, a normal row, a cursor row and a
-  selected row, so the solid selection and the dithered cursor are seen on the
-  host beside the reference art.
+  selected row, and the six row icons beside the imported drawer/volume art, so
+  the solid selection, the dithered cursor and the icons are seen on the host.
 - **The demo** carries a list above the cycle's row, with its own scrollbar. The
   runner clicks a row and reads `demo: list N` back, checking the pixels: the
   chosen row is the solid bar and the row that gave it up is the face again.

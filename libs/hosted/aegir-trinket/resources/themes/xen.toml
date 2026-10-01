@@ -336,3 +336,30 @@ steps = [{ dither = ["$SELECTION_BG", "$GADGET_FACE"] }]
 
 [gadgets.list.selected]
 steps = [{ fill = "$SELECTION_BG" }]
+
+# ---- icons ----
+# A row's image (specs/trinket/listview.md, specs/trinket/file_requester.md): the
+# imported MUI drawer and volume artwork, one recipe per role, the sprite scaled
+# into the cell as the arrows are. Icon::NONE is the empty recipe, and a theme
+# with no art for a role draws nothing for it too.
+
+[gadgets.icon.none]
+steps = []
+
+[gadgets.icon.drawer]
+steps = [{ sprite = "Drawer" }]
+
+[gadgets.icon.hard_disk]
+steps = [{ sprite = "HardDisk" }]
+
+[gadgets.icon.disk]
+steps = [{ sprite = "Disk" }]
+
+[gadgets.icon.chip]
+steps = [{ sprite = "Chip" }]
+
+[gadgets.icon.volume]
+steps = [{ sprite = "Volume" }]
+
+[gadgets.icon.network]
+steps = [{ sprite = "Network" }]

@@ -76,11 +76,11 @@ missing is the *body* and what it stands on:
 // listview.h -- the columns the file list needs
 struct Column {
     std::u32string title;
-    int width;            // pixels; 0 lets the cells size the column
+    int width;            // pixels; 0 shares what the fixed columns leave
     Alignment align;      // LEFT, CENTER, RIGHT (the existing enum)
 };
 void set_columns(std::vector<Column> columns);  // empty: one text column
-void set_row(int index, std::vector<std::u32string> cells, int image);
+void set_row(int index, std::vector<std::u32string> cells, Icon icon);
 
 // file_requester.h
 class FileRequester {

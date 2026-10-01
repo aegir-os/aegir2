@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     char const* path = argc > 1 ? argv[1] : "render.ppm";
 
     constexpr int kWidth = 460;
-    constexpr int kHeight = 420;
+    constexpr int kHeight = 444;
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
     Canvas canvas(pixels.data(), kWidth, kHeight, kWidth);
 
@@ -172,6 +172,16 @@ int main(int argc, char** argv) {
     Parts const hp_inc = scrollbar_parts(hbar_inc, false, 100, 25, 40, 21, 30);
     theme->draw_scrollbar(canvas, hbar_inc, false, hp_inc.trough, hp_inc.thumb,
                           hp_inc.decrement, hp_inc.increment, false, true);
+
+    /* The row icons (specs/trinket/listview.md): the imported MUI drawer and
+     * volume artwork, one per role. */
+    Icon const icons[] = {Icon::DRAWER, Icon::HARD_DISK, Icon::DISK,
+                          Icon::CHIP, Icon::VOLUME, Icon::NETWORK};
+    int ix = 10;
+    for (Icon const icon : icons) {
+        theme->draw_icon(canvas, {ix, 416, 16, 16}, icon);
+        ix += 20;
+    }
 
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {

@@ -48,6 +48,22 @@ void expect(int value, int count, int visible, int want, std::string const& what
     check(got == want, what + ": got " + std::to_string(got) + ", want " + std::to_string(want));
 }
 
+ListView::Column fixed_column(int width) {
+    return ListView::Column{U"", width, ListView::Alignment::LEFT};
+}
+
+ListView::Column free_column() {
+    return ListView::Column{U"", 0, ListView::Alignment::LEFT};
+}
+
+void expect_columns(std::vector<ListView::Column> const& columns, int width, int padding,
+                    std::vector<int> const& want_x, std::vector<int> const& want_width,
+                    std::string const& what) {
+    ListView::ColumnLayout const got = ListView::column_layout(columns, width, padding);
+    check(got.x == want_x && got.width == want_width,
+          what + ": got x/width of " + std::to_string(got.x.size()));
+}
+
 }  // namespace
 
 int main() {
@@ -71,6 +87,24 @@ int main() {
 
     /* A count that shrank under the offset clamps to the new end. */
     expect(50, 20, 10, 10, "a count that shrank under the offset clamps");
+
+    /* The columns' layout: fixed widths in order, and a 0 width taking what the
+     * fixed columns leave. Pure, so it is pinned here rather than on a screen. */
+    expect_columns({}, 200, 4, {}, {}, "no columns, no layout");
+    expect_columns({fixed_column(100)}, 200, 4, {4}, {100},
+                   "one fixed column sits at the padding");
+    expect_columns({fixed_column(80), fixed_column(40)}, 200, 4, {4, 84}, {80, 40},
+                   "two fixed columns run in order");
+    expect_columns({free_column()}, 200, 4, {4}, {192},
+                   "a lone free column takes the content");
+    expect_columns({fixed_column(80), free_column()}, 200, 4, {4, 84}, {80, 112},
+                   "a free column takes what the fixed one leaves");
+    expect_columns({free_column(), free_column()}, 200, 4, {4, 100}, {96, 96},
+                   "two free columns share the content");
+    expect_columns({fixed_column(300), free_column()}, 200, 4, {4, 304}, {300, 0},
+                   "a fixed column past the width leaves nothing free");
+    expect_columns({free_column()}, 100, 8, {8}, {84},
+                   "the padding is at either end");
 
     std::printf("listview: %u checks, %u failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

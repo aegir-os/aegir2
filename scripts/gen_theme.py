@@ -101,6 +101,11 @@ def parse_step(step: dict, palette: dict, sprites: dict[str, int]) -> tuple:
 
 def emit_recipe(name: str, recipe: dict, palette: dict, sprites: dict[str, int]) -> tuple[str, str]:
     steps = recipe["steps"]
+    if not steps:
+        # A recipe with no steps -- Icon::NONE is one -- is a null table, not an
+        # empty array: `const Step x[] = {}` is not C++, and the engine iterates
+        # zero steps either way.
+        return "", "{nullptr, 0}"
     lines = [f"static const Step {name}[] = {{"]
     for step in steps:
         op, kind, inset, num, den, color, color2, sprite = parse_step(step, palette, sprites)
@@ -273,6 +278,12 @@ def main() -> int:
         emit_single("kRecipeListCursor", g["list"]["cursor"], palette, sprite_index),
         "",
         emit_single("kRecipeListSelected", g["list"]["selected"], palette, sprite_index),
+        "",
+        # The row icons, indexed by Icon (specs/trinket/listview.md).
+        emit_array("kRecipeIcon",
+                   [g["icon"][n] for n in ("none", "drawer", "hard_disk", "disk",
+                                           "chip", "volume", "network")],
+                   palette, sprite_index),
         "",
         "}  // namespace aegir::trinket",
         "",

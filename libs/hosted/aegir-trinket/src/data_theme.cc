@@ -267,6 +267,18 @@ public:
         }
     }
 
+    void draw_icon(Canvas& canvas, const Rect& rect, Icon icon) override {
+        /* The imported MUI artwork, one recipe per role (specs/trinket/listview.md).
+         * The art is a small wide bitmap, so it is fitted into the cell rather
+         * than stretched to it. Icon::NONE is the empty recipe and draws
+         * nothing. */
+        int const index = static_cast<int>(icon);
+        if (index < 0 || index >= 7) return;
+        Recipe const& recipe = kRecipeIcon[index];
+        if (recipe.count == 0 || recipe.steps[0].op != Prim::SPRITE) return;
+        run(recipe, canvas, fit_sprite(kSprites[recipe.steps[0].sprite], rect));
+    }
+
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
      * button and the field draw it, so there is no separate ring. */
     void draw_focus_ring(Canvas&, const Rect&) override {}
@@ -344,6 +356,24 @@ private:
             canvas.draw_line(apex_pt, bottom, dark);
             canvas.draw_line(top, bottom, dark);
         }
+    }
+
+    /* The largest rectangle of the sprite's aspect that fits `rect`, centered:
+     * an icon's art is a small wide bitmap, and stretching it to a square cell
+     * squashes it (specs/trinket/listview.md). */
+    static Rect fit_sprite(Sprite const& sprite, Rect const& rect) {
+        if (sprite.width == 0 || sprite.height == 0 || rect.width <= 0 || rect.height <= 0) {
+            return rect;
+        }
+        int w = rect.width;
+        int h = w * sprite.height / sprite.width;
+        if (h > rect.height) {
+            h = rect.height;
+            w = h * sprite.width / sprite.height;
+        }
+        if (w < 1) w = 1;
+        if (h < 1) h = 1;
+        return {rect.x + (rect.width - w) / 2, rect.y + (rect.height - h) / 2, w, h};
     }
 
     /* Blit a sprite into the rectangle, scaled to it (nearest neighbour) --

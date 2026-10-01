@@ -20,6 +20,22 @@ namespace {
 /* The well's one-pixel outline, which the rows are set in from
  * (specs/trinket/listview.md). */
 constexpr int kWell = 1;
+
+/* One cell's text, placed in its column by its alignment. Empty text draws
+ * nothing, so a short row leaves the columns past it blank. */
+void draw_cell(Canvas& canvas, Font* font, Theme& theme, Rect const& cell,
+               std::u32string const& text, ListView::Alignment align) {
+    if (font == nullptr || text.empty()) return;
+    Size const size = font->measure(text);
+    int x = cell.x;
+    if (align == ListView::Alignment::CENTER) {
+        x = cell.x + (cell.width - size.width) / 2;
+    } else if (align == ListView::Alignment::RIGHT) {
+        x = cell.x + cell.width - size.width;
+    }
+    int const y = cell.y + (cell.height - font->height()) / 2;
+    canvas.draw_text({x, y}, text, font, theme.color(ColorRole::TEXT));
+}
 }  // namespace
 
 ListView::ListView() = default;
@@ -27,8 +43,47 @@ ListView::ListView() = default;
 ListView::~ListView() = default;
 
 void ListView::add(std::u32string_view text) {
-    rows_.emplace_back(text);
+    rows_.emplace_back();
+    rows_.back().cells.emplace_back(text);
     damage();
+}
+
+void ListView::set_row(int index, std::vector<std::u32string> cells, Icon icon) {
+    if (index < 0) return;
+    if (index >= count()) {
+        /* Past the last row appends, so a list may be built a row at a time. */
+        rows_.resize(static_cast<size_t>(index) + 1);
+    }
+    rows_[static_cast<size_t>(index)].cells = std::move(cells);
+    rows_[static_cast<size_t>(index)].icon = icon;
+    if (icon != Icon::NONE) has_icons_ = true;
+    damage();
+}
+
+void ListView::set_columns(std::vector<Column> columns) {
+    columns_ = std::move(columns);
+    damage();
+}
+
+ListView::Column const& ListView::column(int index) const {
+    static const Column none;
+    if (index < 0 || index >= column_count()) return none;
+    return columns_[static_cast<size_t>(index)];
+}
+
+std::u32string const& ListView::cell(int index, int column) const {
+    static const std::u32string none;
+    if (index < 0 || index >= count()) return none;
+    Row const& r = rows_[static_cast<size_t>(index)];
+    if (column < 0 || column >= static_cast<int>(r.cells.size())) return none;
+    return r.cells[static_cast<size_t>(column)];
+}
+
+const std::u32string& ListView::row(int index) const { return cell(index, 0); }
+
+Icon ListView::row_icon(int index) const {
+    if (index < 0 || index >= count()) return Icon::NONE;
+    return rows_[static_cast<size_t>(index)].icon;
 }
 
 void ListView::clear() {
@@ -36,13 +91,8 @@ void ListView::clear() {
     active_ = -1;
     cursor_ = -1;
     first_ = 0;
+    has_icons_ = false;
     damage();
-}
-
-const std::u32string& ListView::row(int index) const {
-    static const std::u32string none;
-    if (index < 0 || index >= count()) return none;
-    return rows_[static_cast<size_t>(index)];
 }
 
 void ListView::set_active(int index) {
@@ -86,15 +136,24 @@ Rect ListView::rows_rect() const {
     return rect_.inflated(-kWell);
 }
 
+Rect ListView::data_rect() const {
+    Rect const area = rows_rect();
+    if (columns_.empty()) return area;
+    /* The titles row is the top row of the well. */
+    int const titles = row_height();
+    int const height = area.height - titles > 0 ? area.height - titles : 0;
+    return {area.x, area.y + titles, area.width, height};
+}
+
 int ListView::visible_rows() const {
     int const h = row_height();
-    int const height = rows_rect().height;
+    int const height = data_rect().height;
     if (h <= 0 || height <= 0) return 0;
     return height / h;
 }
 
 int ListView::row_at(Point p) const {
-    Rect const area = rows_rect();
+    Rect const area = data_rect();
     int const h = row_height();
     if (h <= 0 || !area.contains(p)) return -1;
     int const index = first_ + (p.y - area.y) / h;
@@ -102,11 +161,40 @@ int ListView::row_at(Point p) const {
 }
 
 int ListView::height_for_rows(int rows) const {
-    /* The well is the list's own chrome: a host that adds a frame adds that on
-     * top, and a host that counts rows for one of these and forgets the well
-     * gets a list one row shorter than it asked for -- which is how the menu
-     * first came up showing two of its three entries. */
-    return 2 * kWell + std::max(0, rows) * row_height();
+    /* The well is the list's own chrome, and the titles row its own band: a
+     * host that adds a frame adds that on top, and a host that counts rows for
+     * one of these and forgets the well gets a list one row shorter than it
+     * asked for -- which is how the menu first came up showing two of its three
+     * entries. */
+    int const titles = columns_.empty() ? 0 : row_height();
+    return 2 * kWell + titles + std::max(0, rows) * row_height();
+}
+
+ListView::ColumnLayout ListView::column_layout(std::vector<Column> const& columns,
+                                               int width, int padding) {
+    ColumnLayout out;
+    if (columns.empty()) return out;
+    if (padding < 0) padding = 0;
+    int const content = width - 2 * padding;
+    int fixed = 0;
+    int free_columns = 0;
+    for (Column const& c : columns) {
+        if (c.width > 0) {
+            fixed += c.width;
+        } else {
+            ++free_columns;
+        }
+    }
+    int const free = content > fixed ? content - fixed : 0;
+    int const share = free_columns > 0 ? free / free_columns : 0;
+    int x = padding;
+    for (Column const& c : columns) {
+        int const w = c.width > 0 ? c.width : share;
+        out.x.push_back(x);
+        out.width.push_back(w);
+        x += w;
+    }
+    return out;
 }
 
 Size ListView::preferred_size() const {
@@ -129,38 +217,42 @@ Size ListView::maximum_size() const {
     return {std::numeric_limits<int>::max(), std::numeric_limits<int>::max()};
 }
 
-void ListView::select(int index) {
-    if (index < 0 || index >= count()) return;
-    if (index == active_) return;
-    active_ = index;
-    damage();
-    if (on_select) on_select(active_);
-}
-
-void ListView::ensure_visible(int index) {
-    int const visible = visible_rows();
-    if (visible <= 0) return;
-    if (index < first_) {
-        set_first(index);
-    } else if (index >= first_ + visible) {
-        set_first(index - visible + 1);
-    }
-}
-
 void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
     Widget::on_paint(canvas, event);
     Theme& theme = Application::instance()->theme();
-    theme.draw_list(canvas, rect_);
     Font* const font = Application::instance()->default_font();
+    theme.draw_list(canvas, rect_);
     int const h = row_height();
     if (h <= 0) return;
-    Rect const area = rows_rect();
-    int const visible = visible_rows();
     int const pad = theme.metric(MetricRole::LIST_PADDING_H);
+    /* The leading strip an image sits in, so the columns start after it. A list
+     * with no image reserves nothing. */
+    int const icon_size = theme.metric(MetricRole::ICON_SIZE_SMALL);
+    int const gap = theme.metric(MetricRole::SPACING_SMALL);
+    int const strip = has_icons_ && !columns_.empty() ? icon_size + gap : 0;
+    Rect const area = rows_rect();
+    Rect const data = data_rect();
+
+    /* The titles row, when there is a column table: the columns' own layout,
+     * with no image and no row state. */
+    if (!columns_.empty()) {
+        Rect const titles{area.x, area.y, area.width, h};
+        ColumnLayout const layout = column_layout(columns_, titles.width - strip, pad);
+        for (int c = 0; c < column_count() && c < static_cast<int>(layout.x.size()); ++c) {
+            Rect const cell_rect{titles.x + strip + layout.x[c], titles.y,
+                                 layout.width[c], h};
+            draw_cell(canvas, font, theme, cell_rect, columns_[static_cast<size_t>(c)].title,
+                      columns_[static_cast<size_t>(c)].align);
+        }
+    }
+
+    ColumnLayout const layout =
+        columns_.empty() ? ColumnLayout{} : column_layout(columns_, data.width - strip, pad);
+    int const visible = visible_rows();
     for (int i = 0; i < visible; ++i) {
         int const index = first_ + i;
         if (index >= count()) break;
-        Rect const row_rect{area.x, area.y + i * h, area.width, h};
+        Rect const row_rect{data.x, data.y + i * h, data.width, h};
         Theme::ListRow state = Theme::ListRow::NORMAL;
         if (index == active_) {
             state = Theme::ListRow::SELECTED;
@@ -169,16 +261,24 @@ void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
         }
         theme.draw_list_row(canvas, row_rect, state);
         if (font == nullptr) continue;
-        std::u32string const& text = rows_[static_cast<size_t>(index)];
-        Size const size = font->measure(text);
-        int x = row_rect.x + pad;
-        if (align_ == Alignment::CENTER) {
-            x = row_rect.x + (row_rect.width - size.width) / 2;
-        } else if (align_ == Alignment::RIGHT) {
-            x = row_rect.x + row_rect.width - pad - size.width;
+        Row const& r = rows_[static_cast<size_t>(index)];
+        if (strip > 0 && r.icon != Icon::NONE) {
+            Rect const image{row_rect.x + pad, row_rect.y + (h - icon_size) / 2, icon_size,
+                             icon_size};
+            theme.draw_icon(canvas, image, r.icon);
         }
-        int const y = row_rect.y + (h - font->height()) / 2;
-        canvas.draw_text({x, y}, text, font, theme.color(ColorRole::TEXT));
+        if (columns_.empty()) {
+            /* The simple shape: one text column, the widget's own alignment. */
+            Rect const cell_rect{row_rect.x + pad, row_rect.y, row_rect.width - 2 * pad, h};
+            draw_cell(canvas, font, theme, cell_rect, row(index), align_);
+            continue;
+        }
+        for (int c = 0; c < column_count() && c < static_cast<int>(layout.x.size()); ++c) {
+            Rect const cell_rect{row_rect.x + strip + layout.x[c], row_rect.y,
+                                 layout.width[c], h};
+            draw_cell(canvas, font, theme, cell_rect, cell(index, c),
+                      columns_[static_cast<size_t>(c)].align);
+        }
     }
 }
 
@@ -220,6 +320,24 @@ void ListView::on_key_down(const KeyEvent& event) {
     if (next >= count()) next = count() - 1;
     ensure_visible(next);
     select(next);
+}
+
+void ListView::select(int index) {
+    if (index < 0 || index >= count()) return;
+    if (index == active_) return;
+    active_ = index;
+    damage();
+    if (on_select) on_select(active_);
+}
+
+void ListView::ensure_visible(int index) {
+    int const visible = visible_rows();
+    if (visible <= 0) return;
+    if (index < first_) {
+        set_first(index);
+    } else if (index >= first_ + visible) {
+        set_first(index - visible + 1);
+    }
 }
 
 }  // namespace aegir::trinket

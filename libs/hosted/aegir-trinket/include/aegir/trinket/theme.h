@@ -12,6 +12,7 @@
 
 #include <aegir/trinket/color.h>
 #include <aegir/trinket/font.h>
+#include <aegir/trinket/icon.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/popup_button.h>
 #include <memory>
@@ -171,6 +172,9 @@ public:
     enum class ListRow { NORMAL, CURSOR, SELECTED };
     virtual void draw_list(Canvas& canvas, const Rect& rect);
     virtual void draw_list_row(Canvas& canvas, const Rect& rect, ListRow state);
+    // A row's image (specs/trinket/listview.md, file_requester.md): the imported
+    // MUI drawer/volume artwork, scaled into the rect. Icon::NONE draws nothing.
+    virtual void draw_icon(Canvas& canvas, const Rect& rect, Icon icon);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,
                                const char* text);

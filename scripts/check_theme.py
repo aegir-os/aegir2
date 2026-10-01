@@ -98,7 +98,9 @@ def main() -> int:
     art = TRINKET / "resources" / "themes" / "xen" / "Plain" / "11pt"
     names = ["ArrowUp.mf0.png", "ArrowDown.mf0.png", "ArrowLeft.mf0.png",
              "ArrowRight.mf0.png", "ArrowUp.mf1.png", "CheckMark.mf0.png",
-             "CheckMark.mf1.png", "RadioButton.mf1.png", "PopUp.mf0.png"]
+             "CheckMark.mf1.png", "RadioButton.mf1.png", "PopUp.mf0.png",
+             "Drawer2.mbr.png", "Harddisk.mbr.png", "Disk.mbr.png",
+             "Chip.mbr.png", "Volume.mbr.png"]
     sprites = [Image.open(art / n).convert("RGBA") for n in names if (art / n).exists()]
     if sprites:
         strip = Image.new("RGBA", (sum(s.width for s in sprites) + 6 * (len(sprites) - 1),

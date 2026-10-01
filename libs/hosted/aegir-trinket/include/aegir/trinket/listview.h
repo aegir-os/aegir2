@@ -9,6 +9,7 @@
 #ifndef AEGIR_TRINKET_LISTVIEW_H
 #define AEGIR_TRINKET_LISTVIEW_H
 
+#include <aegir/trinket/icon.h>
 #include <aegir/trinket/widget.h>
 #include <functional>
 #include <string>
@@ -23,12 +24,26 @@ class Canvas;
  * selection a row, Page Up/Down a page and Home/End to the ends, scrolling the
  * list to keep it in view. `first` is the top visible row -- the `Scrollbar` is
  * the control for it, as it is for the terminal's scrollback, so the list does
- * not own one (specs/trinket/listview.md). */
+ * not own one (specs/trinket/listview.md).
+ *
+ * A row is one text cell by default (`add`). A *column table* (`set_columns`)
+ * gives it titled columns and per-column cells, with an optional image before
+ * the first cell -- the shape a file requester's list is
+ * (specs/trinket/file_requester.md). */
 class ListView : public Widget {
 public:
-    /* Where a row's text sits in the row: a file list is left, a menu is
+    /* Where a cell's text sits in its column: a file list is left, a menu is
      * centred (specs/trinket/listview.md). */
     enum class Alignment { LEFT, CENTER, RIGHT };
+
+    /* One column: a title, a width in pixels, and where its cells sit. A width
+     * of 0 takes an equal share of the width the fixed columns leave, so the
+     * free column is the one that grows. */
+    struct Column {
+        std::u32string title;
+        int width = 0;
+        Alignment align = Alignment::LEFT;
+    };
 
     ListView();
     ~ListView() override;
@@ -36,10 +51,26 @@ public:
     void set_align(Alignment a) { align_ = a; damage(); }
     Alignment align() const { return align_; }
 
+    /* The simple shape: one text column, no titles row. */
     void add(std::u32string_view text);
+    const std::u32string& row(int index) const;
+
+    /* The columned shape: a titles row inside the well, and per-column cells.
+     * Setting a table leaves the rows already added as the first column's
+     * cells. */
+    void set_columns(std::vector<Column> columns);
+    int column_count() const { return static_cast<int>(columns_.size()); }
+    Column const& column(int index) const;
+
+    /* One row's cells (one per column, short of them is empty) and its image.
+     * `index` past the last row appends, so a list may be built a row at a
+     * time. */
+    void set_row(int index, std::vector<std::u32string> cells, Icon icon = Icon::NONE);
+    std::u32string const& cell(int index, int column) const;
+    Icon row_icon(int index) const;
+
     void clear();
     int count() const { return static_cast<int>(rows_.size()); }
-    const std::u32string& row(int index) const;
 
     void set_active(int index);  // programmatic: no on_select; -1 for none
     int active() const { return active_; }
@@ -56,15 +87,24 @@ public:
     /* The row's height -- the font's line and its pad -- and the row a point in
      * the widget is over, or -1. */
     int row_height() const;
-    /* The height that shows `rows` of them whole: the well and the rows. A host
-     * that frames a list -- a popup does -- adds its own inset to this
-     * (specs/trinket/listview.md). */
+    /* The height that shows `rows` of them whole: the well, the titles row when
+     * there is one, and the rows. A host that frames a list -- a popup does --
+     * adds its own inset to this (specs/trinket/listview.md). */
     int height_for_rows(int rows) const;
     int row_at(Point p) const;
 
     /* The first row a scroll to `value` wants, clamped to `[0, count -
      * visible]`. Pure, so the host check pins it (specs/trinket/listview.md). */
     static int clamp_first(int value, int count, int visible);
+
+    /* The columns' x and width across a row `width` wide, `padding` in at either
+     * end. Pure -- no font, no theme -- so the host check pins it. */
+    struct ColumnLayout {
+        std::vector<int> x;
+        std::vector<int> width;
+    };
+    static ColumnLayout column_layout(std::vector<Column> const& columns, int width,
+                                      int padding);
 
     bool focusable() const override { return true; }
     Size preferred_size() const override;
@@ -79,12 +119,23 @@ protected:
     void on_key_down(const KeyEvent& event) override;
 
 private:
-    /* The rows' area: inside the well's one-pixel outline. */
+    /* The well's inside, and the data rows' part of it (the titles row, when
+     * there is one, is the top). */
     Rect rows_rect() const;
+    Rect data_rect() const;
     void select(int index);  // the user's choice
     void ensure_visible(int index);
 
-    std::vector<std::u32string> rows_;
+    struct Row {
+        std::vector<std::u32string> cells;
+        Icon icon = Icon::NONE;
+    };
+
+    std::vector<Row> rows_;
+    std::vector<Column> columns_;
+    /* Whether any row carries an image: the leading strip the columns start
+     * after. Set by set_row, cleared by clear. */
+    bool has_icons_ = false;
     Alignment align_ = Alignment::LEFT;
     int active_ = -1;
     int cursor_ = -1;

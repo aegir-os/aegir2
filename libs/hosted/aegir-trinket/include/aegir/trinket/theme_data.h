@@ -85,6 +85,9 @@ extern const Recipe kRecipePopup[6];
 extern const Recipe kRecipeListWell;
 extern const Recipe kRecipeListCursor;
 extern const Recipe kRecipeListSelected;
+// A row's image, indexed by Icon: NONE, DRAWER, HARD_DISK, DISK, CHIP, VOLUME,
+// NETWORK (specs/trinket/listview.md).
+extern const Recipe kRecipeIcon[7];
 
 }  // namespace aegir::trinket
 
