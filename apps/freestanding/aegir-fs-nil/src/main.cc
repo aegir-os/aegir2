@@ -161,12 +161,13 @@ int main(int argc, char *argv[])
     }
 
     /* Register, then serve. NIL is writable -- a write is how output
-     * disappears -- and public, so every session can redirect to it. */
+     * disappears -- and public, so every session can redirect to it. It has no
+     * directory, so a file browser leaves it out (specs/vfs.md). */
     constexpr char kVolume[] = "NIL";
     uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 2];
     uint32_t out_words = aegir::nmspace::pack_string(out, kVolume, sizeof(kVolume) - 1,
                                                      aegir::nmspace::kNameMax);
-    out[out_words++] = aegir::nmspace::kFlagPublic;
+    out[out_words++] = aegir::nmspace::kFlagPublic | aegir::nmspace::kFlagNoDir;
     out_words += aegir::nmspace::pack_string(out + out_words, "NIL", 3,
                                              aegir::nmspace::kTypeMax);
     uint64_t in[aegir::nmspace::kNameMax / 8 + 1];

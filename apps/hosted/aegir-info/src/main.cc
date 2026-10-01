@@ -48,11 +48,12 @@ void print_row(aegir::nmspace::Row const &row) noexcept
 {
     char const *const type = row.type[0] != '\0' ? row.type : "-";
     char status[48];
-    std::snprintf(status, sizeof(status), "%s%s%s",
+    std::snprintf(status, sizeof(status), "%s%s%s%s",
                   (row.flags & aegir::nmspace::kFlagReadOnly) != 0 ? "read-only"
                                                                    : "read/write",
                   (row.flags & aegir::nmspace::kFlagBoot) != 0 ? " boot" : "",
-                  (row.flags & aegir::nmspace::kFlagPublic) != 0 ? " public" : "");
+                  (row.flags & aegir::nmspace::kFlagPublic) != 0 ? " public" : "",
+                  (row.flags & aegir::nmspace::kFlagNoDir) != 0 ? " no-dir" : "");
     std::printf("%-16s %-8s %s\n", row.name, type, status);
 }
 

@@ -581,12 +581,13 @@ int main(int argc, char *argv[])
     }
 
     /* Register, then serve. PIPE is public, like NIL: a session and the
-     * commands it starts resolve PIPE:name through the namespace. */
+     * commands it starts resolve PIPE:name through the namespace. It has no
+     * directory, so a file browser leaves it out (specs/vfs.md). */
     constexpr char kVolume[] = "PIPE";
     uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 2];
     uint32_t out_words = aegir::nmspace::pack_string(out, kVolume, sizeof(kVolume) - 1,
                                                      aegir::nmspace::kNameMax);
-    out[out_words++] = aegir::nmspace::kFlagPublic;
+    out[out_words++] = aegir::nmspace::kFlagPublic | aegir::nmspace::kFlagNoDir;
     out_words += aegir::nmspace::pack_string(out + out_words, "PIPE", 4,
                                              aegir::nmspace::kTypeMax);
     uint64_t in[aegir::nmspace::kNameMax / 8 + 1];

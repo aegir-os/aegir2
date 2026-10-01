@@ -129,6 +129,12 @@ constexpr uint64_t kFlagBoot = 2; /* the system volume -- the VFS aliases it Sys
  * it; the system's volumes are its own to share, and the boot volume is shared
  * by definition (specs/ownership.md). */
 constexpr uint64_t kFlagPublic = 4;
+/* No directory: the volume is not a directory tree, so a file browser lists
+ * the volumes *without* it and needs no name list of its own (specs/vfs.md).
+ * NIL: and PIPE: set it; a filesystem with directories does not. It is a
+ * listing property, not a namespace one -- the volume is still resolvable and
+ * usable by path (`EndCLI >NIL:`). */
+constexpr uint64_t kFlagNoDir = 8;
 
 /** The longest name a volume may carry, NUL not included: short enough to
  *  travel in the envelope with room for what comes after it, long enough for
