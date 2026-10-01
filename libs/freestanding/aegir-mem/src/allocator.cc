@@ -280,10 +280,6 @@ void Allocator::reset() noexcept
     slots_next_ = 0;
     slots_end_ = 0;
     slots_used_ = 0;
-    /* The probe's slot reservation goes with the cursor: after a re-adopt the
-     * cursor can hand the same slot to a piece, and a probe retyping into it
-     * would land on a live cap (the kernel's "destination slot is occupied"). */
-    probe_slot_ = 0;
     allocated_bytes_ = 0;
     last_request_bits_ = 0;
     last_candidate_bits_ = 0;
@@ -560,37 +556,20 @@ void Allocator::free_piece(Node *node) noexcept
     }
 }
 
-bool Allocator::piece_is_whole(Node *node) noexcept
+void Allocator::ensure_piece_whole(Node *node) noexcept
 {
     if (node->device != 0) {
-        /* A device untyped's frames are carved by address, not a free index. */
-        return true;
+        /* A device untyped's frames are carved by address, not a free index,
+         * and the frames a caller keeps must not be revoked out from under it. */
+        return;
     }
-    if (node->size_bits < seL4_PageBits) {
-        /* The probe is a page; a piece smaller than one cannot hold it, and a
-         * refusal would say nothing about whether the piece is whole. */
-        return true;
-    }
-    if (probe_slot_ == 0) {
-        probe_slot_ = alloc_slot();
-        if (probe_slot_ == 0) {
-            /* No slot to probe in: take the piece on trust. */
-            return true;
-        }
-    }
-    seL4_Error const retyped =
-        seL4_Untyped_Retype(node->cap, seL4_RISCV_4K_Page, seL4_PageBits,
-                            seL4_CapInitThreadCNode, seL4_CapInitThreadCNode,
-                            cnode_depth_, probe_slot_, 1);
-    if (retyped != seL4_NoError) {
-        return false;
-    }
-    /* The probe made a child, so delete it: the piece is childless again and the
-     * next retype resets its free index. */
+    /* Revoke deletes every capability derived from the piece's cap, so the
+     * piece is childless and the kernel will reset its free index on the next
+     * retype (kernel/src/object/untyped.c:182-189). It is a no-op when the
+     * piece is already whole, and it costs no slot. */
     seL4_Word const del_depth =
         cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
-    seL4_CNode_Delete(seL4_CapInitThreadCNode, probe_slot_, del_depth);
-    return true;
+    seL4_CNode_Revoke(seL4_CapInitThreadCNode, node->cap, del_depth);
 }
 
 bool Allocator::free_object(void *cookie, seL4_Word size_bits) noexcept
@@ -732,38 +711,24 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
                                    uint64_t *physical_out, void **cookie) noexcept
 {
     *error = seL4_NoError;
-    Node *node = nullptr;
-    for (;;) {
-        if (!refill(false, size_bits)) {
-            *error = seL4_NotEnoughMemory;
-            return 0;
-        }
-        node = take(false, size_bits);
-        if (node == nullptr) {
-            *error = seL4_NotEnoughMemory;
-            return 0;
-        }
-        /* A piece on the free list is meant to be whole -- its untyped never
-         * retyped from -- but the kernel's free index is not in the cap, so the
-         * only way to tell is to ask: retype a page from it. A refusal is the
-         * kernel's "0 bytes available", so the piece is spent. It cannot be
-         * handed out, and re-listing it would only be taken again, so it is
-         * dropped and the search continues (specs/memory.md). */
-        if (piece_is_whole(node)) {
-            break;
-        }
-        if (trace_ != nullptr) {
-            trace_(trace_context_, "spent", node->size_bits, node->physical,
-                   node->parent != nullptr, node->cap);
-        }
-        free_node(node);
+    if (!refill(false, size_bits)) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
     }
-    /* What is handed out is a piece the splitting made, so it has nothing
-     * derived from it and the kernel will let the caller copy it -- giving it
-     * to a service is the point (specs/authority.md), and a capability with
-     * derived objects cannot be copied ("RevokeFirst: The untyped has been used
-     * to retype an object",
-     * out/aegir/libsel4/include/interfaces/sel4_client.h:419). */
+    Node *const node = take(false, size_bits);
+    if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    /* What is handed out must have nothing derived from it -- the kernel will
+     * not let the caller copy a capability with derived objects ("RevokeFirst:
+     * The untyped has been used to retype an object",
+     * out/aegir/libsel4/include/interfaces/sel4_client.h:419), and a piece that
+     * is not childless is spent, so a retype from it would be refused with the
+     * kernel's "0 bytes available". A listed piece is meant to be childless
+     * already; revoking makes it so whatever a caller did, so the handout is
+     * whole (specs/memory.md). */
+    ensure_piece_whole(node);
     if (physical_out != nullptr) {
         *physical_out = node->physical;
     }
