@@ -26,8 +26,15 @@ class Canvas;
  * not own one (specs/trinket/listview.md). */
 class ListView : public Widget {
 public:
+    /* Where a row's text sits in the row: a file list is left, a menu is
+     * centred (specs/trinket/listview.md). */
+    enum class Alignment { LEFT, CENTER, RIGHT };
+
     ListView();
     ~ListView() override;
+
+    void set_align(Alignment a) { align_ = a; damage(); }
+    Alignment align() const { return align_; }
 
     void add(std::u32string_view text);
     void clear();
@@ -78,6 +85,7 @@ private:
     void ensure_visible(int index);
 
     std::vector<std::u32string> rows_;
+    Alignment align_ = Alignment::LEFT;
     int active_ = -1;
     int cursor_ = -1;
     int first_ = 0;

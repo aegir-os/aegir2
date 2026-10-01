@@ -50,10 +50,11 @@ label, the list below. It is the window's own layer instead.
   window set, so a damage inside it repaints the window through the same path a
   content widget's does; there is no second damage channel to forget.
 
-- **The frame is the client's.** The layer takes *any* widget as the popup root,
-  so what a popup looks like is the client's choice from the theme's parts; the
-  demo frames its with the group's `FRAME` -- a black outline around the panel
-  face, which is what the MUI screenshot of a popped-up list shows.
+- **The frame is the client's, and a menu's is its list's own.** The layer takes
+  *any* widget as the popup root, so what a popup looks like is the client's
+  choice from the theme's parts. A menu's root is the list itself: the list's
+  well is one border, and wrapping it in a frame -- the obvious first move -- gives
+  a menu two, which is not what the MUI screenshot shows.
 
 - **The anchor is a rule, not a guess.** `popup_rect(anchor, popup, bounds)`
   places the popup below the widget that opened it, above it when it does not
@@ -65,9 +66,10 @@ label, the list below. It is the window's own layer instead.
 - **The cycle uses it for its entries.** MUI's split, now that there is a popup:
   a click on the cycle's **button cell** advances, and a click on its **text**
   opens a list of the entries. It hangs **under that text, just past the button
-  cell** -- anchored to the box's left edge it would sit under the mark, which is
-  not what the entry's own text is under. Picking one sets the active entry and
-  reports it, as the keys already do; the menu closes either way.
+  cell, and is as wide as that text area** -- anchored at the box's left edge it
+  would sit under the mark rather than under the text it belongs to. Its entries
+  read centred, as a menu's do. Picking one sets the active entry and reports it,
+  as the keys already do; the menu closes either way.
 
 ## The shape
 

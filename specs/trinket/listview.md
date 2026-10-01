@@ -34,6 +34,14 @@ palette screen; nothing is inverted). That is a correction to what
   `TEXT` (black) either way -- the palette screen does not invert it -- as a
   `Button` draws its label.
 
+- **The text's alignment is the host's, and the list owns its own height.** A
+  row's text is left-aligned by default -- a file list is -- and `set_align`
+  moves it; a menu's entries are centred, which is how MUI's read
+  (specs/trinket/popup.md). `height_for_rows(n)` is the height that shows `n`
+  rows whole, the well included: a host that counts rows and forgets the well
+  asks for one row less than it needs, which is how the cycle's menu first came
+  up two rows tall with the entry the pick aimed at below the fold.
+
 - **The look is the theme's, the rectangles the widget's.** `Theme::draw_list`
   draws the well (a black outline around the gadget face), and
   `Theme::draw_list_row(rect, state)` draws one row in its state

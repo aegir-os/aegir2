@@ -169,9 +169,16 @@ void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
         }
         theme.draw_list_row(canvas, row_rect, state);
         if (font == nullptr) continue;
+        std::u32string const& text = rows_[static_cast<size_t>(index)];
+        Size const size = font->measure(text);
+        int x = row_rect.x + pad;
+        if (align_ == Alignment::CENTER) {
+            x = row_rect.x + (row_rect.width - size.width) / 2;
+        } else if (align_ == Alignment::RIGHT) {
+            x = row_rect.x + row_rect.width - pad - size.width;
+        }
         int const y = row_rect.y + (h - font->height()) / 2;
-        canvas.draw_text({row_rect.x + pad, y}, rows_[static_cast<size_t>(index)],
-                         font, theme.color(ColorRole::TEXT));
+        canvas.draw_text({x, y}, text, font, theme.color(ColorRole::TEXT));
     }
 }
 

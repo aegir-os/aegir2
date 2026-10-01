@@ -294,25 +294,21 @@ int main(int argc, char *argv[])
      * window writes as the popup opens. */
     popup->on_click = [&window, &app, popup_ptr, &popup_pick]() {
         write("  demo: popup\n");
+        /* The object is the list itself -- its own well is its border -- with
+         * its entries centred, a menu like the cycle's (specs/trinket/popup.md). */
         auto object = std::make_unique<ListView>();
         for (std::u32string_view name : {U"Open", U"Save", U"Print"}) {
             object->add(name);
         }
-        int const height = object->height_for_rows(3);
+        object->set_align(ListView::Alignment::CENTER);
         object->on_select = [&window, &popup_pick](int index) {
             window.close_popup();
             popup_pick = index;
         };
-        int const inset = Group::frame_inset(Group::Frame::FRAME);
-        int const width = app.theme().metric(MetricRole::LIST_MIN_WIDTH) + 2 * inset;
-        ListView* const object_ptr = object.get();
-        auto frame = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
-        frame->set_frame(Group::Frame::FRAME);
-        frame->add_child(std::move(object));
-        frame->set_weight(object_ptr, 1);
+        int const width = app.theme().metric(MetricRole::LIST_MIN_WIDTH);
+        Size const size{width, object->height_for_rows(3)};
         Rect const bounds{0, 0, window.rect().width, window.rect().height};
-        window.open_popup(std::move(frame),
-                          popup_rect(popup_ptr->rect(), {width, height + 2 * inset}, bounds));
+        window.open_popup(std::move(object), popup_rect(popup_ptr->rect(), size, bounds));
     };
     auto cycle_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
     Group* const cycle_row_ptr = cycle_row.get();
