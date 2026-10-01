@@ -331,6 +331,20 @@ unsigned Allocator::check_free_lists() const noexcept
     return problems;
 }
 
+Allocator::Piece Allocator::piece_state(void *cookie) const noexcept
+{
+    Piece out;
+    auto const *const node = static_cast<Node *>(cookie);
+    if (node == nullptr) {
+        return out;
+    }
+    out.size_bits = node->size_bits;
+    out.physical = node->physical;
+    out.split_child = node->parent != nullptr;
+    out.free = node->free != 0;
+    return out;
+}
+
 bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 {
     if (refill_inner(device, size_bits)) {
@@ -508,6 +522,14 @@ void Allocator::free_piece(Node *node) noexcept
          * its CNode's size (specs/memory.md). */
         seL4_Word const del_depth =
             cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
+        /* Revoke before delete: a delete leaves the piece's derived caps alive,
+         * so a caller that handed the piece back without revoking the objects it
+         * retyped from it leaves the memory in use while the merge re-lists the
+         * parent -- a free piece whose memory is spent, which the next retype
+         * from it refuses ("0 bytes available"). The revoke makes the piece's
+         * memory free whatever the caller did (specs/memory.md). */
+        seL4_CNode_Revoke(seL4_CapInitThreadCNode, node->cap, del_depth);
+        seL4_CNode_Revoke(seL4_CapInitThreadCNode, sibling->cap, del_depth);
         seL4_CNode_Delete(seL4_CapInitThreadCNode, node->cap, del_depth);
         seL4_CNode_Delete(seL4_CapInitThreadCNode, sibling->cap, del_depth);
         /* The caps are gone, so their slots are free again -- and a pool that

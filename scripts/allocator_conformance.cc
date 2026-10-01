@@ -149,6 +149,100 @@ bool reentrancy_holds()
     return host_sel4::refusals() == before && allocator.check_free_lists() == 0;
 }
 
+/* The console's slice flow (specs/console.md): carve a big untyped for a
+ * client's slice, then retype the slice's frames from that cap. The node source
+ * is the re-entrant one and the node pool is small, so each carve re-enters
+ * `refill` while a parent is held. Returns true when nothing was refused. */
+bool carve_and_frames_hold()
+{
+    host_sel4::reset();
+    g_chunks = 0;
+    seL4_BootInfo info{};
+    info.empty = {1, 8000};
+    info.initThreadCNodeSizeBits = 12;
+    seL4_CPtr const root = host_sel4::make_root_untyped(24);
+    info.untypedList[0].sizeBits = 24;
+    info.untyped = {root, root + 1};
+
+    aegir::mem::Allocator allocator(&info);
+    if (!allocator.initialise()) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+    alignas(64) static unsigned char nodes[512];
+    allocator.adopt_nodes(nodes, sizeof(nodes));
+    alignas(64) static unsigned char pool[1 << 20];
+    NodeWindow window{&allocator, pool, sizeof(pool), 0};
+    allocator.set_node_source(reentrant_nodes, &window);
+
+    constexpr unsigned kSliceBits = 23;             /* 8 MiB, the console's chunk */
+    constexpr unsigned kFrameBits = 21;             /* a RISC-V mega page */
+    constexpr unsigned kFrames = 1u << (kSliceBits - kFrameBits);
+
+    unsigned const before = host_sel4::refusals();
+    for (unsigned i = 0; i < 8; ++i) {
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        seL4_CPtr const untyped =
+            allocator.carve_untyped(kSliceBits, g_account, &error, nullptr, &cookie);
+        if (untyped == 0) {
+            continue;
+        }
+        seL4_CPtr frames[1u << (kSliceBits - kFrameBits)] = {};
+        for (unsigned f = 0; f < kFrames; ++f) {
+            frames[f] = allocator.carve_page(untyped, g_account, &error, kFrameBits);
+        }
+        /* The console reaps a slice: the frames die, then the piece goes back
+         * and merges with its buddy (specs/console.md). */
+        for (unsigned f = 0; f < kFrames; ++f) {
+            if (frames[f] != 0) {
+                (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, frames[f], 12);
+            }
+        }
+        (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, untyped, 12);
+        (void)allocator.free_object(cookie, kSliceBits);
+    }
+    return host_sel4::refusals() == before && allocator.check_free_lists() == 0;
+}
+
+/* The allocator's contract says a caller revokes the objects it retyped from a
+ * piece before handing the piece back. It must not *depend* on that: the merge
+ * revokes, so a piece handed back with its object still alive leaves no
+ * orphaned memory. With the merge only deleting, the live object is left behind
+ * and the parent comes back whole while its memory is still in use -- the spent
+ * piece a later retype refuses with "0 bytes available". */
+bool free_without_revoke_holds()
+{
+    host_sel4::reset();
+    g_chunks = 0;
+    seL4_BootInfo info{};
+    info.empty = {1, 8000};
+    info.initThreadCNodeSizeBits = 12;
+    seL4_CPtr const root = host_sel4::make_root_untyped(22);
+    info.untypedList[0].sizeBits = 22;
+    info.untyped = {root, root + 1};
+
+    aegir::mem::Allocator allocator(&info);
+    if (!allocator.initialise()) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+
+    unsigned const before = host_sel4::refusals();
+    for (unsigned i = 0; i < 64; ++i) {
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        (void)allocator.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, g_account, &error,
+                                     &cookie);
+        if (cookie != nullptr) {
+            /* The caller skipped its revoke: the page is still alive. */
+            (void)allocator.free_object(cookie, seL4_PageBits);
+        }
+    }
+    return host_sel4::refusals() == before && host_sel4::orphans() == 0 &&
+           allocator.check_free_lists() == 0;
+}
+
 }  // namespace
 
 int main()
@@ -159,6 +253,15 @@ int main()
      * `grow_nodes_from_window` does exactly this), so a refill can re-enter
      * itself. No piece may be lost to that. */
     expect(reentrancy_holds(), "a re-entrant refill keeps the allocator whole");
+
+    /* The same, in the shape the console's slice takes: a big carved untyped
+     * whose frames are retyped from the cap. This is where a spent piece handed
+     * out by `carve_untyped` showed up on the target. */
+    expect(carve_and_frames_hold(), "a carved slice's frames retype from their own cap");
+
+    /* A caller that hands a piece back with its objects still alive (skipping
+     * the revoke the contract asks for) must not poison the pool. */
+    expect(free_without_revoke_holds(), "a piece freed without its objects revoked leaves no orphan");
 
     host_sel4::reset();
 

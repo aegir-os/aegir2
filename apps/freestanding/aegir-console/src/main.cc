@@ -1211,6 +1211,19 @@ int main(int argc, char *argv[])
                 aegir::debug_write_unsigned(carved ? 1 : 0);
                 aegir::debug_write(" events ");
                 aegir::debug_write_unsigned(events);
+                /* The allocator's own view, for a piece the kernel refused: a
+                 * free list with no room and a piece that was split from
+                 * something is the shape the "0 bytes available" bug takes
+                 * (specs/memory.md). */
+                aegir::debug_write(" lists ");
+                aegir::debug_write_unsigned(g_objects.check_free_lists());
+                auto const piece = g_objects.piece_state(untyped_cookie);
+                aegir::debug_write(" piece ");
+                aegir::debug_write_unsigned(piece.size_bits);
+                aegir::debug_write(" split ");
+                aegir::debug_write_unsigned(piece.split_child ? 1 : 0);
+                aegir::debug_write(" held ");
+                aegir::debug_write_unsigned(piece.free ? 0 : 1);
                 aegir::debug_write("\n");
                 gui.reply(0);
                 continue;

@@ -313,6 +313,18 @@ public:
      *  correct allocator answers zero. */
     unsigned check_free_lists() const noexcept;
 
+    /** A piece's place in the split tree, for a boot diagnostic: its size,
+     *  whether it was split from something (so its cap may already have derived
+     *  objects), and whether it is still listed free. `cookie` is what an
+     *  allocation returned through its cookie. */
+    struct Piece {
+        unsigned size_bits = 0;
+        uint64_t physical = 0;
+        bool split_child = false;
+        bool free = false;
+    };
+    Piece piece_state(void *cookie) const noexcept;
+
     /* What the machine gave us, for the boot report. */
     unsigned untyped_count() const noexcept { return node_used_; }
     unsigned untyped_free() const noexcept;

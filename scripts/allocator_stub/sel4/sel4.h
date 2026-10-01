@@ -100,6 +100,10 @@ inline std::array<Cap, kMaxCaps> g_caps{};
 inline seL4_CPtr g_next_root = 100000;
 inline unsigned g_refusals = 0;
 inline unsigned g_retypes = 0;
+/* Caps deleted while capabilities derived from them were still alive: the
+ * memory is orphaned (a delete does not take its children), which is what a
+ * piece handed back without its objects revoked leaves behind. */
+inline unsigned g_orphans = 0;
 inline bool g_log = false;
 
 inline seL4_CPtr take_root()
@@ -113,6 +117,7 @@ inline void reset()
     g_next_root = 100000;
     g_refusals = 0;
     g_retypes = 0;
+    g_orphans = 0;
     g_log = false;
 }
 
@@ -134,6 +139,7 @@ inline seL4_CPtr make_root_untyped(unsigned bits)
 
 inline unsigned refusals() { return g_refusals; }
 inline unsigned retypes() { return g_retypes; }
+inline unsigned orphans() { return g_orphans; }
 inline void log_refusals(bool on) { g_log = on; }
 
 /** The kernel's `getObjectSize`: a CNode's memory is its slot bits plus the
@@ -187,12 +193,35 @@ inline seL4_Error cnode_delete(seL4_CPtr node, seL4_CPtr cap)
     if (cap >= kMaxCaps || !g_caps[cap].valid) {
         return seL4_NoError;
     }
+    if (g_caps[cap].children > 0) {
+        ++g_orphans;
+    }
     seL4_CPtr const parent = g_caps[cap].parent;
     if (parent != 0 && parent < kMaxCaps && g_caps[parent].valid &&
         g_caps[parent].children > 0) {
         g_caps[parent].children -= 1;
     }
     g_caps[cap].valid = false;
+    return seL4_NoError;
+}
+
+/* A revoke takes every capability derived from `cap` with it -- unlike a delete,
+ * which leaves them and so leaves the memory in use (kernel/src/kernel/
+ * cspace.c `finaliseCap`, `capHasDerived`). The allocator's merge relies on it:
+ * a piece can only be whole again when its cap has no children. */
+inline seL4_Error cnode_revoke(seL4_CPtr node, seL4_CPtr cap)
+{
+    static_cast<void>(node);
+    if (cap >= kMaxCaps || !g_caps[cap].valid) {
+        return seL4_NoError;
+    }
+    for (seL4_CPtr child = 0; child < kMaxCaps; ++child) {
+        if (g_caps[child].valid && g_caps[child].parent == cap) {
+            (void)cnode_revoke(node, child);
+            g_caps[child].valid = false;
+        }
+    }
+    g_caps[cap].children = 0;
     return seL4_NoError;
 }
 
@@ -216,6 +245,12 @@ inline seL4_Error seL4_CNode_Delete(seL4_CPtr node, seL4_CPtr cap, seL4_Word dep
 {
     static_cast<void>(depth);
     return host_sel4::cnode_delete(node, cap);
+}
+
+inline seL4_Error seL4_CNode_Revoke(seL4_CPtr node, seL4_CPtr cap, seL4_Word depth)
+{
+    static_cast<void>(depth);
+    return host_sel4::cnode_revoke(node, cap);
 }
 
 inline seL4_Error seL4_RISCV_ASIDControl_MakePool(seL4_CPtr control, seL4_CPtr untyped,
