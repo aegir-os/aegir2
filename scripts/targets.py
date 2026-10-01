@@ -833,6 +833,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 25722}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
+                    # Then the radio group's second member
+                    # (specs/trinket/radio_group.md): it clears the first, and the
+                    # cue the demo prints is a later step's trigger. The click is
+                    # here -- before the screen bar opens the demo's menu -- because
+                    # the menu dance's own click closes the demo.
+                    {"type": "abs", "data": {"axis": "x", "value": 27622}},
+                    {"type": "abs", "data": {"axis": "y", "value": 28016}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
                     # Then the screen bar's first title: the demo's menu.
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},
@@ -843,6 +852,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The scrollbar's click scrolled the terminal: the demo's cue
             # (specs/trinket/scrollbar.md).
             QmpStep(r"demo: scrolled"),
+            # The radio group's click took: the second member is checked and the
+            # first cleared (specs/trinket/radio_group.md).
+            QmpStep(
+                r"demo: radio 2",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The exclusivity (specs/trinket/radio_group.md): the second
+                # member's ring is filled where the first's is hollow.
+                pixels=(
+                    ("gpu0", 1079, 683, 61, 101, 162),
+                    ("gpu0", 1005, 683, 174, 174, 174),
+                ),
+            ),
             # The bureau.menu server (specs/workbench.md), while the demo is
             # still up: it registered its tree when it gained the focus, so the
             # bar's first title is the demo's, and clicking it drops the demo's

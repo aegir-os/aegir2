@@ -117,9 +117,14 @@ public:
 
 ## What this is not
 
-- **The `Group` widget.** The framed, titled container MUI's vocabulary is built
-  on is the next arc; this one is the layout it will use. A plain `Container`
-  with a `GroupLayout` is already a group in the sizing sense.
+- **The `Group` widget's own geometry.** `Group` has landed -- a `Container`
+  with a `GroupLayout`, a frame and a title -- and what it *draws* is the
+  theme's (specs/trinket/theming.md). One part is the group's and not the
+  theme's: a group box's **title band**. A `GROUP_BOX` with a title reserves
+  `font height + 4` at the top of its own rectangle, added to the frame's inset,
+  so the layout sizes and places its children below the caption and the group's
+  preferred height grows with the font. The caption is drawn *inside* that band,
+  so a larger title font cannot push it over the group above.
 - **The grey 3-D XEN look.** `theme-xen.md` is the look; this arc changes no
   pixels.
 - **Flow and wrap.** `FlowLayout` keeps its own line-breaking; `GroupLayout` is

@@ -104,9 +104,10 @@ public:
         Size const size = font->measure(title);
         int const gap_x = 8;
         int const x = rect.x + gap_x;
-        int const y = rect.y - font->ascent() / 2;
-        /* The title sits in a notch in the top edge: clear its place, then draw
-         * it there. */
+        /* The caption sits in the band the group reserved for it, just inside
+         * the box's top edge (specs/trinket/layout.md): the group insets its
+         * children below the band, so the caption is never over them. */
+        int const y = rect.y + 2;
         canvas.fill_rect({x - 2, y, size.width + 4, font->height()},
                          color(ColorRole::PANEL_BG));
         canvas.draw_text({x, y}, title, font, color(ColorRole::TEXT));

@@ -31,8 +31,11 @@ namespace aegir::trinket {
 void Window::damage(const Rect&) {}
 
 /* group.cc's paint names the application; the check lays out but never draws,
- * so a null instance that is never dereferenced is enough. */
+ * so a null instance that is never dereferenced is enough. A group box's title
+ * band asks for the font, and a null font is a band of zero -- which is all the
+ * check lays out. */
 Application* Application::instance() { return nullptr; }
+Font* Application::default_font() { return nullptr; }
 }  // namespace aegir::trinket
 
 namespace {

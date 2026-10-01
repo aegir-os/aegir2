@@ -64,11 +64,15 @@ void Group::set_frame(Frame frame) {
 
 void Group::set_title(std::u32string_view title) {
     title_ = std::u32string(title);
+    /* The band the caption needs changes the inset, and the inset changes the
+     * layout's preferred size (specs/trinket/layout.md). */
+    update_inset();
     damage();
 }
 
 void Group::set_title(std::string_view title) {
     title_ = utf8_to_utf32(title);
+    update_inset();
     damage();
 }
 
@@ -84,7 +88,18 @@ void Group::set_align(Widget* child, Align align) {
 
 void Group::update_inset() {
     int const inset = frame_inset(frame_);
-    group_->set_inset(inset, inset, inset, inset);
+    /* The caption's band is the box's, not the frame's, so it goes on top of the
+     * frame's own inset (specs/trinket/layout.md). */
+    group_->set_inset(inset + title_band(), inset, inset, inset);
+}
+
+int Group::title_band() const noexcept {
+    if (frame_ != Frame::GROUP_BOX || title_.empty()) {
+        return 0;
+    }
+    Application* const app = Application::instance();
+    Font* const font = app != nullptr ? app->default_font() : nullptr;
+    return font != nullptr ? font->height() + 4 : 0;
 }
 
 void Group::on_paint(Canvas& canvas, const PaintEvent& event) {

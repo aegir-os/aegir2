@@ -61,6 +61,9 @@ protected:
 
 private:
     void update_inset();
+    /* The band a group box's title needs at the top: the caption's line and a
+     * little air below it. Zero for a group with no box or no title. */
+    int title_band() const noexcept;
 
     GroupLayout* group_ = nullptr;
     Frame frame_ = Frame::FLAT;
