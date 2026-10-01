@@ -522,6 +522,12 @@ Allocator::Node *Allocator::take(bool device, seL4_Word size_bits) noexcept
 
 void Allocator::free_piece(Node *node) noexcept
 {
+    /* The piece goes back whole whatever the caller did. A caller hands a piece
+     * back with `Revoke`, never `Delete` -- a delete leaves its derived caps
+     * alive -- and a caller that did not would otherwise put a spent piece on
+     * the free list. Revoking here makes the invariant the allocator's, not the
+     * caller's (specs/memory.md). */
+    ensure_piece_whole(node);
     /* A piece whose buddy is free merges with it: delete both children (so the
      * parent has none and its memory resets), return their node slots, and give
      * the parent back in turn (allocman's `_utspace_split_free`). */

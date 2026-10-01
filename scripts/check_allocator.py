@@ -53,6 +53,7 @@ def main() -> int:
             str(MEM / "include"),
             str(DRIVER),
             str(MEM / "src" / "allocator.cc"),
+            str(MEM / "src" / "frame_region.cc"),
             "-o",
             str(binary),
         ]

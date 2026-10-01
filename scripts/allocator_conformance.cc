@@ -12,6 +12,7 @@
 #include <sel4/sel4.h>
 
 #include <aegir/mem/allocator.h>
+#include <aegir/mem/frame_region.h>
 #include <aegir/mem/slot_pool.h>
 
 #include <cstdio>
@@ -252,6 +253,54 @@ bool free_without_revoke_holds()
            allocator.check_free_lists() == 0;
 }
 
+/* A FrameRegion is the sequence a service used to hand-roll: carve a piece,
+ * retype N frames from it, and give it back whole. A caller that never touches
+ * the untyped still gets frames, and the piece goes back so the next caller
+ * cannot inherit a spent one (specs/memory.md). */
+bool frame_region_holds()
+{
+    host_sel4::reset();
+    g_chunks = 0;
+    seL4_BootInfo info{};
+    info.empty = {1, 8000};
+    info.initThreadCNodeSizeBits = 12;
+    seL4_CPtr const root = host_sel4::make_root_untyped(23);
+    info.untypedList[0].sizeBits = 23;
+    info.untyped = {root, root + 1};
+
+    aegir::mem::Allocator allocator(&info);
+    if (!allocator.initialise()) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+
+    constexpr unsigned kFrames = 4;
+    constexpr unsigned kFrameBits = 21;
+    unsigned const before = host_sel4::refusals();
+    for (unsigned round = 0; round < 4; ++round) {
+        aegir::mem::FrameRegion region;
+        seL4_CPtr caps[kFrames] = {};
+        seL4_Error error = seL4_NoError;
+        if (!region.create(allocator, g_account, 23, kFrames, kFrameBits, caps, &error)) {
+            return false;
+        }
+        for (unsigned f = 0; f < kFrames; ++f) {
+            if (caps[f] == 0 || !host_sel4::g_caps[caps[f]].valid) {
+                region.release(allocator);
+                return false;
+            }
+        }
+        region.release(allocator);
+        /* The release took the frames with the piece: the allocator revokes. */
+        for (unsigned f = 0; f < kFrames; ++f) {
+            if (host_sel4::g_caps[caps[f]].valid) {
+                return false;
+            }
+        }
+    }
+    return host_sel4::refusals() == before && allocator.check_free_lists() == 0;
+}
+
 /* A ring of the allocator's piece movements, so the moment a piece is found
  * spent can be read back: what was inserted, split and taken before it. */
 struct Event {
@@ -326,6 +375,10 @@ int main()
     /* A caller that hands a piece back with its objects still alive (skipping
      * the revoke the contract asks for) must not poison the pool. */
     expect(free_without_revoke_holds(), "a piece freed without its objects revoked leaves no orphan");
+
+    /* A service asks for frames, not for an untyped it must retype: the region
+     * carves, retypes and gives the piece back whole (specs/memory.md). */
+    expect(frame_region_holds(), "a frame region gives frames and the piece back whole");
 
     host_sel4::reset();
 
