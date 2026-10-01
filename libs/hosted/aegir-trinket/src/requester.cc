@@ -113,6 +113,11 @@ void Requester::set_gadgets(uint32_t gadgets)
     window_->set_gadgets(gadgets);
 }
 
+void Requester::set_stays_open(uint32_t id)
+{
+    stays_open_.push_back(id);
+}
+
 void Requester::show()
 {
     layout();
@@ -142,6 +147,13 @@ void Requester::activate(uint32_t id)
      * is no longer on screen. */
     if (on_action) {
         on_action(id);
+    }
+    /* An action that acts on the open dialog -- Volumes, Parent -- leaves it up;
+     * the default and the cancel close it. */
+    for (uint32_t const stays : stays_open_) {
+        if (stays == id) {
+            return;
+        }
     }
     close();
 }

@@ -131,6 +131,8 @@ add_library(aegir-trinket STATIC
     src/listview.cc
     src/popup.cc
     src/requester.cc
+    src/file_path.cc
+    src/file_requester.cc
     src/menubar.cc
     src/window.cc
     src/font.cc
@@ -176,6 +178,8 @@ target_link_libraries(aegir-trinket PUBLIC
     aegir-ipc
     aegir-font-protocol
     aegir-namespace
+    aegir-vfs-client
+    aegir-pattern
     aegir-bootstrap
     aegir-mem
     aegir-heap

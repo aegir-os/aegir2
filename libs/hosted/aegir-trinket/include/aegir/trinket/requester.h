@@ -63,6 +63,11 @@ public:
      *  none of its own; a caller that wants a close gadget asks for one. */
     void set_gadgets(uint32_t gadgets);
 
+    /** An action id whose button must not close the window -- the file
+     *  requester's Volumes and Parent, which act on the open dialog. Any other
+     *  action closes, as the default/cancel rule wants. */
+    void set_stays_open(uint32_t id);
+
     /** Size the window to the content and buttons, center it on the screen,
      *  show it, and focus the content (or the default button when there is
      *  none). */
@@ -91,6 +96,7 @@ private:
     Size content_size_{};
     std::vector<Action> actions_;
     std::vector<Widget*> buttons_;
+    std::vector<uint32_t> stays_open_;
     uint32_t default_id_ = 0;
     uint32_t cancel_id_ = 0;
 };

@@ -32,11 +32,13 @@ missing is the *body* and what it stands on:
 
 - **The list grows titles, columns and row images.** `ListView` gains a
   column table -- a title, a width and an alignment each, with the existing
-  single text column the empty table -- and each row may name an image the
-  theme draws before its first cell. The rows stay one active row and one
-  cursor (`specs/trinket/listview.md`); only the row's *contents* widen. The
-  image is a theme sprite (the imported `Drawer`, `HardDisk`, `Disk`, `Chip`,
-  `Volume` art), so the file list's icons are the look's, as the arrows are.
+  single text column the empty table -- and each row may name an `Icon` the
+  theme draws in a leading strip. The rows stay one active row and one cursor
+  (`specs/trinket/listview.md`); only the row's *contents* widen. A width of 0
+  is the free column, so the name column takes the width the size and date
+  columns leave. The image is the imported `Drawer`/`HardDisk`/`Disk`/`Chip`/
+  `Volume` art, fitted to the strip rather than stretched (it is a small wide
+  bitmap), so the file list's icons are the look's, as the arrows are.
 
 - **The Pattern box filters with an AmigaDOS wildcard.** The matcher is
   `specs/pattern.md`'s, shared with the shell's globbing and `dir`/`list` --
@@ -70,6 +72,22 @@ missing is the *body* and what it stands on:
   finding a port of its own, so a program that opens a file is the one whose
   manifest holds `vfs.namespace` (`specs/services.md`).
 
+- **Volumes and Parent act on the open dialog.** The `Requester` closes on a
+  button, which is what OK and Cancel want; the file requester asks it to keep
+  the window up for Volumes and Parent (`Requester::set_stays_open`), which list
+  the volumes and walk to the parent drawer in place.
+
+- **The `Drawer` toggle is the directories.** Checked -- its default -- the
+  drawer's directories and files are listed; unchecked it hides the
+  directories, leaving the files the pattern keeps. The path box beside it is
+  the drawer: Enter in it opens the path, and a click on a directory row opens
+  it, as the Amiga's requester does.
+
+- **The path and the size are pure, so a host check pins them.** The parent of
+  a path, the join of a drawer and a name, and a size as `List` writes it (a
+  comma every three digits) are `file_path.h`'s, with no theme and no VFS, so
+  `make check-file-path` covers them without a boot.
+
 ## The shape
 
 ```cpp
@@ -82,6 +100,11 @@ struct Column {
 void set_columns(std::vector<Column> columns);  // empty: one text column
 void set_row(int index, std::vector<std::u32string> cells, Icon icon);
 
+// file_path.h -- the pure helpers, host-checked
+std::u32string parent_of(std::u32string_view path);
+std::u32string join(std::u32string_view drawer, std::u32string_view name);
+std::string format_size(uint64_t bytes);
+
 // file_requester.h
 class FileRequester {
 public:
@@ -90,18 +113,21 @@ public:
     FileRequester(Application& app, aegir::vfs::Namespace& vfs,
                   std::u32string_view title);
 
-    /** The drawer the list opens on; empty opens on the current directory. */
+    /** The drawer the list opens on. It is listed at once, so a drawer that
+     *  does not resolve leaves an empty list. */
     void open_at(std::u32string_view drawer);
 
-    /** The pattern the box starts with: `#?` lists everything. */
+    /** The wildcard the list is filtered by, `#?` (everything) at first. */
     void set_pattern(std::u32string_view pattern);
 
-    /** The chosen name when OK resolved, empty otherwise. */
+    std::u32string const& drawer() const;
+    /** The name in the File box when OK resolved, empty otherwise. */
     std::u32string const& chosen() const;
 
     std::function<void(Action)> on_action;
     void show();
     void close();
+    bool visible() const;
 };
 ```
 
@@ -124,11 +150,12 @@ public:
 
 ## Acceptance
 
-- **`make check-pattern`** is the matcher's (`specs/pattern.md`); this arc
-  adds nothing to it.
-- **`make check-listview`** grows the column and image cases: the empty table
-  is the one text column, a column table places and sizes its cells, and a
-  row's image sits before its first cell.
+- **`make check-pattern`** is the matcher's (`specs/pattern.md`) and
+  **`make check-listview`** the columns' (`specs/trinket/listview.md`); this arc
+  adds nothing to either.
+- **`make check-file-path`** (`scripts/check_file_path.py` +
+  `scripts/file_path_conformance.cc`): the parent of a path, the join of a
+  drawer and a name, and a size as `List` writes it.
 - **The demo** opens a file requester on a known drawer, reads its columns
   and its list back from a screendump, types a pattern and reads the list
   filtered, presses Volumes and reads the browsable volumes -- with `NIL:`
