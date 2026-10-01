@@ -340,7 +340,10 @@ architecture-specific code stays abstracted.
 Every target is configured and booted through `scripts/run_target.py`, which
 streams the guest console and stops QEMU when the target's success marker
 appears (QEMU never exits on its own). `scripts/targets.py` holds the target
-list.
+list. The watch is bounded on both sides: the runner itself stops a run that
+prints nothing for `--timeout` seconds and names the cues that never printed, so
+a step whose cue cannot come fails the run rather than wedging it until the
+outer `timeout` expires.
 
 ## The root task, and what QEMU actually loads
 

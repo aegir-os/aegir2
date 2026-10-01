@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
@@ -25,6 +26,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -457,7 +459,33 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
         stream = process.stdout
         if stream is None:  # pragma: no cover - Popen above always pipes
             return False, True, ""
-        for line in stream:
+        # The console is read on its own thread so the loop below can time out
+        # on a quiet guest: a step's cue that never prints must fail the run,
+        # not wedge it until the outer budget expires (the rule the build's own
+        # timeouts keep). `timeout` is that bound, and every line resets it.
+        lines: queue.Queue[str | None] = queue.Queue()
+
+        def pump() -> None:
+            try:
+                for text in stream:
+                    lines.put(text)
+            finally:
+                lines.put(None)
+
+        threading.Thread(target=pump, daemon=True).start()
+        while True:
+            try:
+                line = lines.get(timeout=timeout)
+            except queue.Empty:
+                print(
+                    f"    runner: FAIL no console line within {timeout}s -- "
+                    "the guest stopped talking",
+                    flush=True,
+                )
+                failed = True
+                break
+            if line is None:
+                break
             stripped = line.rstrip("\n")
             if stripped:
                 print(f"    {stripped}", flush=True)
@@ -591,7 +619,6 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     flush=True,
                 )
                 failed = True
-        stream.close()
     finally:
         # Take the whole process group down: QEMU is a child of the shell, and
         # neither notices that the target is finished.
@@ -613,7 +640,12 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", required=True, choices=sorted(TARGETS))
-    parser.add_argument("--timeout", type=int, default=900, help="seconds per step")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=900,
+        help="seconds a build step, or a run with no console output, may take",
+    )
     parser.add_argument("--build-only", action="store_true", help="stop after building")
     parser.add_argument(
         "--interactive",
