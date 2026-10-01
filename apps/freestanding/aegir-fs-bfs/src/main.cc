@@ -946,6 +946,8 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     answer[name_words] = is_directory(child) ? 0 : static_cast<uint64_t>(child.size);
     answer[name_words + 1] =
         is_directory(child) ? aegir::volume::kKindDir : aegir::volume::kKindFile;
+    /* The same time stat answers: BFS stores it with 16 fractional bits. */
+    answer[name_words + 2] = static_cast<uint64_t>(child.mtime) >> 16;
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 

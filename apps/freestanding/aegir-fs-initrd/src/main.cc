@@ -168,6 +168,8 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     }
     answer[name_words] = entry_size;
     answer[name_words + 1] = aegir::volume::kKindFile;
+    /* The archive carries no times, as its stat answers zero. */
+    answer[name_words + 2] = 0;
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 

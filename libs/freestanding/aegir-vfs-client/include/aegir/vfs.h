@@ -135,14 +135,17 @@ public:
     bool read_handle(uint64_t handle, uint64_t offset, uint64_t capacity,
                      Bytes &out) noexcept;
 
-    /** One directory entry: the name (into this Volume), its size and kind
-     *  (volume::kKindFile or kKindDir). False at the end of the directory or
-     *  on refusal -- the cursor is the caller's index. */
+    /** One directory entry: the name (into this Volume), its size, its kind
+     *  (volume::kKindFile or kKindDir) and its last-write time as whole seconds
+     *  since the Unix epoch (zero when the filesystem has no clock). False at
+     *  the end of the directory or on refusal -- the cursor is the caller's
+     *  index. */
     struct Entry {
         char const *name;
         uint32_t name_length;
         uint64_t size;
         uint64_t kind;
+        uint64_t mtime;
     };
     bool list(char const *path, uint32_t length, uint64_t index, Entry &out) noexcept;
 

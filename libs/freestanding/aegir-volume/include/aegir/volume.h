@@ -56,7 +56,7 @@
 namespace aegir::volume {
 
 constexpr uint32_t kMethodRead = 1; /* in: path words, offset, max; answer: count, eof, bytes */
-constexpr uint32_t kMethodList = 2; /* in: path words, index; answer: name words, size, kind */
+constexpr uint32_t kMethodList = 2; /* in: path words, index; answer: name words, size, kind, mtime */
 
 /* The write side (specs/vfs.md): handles, the only per-client state a
  * filesystem holds. A handle answers open, is scoped to the caller's badge
@@ -138,8 +138,12 @@ constexpr uint32_t kReadMax = 117 * 8;
 /** read's answer: how many bytes follow, and whether the file ends there. */
 constexpr uint32_t kReadHeaderWords = 2;
 
-/** list's answer after the name string: the entry's size and its kind. */
-constexpr uint32_t kListTailWords = 2;
+/** list's answer after the name string: the entry's size, its kind, and its
+ *  last-write time as whole seconds since the Unix epoch (zero when the
+ *  filesystem has no clock). The time is here, not only in stat, because a file
+ *  list wants it for every row it shows and a stat per row is a call per row
+ *  (specs/vfs.md, specs/trinket/file_requester.md). */
+constexpr uint32_t kListTailWords = 3;
 
 /** stat's answer after the path: the entry's kind and its size, then its
  *  last-write time as whole seconds since the Unix epoch (zero when the

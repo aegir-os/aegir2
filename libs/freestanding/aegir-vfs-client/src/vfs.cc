@@ -295,6 +295,7 @@ bool Volume::list(char const *path, uint32_t length, uint64_t index, Entry &out)
     out.name_length = name_length;
     out.size = reply_[tail];
     out.kind = reply_[tail + 1];
+    out.mtime = reply_[tail + 2];
     return true;
 }
 

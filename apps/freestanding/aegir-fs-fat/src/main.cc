@@ -1751,6 +1751,8 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     answer[name_words] = dirent.bytes;
     answer[name_words + 1] = dirent.directory ? aegir::volume::kKindDir
                                               : aegir::volume::kKindFile;
+    /* The same time stat answers: the FAT date and time fields as Unix seconds. */
+    answer[name_words + 2] = aegir::fat::dos_to_unix(dirent.date, dirent.time);
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 

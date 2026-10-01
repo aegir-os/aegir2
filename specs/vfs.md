@@ -169,8 +169,11 @@ second, ASCII-case-folded (specs/fat.md).
   optional, the write side is not.
 - **list** — words: path, an index. The walk ends at the *directory* the
   path names — the empty path lists the root. Reply: one entry (name, size,
-  kind), or end-of-directory. The cursor is the caller's index, the registry
-  describe pattern again.
+  kind, time), or end-of-directory. The cursor is the caller's index, the
+  registry describe pattern again. The time is the entry's last write, as
+  `stat` answers it, because a file list shows it for every row and a `stat`
+  per row is a call per row (`specs/trinket/file_requester.md`); a filesystem
+  with no clock answers zero.
 - **stat** — words: a path. The walk ends at the thing the path names — the
   empty path is the root, always a directory. Reply: the kind and the size
   (`kStatTailWords` words), or nothing when the path is not there. A

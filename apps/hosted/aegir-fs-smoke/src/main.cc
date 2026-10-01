@@ -232,6 +232,7 @@ int main(int argc, char *argv[])
         Namespace::Resolved resolved{};
         seL4_CPtr const slot = g_objects.alloc_slot();
         bool found = false;
+        bool agrees = false;
         if (slot != 0 && resolve_wait(space, "AEGIR:", sizeof("AEGIR:") - 1, slot, resolved)) {
             Volume volume(resolved.volume);
             for (uint64_t index = 0;; ++index) {
@@ -241,10 +242,19 @@ int main(int argc, char *argv[])
                 }
                 if (entry.name_length == 9 && same_bytes(entry.name, "AEGIR.TXT", 9)) {
                     found = true;
+                    /* The list's tail is stat's: the same size and the same
+                     * time, which is why a file list needs no stat per row
+                     * (specs/vfs.md). The name points into the volume's reply
+                     * buffer, so stat is asked by the literal, not by it. */
+                    Volume::Info info{};
+                    if (volume.stat("AEGIR.TXT", 9, info)) {
+                        agrees = info.size == entry.size && info.mtime == entry.mtime;
+                    }
                 }
             }
         }
         report(found, "AEGIR: lists AEGIR.TXT");
+        report(agrees, "AEGIR: the list's size and time are stat's");
     }
 
     /* The hosted wrapper, in its own translation unit (the libc++ half). It
