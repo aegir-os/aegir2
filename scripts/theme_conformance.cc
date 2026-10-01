@@ -98,6 +98,17 @@ int main(int argc, char** argv) {
     theme->draw_radio(canvas, {85, 201, 17, 12}, false, true);
     theme->draw_radio(canvas, {115, 201, 17, 12}, true, true);
 
+    /* A horizontal slider over 0..100, a quarter along: the bar's trough and
+     * knob at the slider's own geometry (specs/trinket/slider.md). */
+    Rect const slider_trough{10, 228, 200, 24};
+    Rect const slider_inner = slider_trough.inflated(-4);
+    int const slider_knob = 16;
+    int const slider_pos = (slider_inner.width - slider_knob) * 25 / 100;
+    theme->draw_slider(canvas, slider_trough,
+                       {slider_inner.x + slider_pos, slider_inner.y, slider_knob,
+                        slider_inner.height},
+                       false);
+
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {
         std::fprintf(stderr, "cannot write %s\n", path);

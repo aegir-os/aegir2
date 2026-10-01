@@ -842,6 +842,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 28016}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
+                    # Then the slider's trough, right of its knob
+                    # (specs/trinket/slider.md): a trough click steps the value
+                    # one step toward the click (50 -> 60), and the cue the demo
+                    # prints is a later step's trigger. Before the screen bar
+                    # opens the menu, for the same reason as the radio click.
+                    {"type": "abs", "data": {"axis": "x", "value": 27392}},
+                    {"type": "abs", "data": {"axis": "y", "value": 26214}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
                     # Then the screen bar's first title: the demo's menu.
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},
@@ -863,6 +872,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pixels=(
                     ("gpu0", 1079, 683, 61, 101, 162),
                     ("gpu0", 1005, 683, 174, 174, 174),
+                ),
+            ),
+            # The slider's trough click took: the value stepped to 60 and the
+            # knob moved right (specs/trinket/slider.md). The vacated spot is the
+            # trough's dither now, and the knob's raised face is at its new
+            # place -- the click, the widget and the repaint, end to end.
+            QmpStep(
+                r"demo: slider 60",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1025, 640, 191, 191, 191),
+                    ("gpu0", 1008, 640, 102, 136, 187),
                 ),
             ),
             # The bureau.menu server (specs/workbench.md), while the demo is

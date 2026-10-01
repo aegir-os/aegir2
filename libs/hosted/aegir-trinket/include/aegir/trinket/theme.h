@@ -81,6 +81,9 @@ enum class MetricRole {
     INPUT_PADDING_H, INPUT_PADDING_V, INPUT_BORDER_WIDTH,
     // Scrollbar
     SCROLLBAR_WIDTH, SCROLLBAR_MIN_HANDLE, SCROLLBAR_ARROW_SIZE,
+    // Slider (specs/trinket/slider.md): the trough's thickness, the knob's
+    // length along the track, and a shortest useful strip.
+    SLIDER_THICKNESS, SLIDER_KNOB_LENGTH, SLIDER_MIN_LENGTH,
     // Toggle gadgets (specs/trinket/checkbox.md): the checkmark's and the
     // radio's indicator, the MUI artwork's own size.
     CHECK_INDICATOR_WIDTH, CHECK_INDICATOR_HEIGHT,
@@ -138,6 +141,10 @@ public:
                                  const Rect& trough, const Rect& thumb,
                                  const Rect& decrement, const Rect& increment,
                                  bool hovered);
+    // The slider (specs/trinket/slider.md): its trough and its knob, whose
+    // geometry the widget computes as the scrollbar's is.
+    virtual void draw_slider(Canvas& canvas, const Rect& trough, const Rect& knob,
+                             bool hovered);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,
                                const char* text);

@@ -211,6 +211,19 @@ public:
         }
     }
 
+    void draw_slider(Canvas& canvas, const Rect& trough, const Rect& knob,
+                     bool hovered) override {
+        static_cast<void>(hovered);  // the XEN knob has no hover state
+        /* The trough and the knob are the widget's geometry and each is its own
+         * recipe (specs/trinket/slider.md); the recipes start as the bar's. */
+        if (trough.width > 0 && trough.height > 0) {
+            run(kRecipeSliderTrough, canvas, trough);
+        }
+        if (knob.width > 0 && knob.height > 0) {
+            run(kRecipeSliderKnob, canvas, knob);
+        }
+    }
+
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
      * button and the field draw it, so there is no separate ring. */
     void draw_focus_ring(Canvas&, const Rect&) override {}

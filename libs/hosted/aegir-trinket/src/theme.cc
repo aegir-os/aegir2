@@ -44,6 +44,8 @@ void Theme::draw_window_frame(Canvas&, const Rect&, bool) {}
 void Theme::draw_scrollbar(Canvas&, const Rect&, bool, const Rect&, const Rect&,
                            const Rect&, const Rect&, bool) {}
 
+void Theme::draw_slider(Canvas&, const Rect&, const Rect&, bool) {}
+
 void Theme::draw_focus_ring(Canvas&, const Rect&) {}
 
 void Theme::draw_tooltip(Canvas&, const Rect&, const char*) {}

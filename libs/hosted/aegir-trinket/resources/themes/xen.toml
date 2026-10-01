@@ -122,6 +122,9 @@ INPUT_BORDER_WIDTH = 1
 SCROLLBAR_WIDTH = 24
 SCROLLBAR_MIN_HANDLE = 30
 SCROLLBAR_ARROW_SIZE = 21
+SLIDER_THICKNESS = 24
+SLIDER_KNOB_LENGTH = 16
+SLIDER_MIN_LENGTH = 100
 CHECK_INDICATOR_WIDTH = 23
 CHECK_INDICATOR_HEIGHT = 18
 RADIO_INDICATOR_WIDTH = 17
@@ -228,3 +231,18 @@ steps = [{ sprite = "ArrowUp" }]
 
 [gadgets.scrollbar.increment]
 steps = [{ sprite = "ArrowDown" }]
+
+# ---- the slider ----
+# The same XEN face as the bar (specs/trinket/slider.md): the preset assigns
+# PropBack the dither pattern and PropKnob the same xenbar programme the
+# scrollbar's thumb comes from, so the two share their recipes here too. They
+# are the slider's own entries, so either can diverge without touching a widget.
+
+[gadgets.slider.trough]
+steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
+         { bevel = "raised", inset = 1 },
+         { dither = ["$SELECTION_BG", "$SCROLLBAR_BG"], inset = 4 },
+         { bevel = "sunken", inset = 4 }]
+
+[gadgets.slider.knob]
+steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]

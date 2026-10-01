@@ -234,6 +234,10 @@ def main() -> int:
         "",
         emit_single("kRecipeScrollbarIncrement", g["scrollbar"]["increment"], palette, sprite_index),
         "",
+        emit_single("kRecipeSliderTrough", g["slider"]["trough"], palette, sprite_index),
+        "",
+        emit_single("kRecipeSliderKnob", g["slider"]["knob"], palette, sprite_index),
+        "",
         "}  // namespace aegir::trinket",
         "",
     ]

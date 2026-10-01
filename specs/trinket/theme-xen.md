@@ -75,9 +75,15 @@ draws through `draw_panel`, so a group box and a panel are the same pixels.
 
 ## What this is not
 
-- **The slider look.** The scrollbar has landed (`specs/trinket/scrollbar.md`):
-  a dithered trough, a white raised thumb, and the beveled arrow buttons. The
-  slider arrives in the next batch.
+- **The slider look.** The scrollbar and the slider have landed
+  (`specs/trinket/scrollbar.md`, `specs/trinket/slider.md`): a dithered trough
+  and a raised handle, the bar with the beveled arrow buttons. They are the same
+  pixels because the preset gives them the same face -- `PropBack` the `0:135`
+  dither pattern and `PropKnob` the `xenbar` programme the bar's thumb comes
+  from -- so the recipes only diverge if a later theme wants them to.
+- **The cycle and the popup button.** The rest of the value-selection group
+  (`specs/trinket/slider.md`): the cycle's arrows and the popup button's icon
+  art are imported, but the list a popup opens is its own, larger piece.
 - **The window manager's look.** Chrome, per `specs/amiga-fidelity.md`.
 - **Hover beyond a lightening.** A hovered button's face is a shade lighter; the
   screenshots show no hover state.

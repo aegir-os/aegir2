@@ -32,6 +32,7 @@
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/radio_group.h>
 #include <aegir/trinket/scrollbar.h>
+#include <aegir/trinket/slider.h>
 #include <aegir/trinket/terminal_view.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/translation.h>
@@ -172,6 +173,10 @@ int main(int argc, char *argv[])
      * its kWindowHeight and only the label band moves down. A checkbox beside a
      * radio group -- three states, one of them exclusive. */
     int radio_changed = -1;
+    /* The slider's value and whether the *user* moved it
+     * (specs/trinket/slider.md); its cue is printed from on_poll. */
+    int slider_value = 50;
+    bool slider_moved = false;
     auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
     check->set_checked(true);
     auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
@@ -227,12 +232,43 @@ int main(int argc, char *argv[])
 
     /* The terminal and its scrollbar in a row (specs/trinket/scrollbar.md):
      * the terminal free across the row, the scrollbar a fixed strip. A vertical
-     * Group holds the row over the label band. */
+     * Group holds the row over the label band. The slider
+     * (specs/trinket/slider.md) sits under the terminal, inside that same free
+     * row, so the bands below keep the geometry the acceptance reads; its value
+     * label beside it shows the number. */
     auto row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
     TerminalView* const terminal_ptr = terminal.get();
     auto scrollbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
     Scrollbar* const scrollbar_ptr = scrollbar.get();
-    row->add_child(std::move(terminal));
+
+    auto slider = std::make_unique<Slider>(Slider::Orientation::HORIZONTAL);
+    slider->set_range(0, 100);
+    slider->set_value(slider_value);
+    slider->set_step(10);
+    Slider* const slider_ptr = slider.get();
+    auto slider_label = std::make_unique<Label>();
+    Label* const slider_label_ptr = slider_label.get();
+    slider_label->set_text(std::to_string(slider_value));
+    slider_label->set_text_color(app.theme().color(ColorRole::TEXT));
+    auto slider_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
+    Group* const slider_row_ptr = slider_row.get();
+    slider_row->add_child(std::move(slider));
+    slider_row->add_child(std::move(slider_label));
+    slider_row->set_weight(slider_label_ptr, 0);
+    /* The value is the user's to change, so the cue is set from the widget's
+     * own callback: a click, a drag and a key all end in on_change. */
+    slider_ptr->on_change = [slider_label_ptr, &slider_value, &slider_moved](int v) {
+        slider_value = v;
+        slider_moved = true;
+        slider_label_ptr->set_text(std::to_string(v));
+    };
+
+    auto terminal_column = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
+    terminal_column->add_child(std::move(terminal));
+    terminal_column->add_child(std::move(slider_row));
+    terminal_column->set_weight(slider_row_ptr, 0);
+
+    row->add_child(std::move(terminal_column));
     row->add_child(std::move(scrollbar));
     row->set_weight(scrollbar_ptr, 0);
 
@@ -349,6 +385,15 @@ int main(int argc, char *argv[])
             line += "\n";
             write(line.c_str());
             radio_changed = -1;
+        }
+        if (slider_moved) {
+            /* The slider's value is a cue (specs/trinket/slider.md): the runner
+             * reads the click, the drag and the key path back. */
+            slider_moved = false;
+            std::string line("  demo: slider ");
+            line += std::to_string(slider_value);
+            line += "\n";
+            write(line.c_str());
         }
         sync_scrollbar();
         if (!registered) return;

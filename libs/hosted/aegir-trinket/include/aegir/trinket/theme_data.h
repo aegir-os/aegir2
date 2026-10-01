@@ -70,6 +70,8 @@ extern const Recipe kRecipeScrollbarTrough;
 extern const Recipe kRecipeScrollbarThumb;
 extern const Recipe kRecipeScrollbarDecrement;
 extern const Recipe kRecipeScrollbarIncrement;
+extern const Recipe kRecipeSliderTrough;
+extern const Recipe kRecipeSliderKnob;
 
 }  // namespace aegir::trinket
 
