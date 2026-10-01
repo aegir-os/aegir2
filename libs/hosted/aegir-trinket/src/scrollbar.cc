@@ -155,7 +155,7 @@ void Scrollbar::on_paint(Canvas& canvas, const PaintEvent& event) {
     Theme& theme = Application::instance()->theme();
     Parts const p = parts();
     theme.draw_scrollbar(canvas, rect_, orientation_ == Orientation::VERTICAL, p.trough,
-                         p.thumb, p.decrement, p.increment, hovered_);
+                         p.thumb, p.decrement, p.increment, pressed_ == -1, pressed_ == 1);
 }
 
 void Scrollbar::on_mouse_enter(const MouseEvent&) {
@@ -166,10 +166,11 @@ void Scrollbar::on_mouse_enter(const MouseEvent&) {
 }
 
 void Scrollbar::on_mouse_leave(const MouseEvent&) {
-    if (hovered_) {
-        hovered_ = false;
-        damage();
-    }
+    /* No capture: a pointer that leaves releases the arrow it was holding. */
+    bool const changed = hovered_ || pressed_ != 0;
+    hovered_ = false;
+    pressed_ = 0;
+    if (changed) damage();
 }
 
 void Scrollbar::on_mouse_down(const MouseEvent& event) {
@@ -177,13 +178,22 @@ void Scrollbar::on_mouse_down(const MouseEvent& event) {
     bool const vertical = orientation_ == Orientation::VERTICAL;
     Parts const p = parts();
 
-    /* The buttons are stacked at the far end: increment is the last one,
-     * decrement just above it (specs/trinket/scrollbar.md). */
+    /* The buttons are at the far end of the run: the increment is the last cell
+     * and the decrement the one before it -- below a vertical bar, right of a
+     * horizontal one (specs/trinket/scrollbar.md). */
     if (p.decrement.contains(event.pos)) {
+        if (pressed_ != -1) {
+            pressed_ = -1;
+            damage();
+        }
         scroll_to(value_ - 1);
         return;
     }
     if (p.increment.contains(event.pos)) {
+        if (pressed_ != 1) {
+            pressed_ = 1;
+            damage();
+        }
         scroll_to(value_ + 1);
         return;
     }
@@ -211,7 +221,12 @@ void Scrollbar::on_mouse_move(const MouseEvent& event) {
 }
 
 void Scrollbar::on_mouse_up(const MouseEvent& event) {
-    if (event.button == MouseButton::LEFT) dragging_ = false;
+    if (event.button != MouseButton::LEFT) return;
+    dragging_ = false;
+    if (pressed_ != 0) {
+        pressed_ = 0;
+        damage();
+    }
 }
 
 void Scrollbar::on_key_down(const KeyEvent& event) {

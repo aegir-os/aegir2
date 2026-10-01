@@ -33,27 +33,35 @@ namespace {
 using namespace aegir::trinket;
 
 /* The scrollbar's parts, mirroring Scrollbar::parts() so the render shows the
- * same geometry the widget draws (frame 3, buttons at the foot). */
+ * same geometry the widget draws: the trough's frame, and the two arrow cells
+ * at the far end of the run -- below a vertical bar, right of a horizontal one. */
 struct Parts {
     Rect trough, thumb, decrement, increment;
 };
 
-Parts scrollbar_parts(Rect const& rect, int total, int page, int value, int arrow,
-                      int min_handle) {
+Parts scrollbar_parts(Rect const& rect, bool vertical, int total, int page, int value,
+                      int arrow, int min_handle) {
     int const well = 4;  // the trough container's frame, matching the theme
     int const buttons = 2 * arrow;
     Parts p;
-    p.decrement = Rect{rect.x, rect.y + rect.height - buttons, rect.width, arrow};
-    p.increment = Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow};
-    p.trough = Rect{rect.x, rect.y, rect.width, rect.height - buttons};
+    if (vertical) {
+        p.decrement = Rect{rect.x, rect.y + rect.height - buttons, rect.width, arrow};
+        p.increment = Rect{rect.x, rect.y + rect.height - arrow, rect.width, arrow};
+        p.trough = Rect{rect.x, rect.y, rect.width, rect.height - buttons};
+    } else {
+        p.decrement = Rect{rect.x + rect.width - buttons, rect.y, arrow, rect.height};
+        p.increment = Rect{rect.x + rect.width - arrow, rect.y, arrow, rect.height};
+        p.trough = Rect{rect.x, rect.y, rect.width - buttons, rect.height};
+    }
     Rect const well_rect = p.trough.inflated(-well);
-    int const track = well_rect.height;
+    int const track = vertical ? well_rect.height : well_rect.width;
     int size = track * page / total;
     if (size < min_handle) size = min_handle;
     if (size > track) size = track;
     int const travel = track - size;
     int pos = travel <= 0 ? 0 : travel * value / (total - page);
-    p.thumb = Rect{well_rect.x, well_rect.y + pos, well_rect.width, size};
+    p.thumb = vertical ? Rect{well_rect.x, well_rect.y + pos, well_rect.width, size}
+                       : Rect{well_rect.x + pos, well_rect.y, size, well_rect.height};
     return p;
 }
 
@@ -62,8 +70,8 @@ Parts scrollbar_parts(Rect const& rect, int total, int page, int value, int arro
 int main(int argc, char** argv) {
     char const* path = argc > 1 ? argv[1] : "render.ppm";
 
-    constexpr int kWidth = 420;
-    constexpr int kHeight = 352;
+    constexpr int kWidth = 460;
+    constexpr int kHeight = 420;
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
     Canvas canvas(pixels.data(), kWidth, kHeight, kWidth);
 
@@ -87,10 +95,17 @@ int main(int argc, char** argv) {
     theme->draw_panel(canvas, {260, 70, 100, 50}, Panel::Style::SUNKEN, U"", false);
     theme->draw_panel(canvas, {260, 130, 100, 50}, Panel::Style::FRAME, U"", false);
 
-    /* A vertical scrollbar, content 100 lines, 25 shown, scrolled to line 40. */
-    Parts const p = scrollbar_parts({386, 10, 24, 200}, 100, 25, 40, 21, 30);
-    theme->draw_scrollbar(canvas, {386, 10, 24, 200}, true, p.trough, p.thumb,
-                          p.decrement, p.increment, false);
+    /* A vertical scrollbar, content 100 lines, 25 shown, scrolled to line 40,
+     * and its twin with the increment arrow held -- the MUI selected frame
+     * (specs/trinket/scrollbar.md). */
+    Rect const vbar{386, 10, 24, 200};
+    Parts const p = scrollbar_parts(vbar, true, 100, 25, 40, 21, 30);
+    theme->draw_scrollbar(canvas, vbar, true, p.trough, p.thumb, p.decrement,
+                          p.increment, false, false);
+    Rect const vbar_held{416, 10, 24, 200};
+    Parts const p_held = scrollbar_parts(vbar_held, true, 100, 25, 40, 21, 30);
+    theme->draw_scrollbar(canvas, vbar_held, true, p_held.trough, p_held.thumb,
+                          p_held.decrement, p_held.increment, false, true);
 
     /* The toggle indicators: a checkmark button and a radio ring, off and on. */
     theme->draw_check(canvas, {10, 198, 23, 18}, false, true);
@@ -141,6 +156,22 @@ int main(int argc, char** argv) {
                          Theme::ListRow::CURSOR);
     theme->draw_list_row(canvas, {row_area.x, row_area.y + 2 * row_h, row_area.width, row_h},
                          Theme::ListRow::SELECTED);
+
+    /* Horizontal scrollbars: the same widget turned, drawing the MUI
+     * ArrowLeft/ArrowRight art -- normal, the decrement arrow held and the
+     * increment held, so both selected frames are on the sheet. */
+    Rect const hbar{10, 352, 200, 24};
+    Parts const hp = scrollbar_parts(hbar, false, 100, 25, 40, 21, 30);
+    theme->draw_scrollbar(canvas, hbar, false, hp.trough, hp.thumb, hp.decrement,
+                          hp.increment, false, false);
+    Rect const hbar_dec{230, 352, 200, 24};
+    Parts const hp_dec = scrollbar_parts(hbar_dec, false, 100, 25, 40, 21, 30);
+    theme->draw_scrollbar(canvas, hbar_dec, false, hp_dec.trough, hp_dec.thumb,
+                          hp_dec.decrement, hp_dec.increment, true, false);
+    Rect const hbar_inc{10, 384, 200, 24};
+    Parts const hp_inc = scrollbar_parts(hbar_inc, false, 100, 25, 40, 21, 30);
+    theme->draw_scrollbar(canvas, hbar_inc, false, hp_inc.trough, hp_inc.thumb,
+                          hp_inc.decrement, hp_inc.increment, false, true);
 
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {

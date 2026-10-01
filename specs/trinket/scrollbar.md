@@ -37,11 +37,15 @@ and nothing showed where in the scrollback it sat.
   the dither slides a **raised thumb** (`#bfbfbf`), plain: a circle mark was
   tried and dropped, because a small circle cannot be drawn legibly without
   antialiasing, which the toolkit has none of. The **two arrow
-  buttons are separate cells below**, not inside the trough's
-  frame -- decrement above increment -- and they are the **MUI artwork**
-  (`ArrowUp`/`ArrowDown`), blitted into the cell and scaled to it, so the hollow
-  3-D mark is the art's own and the buttons keep their proportion as the bar
-  widens. `SCROLLBAR_WIDTH` is the window's resize-gadget width
+  buttons are separate cells at the far end of the run**, not inside the trough's
+  frame -- decrement then increment, below a vertical bar and right of a
+  horizontal one -- and they are the **MUI artwork**, blitted into the cell and
+  scaled to it, so the hollow 3-D mark is the art's own and the buttons keep
+  their proportion as the bar widens. The art names the direction and the state:
+  `ArrowUp`/`ArrowDown` for a vertical bar, `ArrowLeft`/`ArrowRight` for a
+  horizontal one, and the `*Selected` frame while the button is held (the widget
+  holds which arrow is down and clears it on the release or when the pointer
+  leaves, since the toolkit has no capture). `SCROLLBAR_WIDTH` is the window's resize-gadget width
   (`TITLEBAR_HEIGHT`), so the bar is as wide as the gadget at the window's foot,
   and `SCROLLBAR_ARROW_SIZE` is the button's height, the art's own height scaled
   to that width. The widget and the theme agree on both so a click and a drawn
@@ -87,14 +91,20 @@ public:
   its own widget and owns the offset the scrollbar maps.
 - **Pointer capture.** A drag that leaves the scrollbar stops, because the
   toolkit has no capture yet; the grab offset means it resumes cleanly.
-- **A horizontal use.** `Orientation::HORIZONTAL` is implemented and mapped, but
-  no widget uses it yet.
+- **A horizontal *view*.** `Orientation::HORIZONTAL` draws and hit-tests -- the
+  demo carries one at the window's foot and reads its value back -- but no view
+  scrolls sideways yet; a column list or a text viewer is the list/viewer arc's.
 
 ## Acceptance
 
 - **`make check-scrollbar`** (`scripts/check_scrollbar.py` +
   `scripts/scrollbar_conformance.cc`): the thumb and its inverse, 16 cases.
+- **`make check-theme`** renders a vertical and a horizontal bar, each with an
+  arrow held, so all four arrow recipes are on the sheet beside the imported
+  `ArrowUp`/`ArrowDown`/`ArrowLeft`/`ArrowRight`.
 - **The demo** shows the scrollbar beside the terminal and the terminal's
   scrollback behind it. The runner reads its arrows back from a screendump, then
   clicks the top arrow and reads the demo's `scrolled` cue -- the click, the
-  scrollbar, the terminal's scrollback and the repaint, end to end.
+  scrollbar, the terminal's scrollback and the repaint, end to end. A horizontal
+  bar at the window's foot is the test-bed's own control: the runner reads its
+  left and right arrows back, clicks the increment, and reads `demo: bar N`.

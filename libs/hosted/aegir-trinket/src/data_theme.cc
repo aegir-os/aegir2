@@ -192,12 +192,12 @@ public:
     void draw_scrollbar(Canvas& canvas, const Rect& rect, bool vertical,
                          const Rect& trough, const Rect& thumb,
                          const Rect& decrement, const Rect& increment,
-                         bool hovered) override {
-        static_cast<void>(vertical);
-        static_cast<void>(hovered);
+                         bool decrement_pressed, bool increment_pressed) override {
         static_cast<void>(rect);  // the trough and the buttons are the whole strip
         /* Each part is a recipe (specs/trinket/theming.md); the buttons are
-         * separate cells below the trough, their marks in their own recipes. */
+         * separate cells, their marks in their own recipes -- one per
+         * orientation, and the MUI selected frame while the button is held
+         * (specs/trinket/scrollbar.md). */
         if (trough.width > 0 && trough.height > 0) {
             run(kRecipeScrollbarTrough, canvas, trough);
         }
@@ -205,10 +205,14 @@ public:
             run(kRecipeScrollbarThumb, canvas, thumb);
         }
         if (decrement.width > 0 && decrement.height > 0) {
-            run(kRecipeScrollbarDecrement, canvas, decrement);
+            Recipe const* const recipes =
+                vertical ? kRecipeScrollbarDecrement : kRecipeScrollbarDecrementHorizontal;
+            run(recipes[decrement_pressed ? 1 : 0], canvas, decrement);
         }
         if (increment.width > 0 && increment.height > 0) {
-            run(kRecipeScrollbarIncrement, canvas, increment);
+            Recipe const* const recipes =
+                vertical ? kRecipeScrollbarIncrement : kRecipeScrollbarIncrementHorizontal;
+            run(recipes[increment_pressed ? 1 : 0], canvas, increment);
         }
     }
 

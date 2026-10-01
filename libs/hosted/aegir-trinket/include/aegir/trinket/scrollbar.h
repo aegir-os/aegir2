@@ -88,6 +88,11 @@ private:
     bool hovered_ = false;
     bool dragging_ = false;
     int grab_ = 0;  // where in the thumb the drag began
+    /* The arrow held down: -1 decrement, +1 increment, 0 neither. The theme
+     * draws its selected frame until the release (specs/trinket/scrollbar.md);
+     * a pointer that leaves the bar releases it, because the toolkit has no
+     * capture. */
+    int pressed_ = 0;
 };
 
 }  // namespace aegir::trinket

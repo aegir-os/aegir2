@@ -234,11 +234,34 @@ steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
 [gadgets.scrollbar.thumb]
 steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]
 
+# The arrow buttons: one recipe per orientation and press state, because the
+# sprite is the whole cell and the art names the direction. Vertical is
+# ArrowUp/ArrowDown, horizontal ArrowLeft/ArrowRight; the `_pressed` frame is the
+# MUI selected image, drawn while the button is held (specs/trinket/scrollbar.md).
+
 [gadgets.scrollbar.decrement]
 steps = [{ sprite = "ArrowUp" }]
 
+[gadgets.scrollbar.decrement_pressed]
+steps = [{ sprite = "ArrowUpSelected" }]
+
 [gadgets.scrollbar.increment]
 steps = [{ sprite = "ArrowDown" }]
+
+[gadgets.scrollbar.increment_pressed]
+steps = [{ sprite = "ArrowDownSelected" }]
+
+[gadgets.scrollbar.decrement_horizontal]
+steps = [{ sprite = "ArrowLeft" }]
+
+[gadgets.scrollbar.decrement_horizontal_pressed]
+steps = [{ sprite = "ArrowLeftSelected" }]
+
+[gadgets.scrollbar.increment_horizontal]
+steps = [{ sprite = "ArrowRight" }]
+
+[gadgets.scrollbar.increment_horizontal_pressed]
+steps = [{ sprite = "ArrowRightSelected" }]
 
 # ---- the slider ----
 # The same XEN face as the bar (specs/trinket/slider.md): the preset assigns

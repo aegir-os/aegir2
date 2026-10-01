@@ -894,8 +894,30 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             # The scrollbar's click scrolled the terminal: the demo's cue
-            # (specs/trinket/scrollbar.md).
-            QmpStep(r"demo: scrolled"),
+            # (specs/trinket/scrollbar.md). With no popup up, the horizontal bar
+            # at the window's foot is read and clicked: its left and right arrows
+            # are the MUI ArrowLeft/ArrowRight art (their white marks at 1127 and
+            # 1147 on row 730), and the increment steps the value 40 -> 41, which
+            # the next step's trigger names.
+            QmpStep(
+                r"demo: scrolled",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1127, 730, 240, 240, 240),
+                    ("gpu0", 1147, 730, 240, 240, 240),
+                ),
+                dark=(("gpu0", 1116, 724, 42, 22, 30),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 29363}},
+                    {"type": "abs", "data": {"axis": "y", "value": 30065}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The horizontal bar's increment took: the value is 41, and the cue
+            # says so (specs/trinket/scrollbar.md).
+            QmpStep(r"demo: bar 41"),
             # The radio group's click took: the second member is checked and the
             # first cleared (specs/trinket/radio_group.md).
             QmpStep(

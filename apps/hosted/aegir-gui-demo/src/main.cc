@@ -218,8 +218,12 @@ int main(int argc, char *argv[])
     toggles->set_weight(check_ptr, 0);
     toggles->set_weight(radios_ptr, 0);
     int const toggle_band = toggles->preferred_size().height;
+    /* The horizontal bar's band, at the window's foot (specs/trinket/scrollbar.md):
+     * the window grows by it, so the free terminal above gives up the height and
+     * the rows the acceptance measures keep their y. */
+    int const bar_band = app.theme().metric(MetricRole::SCROLLBAR_WIDTH);
     int const window_height =
-        kWindowHeight + toggle_band + label_band + 2 * frame_inset;
+        kWindowHeight + toggle_band + label_band + bar_band + 2 * frame_inset;
 
     Window window(app);
     window.set_title("Demo");
@@ -348,6 +352,23 @@ int main(int argc, char *argv[])
     list_row->add_child(std::move(list_scrollbar));
     list_row->set_weight(list_scrollbar_ptr, 0);
 
+    /* A horizontal bar at the window's foot (specs/trinket/scrollbar.md): the
+     * test-bed's own control, drawing the MUI ArrowLeft/ArrowRight art. No view
+     * here scrolls sideways -- that is the list/viewer arc's -- so it carries a
+     * range of its own and the poll prints the value it lands on. It is the last
+     * child of the content, so the free terminal above absorbs its band and every
+     * row the acceptance measures keeps its y. */
+    auto hbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::HORIZONTAL);
+    Scrollbar* const hbar_ptr = hbar.get();
+    hbar_ptr->set_range(100, 25);
+    hbar_ptr->set_value(40);
+    bool bar_scrolled = false;
+    int bar_value = 0;
+    hbar_ptr->on_scroll = [&bar_scrolled, &bar_value](int v) {
+        bar_value = v;
+        bar_scrolled = true;
+    };
+
     auto terminal_column = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     terminal_column->add_child(std::move(terminal));
     terminal_column->add_child(std::move(list_row));
@@ -367,10 +388,12 @@ int main(int argc, char *argv[])
     content->add_child(std::move(row));
     content->add_child(std::move(toggles));
     content->add_child(std::move(label));
-    /* The label and the toggles keep their bands; the row is free and takes the
-     * rest. */
+    content->add_child(std::move(hbar));
+    /* The label, the toggles and the horizontal bar keep their bands; the row is
+     * free and takes the rest. */
     content->set_weight(label_ptr, 0);
     content->set_weight(toggles_ptr, 0);
+    content->set_weight(hbar_ptr, 0);
     window.set_content(std::move(content));
     window.show();
 
@@ -543,6 +566,16 @@ int main(int argc, char *argv[])
             list_scrolled = false;
             std::string line("  demo: listed ");
             line += std::to_string(list_ptr->first());
+            line += "\n";
+            write(line.c_str());
+        }
+        if (bar_scrolled) {
+            /* The horizontal bar's own control moved (specs/trinket/scrollbar.md):
+             * the value it landed on is the cue, as the terminal's scroll and the
+             * list's are. */
+            bar_scrolled = false;
+            std::string line("  demo: bar ");
+            line += std::to_string(bar_value);
             line += "\n";
             write(line.c_str());
         }

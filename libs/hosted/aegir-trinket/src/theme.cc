@@ -42,7 +42,7 @@ void Theme::draw_titlebar(Canvas&, const Rect&, const char*, bool) {}
 void Theme::draw_window_frame(Canvas&, const Rect&, bool) {}
 
 void Theme::draw_scrollbar(Canvas&, const Rect&, bool, const Rect&, const Rect&,
-                           const Rect&, const Rect&, bool) {}
+                           const Rect&, const Rect&, bool, bool) {}
 
 void Theme::draw_slider(Canvas&, const Rect&, const Rect&, bool) {}
 

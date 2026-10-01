@@ -145,10 +145,14 @@ public:
                                 const char* title, bool active);
     virtual void draw_window_frame(Canvas& canvas, const Rect& rect,
                                     bool active);
+    // The scrollbar (specs/trinket/scrollbar.md): its trough, thumb and two arrow
+    // cells, whose rectangles the widget computes. `vertical` names the
+    // orientation the arrows point along; each `*_pressed` draws the MUI
+    // selected frame while that button is held.
     virtual void draw_scrollbar(Canvas& canvas, const Rect& rect, bool vertical,
                                  const Rect& trough, const Rect& thumb,
                                  const Rect& decrement, const Rect& increment,
-                                 bool hovered);
+                                 bool decrement_pressed, bool increment_pressed);
     // The slider (specs/trinket/slider.md): its trough and its knob, whose
     // geometry the widget computes as the scrollbar's is.
     virtual void draw_slider(Canvas& canvas, const Rect& trough, const Rect& knob,

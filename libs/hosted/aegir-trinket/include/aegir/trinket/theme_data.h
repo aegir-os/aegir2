@@ -68,8 +68,11 @@ extern const Recipe kRecipeTextboxReadonly;
 extern const Recipe kRecipePanel[5];    // Panel::Style: FLAT, RAISED, SUNKEN, FRAME, GROUP_BOX
 extern const Recipe kRecipeScrollbarTrough;
 extern const Recipe kRecipeScrollbarThumb;
-extern const Recipe kRecipeScrollbarDecrement;
-extern const Recipe kRecipeScrollbarIncrement;
+// The arrow buttons, by orientation and press state: index pressed ? 1 : 0.
+extern const Recipe kRecipeScrollbarDecrement[2];            // vertical
+extern const Recipe kRecipeScrollbarIncrement[2];
+extern const Recipe kRecipeScrollbarDecrementHorizontal[2];  // horizontal
+extern const Recipe kRecipeScrollbarIncrementHorizontal[2];
 extern const Recipe kRecipeSliderTrough;
 extern const Recipe kRecipeSliderKnob;
 extern const Recipe kRecipeCycleFace;

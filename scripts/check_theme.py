@@ -96,7 +96,8 @@ def main() -> int:
 
     # The imported XEN artwork, at the same scale, in a row for the eye.
     art = TRINKET / "resources" / "themes" / "xen" / "Plain" / "11pt"
-    names = ["ArrowUp.mf0.png", "ArrowDown.mf0.png", "CheckMark.mf0.png",
+    names = ["ArrowUp.mf0.png", "ArrowDown.mf0.png", "ArrowLeft.mf0.png",
+             "ArrowRight.mf0.png", "ArrowUp.mf1.png", "CheckMark.mf0.png",
              "CheckMark.mf1.png", "RadioButton.mf1.png", "PopUp.mf0.png"]
     sprites = [Image.open(art / n).convert("RGBA") for n in names if (art / n).exists()]
     if sprites:
