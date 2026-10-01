@@ -26,10 +26,12 @@
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/button.h>
+#include <aegir/trinket/cycle.h>
 #include <aegir/trinket/group.h>
 #include <aegir/trinket/label.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
+#include <aegir/trinket/popup_button.h>
 #include <aegir/trinket/radio_group.h>
 #include <aegir/trinket/scrollbar.h>
 #include <aegir/trinket/slider.h>
@@ -177,6 +179,10 @@ int main(int argc, char *argv[])
      * (specs/trinket/slider.md); its cue is printed from on_poll. */
     int slider_value = 50;
     bool slider_moved = false;
+    /* The cycle's chosen entry and whether the *user* cycled; the popup's click
+     * (specs/trinket/cycle.md, popup_button.md). Both are printed from on_poll. */
+    int cycle_index = -1;
+    bool popup_clicked = false;
     auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
     check->set_checked(true);
     auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
@@ -263,9 +269,30 @@ int main(int argc, char *argv[])
         slider_label_ptr->set_text(std::to_string(v));
     };
 
+    /* The cycle and the popup button (specs/trinket/cycle.md,
+     * specs/trinket/popup_button.md) share a row above the slider's, so the
+     * slider keeps the geometry the acceptance reads. */
+    auto cycle = std::make_unique<Cycle>();
+    /* The first entry is short and the one the acceptance cycles to is long, so
+     * the ink in the text band tells the two apart (scripts/targets.py). */
+    cycle->add(U"A500");
+    cycle->add(U"Amiga 1200");
+    cycle->add(U"A4000");
+    cycle->on_changed = [&cycle_index](int index) { cycle_index = index; };
+    auto popup = std::make_unique<PopupButton>(PopupButton::Role::POPUP);
+    PopupButton* const popup_ptr = popup.get();
+    popup->on_click = [&popup_clicked]() { popup_clicked = true; };
+    auto cycle_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
+    Group* const cycle_row_ptr = cycle_row.get();
+    cycle_row->add_child(std::move(cycle));
+    cycle_row->add_child(std::move(popup));
+    cycle_row->set_weight(popup_ptr, 0);
+
     auto terminal_column = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     terminal_column->add_child(std::move(terminal));
+    terminal_column->add_child(std::move(cycle_row));
     terminal_column->add_child(std::move(slider_row));
+    terminal_column->set_weight(cycle_row_ptr, 0);
     terminal_column->set_weight(slider_row_ptr, 0);
 
     row->add_child(std::move(terminal_column));
@@ -394,6 +421,21 @@ int main(int argc, char *argv[])
             line += std::to_string(slider_value);
             line += "\n";
             write(line.c_str());
+        }
+        if (cycle_index >= 0) {
+            /* The cycle's active entry is a cue (specs/trinket/cycle.md): the
+             * runner reads which one it landed on. */
+            std::string line("  demo: cycle ");
+            line += std::to_string(cycle_index + 1);
+            line += "\n";
+            write(line.c_str());
+            cycle_index = -1;
+        }
+        if (popup_clicked) {
+            /* The popup button's click is a cue (specs/trinket/popup_button.md);
+             * the object it opens waits for the list. */
+            popup_clicked = false;
+            write("  demo: popup\n");
         }
         sync_scrollbar();
         if (!registered) return;

@@ -851,6 +851,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 26214}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
+                    # Then the cycle's text area (specs/trinket/cycle.md): a click
+                    # advances to the next entry, and the cue the demo prints is a
+                    # later step's trigger. Clear of the cell's mark and divider.
+                    {"type": "abs", "data": {"axis": "x", "value": 25906}},
+                    {"type": "abs", "data": {"axis": "y", "value": 25231}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    # Then the popup button (specs/trinket/popup_button.md): it
+                    # reports the click, and what it would open waits for the list.
+                    {"type": "abs", "data": {"axis": "x", "value": 28748}},
+                    {"type": "abs", "data": {"axis": "y", "value": 25067}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
                     # Then the screen bar's first title: the demo's menu.
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},
@@ -886,6 +899,24 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1025, 640, 191, 191, 191),
                     ("gpu0", 1008, 640, 102, 136, 187),
                 ),
+            ),
+            # The cycle's click took: the active entry advanced from the short
+            # one to the long one, so the text band's ink roughly doubles
+            # (specs/trinket/cycle.md). The band is clear of the box's outline,
+            # the divider and the cell's mark.
+            QmpStep(
+                r"demo: cycle 2",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 924, 610, 178, 12, 100),),
+            ),
+            # The popup button's click took (specs/trinket/popup_button.md): the
+            # pixel is the magnifier's own colour in the imported art.
+            QmpStep(
+                r"demo: popup",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 1123, 607, 96, 128, 176),),
             ),
             # The bureau.menu server (specs/workbench.md), while the demo is
             # still up: it registered its tree when it gained the focus, so the

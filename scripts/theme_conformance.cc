@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     char const* path = argc > 1 ? argv[1] : "render.ppm";
 
     constexpr int kWidth = 420;
-    constexpr int kHeight = 260;
+    constexpr int kHeight = 280;
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
     Canvas canvas(pixels.data(), kWidth, kHeight, kWidth);
 
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
 
     /* A horizontal slider over 0..100, a quarter along: the bar's trough and
      * knob at the slider's own geometry (specs/trinket/slider.md). */
-    Rect const slider_trough{10, 228, 200, 24};
+    Rect const slider_trough{10, 228, 180, 24};
     Rect const slider_inner = slider_trough.inflated(-4);
     int const slider_knob = 16;
     int const slider_pos = (slider_inner.width - slider_knob) * 25 / 100;
@@ -108,6 +108,25 @@ int main(int argc, char** argv) {
                        {slider_inner.x + slider_pos, slider_inner.y, slider_knob,
                         slider_inner.height},
                        false);
+
+    /* A cycle beside it: the boxed face, its divider and the mark, which are
+     * the theme's part (specs/trinket/cycle.md). */
+    Rect const cycle{200, 228, 100, 24};
+    Rect const divider{cycle.x + 1 + 20, cycle.y + 1, 1, cycle.height - 2};
+    int const mark = 8;
+    theme->draw_cycle(canvas, cycle, divider,
+                      {cycle.x + 1 + (20 - mark) / 2, cycle.y + 1 + (cycle.height - 2 - mark) / 2,
+                       mark, mark},
+                      false, false);
+
+    /* The popup button's three roles, normal over selected: the MUI image is the
+     * whole button (specs/trinket/popup_button.md). */
+    theme->draw_popup(canvas, {312, 228, 22, 17}, PopupButton::Role::POPUP, false);
+    theme->draw_popup(canvas, {340, 228, 22, 17}, PopupButton::Role::FILE, false);
+    theme->draw_popup(canvas, {368, 228, 22, 17}, PopupButton::Role::DRAWER, false);
+    theme->draw_popup(canvas, {312, 250, 22, 17}, PopupButton::Role::POPUP, true);
+    theme->draw_popup(canvas, {340, 250, 22, 17}, PopupButton::Role::FILE, true);
+    theme->draw_popup(canvas, {368, 250, 22, 17}, PopupButton::Role::DRAWER, true);
 
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {

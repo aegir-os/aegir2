@@ -46,6 +46,10 @@ void Theme::draw_scrollbar(Canvas&, const Rect&, bool, const Rect&, const Rect&,
 
 void Theme::draw_slider(Canvas&, const Rect&, const Rect&, bool) {}
 
+void Theme::draw_cycle(Canvas&, const Rect&, const Rect&, const Rect&, bool, bool) {}
+
+void Theme::draw_popup(Canvas&, const Rect&, PopupButton::Role, bool) {}
+
 void Theme::draw_focus_ring(Canvas&, const Rect&) {}
 
 void Theme::draw_tooltip(Canvas&, const Rect&, const char*) {}

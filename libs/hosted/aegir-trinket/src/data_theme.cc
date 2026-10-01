@@ -224,6 +224,28 @@ public:
         }
     }
 
+    void draw_cycle(Canvas& canvas, const Rect& rect, const Rect& divider,
+                    const Rect& mark, bool pressed, bool hovered) override {
+        static_cast<void>(hovered);  // the XEN cycle has no hover state
+        /* The boxed face, the divider and the mark (specs/trinket/cycle.md). */
+        run(pressed ? kRecipeCyclePressed : kRecipeCycleFace, canvas, rect);
+        if (divider.width > 0 && divider.height > 0) {
+            run(kRecipeCycleDivider, canvas, divider);
+        }
+        if (mark.width > 0 && mark.height > 0) {
+            run(kRecipeCycleMark, canvas, mark);
+        }
+    }
+
+    void draw_popup(Canvas& canvas, const Rect& rect, PopupButton::Role role,
+                    bool selected) override {
+        /* The image is the whole button, in its normal or selected frame
+         * (specs/trinket/popup_button.md): role * 2 picks the pair. */
+        int const index = static_cast<int>(role) * 2 + (selected ? 1 : 0);
+        if (index < 0 || index >= 6) return;
+        run(kRecipePopup[index], canvas, rect);
+    }
+
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
      * button and the field draw it, so there is no separate ring. */
     void draw_focus_ring(Canvas&, const Rect&) override {}

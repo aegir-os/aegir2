@@ -13,6 +13,7 @@
 #include <aegir/trinket/color.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/panel.h>
+#include <aegir/trinket/popup_button.h>
 #include <memory>
 #include <string_view>
 
@@ -84,6 +85,9 @@ enum class MetricRole {
     // Slider (specs/trinket/slider.md): the trough's thickness, the knob's
     // length along the track, and a shortest useful strip.
     SLIDER_THICKNESS, SLIDER_KNOB_LENGTH, SLIDER_MIN_LENGTH,
+    // Cycle and popup button (specs/trinket/cycle.md, popup_button.md): the
+    // cycle's button cell and its mark, and the popup button's own size.
+    CYCLE_BUTTON_WIDTH, CYCLE_MARK_SIZE, POPUP_BUTTON_WIDTH, POPUP_BUTTON_HEIGHT,
     // Toggle gadgets (specs/trinket/checkbox.md): the checkmark's and the
     // radio's indicator, the MUI artwork's own size.
     CHECK_INDICATOR_WIDTH, CHECK_INDICATOR_HEIGHT,
@@ -145,6 +149,14 @@ public:
     // geometry the widget computes as the scrollbar's is.
     virtual void draw_slider(Canvas& canvas, const Rect& trough, const Rect& knob,
                              bool hovered);
+    // The cycle (specs/trinket/cycle.md): its boxed face, the divider and the
+    // mark, whose rectangles the widget computes.
+    virtual void draw_cycle(Canvas& canvas, const Rect& rect, const Rect& divider,
+                            const Rect& mark, bool pressed, bool hovered);
+    // The popup button (specs/trinket/popup_button.md): the MUI image as the
+    // whole button, in its normal or selected frame.
+    virtual void draw_popup(Canvas& canvas, const Rect& rect,
+                            PopupButton::Role role, bool selected);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,
                                const char* text);

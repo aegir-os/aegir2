@@ -125,6 +125,10 @@ SCROLLBAR_ARROW_SIZE = 21
 SLIDER_THICKNESS = 24
 SLIDER_KNOB_LENGTH = 16
 SLIDER_MIN_LENGTH = 100
+CYCLE_BUTTON_WIDTH = 20
+CYCLE_MARK_SIZE = 8
+POPUP_BUTTON_WIDTH = 22
+POPUP_BUTTON_HEIGHT = 17
 CHECK_INDICATOR_WIDTH = 23
 CHECK_INDICATOR_HEIGHT = 18
 RADIO_INDICATOR_WIDTH = 17
@@ -246,3 +250,47 @@ steps = [{ fill = "$PANEL_BG" }, { outline = "$GADGET_SHADOW" },
 
 [gadgets.slider.knob]
 steps = [{ fill = "$SCROLLBAR_HANDLE" }, { bevel = "raised" }]
+
+# ---- the cycle ----
+# A boxed gadget (specs/trinket/cycle.md, from the MUI demo's screenshot): a
+# black outline around a raised bevel, a button cell at the left with a hollow
+# raised-square mark, and a one-pixel divider between the cell and the entry
+# text. `Cycle.mbr` is a 16x11 bitmap the engine's whole-image blit would
+# distort, so the same edges are drawn from the primitives.
+
+[gadgets.cycle.face]
+steps = [{ fill = "$BUTTON_BG" }, { outline = "$GADGET_SHADOW" },
+         { bevel = "raised", inset = 1 }]
+
+[gadgets.cycle.pressed]
+steps = [{ fill = "$BUTTON_PRESSED" }, { outline = "$GADGET_SHADOW" },
+         { bevel = "sunken", inset = 1 }]
+
+[gadgets.cycle.divider]
+steps = [{ fill = "$GADGET_SHADOW" }]
+
+[gadgets.cycle.mark]
+steps = [{ bevel = "raised" }]
+
+# ---- the popup button ----
+# The MUI image is the whole button (specs/trinket/popup_button.md): a magnifier
+# (`PopUp`), a document (`PopFile`) or a drawer (`PopDrawer`), each with the
+# selected frame the preset's `.mf1` holds.
+
+[gadgets.popup.popup_normal]
+steps = [{ sprite = "PopUp" }]
+
+[gadgets.popup.popup_selected]
+steps = [{ sprite = "PopUpSelected" }]
+
+[gadgets.popup.file_normal]
+steps = [{ sprite = "PopFile" }]
+
+[gadgets.popup.file_selected]
+steps = [{ sprite = "PopFileSelected" }]
+
+[gadgets.popup.drawer_normal]
+steps = [{ sprite = "PopDrawer" }]
+
+[gadgets.popup.drawer_selected]
+steps = [{ sprite = "PopDrawerSelected" }]
