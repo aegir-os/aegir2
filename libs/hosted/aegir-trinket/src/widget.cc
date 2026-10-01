@@ -15,6 +15,14 @@ Widget::Widget() = default;
 
 Widget::~Widget() = default;
 
+Window* Widget::window() const {
+    Widget const* widget = this;
+    while (widget != nullptr && widget->window_ == nullptr) {
+        widget = widget->parent_;
+    }
+    return widget != nullptr ? widget->window_ : nullptr;
+}
+
 void Widget::set_rect(Rect r) {
     if (rect_ != r) {
         rect_ = r;

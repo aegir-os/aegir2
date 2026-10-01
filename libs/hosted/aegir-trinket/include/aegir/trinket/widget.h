@@ -88,6 +88,11 @@ public:
     Container* parent_container() const { return parent_; }
     virtual bool is_container() const { return false; }
 
+    // The window this widget's tree belongs to, found through its parents: the
+    // content root is the one that carries it. A widget that opens a popup --
+    // the cycle's menu -- needs it (specs/trinket/popup.md).
+    Window* window() const;
+
     // Whether a pointer-down or Tab may focus this widget. A text field and a
     // button are focusable; a label is not.
     virtual bool focusable() const { return false; }

@@ -64,6 +64,15 @@ public:
     void set_content(std::unique_ptr<Widget> content);
     Widget* content() const { return content_.get(); }
 
+    // The popup layer (specs/trinket/popup.md): one widget drawn above the
+    // content, in window-content coordinates, taking the pointer and the keys
+    // while it is up. The window owns it; a pointer-down outside it dismisses
+    // it -- and is swallowed -- and Escape does too.
+    void open_popup(std::unique_ptr<Widget> content, Rect rect);
+    void close_popup();
+    bool has_popup() const { return popup_ != nullptr; }
+    Widget* popup() const { return popup_.get(); }
+
     void show();
     void hide();
     bool visible() const { return visible_; }
@@ -96,6 +105,11 @@ public:
     // shortcut -- a requester's Enter and Escape, a hotkey the console
     // delivered to this window. Return true when it is handled.
     std::function<bool(KeyEvent const&)> on_key;
+
+    // A popup opened (true) or closed (false): the client's to know -- a button
+    // draws its selected frame while its object is up, and a test wants the cue
+    // (specs/trinket/popup.md).
+    std::function<void(bool)> on_popup;
 
     // Called by Application when focus changes
     void on_focus_gained();
@@ -156,6 +170,20 @@ private:
 
     // The widget within the content tree that keys go to.
     Widget* focused_ = nullptr;
+
+    // The popup layer: the widget, its rectangle in content coordinates, the
+    // widget within it that keys go to, and the content focus to put back when
+    // it closes.
+    std::unique_ptr<Widget> popup_;
+    Rect popup_rect_;
+    Widget* popup_focus_ = nullptr;
+    Widget* saved_focus_ = nullptr;
+
+    // The widget the pointer is over, so a motion can tell enter from leave --
+    // the hovered state a button draws, and the drag a scrollbar's thumb
+    // begins. Motion with no button is the console's to deliver; when it
+    // arrives it goes here, and to the popup while one is up.
+    Widget* hovering_ = nullptr;
 
     // Console focus (the titlebar's active colour), and the titlebar drag and
     // the resize grip.

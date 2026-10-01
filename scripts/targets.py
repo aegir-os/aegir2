@@ -857,19 +857,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "abs", "data": {"axis": "y", "value": 26214}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
-                    # Then the cycle's text area (specs/trinket/cycle.md): a click
-                    # advances to the next entry, and the cue the demo prints is a
-                    # later step's trigger. Clear of the cell's mark and divider.
-                    {"type": "abs", "data": {"axis": "x", "value": 25906}},
+                    # Then the cycle's button cell (specs/trinket/cycle.md): a
+                    # click there advances to the next entry. The cell is left of
+                    # the divider at x923, and the text to its right opens the
+                    # entries' menu instead (specs/trinket/popup.md), which is a
+                    # later step's to do.
+                    {"type": "abs", "data": {"axis": "x", "value": 23297}},
                     {"type": "abs", "data": {"axis": "y", "value": 25231}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
-                    # Then the popup button (specs/trinket/popup_button.md): it
-                    # reports the click, and what it would open waits for the list.
-                    {"type": "abs", "data": {"axis": "x", "value": 28748}},
-                    {"type": "abs", "data": {"axis": "y", "value": 25067}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    # The popup button's click is parked: it opens an object now
+                    # (specs/trinket/popup.md), and a popup-opening gesture in
+                    # this burst would be dismissed and swallowed by the click
+                    # that followed it. It gets its own step once the demo's
+                    # gestures are sequenced so no popup is up across them.
                     # Then the list (specs/trinket/listview.md): a click on its
                     # third row chooses it, a move over the fourth leaves the
                     # cursor there, and its scrollbar's foot arrow scrolls the
@@ -884,11 +885,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     # triggers, not here: a step's whole burst is sent before the
                     # next step's dump, so a scroll in this list would move the
                     # rows out from under that dump.
-                    # Then the screen bar's first title: the demo's menu.
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    #
+                    # The screen bar's click is not here either. It drops the
+                    # bureau's menu over the screen, and every gesture after it
+                    # would land on that menu rather than on the demo -- which is
+                    # what stalled the acceptance when it was here. It goes in a
+                    # step of its own, once the demo's own menus are done.
                 ),
             ),
             # The scrollbar's click scrolled the terminal: the demo's cue
@@ -920,24 +922,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1008, 640, 102, 136, 187),
                 ),
             ),
-            # The cycle's click took: the active entry advanced from the short
-            # one to the long one, so the text band's ink roughly doubles
-            # (specs/trinket/cycle.md). The band is clear of the box's outline,
-            # the divider and the cell's mark.
+            # The cycle's button-cell click took: the active entry advanced from
+            # the short one to the long one, so the text band's ink roughly
+            # doubles (specs/trinket/cycle.md). The band is clear of the box's
+            # outline, the divider and the cell's mark.
             QmpStep(
                 r"demo: cycle 2",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 924, 610, 178, 12, 100),),
             ),
-            # The popup button's click took (specs/trinket/popup_button.md): the
-            # pixel is the magnifier's own colour in the imported art.
-            QmpStep(
-                r"demo: popup",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                pixels=(("gpu0", 1123, 607, 96, 128, 176),),
-            ),
+            # The popup button's step is parked with its click: the pixel it
+            # checked -- the magnifier's own colour in the imported art -- is
+            # check-theme's to prove while the click waits for its own step.
             # The list's click took: its third row is chosen and the first is
             # plain again (specs/trinket/listview.md). The rows are sixteen
             # pixels at 525, 541, 557 and 573.
@@ -960,12 +957,57 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             # The list's scrollbar arrow took: the rows moved up one, so the
-            # chosen row now sits a row higher than it did.
+            # chosen row now sits a row higher than it did. Then the cycle's
+            # text, which opens the entries' menu (specs/trinket/popup.md): a
+            # popup-opening gesture goes after every cue the restored burst
+            # produced, so nothing is left to intercept it.
             QmpStep(
                 r"demo: listed 1",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 950, 550, 102, 136, 187),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 25906}},
+                    {"type": "abs", "data": {"axis": "y", "value": 25231}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The menu the text opened: a framed list under the cycle, its rows
+            # sixteen pixels at 631, 647 and 663, the active entry's solid bar on
+            # the second. The pick is the third row's middle -- A4000, an entry
+            # the active one is not, so the pick is a change and reports.
+            QmpStep(
+                r"demo: menu 1",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 950, 655, 102, 136, 187),
+                    ("gpu0", 950, 640, 191, 191, 191),
+                ),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 24319}},
+                    {"type": "abs", "data": {"axis": "y", "value": 27483}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(r"demo: menu 0"),
+            # The pick took: the cycle's active entry is the picked one and the
+            # menu is gone. Then the screen bar's first title -- the demo's menu
+            # (specs/workbench.md) -- which is the bureau's bar, a window of its
+            # own, and goes last of the demo's gestures.
+            QmpStep(
+                r"demo: cycle 3",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 924, 610, 178, 12, 60),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
             ),
             # The bureau.menu server (specs/workbench.md), while the demo is
             # still up: it registered its tree when it gained the focus, so the

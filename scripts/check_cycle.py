@@ -63,7 +63,14 @@ def main() -> int:
             "-I",
             str(INPUT / "include"),
             str(DRIVER),
+            # cycle.cc opens its menu through the popup layer, so the check
+            # links the widgets that path names: the list it builds, the frame
+            # around it and the layout both use.
             str(TRINKET / "src" / "cycle.cc"),
+            str(TRINKET / "src" / "listview.cc"),
+            str(TRINKET / "src" / "popup.cc"),
+            str(TRINKET / "src" / "group.cc"),
+            str(TRINKET / "src" / "layout.cc"),
             str(TRINKET / "src" / "widget.cc"),
             str(TRINKET / "src" / "canvas.cc"),
             str(TRINKET / "src" / "unicode.cc"),

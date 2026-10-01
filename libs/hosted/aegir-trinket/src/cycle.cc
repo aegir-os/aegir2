@@ -9,7 +9,11 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/group.h>
+#include <aegir/trinket/listview.h>
+#include <aegir/trinket/popup.h>
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/window.h>
 
 #include <algorithm>
 #include <limits>
@@ -160,10 +164,53 @@ void Cycle::on_mouse_up(const MouseEvent& event) {
     if (!pressed_ || event.button != MouseButton::LEFT) return;
     pressed_ = false;
     damage();
-    /* A Shift+click goes back, anything else advances -- MUI's normal function
-     * (specs/trinket/cycle.md). The button cell's popup menu waits. */
+    /* MUI's split, now that there is a popup (specs/trinket/cycle.md): a click
+     * on the button cell -- and a Shift+click anywhere -- moves the entry, and
+     * a click on the text opens the menu of them. */
     bool const back = (event.modifiers & kModShift) != 0;
+    if (!back && event.pos.x >= divider_rect().x) {
+        open_menu();
+        return;
+    }
     step(back ? -1 : 1);
+}
+
+/* The entries, as a menu under the gadget: a list with the active entry on it,
+ * anchored below the cycle (above it when the window has no room below), and
+ * framed in the outline the MUI screenshot shows (specs/trinket/popup.md). */
+void Cycle::open_menu() {
+    Window* const win = window();
+    if (win == nullptr || entries_.empty()) return;
+
+    Theme& theme = Application::instance()->theme();
+    Font* const font = Application::instance()->default_font();
+    int const inset = Group::frame_inset(Group::Frame::FRAME);
+    int const pad = theme.metric(MetricRole::LIST_PADDING_H);
+
+    auto list = std::make_unique<ListView>();
+    int text = 0;
+    for (std::u32string const& entry : entries_) {
+        list->add(entry);
+        if (font != nullptr) text = std::max(text, font->measure(entry).width);
+    }
+    list->set_active(active_);
+    int const row_height = list->row_height();
+    /* A pick is the cycle's change to make, so it goes through the same door
+     * the keys do; the menu is the window's to close. */
+    list->on_select = [this, win](int index) {
+        win->close_popup();
+        go_to(index);
+    };
+
+    auto frame = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
+    frame->set_frame(Group::Frame::FRAME);
+    frame->add_child(std::move(list));
+
+    int const width = std::max(theme.metric(MetricRole::LIST_MIN_WIDTH), text + 2 * pad) +
+                      2 * inset;
+    int const height = count() * row_height + 2 * inset;
+    Rect const bounds{0, 0, win->rect().width, win->rect().height};
+    win->open_popup(std::move(frame), popup_rect(rect_, {width, height}, bounds));
 }
 
 void Cycle::on_mouse_enter(const MouseEvent&) {

@@ -25,6 +25,10 @@ namespace aegir::trinket {
  * (specs/trinket/cycle.md). window.h is host-includable through the sel4 stub
  * beside the layout check (scripts/layout_stub/sel4/sel4.h). */
 void Window::damage(const Rect&) {}
+/* cycle.cc's menu names the window's popup layer; the check never opens one, so
+ * a window that takes the widget and forgets it is enough. */
+void Window::open_popup(std::unique_ptr<Widget>, Rect) {}
+void Window::close_popup() {}
 Application* Application::instance() { return nullptr; }
 Font* Application::default_font() { return nullptr; }
 }  // namespace aegir::trinket

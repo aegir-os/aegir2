@@ -32,6 +32,7 @@
 #include <aegir/trinket/listview.h>
 #include <aegir/trinket/locale.h>
 #include <aegir/trinket/panel.h>
+#include <aegir/trinket/popup.h>
 #include <aegir/trinket/popup_button.h>
 #include <aegir/trinket/radio_group.h>
 #include <aegir/trinket/scrollbar.h>
@@ -180,14 +181,15 @@ int main(int argc, char *argv[])
      * (specs/trinket/slider.md); its cue is printed from on_poll. */
     int slider_value = 50;
     bool slider_moved = false;
-    /* The cycle's chosen entry and whether the *user* cycled; the popup's click
-     * (specs/trinket/cycle.md, popup_button.md). Both are printed from on_poll. */
+    /* The cycle's chosen entry, when the *user* cycled it (specs/trinket/cycle.md);
+     * its cue is printed from on_poll. */
     int cycle_index = -1;
-    bool popup_clicked = false;
     /* The list's chosen row and whether the *user* scrolled it
      * (specs/trinket/listview.md); both are printed from on_poll. */
     int list_selected = -1;
     bool list_scrolled = false;
+    /* The entry the popup button's object was picked at (specs/trinket/popup.md). */
+    int popup_pick = -1;
     auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
     check->set_checked(true);
     auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
@@ -286,7 +288,31 @@ int main(int argc, char *argv[])
     cycle->on_changed = [&cycle_index](int index) { cycle_index = index; };
     auto popup = std::make_unique<PopupButton>(PopupButton::Role::POPUP);
     PopupButton* const popup_ptr = popup.get();
-    popup->on_click = [&popup_clicked]() { popup_clicked = true; };
+    /* The popup button opens an object of the client's: a small list, the way
+     * the cycle opens its entries (specs/trinket/popup.md). Its cue is written
+     * here rather than from on_poll so it precedes the menu's own, which the
+     * window writes as the popup opens. */
+    popup->on_click = [&window, &app, popup_ptr, &popup_pick]() {
+        write("  demo: popup\n");
+        auto object = std::make_unique<ListView>();
+        for (std::u32string_view name : {U"Open", U"Save", U"Print"}) {
+            object->add(name);
+        }
+        int const row_height = object->row_height();
+        object->on_select = [&window, &popup_pick](int index) {
+            window.close_popup();
+            popup_pick = index;
+        };
+        int const inset = Group::frame_inset(Group::Frame::FRAME);
+        int const width = app.theme().metric(MetricRole::LIST_MIN_WIDTH) + 2 * inset;
+        auto frame = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
+        frame->set_frame(Group::Frame::FRAME);
+        frame->add_child(std::move(object));
+        Rect const bounds{0, 0, window.rect().width, window.rect().height};
+        window.open_popup(std::move(frame),
+                          popup_rect(popup_ptr->rect(), {width, 3 * row_height + 2 * inset},
+                                     bounds));
+    };
     auto cycle_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
     Group* const cycle_row_ptr = cycle_row.get();
     cycle_row->add_child(std::move(cycle));
@@ -438,6 +464,12 @@ int main(int argc, char *argv[])
         report_focus(false);
         write("  demo: closed\n");
     };
+    /* The popup layer is the window's (specs/trinket/popup.md): a cue as one
+     * opens and closes, so the runner can pace a dump on it. The cycle's menu
+     * and the popup button's object are both this window's. */
+    window.on_popup = [](bool up) {
+        write(up ? "  demo: menu 1\n" : "  demo: menu 0\n");
+    };
 
     /* The bureau rings the doorbell for an action; fetch it and print the cue
      * the runner reads. Nothing to fetch until the tree is registered. */
@@ -473,11 +505,13 @@ int main(int argc, char *argv[])
             write(line.c_str());
             cycle_index = -1;
         }
-        if (popup_clicked) {
-            /* The popup button's click is a cue (specs/trinket/popup_button.md);
-             * the object it opens waits for the list. */
-            popup_clicked = false;
-            write("  demo: popup\n");
+        if (popup_pick >= 0) {
+            /* The popup button's object was picked (specs/trinket/popup.md). */
+            std::string line("  demo: picked ");
+            line += std::to_string(popup_pick + 1);
+            line += "\n";
+            write(line.c_str());
+            popup_pick = -1;
         }
         if (list_selected >= 0) {
             /* The list's chosen row is a cue (specs/trinket/listview.md): the

@@ -70,6 +70,9 @@ private:
     Rect mark_rect() const;
     void step(int delta);   // user-driven
     void go_to(int index);  // user-driven
+    /* Open the entries as a menu under the gadget: the text's click
+     * (specs/trinket/popup.md). */
+    void open_menu();
 
     std::vector<std::u32string> entries_;
     int active_ = 0;

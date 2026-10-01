@@ -150,6 +150,52 @@ void Window::set_content(std::unique_ptr<Widget> content) {
     }
 }
 
+void Window::open_popup(std::unique_ptr<Widget> content, Rect rect) {
+    close_popup();
+    popup_ = std::move(content);
+    if (popup_ == nullptr) return;
+    popup_rect_ = rect;
+    /* The popup's tree links to this window the way the content's does, so a
+     * damage inside it repaints through the same path -- there is no second
+     * channel to forget -- and its rectangle is the content's coordinate
+     * space, which is what the canvas is offset by (specs/trinket/popup.md). */
+    popup_->window_ = this;
+    popup_->set_rect(rect);
+    popup_->dispatch_layout();
+    /* The keys go to it while it is up. The window's own focus steps aside and
+     * is put back when it closes, so a menu's arrows work without the client
+     * wiring them. */
+    saved_focus_ = focused_;
+    std::vector<Widget*> focusables;
+    collect_focusables(popup_.get(), focusables);
+    popup_focus_ = focusables.empty() ? nullptr : focusables.front();
+    if (popup_focus_ != nullptr) {
+        if (focused_ != nullptr) focused_->set_focused(false);
+        focused_ = popup_focus_;
+        popup_focus_->set_focused(true);
+    }
+    repaint();
+    if (on_popup) on_popup(true);
+}
+
+void Window::close_popup() {
+    if (popup_ == nullptr) return;
+    if (popup_focus_ != nullptr && focused_ == popup_focus_) {
+        popup_focus_->set_focused(false);
+        focused_ = saved_focus_;
+        if (focused_ != nullptr) focused_->set_focused(true);
+    }
+    popup_focus_ = nullptr;
+    saved_focus_ = nullptr;
+    popup_.reset();
+    /* The pointer cannot be over a widget that is gone. */
+    hovering_ = nullptr;
+    /* What the popup covered is the region to repaint: the content under it is
+     * what shows now. */
+    damage(popup_rect_);
+    if (on_popup) on_popup(false);
+}
+
 void Window::show() {
     if (!visible_) {
         visible_ = true;
@@ -261,6 +307,23 @@ void Window::dispatch_key(uint64_t event) {
     default:
         if (c >= 32 && c < 127) key.text = static_cast<char32_t>(c);
         break;
+    }
+
+    /* A popup takes the keys while it is up (specs/trinket/popup.md): Escape
+     * dismisses it, and anything else goes to the widget within it that wants
+     * keys -- or nowhere, so a keystroke cannot reach the content behind it. */
+    if (popup_ != nullptr) {
+        if (key.code == KeyCode::ESCAPE) {
+            if (pressed) close_popup();
+            return;
+        }
+        if (popup_focus_ == nullptr) return;
+        if (pressed) {
+            popup_focus_->dispatch_key_down(key);
+        } else {
+            popup_focus_->dispatch_key_up(key);
+        }
+        return;
     }
 
     if (key.code == KeyCode::TAB) {
@@ -401,6 +464,29 @@ void Window::dispatch_pointer(uint64_t event) {
                     }
                 }
             }
+        } else {
+            /* Motion with no button, and no frame gesture in progress: the
+             * widget under the pointer. It is told when the pointer enters and
+             * leaves it -- the hovered state a button draws -- and told to move,
+             * which is what carries a drag on: a scrollbar's thumb, a slider's
+             * knob. The console delivers motion during a grab, and a popup
+             * takes it while one is up (specs/trinket/popup.md). Nothing
+             * received it before this, so the widgets that draw a hover or a
+             * drag had no way to be told. */
+            Point const content_pos{pos.x, pos.y - bar};
+            Widget* root = popup_ != nullptr ? popup_.get() : content_.get();
+            if (popup_ != nullptr && !popup_rect_.contains(content_pos)) root = nullptr;
+            MouseEvent mouse;
+            mouse.pos = content_pos;
+            mouse.global_pos = content_pos;
+            mouse.button = MouseButton::LEFT;
+            Widget* const under = root != nullptr ? hit_test(root, content_pos) : nullptr;
+            if (under != hovering_) {
+                if (hovering_ != nullptr) hovering_->dispatch_mouse_leave(mouse);
+                hovering_ = under;
+                if (hovering_ != nullptr) hovering_->dispatch_mouse_enter(mouse);
+            }
+            if (under != nullptr) under->dispatch_mouse_move(mouse);
         }
         return;
     }
@@ -427,8 +513,39 @@ void Window::dispatch_pointer(uint64_t event) {
             resizing_ = false;
             return;
         }
+        /* A popup takes the release when the press was inside it; a release
+         * outside it is nothing, because the press outside already dismissed it
+         * (specs/trinket/popup.md). */
+        if (popup_ != nullptr) {
+            if (!popup_rect_.contains(content_pos)) return;
+            Widget* const target = hit_test(popup_.get(), content_pos);
+            if (target != nullptr) target->dispatch_mouse_up(mouse);
+            return;
+        }
         Widget* const target = hit_test(content_.get(), content_pos);
         if (target != nullptr) target->dispatch_mouse_up(mouse);
+        return;
+    }
+
+    /* A popup takes the pointer first (specs/trinket/popup.md): a down inside
+     * it goes to its widget, and a down outside it dismisses it -- swallowed,
+     * so the click does not fall through to the content or the titlebar. */
+    if (popup_ != nullptr) {
+        if (!popup_rect_.contains(content_pos)) {
+            close_popup();
+            return;
+        }
+        Widget* const target = hit_test(popup_.get(), content_pos);
+        if (target == nullptr) return;
+        if (target->focusable() && target != popup_focus_) {
+            if (popup_focus_ != nullptr) popup_focus_->set_focused(false);
+            popup_focus_ = target;
+            if (focused_ != nullptr) focused_->set_focused(false);
+            focused_ = target;
+            target->set_focused(true);
+        }
+        hovering_ = target;
+        target->dispatch_mouse_down(mouse);
         return;
     }
 
@@ -707,6 +824,19 @@ Rect Window::paint() {
         /* The content's own space: the damage shifts down by the titlebar. */
         content_->dispatch_paint(
             content_canvas,
+            PaintEvent{{damage.x, damage.y - bar, damage.width, damage.height}});
+    }
+
+    if (popup_) {
+        /* The popup layer is painted after the content, in the same region and
+         * the same offset canvas -- it covers its siblings rather than being
+         * buried by tree order, which is why it is not a widget in the tree
+         * (specs/trinket/popup.md). It is clipped to the content's area. */
+        popup_->dispatch_layout();
+        Canvas popup_canvas(pixels + static_cast<size_t>(bar) * frame.width,
+                            rect_.width, rect_.height, frame.width);
+        popup_->dispatch_paint(
+            popup_canvas,
             PaintEvent{{damage.x, damage.y - bar, damage.width, damage.height}});
     }
 
