@@ -123,8 +123,12 @@ public:
   theme's: a group box's **title band**. A `GROUP_BOX` with a title reserves
   `font height + 4` at the top of its own rectangle, added to the frame's inset,
   so the layout sizes and places its children below the caption and the group's
-  preferred height grows with the font. The caption is drawn *inside* that band,
-  so a larger title font cannot push it over the group above.
+  preferred height grows with the font. The caption is **centred and straddles
+  the box's top edge**, as MUI's does (read off the "Cycle Gadgets" group's
+  screenshot): the group hands the frame a rectangle whose top edge is the
+  border line, with half the band above it, and the theme notches that line
+  around the caption. So the caption is never over the children, and a larger
+  title font cannot push it over the group above.
 - **The grey 3-D XEN look.** `theme-xen.md` is the look; this arc changes no
   pixels.
 - **Flow and wrap.** `FlowLayout` keeps its own line-breaking; `GroupLayout` is

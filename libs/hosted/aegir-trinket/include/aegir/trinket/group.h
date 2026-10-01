@@ -64,6 +64,10 @@ private:
     /* The band a group box's title needs at the top: the caption's line and a
      * little air below it. Zero for a group with no box or no title. */
     int title_band() const noexcept;
+    /* The rectangle the frame is drawn in: the caption straddles its top edge,
+     * so the band is split half above the line and half below. The group's own
+     * rect when there is no caption (specs/trinket/layout.md). */
+    Rect frame_rect() const;
 
     GroupLayout* group_ = nullptr;
     Frame frame_ = Frame::FLAT;

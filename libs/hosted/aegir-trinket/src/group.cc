@@ -102,11 +102,20 @@ int Group::title_band() const noexcept {
     return font != nullptr ? font->height() + 4 : 0;
 }
 
+Rect Group::frame_rect() const {
+    /* The caption is centred on the box's top edge, so the band the group
+     * reserved for it is split: half above the line, half below
+     * (specs/trinket/layout.md). */
+    int const band = title_band();
+    if (band == 0) return rect_;
+    return Rect{rect_.x, rect_.y + band / 2, rect_.width, rect_.height - band / 2};
+}
+
 void Group::on_paint(Canvas& canvas, const PaintEvent& event) {
     Widget::on_paint(canvas, event);
     if (frame_ != Frame::FLAT) {
-        Application::instance()->theme().draw_panel(canvas, rect_, frame_, title_,
-                                                    focused());
+        Application::instance()->theme().draw_panel(canvas, frame_rect(), frame_,
+                                                    title_, focused());
     }
     Container::on_paint(canvas, event);
 }

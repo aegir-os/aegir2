@@ -102,12 +102,13 @@ public:
         Font* const font = Application::instance()->default_font();
         if (font == nullptr) return;
         Size const size = font->measure(title);
-        int const gap_x = 8;
-        int const x = rect.x + gap_x;
-        /* The caption sits in the band the group reserved for it, just inside
-         * the box's top edge (specs/trinket/layout.md): the group insets its
-         * children below the band, so the caption is never over them. */
-        int const y = rect.y + 2;
+        /* The caption is centred in the box and straddles the frame's top edge
+         * (specs/trinket/layout.md), as MUI's does: the group hands the frame a
+         * rectangle whose top edge is the border line, with half the caption's
+         * band above it -- the whole band is inset from its children -- so the
+         * line is notched around the caption and never drawn over it. */
+        int const x = rect.x + (rect.width - size.width) / 2;
+        int const y = rect.y - font->height() / 2;
         canvas.fill_rect({x - 2, y, size.width + 4, font->height()},
                          color(ColorRole::PANEL_BG));
         canvas.draw_text({x, y}, title, font, color(ColorRole::TEXT));
