@@ -73,12 +73,16 @@ public:
 ## Acceptance
 
 - **The demo** shows a radio group in a group box beside the checkbox, and the
-  selection prints a cue (`demo: radio N`). The runner does not yet click it. A
-  click on a member was tried and did not reach the widget: the member's
-  rectangle is right (63x24, at its content-local place) and the tested point is
-  inside it, yet the press never arrived -- so the end-to-end click waits on that
-  delivery puzzle, not on the group. The exclusivity is `set_active`'s, and
-  `Button::on_mouse_up` now reports a toggle's click on the mouse path as
-  `on_key_up` always did on the key path -- before, only a `PUSH` reported.
+  selection prints a cue (`demo: radio N`). The runner does not yet click it.
+  Two things came out of trying: a step's `events` are sent only when its
+  `trigger` fires, so a click and the cue it produces are two steps -- the first
+  attempt made the cue its own trigger, and the click was never sent at all; and
+  once the click *is* sent, the console routes it to the **bureau** -- the
+  full-screen backdrop, `0,0,1280,800` -- and not to the demo window
+  (`900,450,260,259`) that covers the same point, so the member never sees it
+  (a window-routing/z-order question, not the group). The exclusivity is
+  `set_active`'s, and `Button::on_mouse_up` now reports a toggle's click on the
+  mouse path as `on_key_up` always did on the key path -- before, only a `PUSH`
+  reported.
 - **`make check-theme`** renders the checked and unchecked frames of both
   toggles on the host (specs/trinket/checkbox.md).
