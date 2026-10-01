@@ -1005,9 +1005,52 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 924, 610, 178, 12, 60),),
-                # Then the screen bar's first title -- the demo's menu
-                # (specs/workbench.md) -- which drops the bureau's menu over the
-                # screen, and so goes last of the demo's gestures.
+                # Then the popup button (specs/trinket/popup_button.md), which
+                # opens its object. A popup-opening gesture goes after every cue
+                # the restored burst produced, so nothing is left to intercept
+                # it, and this cue is the last of them.
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 28748}},
+                    {"type": "abs", "data": {"axis": "y", "value": 25067}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The popup button's click took, and opened its object: a list
+            # anchored under the button, with the magnifier's own colour still at
+            # the pixel it held in the imported art.
+            QmpStep(
+                r"demo: popup",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 1123, 607, 96, 128, 176),),
+            ),
+            # The object itself: a list of three with its entries centred, its
+            # rows sixteen pixels at 627, 643 and 659. The pick is the second
+            # row's middle -- Save -- and the cue it prints is the next step's.
+            # Its cue is `demo: object`, not the cycle's `demo: menu`: the two
+            # popups are the window's one layer, and a cue the runner answers
+            # with two steps would fire the object's pick on the cycle's menu.
+            QmpStep(
+                r"demo: object 1",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 1045, 628, 112, 46, 60),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 28154}},
+                    {"type": "abs", "data": {"axis": "y", "value": 26663}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            QmpStep(r"demo: object 0"),
+            # The object was picked at its second row, Save
+            # (specs/trinket/popup_button.md). Then the screen bar's first title
+            # -- the demo's menu (specs/workbench.md) -- which drops the bureau's
+            # menu over the screen, and so goes last of the demo's gestures, with
+            # no demo popup left for it to be mistaken for.
+            QmpStep(
+                r"demo: picked 2",
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 768}},
                     {"type": "abs", "data": {"axis": "y", "value": 450}},

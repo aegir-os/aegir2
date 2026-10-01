@@ -151,7 +151,9 @@ void Window::set_content(std::unique_ptr<Widget> content) {
 }
 
 void Window::open_popup(std::unique_ptr<Widget> content, Rect rect) {
-    close_popup();
+    /* Replacing a popup is not the popup's own handler asking, so it does not
+     * wait for a dispatch to end. */
+    close_popup_now();
     popup_ = std::move(content);
     if (popup_ == nullptr) return;
     popup_rect_ = rect;
@@ -184,6 +186,26 @@ void Window::open_popup(std::unique_ptr<Widget> content, Rect rect) {
 }
 
 void Window::close_popup() {
+    if (popup_ == nullptr) return;
+    /* A close asked for from inside a dispatch waits for it to return: the
+     * widget that asked may be the popup's own, and resetting it here would
+     * free that widget while its handler is still on the stack
+     * (specs/trinket/popup.md). */
+    if (dispatch_depth_ > 0) {
+        popup_close_pending_ = true;
+        return;
+    }
+    close_popup_now();
+}
+
+void Window::end_dispatch() {
+    if (--dispatch_depth_ > 0) return;
+    if (!popup_close_pending_) return;
+    popup_close_pending_ = false;
+    close_popup_now();
+}
+
+void Window::close_popup_now() {
     if (popup_ == nullptr) return;
     if (popup_focus_ != nullptr && focused_ == popup_focus_) {
         popup_focus_->set_focused(false);
@@ -288,6 +310,8 @@ void Window::focus_next() {
 }
 
 void Window::dispatch_key(uint64_t event) {
+    /* A close asked for inside this dispatch waits for it (window.h). */
+    Dispatch const dispatch(this);
     uint32_t const value = aegir::input::event_value(event);
     char const c = static_cast<char>(value & 0xffff);
     bool const pressed = (value & aegir::console::kKeyPressed) != 0;
@@ -388,6 +412,8 @@ KeyCode Window::keycode_for(uint16_t code) {
 }
 
 void Window::dispatch_pointer(uint64_t event) {
+    /* A close asked for inside this dispatch waits for it (window.h). */
+    Dispatch const dispatch(this);
     uint32_t const value = aegir::input::event_value(event);
     uint16_t const code = aegir::input::event_code(event);
     Point const pos{static_cast<int>(value & 0xffff),

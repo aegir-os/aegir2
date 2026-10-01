@@ -179,6 +179,27 @@ private:
     Widget* popup_focus_ = nullptr;
     Widget* saved_focus_ = nullptr;
 
+    // A popup close asked for while an event is being dispatched waits until
+    // the dispatch returns: the widget that asked may be the popup's own, with
+    // its handler still on the stack, and resetting it there frees the widget
+    // mid-call. The depth counts nested dispatches, and the close runs when the
+    // outermost returns (specs/trinket/popup.md).
+    int dispatch_depth_ = 0;
+    bool popup_close_pending_ = false;
+
+    // A dispatch's scope. It is a member so it can reach the depth and the
+    // pending close; the constructor and destructor bracket one dispatch.
+    struct Dispatch {
+        Window* window;
+        explicit Dispatch(Window* w) : window(w) { ++window->dispatch_depth_; }
+        ~Dispatch() { window->end_dispatch(); }
+    };
+
+    // The close itself, without the deferral: `open_popup` replacing a popup
+    // is not the popup's own handler asking, so it does not wait.
+    void close_popup_now();
+    void end_dispatch();
+
     // The widget the pointer is over, so a motion can tell enter from leave --
     // the hovered state a button draws, and the drag a scrollbar's thumb
     // begins. Motion with no button is the console's to deliver; when it

@@ -35,6 +35,22 @@ label, the list below. It is the window's own layer instead.
   frame of its own. The console composites per window, so the popup cannot leave
   the window and does not need to.
 
+- **A close asked for inside a dispatch waits for it to return.** A menu's own
+  list is what picks an entry: `ListView::select` calls the client's `on_select`
+  from inside `on_mouse_down`, and the client's handler is what closes the popup
+  -- so resetting the popup there frees the widget whose handler is still on the
+  stack. The window defers the reset to the end of the dispatch, as it already
+  defers a repaint asked for from inside a paint. `open_popup` replacing a popup
+  does not wait, because the widget asking is not the popup's.
+
+- **A cue names exactly one event.** The cycle's menu and the popup button's
+  object are both this window's one popup layer and both report through its one
+  callback, so the cue has to say *which*: the opener knows, and the demo prints
+  `demo: menu N` for the cycle's menu and `demo: object N` for the popup button's
+  object. The acceptance answers a cue with the steps that watch for it, and a
+  cue two events shared fired the object's pick on the cycle's menu -- the object
+  was then never picked and the run waited for a cue that could not come.
+
 - **The pointer goes to it first.** With a popup up, a pointer down inside it
   goes to the widget under the point; a pointer down *outside* dismisses the
   popup and is swallowed -- MUI's rule, and what makes a menu feel like a menu

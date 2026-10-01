@@ -190,6 +190,15 @@ int main(int argc, char *argv[])
     bool list_scrolled = false;
     /* The entry the popup button's object was picked at (specs/trinket/popup.md). */
     int popup_pick = -1;
+    /* Whether the window's popup is the popup button's object rather than the
+     * cycle's menu. The window owns one popup layer and one cue callback, so the
+     * client is what says which popup opened; the popup button sets this just
+     * before it opens. The two cues must not read the same, because the
+     * acceptance answers a cue with its steps and would fire the object's step
+     * on the cycle's menu (scripts/targets.py). A popup is replaced only by the
+     * opener's own call -- a pointer-down outside dismisses and is swallowed --
+     * so the flag cannot go stale between an open and its close. */
+    bool popup_is_object = false;
     auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
     check->set_checked(true);
     auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
@@ -292,7 +301,7 @@ int main(int argc, char *argv[])
      * the cycle opens its entries (specs/trinket/popup.md). Its cue is written
      * here rather than from on_poll so it precedes the menu's own, which the
      * window writes as the popup opens. */
-    popup->on_click = [&window, &app, popup_ptr, &popup_pick]() {
+    popup->on_click = [&window, &app, popup_ptr, &popup_pick, &popup_is_object]() {
         write("  demo: popup\n");
         /* The object is the list itself -- its own well is its border -- with
          * its entries centred, a menu like the cycle's (specs/trinket/popup.md). */
@@ -308,6 +317,8 @@ int main(int argc, char *argv[])
         int const width = app.theme().metric(MetricRole::LIST_MIN_WIDTH);
         Size const size{width, object->height_for_rows(3)};
         Rect const bounds{0, 0, window.rect().width, window.rect().height};
+        /* Before the open: the window writes its cue from inside open_popup. */
+        popup_is_object = true;
         window.open_popup(std::move(object), popup_rect(popup_ptr->rect(), size, bounds));
     };
     auto cycle_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 8);
@@ -464,8 +475,15 @@ int main(int argc, char *argv[])
     /* The popup layer is the window's (specs/trinket/popup.md): a cue as one
      * opens and closes, so the runner can pace a dump on it. The cycle's menu
      * and the popup button's object are both this window's. */
-    window.on_popup = [](bool up) {
-        write(up ? "  demo: menu 1\n" : "  demo: menu 0\n");
+    window.on_popup = [&popup_is_object](bool up) {
+        if (popup_is_object) {
+            write(up ? "  demo: object 1\n" : "  demo: object 0\n");
+        } else {
+            write(up ? "  demo: menu 1\n" : "  demo: menu 0\n");
+        }
+        /* Cleared at the close, so the next popup's opener decides the kind
+         * afresh (the cycle's menu opener does not set it). */
+        if (!up) popup_is_object = false;
     };
 
     /* The bureau rings the doorbell for an action; fetch it and print the cue

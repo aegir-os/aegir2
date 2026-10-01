@@ -60,5 +60,10 @@ virtual void draw_popup(Canvas&, const Rect& rect, PopupButton::Role role,
 
 - **`make check-theme`** renders the three roles in both frames on the host, so
   a wrong frame or a mis-scaled button is seen in seconds.
-- **The demo** carries a popup button beside the cycle; the runner clicks it and
-  reads `demo: popup` back.
+- **The demo** carries a popup button beside the cycle. The runner clicks it,
+  reads `demo: popup` back and checks the magnifier's own colour where the art
+  puts it; then, with the object open, checks the ink of its three centred
+  entries and picks the second (`Save`), reading `demo: picked 2`. The click is a
+  step of its own, after every cue the demo's burst produced: a popup-opening
+  gesture inside that burst is dismissed -- and swallowed -- by the click that
+  follows it.
