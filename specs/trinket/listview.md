@@ -50,10 +50,10 @@ palette screen; nothing is inverted). That is a correction to what
   name column takes the width its size and date columns do not. The titles row
   is the list's own band: `height_for_rows` counts it and `row_at`/
   `visible_rows` leave it out. The arithmetic is pure (`column_layout`), so the
-  host check pins it. Columns are separated by a `SPACING_SMALL` gap: a
-  right-aligned cell ends at its column's right edge and the next column's
-  left-aligned cell begins at that same edge, so with no gap the two touch (a
-  size against the date beside it).
+  host check pins it -- the gap is a parameter, the theme's `SPACING_SMALL` on
+  the target. Columns are separated by that gap: a right-aligned cell ends at
+  its column's right edge and the next column's left-aligned cell begins at that
+  same edge, so with no gap the two touch (a size against the date beside it).
 
   A row may carry an `Icon` (`aegir/trinket/icon.h`): the theme draws the
   imported MUI drawer/volume art in a leading strip the columns start after.
@@ -104,7 +104,8 @@ public:
 
     // The columns' x and width across a row: pure, so the host check pins it.
     struct ColumnLayout { std::vector<int> x; std::vector<int> width; };
-    static ColumnLayout column_layout(std::vector<Column> const&, int width, int padding);
+    static ColumnLayout column_layout(std::vector<Column> const&, int width, int padding,
+                                      int gap);
 
     void set_active(int index);   // programmatic: no on_select; -1 for none
     int active() const;

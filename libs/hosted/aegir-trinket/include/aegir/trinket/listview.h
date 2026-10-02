@@ -103,13 +103,14 @@ public:
     static int clamp_first(int value, int count, int visible);
 
     /* The columns' x and width across a row `width` wide, `padding` in at either
-     * end. Pure -- no font, no theme -- so the host check pins it. */
+     * end and `gap` between. Pure -- no font, no theme -- so the host check
+     * pins it; the caller passes the theme's spacing as `gap`. */
     struct ColumnLayout {
         std::vector<int> x;
         std::vector<int> width;
     };
     static ColumnLayout column_layout(std::vector<Column> const& columns, int width,
-                                      int padding);
+                                      int padding, int gap);
 
     bool focusable() const override { return true; }
     Size preferred_size() const override;

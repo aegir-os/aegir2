@@ -182,15 +182,16 @@ int ListView::height_for_rows(int rows) const {
 }
 
 ListView::ColumnLayout ListView::column_layout(std::vector<Column> const& columns,
-                                               int width, int padding) {
+                                               int width, int padding, int gap) {
     ColumnLayout out;
     if (columns.empty()) return out;
     if (padding < 0) padding = 0;
     /* A gap between columns: a right-aligned cell ends at its column's right
      * edge and the next column's left-aligned cell begins at that same edge, so
      * with no gap the two touch -- a size against the date beside it
-     * (specs/trinket/listview.md). */
-    int const gap = Application::instance()->theme().metric(MetricRole::SPACING_SMALL);
+     * (specs/trinket/listview.md). It is the caller's, the theme's spacing on
+     * the target, so the arithmetic stays pure and the host check pins it. */
+    if (gap < 0) gap = 0;
     int const gaps = (static_cast<int>(columns.size()) - 1) * gap;
     int const content = width - 2 * padding - gaps;
     int fixed = 0;
@@ -254,7 +255,7 @@ void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
      * with no image and no row state. */
     if (titles()) {
         Rect const titles_band{area.x, area.y, area.width, h};
-        ColumnLayout const layout = column_layout(columns_, titles_band.width - strip, pad);
+        ColumnLayout const layout = column_layout(columns_, titles_band.width - strip, pad, gap);
         for (int c = 0; c < column_count() && c < static_cast<int>(layout.x.size()); ++c) {
             Rect const cell_rect{titles_band.x + strip + layout.x[c], titles_band.y,
                                  layout.width[c], h};
@@ -268,7 +269,7 @@ void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
     }
 
     ColumnLayout const layout =
-        columns_.empty() ? ColumnLayout{} : column_layout(columns_, data.width - strip, pad);
+        columns_.empty() ? ColumnLayout{} : column_layout(columns_, data.width - strip, pad, gap);
     int const visible = visible_rows();
     for (int i = 0; i < visible; ++i) {
         int const index = first_ + i;

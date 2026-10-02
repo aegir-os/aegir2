@@ -58,8 +58,8 @@ ListView::Column free_column() {
 
 void expect_columns(std::vector<ListView::Column> const& columns, int width, int padding,
                     std::vector<int> const& want_x, std::vector<int> const& want_width,
-                    std::string const& what) {
-    ListView::ColumnLayout const got = ListView::column_layout(columns, width, padding);
+                    std::string const& what, int gap = 0) {
+    ListView::ColumnLayout const got = ListView::column_layout(columns, width, padding, gap);
     check(got.x == want_x && got.width == want_width,
           what + ": got x/width of " + std::to_string(got.x.size()));
 }
@@ -105,6 +105,10 @@ int main() {
                    "a fixed column past the width leaves nothing free");
     expect_columns({free_column()}, 100, 8, {8}, {84},
                    "the padding is at either end");
+    expect_columns({fixed_column(80), fixed_column(40)}, 200, 4, {4, 88}, {80, 40},
+                   "the gap sits between the columns", 4);
+    expect_columns({free_column(), free_column()}, 200, 4, {4, 102}, {94, 94},
+                   "the gap comes out of the free share", 4);
 
     std::printf("listview: %u checks, %u failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
