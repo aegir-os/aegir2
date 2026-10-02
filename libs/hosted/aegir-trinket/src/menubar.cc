@@ -6,6 +6,7 @@
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/unicode.h>
 #include <algorithm>
 
 namespace aegir::trinket {
@@ -89,7 +90,9 @@ void MenuBar::on_paint(Canvas& canvas, const PaintEvent& event) {
     Theme& theme = Application::instance()->theme();
     Rect r = rect_;
 
-    canvas.fill_rect(r, theme.color(ColorRole::MENUBAR_BG));
+    /* The bar's face is the theme's (specs/trinket/chrome.md); the widget draws
+     * the titles. */
+    theme.draw_menubar(canvas, r);
 
     int x = r.x;
     for (const auto& menu : menus_) {
@@ -144,53 +147,29 @@ void MenuBar::draw_menu(Canvas& canvas, const Menu& menu, int index) {
     int menu_height = static_cast<int>(menu.items.size()) * item_height;
     Rect menu_rect = {menu_x, menu_y, max_width, menu_height};
 
-    canvas.fill_rect(menu_rect, theme.color(ColorRole::MENU_BG));
-    canvas.draw_rect(menu_rect, theme.color(ColorRole::MENU_BORDER), theme.metric(MetricRole::MENU_BORDER_WIDTH));
+    theme.draw_menu_well(canvas, menu_rect);
 
     int item_y = menu_y;
     for (size_t i = 0; i < menu.items.size(); ++i) {
         const auto& item = menu.items[i];
-        Rect item_rect = {menu_x, item_y, max_width, item_height};
-
-        if (item.flags & MenuItem::SEPARATOR) {
-            int sep_y = item_y + item_height / 2;
-            canvas.draw_hline(menu_x + 10, menu_x + max_width - 10, sep_y, theme.color(ColorRole::MENU_SEPARATOR));
-        } else {
-            bool hovered = (state_.submenu_index == static_cast<int>(i));
-            if (hovered && !(item.flags & MenuItem::DISABLED)) {
-                canvas.fill_rect(item_rect, theme.color(ColorRole::MENU_HOVER));
-            }
-
-            Color text_color = (item.flags & MenuItem::DISABLED) ? theme.color(ColorRole::DISABLED_TEXT)
-                                                                : theme.color(ColorRole::MENU_TEXT);
-
-            int text_x = menu_x + padding_h;
-            int text_y = item_y + (item_height + font->ascent() - font->descent()) / 2;
-            canvas.draw_text({text_x, text_y}, item.label, font, text_color);
-
-            // Shortcut: keycap modifiers, then the key name
-            if (item.shortcut_key != KeyCode::UNKNOWN) {
-                draw_accelerator(canvas, menu_x + max_width - padding_h, text_y, item,
-                                 font, text_color);
-            }
-
-            // Checkmark
-            if (item.flags & MenuItem::CHECKED) {
-                int cx = menu_x + 8;
-                int cy = item_y + item_height / 2;
-                canvas.draw_line({cx, cy}, {cx + 4, cy + 4}, text_color);
-                canvas.draw_line({cx + 4, cy + 4}, {cx + 10, cy - 4}, text_color);
-            }
-
-            // Submenu indicator
-            if (item.flags & MenuItem::SUBMENU) {
-                int ax = menu_x + max_width - padding_h - 10;
-                int ay = item_y + item_height / 2;
-                canvas.draw_line({ax, ay - 4}, {ax + 6, ay}, text_color);
-                canvas.draw_line({ax + 6, ay}, {ax, ay + 4}, text_color);
-            }
+        Rect const item_rect = {menu_x, item_y, max_width, item_height};
+        /* The row -- its face, its label, its check and its submenu chevron -- is
+         * the theme's (specs/trinket/chrome.md). The accelerator's keycaps are
+         * boxes too, but the widget places them, so it draws them by name. */
+        theme.draw_menu_item(canvas, item_rect, utf32_to_utf8(item.label).c_str(),
+                             state_.submenu_index == static_cast<int>(i),
+                             (item.flags & MenuItem::CHECKED) != 0,
+                             (item.flags & MenuItem::DISABLED) != 0,
+                             (item.flags & MenuItem::SEPARATOR) != 0,
+                             (item.flags & MenuItem::SUBMENU) != 0);
+        if (item.shortcut_key != KeyCode::UNKNOWN) {
+            int const text_y = item_y + (item_height + font->ascent() - font->descent()) / 2;
+            Color const text_color = (item.flags & MenuItem::DISABLED)
+                                         ? theme.color(ColorRole::DISABLED_TEXT)
+                                         : theme.color(ColorRole::MENU_TEXT);
+            draw_accelerator(canvas, menu_x + max_width - padding_h, text_y, item,
+                             font, text_color);
         }
-
         item_y += item_height;
     }
 }
@@ -394,23 +373,13 @@ int keycap_width(std::u32string_view label, Font* font) {
     return font->measure(label).width + 2 * kKeycapPad;
 }
 
-/* One keycap: a beveled box around a label, the titlebar gadgets' look. */
+/* One keycap: the widget places the box, the theme draws the raised face and
+ * the label (specs/trinket/chrome.md). */
 void draw_keycap(Canvas& canvas, int x, int text_y, std::u32string_view label, Font* font) {
     Theme& theme = Application::instance()->theme();
     int const height = font->height() + 2 * kKeycapPad;
     Rect const box{x, text_y - kKeycapPad, keycap_width(label, font), height};
-    canvas.fill_rect(box, theme.color(ColorRole::BUTTON_BG));
-    canvas.draw_rect(box, theme.color(ColorRole::BUTTON_BORDER));
-    canvas.draw_hline(box.x + 1, box.x + box.width - 2, box.y + 1,
-                      theme.color(ColorRole::GADGET_WHITE));
-    canvas.draw_vline(box.y + 1, box.y + box.height - 2, box.x + 1,
-                      theme.color(ColorRole::GADGET_WHITE));
-    canvas.draw_hline(box.x + 1, box.x + box.width - 2, box.y + box.height - 2,
-                      theme.color(ColorRole::GADGET_GREY));
-    canvas.draw_vline(box.y + 1, box.y + box.height - 2, box.x + box.width - 2,
-                      theme.color(ColorRole::GADGET_GREY));
-    canvas.draw_text({box.x + kKeycapPad, text_y}, label, font,
-                     theme.color(ColorRole::BUTTON_TEXT));
+    theme.draw_keycap(canvas, box, utf32_to_utf8(label).c_str());
 }
 
 }  // namespace

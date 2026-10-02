@@ -106,6 +106,13 @@ extern const Recipe kRecipeTitlebar[2];  // inactive, active
 extern const Recipe kRecipeBottombar;
 extern const Recipe kRecipeWindowFrame;
 extern const Recipe kRecipeGadget[6];
+// The screen bar and the menus (specs/trinket/chrome.md): the screen bar, the
+// in-window menu bar, a popup's well, one row (normal, hovered), and a keycap.
+extern const Recipe kRecipeScreenBar;
+extern const Recipe kRecipeMenubar;
+extern const Recipe kRecipeMenuWell;
+extern const Recipe kRecipeMenuItem[2];
+extern const Recipe kRecipeKeycap;
 
 }  // namespace aegir::trinket
 

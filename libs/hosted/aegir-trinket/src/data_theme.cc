@@ -124,41 +124,65 @@ public:
         }
     }
 
+    void draw_screen_bar(Canvas& canvas, const Rect& rect) override {
+        run(kRecipeScreenBar, canvas, rect);
+    }
+
     void draw_menubar(Canvas& canvas, const Rect& rect) override {
-        canvas.fill_rect(rect, color(ColorRole::MENUBAR_BG));
-        canvas.draw_hline(rect.x, rect.x + rect.width - 1, rect.y + rect.height - 1,
-                          color(ColorRole::MENU_BORDER));
+        run(kRecipeMenubar, canvas, rect);
+    }
+
+    void draw_menu_well(Canvas& canvas, const Rect& rect) override {
+        run(kRecipeMenuWell, canvas, rect);
     }
 
     void draw_menu_item(Canvas& canvas, const Rect& rect,
                          const char* label, bool hovered,
-                         bool checked, bool disabled, bool separator) override {
+                         bool checked, bool disabled, bool separator,
+                         bool submenu) override {
         if (separator) {
-            int y = rect.y + rect.height / 2;
-            canvas.draw_hline(rect.x + 20, rect.x + rect.width - 20, y, color(ColorRole::MENU_SEPARATOR));
+            int const y = rect.y + rect.height / 2;
+            canvas.draw_hline(rect.x + 20, rect.x + rect.width - 20, y,
+                              color(ColorRole::MENU_SEPARATOR));
             return;
         }
 
-        if (hovered && !disabled) {
-            canvas.fill_rect(rect, color(ColorRole::MENU_HOVER));
-        }
+        run(kRecipeMenuItem[hovered && !disabled ? 1 : 0], canvas, rect);
 
-        Font* font = Application::instance()->default_font();
-        if (font && label) {
-            Color text_color = disabled ? color(ColorRole::DISABLED_TEXT) : color(ColorRole::MENU_TEXT);
-            int x = rect.x + metric(MetricRole::MENU_PADDING_H);
-            int y = rect.y + (rect.height - font->height()) / 2;
-            canvas.draw_text({x, y}, utf8_to_utf32(label),
-                             font, text_color);
+        Color const text_color = disabled ? color(ColorRole::DISABLED_TEXT)
+                                          : color(ColorRole::MENU_TEXT);
+        Font* const font = Application::instance()->default_font();
+        if (font != nullptr && label != nullptr) {
+            int const x = rect.x + metric(MetricRole::MENU_PADDING_H);
+            int const y = rect.y + (rect.height - font->height()) / 2;
+            canvas.draw_text({x, y}, utf8_to_utf32(label), font, text_color);
         }
 
         if (checked) {
-            // Draw checkmark
-            int cx = rect.x + 4;
-            int cy = rect.y + rect.height / 2;
-            canvas.draw_line({cx, cy}, {cx + 4, cy + 4}, color(ColorRole::MENU_TEXT));
-            canvas.draw_line({cx + 4, cy + 4}, {cx + 10, cy - 4}, color(ColorRole::MENU_TEXT));
+            /* The checkmark, the two strokes MUI's menu shows. */
+            int const cx = rect.x + 4;
+            int const cy = rect.y + rect.height / 2;
+            canvas.draw_line({cx, cy}, {cx + 4, cy + 4}, text_color);
+            canvas.draw_line({cx + 4, cy + 4}, {cx + 10, cy - 4}, text_color);
         }
+        if (submenu) {
+            /* A submenu's chevron: a right-pointing angle, the item's far right. */
+            int const ax = rect.x + rect.width - metric(MetricRole::MENU_PADDING_H) - 10;
+            int const ay = rect.y + rect.height / 2;
+            canvas.draw_line({ax, ay - 4}, {ax + 6, ay}, text_color);
+            canvas.draw_line({ax + 6, ay}, {ax, ay + 4}, text_color);
+        }
+    }
+
+    void draw_keycap(Canvas& canvas, const Rect& rect, const char* label) override {
+        run(kRecipeKeycap, canvas, rect);
+        Font* const font = Application::instance()->default_font();
+        if (font == nullptr || label == nullptr) {
+            return;
+        }
+        int const pad = metric(MetricRole::MENU_PADDING_V);
+        canvas.draw_text({rect.x + pad, rect.y + (rect.height - font->height()) / 2},
+                         utf8_to_utf32(label), font, color(ColorRole::BUTTON_TEXT));
     }
 
     void draw_titlebar(Canvas& canvas, const Rect& rect,

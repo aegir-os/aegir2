@@ -434,3 +434,35 @@ steps = [{ fill = "$TITLEBAR_BG", at = [2, 2, 12, 12] },
          { outline = "$GADGET_OUTLINE", at = [2, 2, 12, 12] },
          { fill = "$TITLEBAR_BG", at = [5, 5, 15, 15] },
          { outline = "$GADGET_OUTLINE", at = [5, 5, 15, 15] }]
+
+# ---- the screen bar and the menus ----
+# The screen bar is the title bar's look across the top of the screen
+# (specs/workbench.md); the in-window menu bar, its popups and their
+# accelerator keycaps are their own (specs/trinket/chrome.md).
+
+[gadgets.screen_bar]
+steps = [{ fill = "$TITLEBAR_BG" },
+         { line = "top", color = "$TITLEBAR_HIGHLIGHT", inset = 1 },
+         { line = "bottom", color = "$TITLEBAR_SHADOW" }]
+
+[gadgets.menubar]
+steps = [{ fill = "$MENUBAR_BG" },
+         { line = "bottom", color = "$MENU_BORDER" }]
+
+[gadgets.menu_well]
+steps = [{ fill = "$MENU_BG" }, { outline = "$MENU_BORDER" }]
+
+[gadgets.menu_item.normal]
+steps = []
+
+[gadgets.menu_item.hovered]
+steps = [{ fill = "$MENU_HOVER" }]
+
+# A keycap is a raised box around a modifier's name (specs/trinket/chrome.md);
+# the light and dark lines are the white/grey pair the window gadgets use.
+[gadgets.keycap]
+steps = [{ fill = "$BUTTON_BG" }, { outline = "$BUTTON_BORDER" },
+         { line = "top", color = "$GADGET_WHITE", inset = 1 },
+         { line = "left", color = "$GADGET_WHITE", inset = 1 },
+         { line = "bottom", color = "$GADGET_GREY", inset = 1 },
+         { line = "right", color = "$GADGET_GREY", inset = 1 }]

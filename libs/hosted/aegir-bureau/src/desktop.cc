@@ -8,6 +8,7 @@
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/unicode.h>
 
 #include <algorithm>
 
@@ -166,13 +167,9 @@ void Desktop::draw_bar(Canvas& canvas) {
     Theme& theme = Application::instance()->theme();
     int const height = bar_height();
     Rect const bar{rect_.x, rect_.y, rect_.width, height};
-    canvas.fill_rect(bar, theme.color(ColorRole::TITLEBAR_BG));
-    if (height > 2) {
-        canvas.draw_hline(bar.x, bar.x + bar.width - 1, bar.y + 1,
-                          theme.color(ColorRole::TITLEBAR_HIGHLIGHT));
-    }
-    canvas.draw_hline(bar.x, bar.x + bar.width - 1, bar.y + height - 1,
-                      theme.color(ColorRole::TITLEBAR_SHADOW));
+    /* The screen bar's face is the theme's (specs/trinket/chrome.md); the
+     * desktop draws the titles it knows. */
+    theme.draw_screen_bar(canvas, bar);
 
     Font* const font = Application::instance()->default_font();
     if (font == nullptr) return;
@@ -197,33 +194,26 @@ void Desktop::draw_menu(Canvas& canvas, int menu) {
     Rect const box{slots.front().rect.x, slots.front().rect.y,
                    slots.front().rect.width,
                    static_cast<int>(active_menus()[menu].items.size()) * height};
-    canvas.fill_rect(box, theme.color(ColorRole::MENU_BG));
-    canvas.draw_rect(box, theme.color(ColorRole::MENU_BORDER),
-                     theme.metric(MetricRole::MENU_BORDER_WIDTH));
+    /* The well and each row are the theme's (specs/trinket/chrome.md); the
+     * desktop places the rows and draws the accelerators. */
+    theme.draw_menu_well(canvas, box);
 
     for (const Slot& slot : slots) {
         MenuItem const& item = active_menus()[menu].items[slot.item];
-        if ((item.flags & MenuItem::SEPARATOR) != 0) {
-            int const y = slot.rect.y + height / 2;
-            canvas.draw_hline(slot.rect.x + 8, slot.rect.x + slot.rect.width - 8, y,
-                              theme.color(ColorRole::MENU_SEPARATOR));
-            continue;
-        }
-        Color const text = (item.flags & MenuItem::DISABLED) != 0
-                               ? theme.color(ColorRole::DISABLED_TEXT)
-                               : theme.color(ColorRole::MENU_TEXT);
-        canvas.draw_text({slot.rect.x + pad, slot.rect.y + (height - font->height()) / 2},
-                         item.label, font, text);
+        theme.draw_menu_item(canvas, slot.rect,
+                             aegir::trinket::utf32_to_utf8(item.label).c_str(),
+                             false,
+                             (item.flags & MenuItem::CHECKED) != 0,
+                             (item.flags & MenuItem::DISABLED) != 0,
+                             (item.flags & MenuItem::SEPARATOR) != 0,
+                             (item.flags & MenuItem::SUBMENU) != 0);
         if (item.shortcut_key != KeyCode::UNKNOWN) {
+            Color const text = (item.flags & MenuItem::DISABLED) != 0
+                                   ? theme.color(ColorRole::DISABLED_TEXT)
+                                   : theme.color(ColorRole::MENU_TEXT);
             MenuBar::draw_accelerator(canvas, slot.rect.x + slot.rect.width - pad,
                                       slot.rect.y + (height - font->height()) / 2, item,
                                       font, text);
-        }
-        if ((item.flags & MenuItem::CHECKED) != 0) {
-            int const cx = slot.rect.x + 8;
-            int const cy = slot.rect.y + height / 2;
-            canvas.draw_line({cx, cy}, {cx + 4, cy + 4}, text);
-            canvas.draw_line({cx + 4, cy + 4}, {cx + 10, cy - 4}, text);
         }
     }
 }

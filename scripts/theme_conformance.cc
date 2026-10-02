@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     char const* path = argc > 1 ? argv[1] : "render.ppm";
 
     constexpr int kWidth = 460;
-    constexpr int kHeight = 560;
+    constexpr int kHeight = 640;
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
     Canvas canvas(pixels.data(), kWidth, kHeight, kWidth);
 
@@ -224,6 +224,18 @@ int main(int argc, char** argv) {
     theme->draw_resize_gadget(canvas, {bottom.x + bottom.width - 24, bottom.y, 24, 24});
     theme->draw_window_frame(canvas, {330, 452, 120, 80}, true);
     theme->draw_menubar(canvas, {10, 536, 440, 22});
+
+    /* The screen bar, a menu popup and an accelerator keycap
+     * (specs/trinket/chrome.md): the bar faces, a popup's well with a plain and
+     * a hovered row, and the raised keycap box. No labels: no font here. */
+    theme->draw_screen_bar(canvas, {10, 566, 440, 22});
+    Rect const well{10, 592, 120, 44};
+    theme->draw_menu_well(canvas, well);
+    theme->draw_menu_item(canvas, {well.x, well.y, well.width, 22}, "", false,
+                          false, false, false, false);
+    theme->draw_menu_item(canvas, {well.x, well.y + 22, well.width, 22}, "", true,
+                          false, false, false, false);
+    theme->draw_keycap(canvas, {140, 598, 40, 20}, "");
 
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {

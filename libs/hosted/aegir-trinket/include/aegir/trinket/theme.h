@@ -146,10 +146,18 @@ public:
                              bool focused);
     virtual void draw_textbox(Canvas& canvas, const Rect& rect,
                                bool focused, bool read_only, bool password);
+    // The screen bar and the menus (specs/trinket/chrome.md): the screen bar's
+    // face, the in-window menu bar's, a popup's well, one row (its label, its
+    // check and its submenu chevron) and an accelerator's keycap. The widget
+    // computes the slots and draws the titles; the theme draws the furniture.
+    virtual void draw_screen_bar(Canvas& canvas, const Rect& rect);
     virtual void draw_menubar(Canvas& canvas, const Rect& rect);
+    virtual void draw_menu_well(Canvas& canvas, const Rect& rect);
     virtual void draw_menu_item(Canvas& canvas, const Rect& rect,
                                  const char* label, bool hovered,
-                                 bool checked, bool disabled, bool separator);
+                                 bool checked, bool disabled, bool separator,
+                                 bool submenu);
+    virtual void draw_keycap(Canvas& canvas, const Rect& rect, const char* label);
     // The window chrome (specs/trinket/chrome.md): the widget computes the
     // geometry and the theme draws the look. `close_gadget` tells the title bar
     // where the title starts, past the close gadget at its far left.

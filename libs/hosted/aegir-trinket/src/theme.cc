@@ -33,9 +33,16 @@ void Theme::draw_panel(Canvas&, const Rect&, Panel::Style, std::u32string_view, 
 
 void Theme::draw_textbox(Canvas&, const Rect&, bool, bool, bool) {}
 
+void Theme::draw_screen_bar(Canvas&, const Rect&) {}
+
 void Theme::draw_menubar(Canvas&, const Rect&) {}
 
-void Theme::draw_menu_item(Canvas&, const Rect&, const char*, bool, bool, bool, bool) {}
+void Theme::draw_menu_well(Canvas&, const Rect&) {}
+
+void Theme::draw_menu_item(Canvas&, const Rect&, const char*, bool, bool, bool,
+                           bool, bool) {}
+
+void Theme::draw_keycap(Canvas&, const Rect&, const char*) {}
 
 void Theme::draw_titlebar(Canvas&, const Rect&, const char*, bool, bool) {}
 
