@@ -38,6 +38,7 @@
 #include <aegir/trinket/radio_group.h>
 #include <aegir/trinket/scrollbar.h>
 #include <aegir/trinket/slider.h>
+#include <aegir/trinket/tab_group.h>
 #include <aegir/trinket/terminal_view.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/translation.h>
@@ -205,6 +206,8 @@ int main(int argc, char *argv[])
      * opener's own call -- a pointer-down outside dismisses and is swallowed --
      * so the flag cannot go stale between an open and its close. */
     bool popup_is_object = false;
+    /* The tab group's chosen page (specs/trinket/tabs.md): the runner's cue. */
+    int tab_changed = -1;
     auto check = std::make_unique<Button>("Check", Button::Type::CHECK);
     check->set_checked(true);
     auto radios = std::make_unique<RadioGroup>(Group::Orientation::HORIZONTAL, 8);
@@ -218,7 +221,6 @@ int main(int argc, char *argv[])
     auto toggles = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 12);
     Button* const check_ptr = check.get();
     RadioGroup* const radios_ptr = radios.get();
-    Group* const toggles_ptr = toggles.get();
     toggles->add_child(std::move(check));
     toggles->add_child(std::move(radios));
     toggles->set_weight(check_ptr, 0);
@@ -262,13 +264,11 @@ int main(int argc, char *argv[])
     }
     label->set_text_color(app.theme().color(ColorRole::TEXT));
 
-    /* The terminal and its scrollbar in a row (specs/trinket/scrollbar.md):
-     * the terminal free across the row, the scrollbar a fixed strip. A vertical
-     * Group holds the row over the label band. The slider
-     * (specs/trinket/slider.md) sits under the terminal, inside that same free
-     * row, so the bands below keep the geometry the acceptance reads; its value
-     * label beside it shows the number. */
-    auto row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
+    /* The widgets are built here and grouped into the tabs at the end
+     * (specs/trinket/tabs.md): the terminal and its scrollbar
+     * (specs/trinket/scrollbar.md), the slider (specs/trinket/slider.md), the
+     * cycle and popup button (specs/trinket/cycle.md, popup_button.md) and the
+     * list (specs/trinket/listview.md) are each a page's. */
     TerminalView* const terminal_ptr = terminal.get();
     auto scrollbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
     Scrollbar* const scrollbar_ptr = scrollbar.get();
@@ -338,13 +338,14 @@ int main(int argc, char *argv[])
     cycle_row->set_weight(popup_ptr, 0);
 
     /* The list and its scrollbar (specs/trinket/listview.md): rows with one
-     * chosen, and the same Scrollbar the terminal uses as the control. It sits
-     * above the cycle's row -- the fixed rows are bottom-anchored -- so the
-     * cycle and the slider keep the rectangles the acceptance reads and the
-     * terminal gives up the band, which is why its ink sample shrank. */
+     * chosen, and the same Scrollbar the terminal uses as the control. It is
+     * longer than the page shows, so its scrollbar has a range to travel -- the
+     * acceptance scrolls it a row and reads the cue (scripts/targets.py). */
     auto list = std::make_unique<ListView>();
-    for (std::u32string_view name : {U"C:", U"Fonts", U"Libs", U"Prefs", U"System",
-                                     U"Tests", U"Tools", U"Users"}) {
+    for (std::u32string_view name :
+         {U"C:", U"Fonts", U"Libs", U"Prefs", U"System", U"Tests", U"Tools",
+          U"Users", U"Work", U"Games", U"Demos", U"Docs", U"Music", U"Images",
+          U"Dev", U"Tmp", U"Ram", U"Disk", U"Archive", U"Backup"}) {
         list->add(name);
     }
     ListView* const list_ptr = list.get();
@@ -353,7 +354,6 @@ int main(int argc, char *argv[])
     auto list_scrollbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
     Scrollbar* const list_scrollbar_ptr = list_scrollbar.get();
     auto list_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
-    Group* const list_row_ptr = list_row.get();
     list_row->add_child(std::move(list));
     list_row->add_child(std::move(list_scrollbar));
     list_row->set_weight(list_scrollbar_ptr, 0);
@@ -375,31 +375,51 @@ int main(int argc, char *argv[])
         bar_scrolled = true;
     };
 
-    auto terminal_column = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
-    terminal_column->add_child(std::move(terminal));
-    terminal_column->add_child(std::move(list_row));
-    terminal_column->add_child(std::move(cycle_row));
-    terminal_column->add_child(std::move(slider_row));
-    terminal_column->set_weight(list_row_ptr, 0);
-    terminal_column->set_weight(cycle_row_ptr, 0);
-    terminal_column->set_weight(slider_row_ptr, 0);
+    /* Group the widgets into tabs by kind (specs/trinket/tabs.md): Toggles,
+     * Values, Lists and Text. A new widget is a page or a page's child, so the
+     * test-bed grows by a tab rather than by another band. Lists opens first:
+     * it holds the widgets the acceptance reads at boot. */
+    auto tabs = std::make_unique<TabGroup>();
+    tabs->on_change = [&tab_changed](int index) { tab_changed = index; };
 
-    row->add_child(std::move(terminal_column));
-    row->add_child(std::move(scrollbar));
-    row->set_weight(scrollbar_ptr, 0);
+    /* Toggles: the checkbox and the radio group (specs/trinket/checkbox.md,
+     * radio_group.md). */
+    tabs->add_page(U"Toggles", std::move(toggles));
 
+    /* Values: the cycle and popup button over the slider
+     * (specs/trinket/cycle.md, popup_button.md, slider.md). */
+    auto values_page = std::make_unique<Group>(Group::Orientation::VERTICAL, 8);
+    values_page->add_child(std::move(cycle_row));
+    values_page->add_child(std::move(slider_row));
+    values_page->set_weight(cycle_row_ptr, 0);
+    values_page->set_weight(slider_row_ptr, 0);
+    tabs->add_page(U"Values", std::move(values_page));
+
+    /* Lists: the list and its scrollbar over the horizontal bar
+     * (specs/trinket/listview.md, scrollbar.md). */
+    auto lists_page = std::make_unique<Group>(Group::Orientation::VERTICAL, 8);
+    lists_page->add_child(std::move(list_row));
+    lists_page->add_child(std::move(hbar));
+    lists_page->set_weight(hbar_ptr, 0);
+    tabs->add_page(U"Lists", std::move(lists_page));
+
+    /* Text: the terminal and its scrollbar over the outline label
+     * (specs/trinket/scrollbar.md, terminal.md). */
+    auto text_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
+    text_row->add_child(std::move(terminal));
+    text_row->add_child(std::move(scrollbar));
+    text_row->set_weight(scrollbar_ptr, 0);
+    auto text_page = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
+    Label* const label_ptr = label.get();
+    text_page->add_child(std::move(text_row));
+    text_page->add_child(std::move(label));
+    text_page->set_weight(label_ptr, 0);
+    tabs->add_page(U"Text", std::move(text_page));
+
+    tabs->set_active(2); /* Lists */
     auto content = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     content->set_frame(Group::Frame::RAISED);
-    Label* const label_ptr = label.get();
-    content->add_child(std::move(row));
-    content->add_child(std::move(toggles));
-    content->add_child(std::move(label));
-    content->add_child(std::move(hbar));
-    /* The label, the toggles and the horizontal bar keep their bands; the row is
-     * free and takes the rest. */
-    content->set_weight(label_ptr, 0);
-    content->set_weight(toggles_ptr, 0);
-    content->set_weight(hbar_ptr, 0);
+    content->add_child(std::move(tabs));
     window.set_content(std::move(content));
     window.show();
 
@@ -565,6 +585,15 @@ int main(int argc, char *argv[])
             line += "\n";
             write(line.c_str());
             radio_changed = -1;
+        }
+        if (tab_changed >= 0) {
+            /* The tab group's chosen page (specs/trinket/tabs.md): the runner
+             * reads which tab a click or a key landed on. */
+            std::string line("  demo: tab ");
+            line += std::to_string(tab_changed + 1);
+            line += "\n";
+            write(line.c_str());
+            tab_changed = -1;
         }
         if (slider_moved) {
             /* The slider's value is a cue (specs/trinket/slider.md): the runner

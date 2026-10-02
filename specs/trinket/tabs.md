@@ -114,9 +114,14 @@ The metric roles are `TAB_PADDING_H`, `TAB_HEIGHT`, `TAB_GAP` and `TAB_CHAMFER`
 - **The theme** draws the tab in the existing XEN palette; `make theme-preview`
   renders a strip (three tabs over a framed body) beside the other gadgets, so
   the look is seen in seconds on the host (`specs/trinket/theme-xen.md`).
-- **The demo** carries a `TabGroup` among the other widgets
-  (`specs/trinket/layout.md`'s test-bed), a page per tab, and the runner clicks
-  a tab and reads a cue naming the page that now shows. It is the *next* piece:
-  the test-bed's window has no spare band, and giving the group one moves every
-  widget the demo's own acceptance reads by name and pixel, so it wants the
-  geometry re-baselined with it rather than bolted on.
+- **The demo is tabbed** (`specs/trinket/layout.md`'s test-bed): its content is
+  a `TabGroup`, one page per kind -- Toggles, Values, Lists and Text -- so a new
+  widget is a page or a page's child, not another band, and the test-bed grows
+  without moving every widget the acceptance reads. The runner clicks a tab,
+  reads the cue naming the page that now shows, and reads each page's own
+  widgets while it shows: the list and the horizontal bar on Lists, the radio
+  pair on Toggles, the terminal and its label on Text, the cycle, the popup
+  button and the slider on Values. Each page's gestures drain their cues before
+  the next tab, because one page shows at a time -- and a page's cues are read
+  before its tab moves on, so a dump never lands on a widget the page below it
+  has hidden.

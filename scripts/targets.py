@@ -800,7 +800,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 1000, 10, 102, 136, 187),
-                    ("gpu0", 1000, 400, 170, 170, 170),
+                    ("gpu0", 1000, 400, 191, 191, 191),
                     ("gpu0", 1000, 795, 102, 136, 187),
                 ),
                 events=(
@@ -814,207 +814,220 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: restored",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                # The point the window's body used to hold is the list's well
-                # now -- it took that band (specs/trinket/listview.md) -- so the
-                # sample is the gadget face the list is drawn on.
-                pixels=(("gpu0", 1000, 600, 191, 191, 191),),
-                # The demo's terminal grid has text on it: a grid that wrapped
-                # every character into one column, or drew nothing, has far less
-                # ink than this. The body sample is deep in the terminal, clear
-                # of the group frame the content draws now (specs/trinket/layout.md).
-                dark=(
-                    # The list took a band off the terminal's height
-                    # (specs/trinket/listview.md), so the body sample is the top
-                    # of it; it still reads 455 dark pixels against this 100.
-                    ("gpu0", 902, 470, 240, 50, 100),
-                    # The outline label's band at the window's foot is ink too:
-                    # a group whose terminal overflowed would push the label off
-                    # and leave this blank (specs/trinket/layout.md).
-                    ("gpu0", 902, 654, 240, 20, 20),
-                    # The scrollbar's two arrow buttons stack at its foot; each
-                    # draws a hollow mark, whose dark trailing edges are the ink
-                    # (specs/trinket/scrollbar.md).
-                    ("gpu0", 1144, 625, 12, 23, 8),
+                # Lists opens first (specs/trinket/tabs.md), so the body holds
+                # the list and its scrollbar over the horizontal bar. The list's
+                # first row is chosen, the rows below it are ink, and the gadget
+                # face stands where the window's old body was.
+                pixels=(
+                    ("gpu0", 950, 482, 102, 136, 187),
+                    ("gpu0", 1000, 600, 191, 191, 191),
                 ),
+                dark=(("gpu0", 906, 507, 60, 100, 120),),
                 events=(
-                    # The scrollbar's decrement (up) button, at its foot inside
-                    # the demo window: a click scrolls the terminal up a line
-                    # (specs/trinket/scrollbar.md).
-                    {"type": "abs", "data": {"axis": "x", "value": 29437}},
-                    {"type": "abs", "data": {"axis": "y", "value": 25722}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    # Then the radio group's second member
-                    # (specs/trinket/radio_group.md): it clears the first, and the
-                    # cue the demo prints is a later step's trigger. The click is
-                    # here -- before the screen bar opens the demo's menu -- because
-                    # the menu dance's own click closes the demo.
-                    {"type": "abs", "data": {"axis": "x", "value": 27622}},
-                    {"type": "abs", "data": {"axis": "y", "value": 28016}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    # Then the slider's trough, right of its knob
-                    # (specs/trinket/slider.md): a trough click steps the value
-                    # one step toward the click (50 -> 60), and the cue the demo
-                    # prints is a later step's trigger. Before the screen bar
-                    # opens the menu, for the same reason as the radio click.
-                    {"type": "abs", "data": {"axis": "x", "value": 27392}},
-                    {"type": "abs", "data": {"axis": "y", "value": 26214}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    # Then the cycle's button cell (specs/trinket/cycle.md): a
-                    # click there advances to the next entry. The cell is left of
-                    # the divider at x923, and the text to its right opens the
-                    # entries' menu instead (specs/trinket/popup.md), which is a
-                    # later step's to do.
-                    {"type": "abs", "data": {"axis": "x", "value": 23297}},
-                    {"type": "abs", "data": {"axis": "y", "value": 25231}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    # The popup button's click is parked: it opens an object now
-                    # (specs/trinket/popup.md), and a popup-opening gesture in
-                    # this burst would be dismissed and swallowed by the click
-                    # that followed it. It gets its own step once the demo's
-                    # gestures are sequenced so no popup is up across them.
-                    # Then the list (specs/trinket/listview.md): a click on its
-                    # third row chooses it, a move over the fourth leaves the
-                    # cursor there, and its scrollbar's foot arrow scrolls the
-                    # rows up one. Each cue is a later step's trigger.
+                    # The list's third row (specs/trinket/listview.md) and the
+                    # horizontal bar's increment: each is a later step's trigger.
                     {"type": "abs", "data": {"axis": "x", "value": 24319}},
-                    {"type": "abs", "data": {"axis": "y", "value": 23142}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21053}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 24319}},
-                    {"type": "abs", "data": {"axis": "y", "value": 23756}},
-                    # The list's scrollbar arrow goes in the step the click's cue
-                    # triggers, not here: a step's whole burst is sent before the
-                    # next step's dump, so a scroll in this list would move the
-                    # rows out from under that dump.
-                    #
-                    # The screen bar's click is not here either. It drops the
-                    # bureau's menu over the screen, and every gesture after it
-                    # would land on that menu rather than on the demo -- which is
-                    # what stalled the acceptance when it was here. It goes in a
-                    # step of its own, once the demo's own menus are done.
-                ),
-            ),
-            # The scrollbar's click scrolled the terminal: the demo's cue
-            # (specs/trinket/scrollbar.md). With no popup up, the horizontal bar
-            # at the window's foot is read and clicked: its left and right arrows
-            # are the MUI ArrowLeft/ArrowRight art (their white marks at 1127 and
-            # 1147 on row 730), and the increment steps the value 40 -> 41, which
-            # the next step's trigger names.
-            QmpStep(
-                r"demo: scrolled",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                pixels=(
-                    ("gpu0", 1127, 730, 240, 240, 240),
-                    ("gpu0", 1147, 730, 240, 240, 240),
-                ),
-                dark=(("gpu0", 1116, 724, 42, 22, 30),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 29363}},
-                    {"type": "abs", "data": {"axis": "y", "value": 30065}},
+                    {"type": "abs", "data": {"axis": "x", "value": 29311}},
+                    {"type": "abs", "data": {"axis": "y", "value": 30064}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
-            # The horizontal bar's increment took: the value is 41, and the cue
-            # says so (specs/trinket/scrollbar.md).
-            QmpStep(r"demo: bar 41"),
-            # The radio group's click took: the second member is checked and the
-            # first cleared (specs/trinket/radio_group.md).
-            QmpStep(
-                r"demo: radio 2",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                # The exclusivity (specs/trinket/radio_group.md): the second
-                # member's ring is filled where the first's is hollow.
-                pixels=(
-                    ("gpu0", 1079, 683, 61, 101, 162),
-                    ("gpu0", 1005, 683, 174, 174, 174),
-                ),
-            ),
-            # The slider's trough click took: the value stepped to 60 and the
-            # knob moved right (specs/trinket/slider.md). The vacated spot is the
-            # trough's dither now, and the knob's raised face is at its new
-            # place -- the click, the widget and the repaint, end to end.
-            QmpStep(
-                r"demo: slider 60",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                pixels=(
-                    ("gpu0", 1025, 640, 191, 191, 191),
-                    ("gpu0", 1008, 640, 102, 136, 187),
-                ),
-            ),
-            # The cycle's button-cell click took: the active entry advanced from
-            # the short one to the long one, so the text band's ink roughly
-            # doubles (specs/trinket/cycle.md). The band is clear of the box's
-            # outline, the divider and the cell's mark.
-            QmpStep(
-                r"demo: cycle 2",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                dark=(("gpu0", 924, 610, 178, 12, 100),),
-            ),
-            # The popup button's step is parked with its click: the pixel it
-            # checked -- the magnifier's own colour in the imported art -- is
-            # check-theme's to prove while the click waits for its own step.
             # The list's click took: its third row is chosen and the first is
             # plain again (specs/trinket/listview.md). The rows are sixteen
-            # pixels at 525, 541, 557 and 573.
+            # pixels at 475, 491, 507 and 523.
             QmpStep(
                 r"demo: list 3",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 950, 565, 102, 136, 187),
-                    ("gpu0", 950, 530, 191, 191, 191),
+                    ("gpu0", 950, 514, 102, 136, 187),
+                    ("gpu0", 950, 482, 191, 191, 191),
                 ),
-                # Then the list's scrollbar, its foot arrow: a scroll moves the
-                # rows up one, and the cue that prints is the next step's
-                # trigger.
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 28722}},
-                    {"type": "abs", "data": {"axis": "y", "value": 24248}},
+                    # Then its scrollbar's foot arrow (specs/trinket/scrollbar.md):
+                    # a scroll moves the rows up one, and the cue that prints is a
+                    # later step's trigger.
+                    {"type": "abs", "data": {"axis": "x", "value": 29311}},
+                    {"type": "abs", "data": {"axis": "y", "value": 28753}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
+            # The horizontal bar's increment took: its left and right arrows are
+            # the MUI ArrowLeft/ArrowRight art (their white marks at 1115 and
+            # 1136 on row 730), and the value stepped 40 -> 41. The bar is on
+            # this page, so its check rides this cue's dump.
+            QmpStep(
+                r"demo: bar 41",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1115, 730, 240, 240, 240),
+                    ("gpu0", 1136, 730, 240, 240, 240),
+                ),
+                dark=(("gpu0", 1113, 722, 44, 24, 30),),
+            ),
             # The list's scrollbar arrow took: the rows moved up one, so the
-            # chosen row now sits a row higher than it did. Then the cycle's
-            # text, which opens the entries' menu (specs/trinket/popup.md): a
-            # popup-opening gesture goes after every cue the restored burst
-            # produced, so nothing is left to intercept it.
+            # chosen row now sits a row higher than it did. Then the Toggles tab
+            # (specs/trinket/tabs.md), the last cue of the Lists page.
             QmpStep(
                 r"demo: listed 1",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 950, 550, 102, 136, 187),),
+                pixels=(("gpu0", 950, 498, 102, 136, 187),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 23858}},
+                    {"type": "abs", "data": {"axis": "y", "value": 18923}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The Toggles tab is up: the checkbox and the radio group
+            # (specs/trinket/checkbox.md, radio_group.md). The group's first
+            # member is checked, its ring filled; the second's is hollow.
+            QmpStep(
+                r"demo: tab 1",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1008, 618, 61, 101, 162),
+                    ("gpu0", 1079, 618, 174, 174, 174),
+                ),
+                events=(
+                    # The radio group's second member (specs/trinket/radio_group.md):
+                    # it clears the first.
+                    {"type": "abs", "data": {"axis": "x", "value": 27622}},
+                    {"type": "abs", "data": {"axis": "y", "value": 25313}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The radio's click took: the second member is checked and the first
+            # cleared (specs/trinket/radio_group.md). Then the Text tab.
+            QmpStep(
+                r"demo: radio 2",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 1075, 618, 61, 101, 162),
+                    ("gpu0", 1008, 618, 174, 174, 174),
+                ),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 28108}},
+                    {"type": "abs", "data": {"axis": "y", "value": 18923}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The Text tab is up: the terminal (specs/terminal.md) over the
+            # outline label, with the terminal's scrollbar. The grid has text on
+            # it -- a grid that wrapped every character into one column, or drew
+            # nothing, has far less ink -- the label's band is ink too, and the
+            # scrollbar's two arrow buttons stack at its foot, each drawing a
+            # hollow mark whose dark trailing edges are the ink.
+            QmpStep(
+                r"demo: tab 4",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(
+                    ("gpu0", 906, 478, 220, 120, 100),
+                    ("gpu0", 906, 723, 220, 20, 20),
+                    ("gpu0", 1138, 676, 16, 46, 8),
+                ),
+                events=(
+                    # The scrollbar's decrement (up) button: a click scrolls the
+                    # terminal up a line (specs/trinket/scrollbar.md).
+                    {"type": "abs", "data": {"axis": "x", "value": 29311}},
+                    {"type": "abs", "data": {"axis": "y", "value": 28098}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The scrollbar's click scrolled the terminal, and the cue says so
+            # (specs/trinket/scrollbar.md). Then the Values tab: a tab change is
+            # the cue, so the page's own widgets are read on it.
+            QmpStep(
+                r"demo: scrolled",
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 25420}},
+                    {"type": "abs", "data": {"axis": "y", "value": 18923}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The Values tab is up: the cycle and popup button over the slider
+            # (specs/trinket/cycle.md, popup_button.md, slider.md). The cycle
+            # shows its short first entry -- the text band's ink is what says so
+            # -- and the slider's knob sits at the middle, the trough's dither
+            # left where the knob will land.
+            QmpStep(
+                r"demo: tab 2",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 1035, 519, 170, 170, 170),),
+                dark=(("gpu0", 924, 478, 178, 14, 60),),
+                events=(
+                    # The slider's trough, right of its knob (specs/trinket/slider.md):
+                    # a trough click steps the value one step toward the click
+                    # (50 -> 60). Then the cycle's button cell: a click there
+                    # advances to the next entry (specs/trinket/cycle.md).
+                    {"type": "abs", "data": {"axis": "x", "value": 27519}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21258}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 23295}},
+                    {"type": "abs", "data": {"axis": "y", "value": 19947}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The slider's trough click took: the value stepped to 60 and the
+            # knob moved right (specs/trinket/slider.md). The raised face stands
+            # where the trough's dither was -- the click, the widget and the
+            # repaint, end to end.
+            QmpStep(
+                r"demo: slider 60",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 1035, 519, 191, 191, 191),),
+            ),
+            # The cycle's button-cell click took: the active entry advanced from
+            # the short one to the long one, so the text band's ink roughly
+            # doubles (specs/trinket/cycle.md). Then the cycle's text, which opens
+            # the entries' menu (specs/trinket/popup.md): a popup-opening gesture
+            # goes after every cue the burst produced, so nothing intercepts it.
+            QmpStep(
+                r"demo: cycle 2",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 924, 478, 178, 14, 100),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 25906}},
-                    {"type": "abs", "data": {"axis": "y", "value": 25231}},
+                    {"type": "abs", "data": {"axis": "y", "value": 19906}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
             # The menu the text opened: a framed list under the cycle, its rows
-            # sixteen pixels at 631, 647 and 663, the active entry's solid bar on
-            # the second. The pick is the third row's middle -- A4000, an entry
-            # the active one is not, so the pick is a change and reports.
+            # sixteen pixels at 498, 514 and 530. The active entry -- the long one
+            # the cell just landed on -- carries the solid bar on the second row.
+            # The pick is the third row's middle: A4000, an entry the active one
+            # is not, so the pick is a change and reports.
             QmpStep(
                 r"demo: menu 1",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 950, 655, 102, 136, 187),
-                    ("gpu0", 950, 640, 191, 191, 191),
+                    ("gpu0", 950, 521, 102, 136, 187),
+                    ("gpu0", 950, 505, 191, 191, 191),
                 ),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 24319}},
-                    {"type": "abs", "data": {"axis": "y", "value": 27483}},
+                    {"type": "abs", "data": {"axis": "x", "value": 26214}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21995}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
@@ -1024,21 +1037,18 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # is settled, one uncertain thing per run.
             QmpStep(r"demo: menu 0"),
             # The pick took: the cycle's active entry is the picked one and the
-            # menu is gone. Then the screen bar's first title -- the demo's menu
-            # (specs/workbench.md) -- which is the bureau's bar, a window of its
-            # own, and goes last of the demo's gestures.
+            # menu is gone (specs/trinket/cycle.md). Then the popup button
+            # (specs/trinket/popup_button.md), which opens its object: a
+            # popup-opening gesture goes after every cue the burst produced, so
+            # nothing is left to intercept it.
             QmpStep(
                 r"demo: cycle 3",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                dark=(("gpu0", 924, 610, 178, 12, 60),),
-                # Then the popup button (specs/trinket/popup_button.md), which
-                # opens its object. A popup-opening gesture goes after every cue
-                # the restored burst produced, so nothing is left to intercept
-                # it, and this cue is the last of them.
+                dark=(("gpu0", 924, 478, 178, 14, 60),),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 28748}},
-                    {"type": "abs", "data": {"axis": "y", "value": 25067}},
+                    {"type": "abs", "data": {"axis": "x", "value": 29337}},
+                    {"type": "abs", "data": {"axis": "y", "value": 19906}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
@@ -1050,10 +1060,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: popup",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 1123, 607, 96, 128, 176),),
+                pixels=(("gpu0", 1140, 481, 96, 128, 176),),
             ),
             # The object itself: a list of three with its entries centred, its
-            # rows sixteen pixels at 627, 643 and 659. The pick is the second
+            # rows sixteen pixels at 498, 514 and 530. The pick is the second
             # row's middle -- Save -- and the cue it prints is the next step's.
             # Its cue is `demo: object`, not the cycle's `demo: menu`: the two
             # popups are the window's one layer, and a cue the runner answers
@@ -1062,10 +1072,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: object 1",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                dark=(("gpu0", 1045, 628, 112, 46, 60),),
+                dark=(("gpu0", 1050, 500, 100, 46, 120),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 28154}},
-                    {"type": "abs", "data": {"axis": "y", "value": 26663}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21340}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
@@ -1075,7 +1085,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # (specs/trinket/popup_button.md). Then the screen bar's first title
             # -- the demo's menu (specs/workbench.md) -- which drops the bureau's
             # menu over the screen, and so goes last of the demo's gestures, with
-            # no demo popup left for it to be mistaken for.
+            # no demo popup left for it to be mistaken for. mistaken for.
             QmpStep(
                 r"demo: picked 2",
                 events=(

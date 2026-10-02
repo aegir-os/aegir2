@@ -63,7 +63,8 @@ and nothing showed where in the scrollback it sat.
   sets the buffer's offset to match; the demo re-syncs each poll, so a key or a
   resize is reflected (specs/trinket/layout.md's widget test-bed). The terminal
   and the scrollbar sit in a horizontal group -- the terminal free, the
-  scrollbar a fixed strip -- under the label band.
+  scrollbar a fixed strip -- over the label band, on the tab group's Text page
+  (specs/trinket/tabs.md).
 
 ## The shape
 
@@ -92,7 +93,7 @@ public:
 - **Pointer capture.** A drag that leaves the scrollbar stops, because the
   toolkit has no capture yet; the grab offset means it resumes cleanly.
 - **A horizontal *view*.** `Orientation::HORIZONTAL` draws and hit-tests -- the
-  demo carries one at the window's foot and reads its value back -- but no view
+  demo carries one on its Lists page and reads its value back -- but no view
   scrolls sideways yet; a column list or a text viewer is the list/viewer arc's.
 
 ## Acceptance
@@ -103,8 +104,9 @@ public:
   arrow held, so all four arrow recipes are on the sheet beside the imported
   `ArrowUp`/`ArrowDown`/`ArrowLeft`/`ArrowRight`.
 - **The demo** shows the scrollbar beside the terminal and the terminal's
-  scrollback behind it. The runner reads its arrows back from a screendump, then
-  clicks the top arrow and reads the demo's `scrolled` cue -- the click, the
-  scrollbar, the terminal's scrollback and the repaint, end to end. A horizontal
-  bar at the window's foot is the test-bed's own control: the runner reads its
-  left and right arrows back, clicks the increment, and reads `demo: bar N`.
+  scrollback behind it, on the tab group's Text page. The runner reads its arrows
+  back from a screendump, then clicks the top arrow and reads the demo's
+  `scrolled` cue -- the click, the scrollbar, the terminal's scrollback and the
+  repaint, end to end. A horizontal bar on the Lists page is the test-bed's own
+  control: the runner reads its left and right arrows back, clicks the
+  increment, and reads `demo: bar N`.
