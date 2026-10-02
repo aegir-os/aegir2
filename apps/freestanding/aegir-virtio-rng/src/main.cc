@@ -39,11 +39,11 @@ void write_line(char const *label, char const *text) noexcept
     aegir::debug_write("\n");
 }
 
-/* The buffer a read posts: past the rings, inside the queue's first page,
- * and sized at what the port's envelope can carry home -- the caller's
- * ceiling and the buffer are the same number (aegir/entropy.h). 512 is past
- * the available ring's end and well short of the used ring at 4096. */
-constexpr uint32_t kBufferOffset = 512;
+/* The buffer a read posts: past the rings, inside the queue page, and sized
+ * at what the port's envelope can carry home -- the caller's ceiling and the
+ * buffer are the same number (aegir/entropy.h). kRingsEnd is past the used
+ * ring, which the queue's own size decides. */
+constexpr uint32_t kBufferOffset = aegir::virtio::kRingsEnd;
 
 /** One read of the device: post the buffer device-writable, wait, copy out
  *  what it wrote. The device may fill less than was posted -- the used

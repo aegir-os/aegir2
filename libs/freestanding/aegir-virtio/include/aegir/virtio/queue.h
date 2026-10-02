@@ -40,9 +40,15 @@
 
 namespace aegir::virtio {
 
-/* One queue, eight entries. A power of two because the rings wrap by masking, and smaller
- * than the devices' QueueNumMax (1024 here) because nothing needs more. */
-constexpr uint32_t kQueueSize = 8;
+/* One queue, 128 entries. A power of two because the rings wrap by masking, and
+ * well under the devices' QueueNumMax (1024 here) -- but not so small as eight
+ * was. The input driver's posted buffers are the whole of its event buffer, so
+ * an eight-entry queue dropped keys whenever a slow consumer (a window repaint,
+ * say) kept the console off the device for longer than the queue held. 128 is
+ * the largest power of two that still keeps the used ring at kUsedOffset: the
+ * available ring ends at 128 * 16 + 4 + 2 * 128 = 2308, which rounds up to one
+ * page, and the used ring ends well inside the second. */
+constexpr uint32_t kQueueSize = 128;
 
 /* The pages' layout, in bytes. Three rules from the header the structures come from: the
  * descriptor table is first, the available ring follows it at 16 bytes per entry, and the
@@ -51,16 +57,24 @@ constexpr uint32_t kQueueSize = 8;
  * the event field the *other* side reads: `used_event` after available, `avail_event` after
  * used. */
 constexpr uint32_t kDescOffset = 0;
-constexpr uint32_t kAvailOffset = kDescOffset + kQueueSize * 16;         /* 128 */
+constexpr uint32_t kAvailOffset = kDescOffset + kQueueSize * 16;         /* 2048 */
 /* The used ring is a *page* away, not packed after the available ring: `vring_init` puts it
  * at `align(&avail->ring[num] + sizeof(uint16_t), align)` and the alignment is 4096
  * (projects/util_libs/libvirtio/include/virtio/virtio_pci.h, VIRTIO_PCI_VRING_ALIGN -- "the
  * alignment to use between consumer and producer parts of vring"). That is the whole reason
- * this queue needs two pages: 150 rounded up to 4096 is a second page, and a device writing
+ * this queue needs two pages: 2308 rounded up to 4096 is a second page, and a device writing
  * its used entry at base+4096 has been writing outside the page the driver polls. */
 constexpr uint32_t kUsedOffset = 4096;
 constexpr uint32_t kQueueBytes = 8192;
 constexpr uint32_t kPageBytes = 4096;
+
+/* Where the rings end, and so where a driver's own buffers in the queue page
+ * may begin: the used ring is the last of them -- four bytes of flags and
+ * index, an eight-byte entry per descriptor, then the avail_event field. The
+ * block and gpu drivers keep their request in the queue's page, and they start
+ * it here rather than at a literal: an eight-entry queue put that literal at
+ * 512, before the used ring, and a larger queue moves the ring over it. */
+constexpr uint32_t kRingsEnd = kUsedOffset + 4 + kQueueSize * 8 + 2;
 
 /* The descriptor flags (virtio_ring.h: VRING_DESC_F_*). */
 constexpr uint16_t kDescNext = 1;   /* the next descriptor continues this chain */

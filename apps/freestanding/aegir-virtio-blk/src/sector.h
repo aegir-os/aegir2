@@ -7,8 +7,8 @@
  *
  * The queue's rings are the library's (aegir/virtio/queue.h); what is
  * blk-specific is the request header the device reads, the sector of data, and
- * the status byte, laid out in the queue page past the available ring, so that
- * a single 4 KiB page holds all of it.
+ * the status byte, laid out in the queue page past the rings (kRingsEnd), so
+ * that the queue's own two pages hold all of it.
  */
 
 #pragma once
@@ -19,10 +19,10 @@
 namespace aegir::virtio {
 
 /* The blk areas of the queue page, in bytes from its start: past the rings,
- * inside the first page. */
-constexpr uint32_t kRequestOffset = 512;
-constexpr uint32_t kDataOffset = kRequestOffset + 16;                         /* 528 */
-constexpr uint32_t kStatusOffset = kDataOffset + 512;                         /* 1040 */
+ * which the queue's own size decides (kRingsEnd). */
+constexpr uint32_t kRequestOffset = kRingsEnd;                                /* 5126 */
+constexpr uint32_t kDataOffset = kRequestOffset + 16;                         /* 5142 */
+constexpr uint32_t kStatusOffset = kDataOffset + 512;                         /* 5654 */
 constexpr uint32_t kSectorBytes = 512;
 
 /* The block device's request header (virtio 1.x, 5.2.6): a type, a reserved word, and the

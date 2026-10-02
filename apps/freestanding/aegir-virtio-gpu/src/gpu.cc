@@ -12,10 +12,9 @@ namespace aegir::virtio {
 namespace {
 
 /* The command and response buffers live in the queue's own memory, past the
- * rings and before the used ring's page -- the same shape as the block
- * driver's request (kUsedOffset is 4096; the rings end at 158). */
-constexpr uint32_t kCommandOffset = 512;
-constexpr uint32_t kResponseOffset = 640; /* 1 KiB of room: the EDID answer is 1056 */
+ * rings -- the same shape as the block driver's request (kRingsEnd). */
+constexpr uint32_t kCommandOffset = kRingsEnd;              /* 5126 */
+constexpr uint32_t kResponseOffset = kCommandOffset + 128;  /* 5254; the EDID answer needs 1056 */
 
 }  // namespace
 
