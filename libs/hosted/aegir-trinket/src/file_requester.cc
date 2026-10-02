@@ -20,7 +20,6 @@
 #include <aegir/trinket/unicode.h>
 
 #include <aegir/bootstrap.h>
-#include <aegir/filesystem.h>
 #include <aegir/pattern.h>
 #include <sel4/sel4.h>
 
@@ -33,15 +32,6 @@ namespace {
 constexpr int kBodyWidth = 440;
 constexpr int kListRows = 10;
 
-/* How full a volume is, in whole percent: "78%". Empty when the capacity is
- * unknown (a volume that refused `space`). */
-std::u32string percent(uint64_t used, uint64_t total)
-{
-    if (total == 0) {
-        return std::u32string();
-    }
-    return utf8_to_utf32(std::to_string(used * 100 / total) + "%");
-}
 }  // namespace
 
 FileRequester::FileRequester(Application& app, aegir::vfs::Namespace& vfs,
@@ -404,16 +394,27 @@ void FileRequester::apply_filter()
              * (specs/trinket/file_requester.md). */
             uint64_t const used = e.total > e.free ? e.total - e.free : 0;
             cells.push_back(e.assign ? e.detail : e.device);
-            cells.push_back(e.total > 0 ? percent(used, e.total) : std::u32string());
+            /* The percent and the two sizes are the locale's: its percent
+             * pattern, its unit words and its number form (specs/locale.md). A
+             * volume that refused `space` leaves the cells blank. */
+            cells.push_back(
+                e.total > 0
+                    ? utf8_to_utf32(app_.locale().format_percent(
+                          static_cast<double>(used) / static_cast<double>(e.total)))
+                    : std::u32string());
             cells.push_back(e.total > 0
-                                ? utf8_to_utf32(aegir::filesystem::format_size(e.free))
+                                ? utf8_to_utf32(app_.locale().format_size(e.free))
                                 : std::u32string());
             cells.push_back(e.total > 0
-                                ? utf8_to_utf32(aegir::filesystem::format_size(used))
+                                ? utf8_to_utf32(app_.locale().format_size(used))
                                 : std::u32string());
         } else {
-            cells.push_back(e.directory() ? std::u32string()
-                                          : utf8_to_utf32(file_path::format_size(e.size)));
+            /* The byte count, grouped as the locale groups a number -- the
+             * size `List` writes, with the locale's separator (specs/locale.md). */
+            cells.push_back(e.directory()
+                                ? std::u32string()
+                                : utf8_to_utf32(app_.locale().format_number(
+                                      static_cast<double>(e.size))));
             cells.push_back(e.mtime != 0
                                 ? utf8_to_utf32(app_.locale().format_date(
                                       static_cast<int64_t>(e.mtime)))

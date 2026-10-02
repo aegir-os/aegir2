@@ -55,12 +55,12 @@ missing is the *body* and what it stands on:
   but whose numbers are unreadable without it. The list opens with the
   browsable volumes: the label, the backing block device's name (the namespace
   `Row`'s `device`, the block protocol's identify name), and the capacity the
-  volume's `space` answers. The two sizes are `aegir::filesystem::format_size`'s
-  -- human-readable like `df -h`, the largest unit the value fills (Bytes,
-  KiB, MiB, GiB, TiB) to one decimal, so the requester does not own a second
-  size formatter (`specs/cxx.md` step 5).
-  A volume that will not resolve or refuses `space` keeps its capacity cells
-  blank. Then the namespace's bindings as the Amiga's Assign rows: the assign's
+  volume's `space` answers. The two sizes and the percent are the locale's:
+  `Locale::format_size` (the largest decimal digital unit, to one decimal, in
+  the locale's own unit words and number form -- "8.9 MB", fr's "8,9 ko") and
+  `Locale::format_percent` (specs/locale.md), so the requester owns no size
+  formatter. A volume that will not resolve or refuses `space` keeps its
+  capacity cells blank. Then the namespace's bindings as the Amiga's Assign rows: the assign's
   label (`C:`, `Home:`, ...) under `Label`, the literal word `Assign` under the
   second column -- not the path it stands for, which a binding can hold several
   of -- and the capacity columns blank. The columns swap for the visit and swap
