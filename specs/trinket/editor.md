@@ -98,9 +98,10 @@ enum class CursorShape { BLOCK, UNDERLINE };
 virtual void draw_cursor(Canvas& canvas, const Rect& cell, CursorShape shape);
 ```
 
-The palette roles are `CURSOR_BG` and `CURSOR_TEXT`; the metrics are the field's
-(`INPUT_PADDING_H`, `INPUT_PADDING_V`) and the document's own line height is the
-font's, so the grid follows the font as the terminal's does.
+The palette roles are `CURSOR_BG` and `CURSOR_TEXT`. The line height is the
+font's, so the rows follow the font as the terminal's do, and the inset is the
+terminal view's own four pixels rather than a metric -- the two text views stay
+against their frames the same way.
 
 ## What this is not
 
@@ -122,8 +123,10 @@ font's, so the grid follows the font as the terminal's does.
 - **The theme** draws the block and the underline cursor;
   `make theme-preview` renders both beside the other gadgets, so the look is
   seen in seconds on the host (`specs/trinket/theme-xen.md`).
-- **The demo** carries a `TextEdit` -- a page of its own in the tab group, or a
-  small editor window -- and the runner types into it, toggles insert and
-  overwrite with `INSERT`, and reads the cursor's shape and the text back from a
-  screendump: the block cursor's `CURSOR_BG`, the underline's, and the glyphs
-  the typing landed.
+- **The editor application** -- the window with a tab per open file
+  (`specs/trinket/tabs.md`) -- is where the widget is proven on the target: the
+  runner types into it, presses `INSERT`, and reads the cursor's shape and the
+  text back from a screendump: the block's `CURSOR_BG`, the underline's, and the
+  glyphs the typing landed. The component itself lands on the two checks above;
+  it is not wired into the widget test-bed, whose tab strip has no room left for
+  another page.
