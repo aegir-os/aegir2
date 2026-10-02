@@ -38,6 +38,11 @@ public:
     Widget* page(int index) const;
     std::u32string const& title(int index) const;
 
+    /* Rename a page: a title is the client's to set when what the page holds
+     * changes its name -- an editor saving a file under another one
+     * (specs/trinket/tabs.md). */
+    void set_title(int index, std::u32string_view title);
+
     /* Choose the page that shows. Programmatic: it does not run `on_change`,
      * which is the user's choice (a click or the keys), as `ListView`'s
      * `set_active` and `on_select` split. */

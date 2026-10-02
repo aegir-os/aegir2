@@ -51,6 +51,11 @@ XEN that becomes the same grey 3-D face a button is, with the cut corner.
   two read as one; the inactive tabs keep their full bottom outline. That is
   the reference's shape and what says which page shows.
 
+- **A page is titled, and a client may rename it.** `set_title` is the client's
+  when what a page holds changes its name -- an editor saving a file under
+  another one. It damages the whole strip, because a title's width is a
+  different layout, not one tab's rectangle.
+
 - **A click selects; the keyboard moves.** A click on a tab selects it. The
   strip is focusable: LEFT/RIGHT move the active tab and HOME/END go to the
   ends, and the active page's widgets are focusable while that page shows.
@@ -74,6 +79,7 @@ public:
     int page_count() const;
     Widget* page(int index) const;
     std::u32string const& title(int index) const;
+    void set_title(int index, std::u32string_view title);  // a rename
 
     void set_active(int index);   // one shows; the rest hidden
     int active() const;

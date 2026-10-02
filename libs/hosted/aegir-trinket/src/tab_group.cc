@@ -57,6 +57,17 @@ std::u32string const& TabGroup::title(int index) const
     return pages_[static_cast<size_t>(index)].title;
 }
 
+void TabGroup::set_title(int index, std::u32string_view title)
+{
+    if (index < 0 || index >= page_count()) {
+        return;
+    }
+    /* A different width is a different strip, so the rename damages the whole
+     * group rather than one tab's rectangle. */
+    pages_[static_cast<size_t>(index)].title = std::u32string(title);
+    damage();
+}
+
 void TabGroup::set_active(int index)
 {
     if (index < 0 || index >= page_count() || index == active_) {
