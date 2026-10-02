@@ -97,6 +97,10 @@ enum class MetricRole {
     // radio's indicator, the MUI artwork's own size.
     CHECK_INDICATOR_WIDTH, CHECK_INDICATOR_HEIGHT,
     RADIO_INDICATOR_WIDTH, RADIO_INDICATOR_HEIGHT,
+    // Tabs (specs/trinket/tabs.md): a tab's horizontal padding, the strip's
+    // height, the gap between tabs, and the 45-degree chamfer cut from each
+    // tab's two top corners.
+    TAB_PADDING_H, TAB_HEIGHT, TAB_GAP, TAB_CHAMFER,
     // General
     SPACING_SMALL, SPACING_MEDIUM, SPACING_LARGE,
     FOCUS_RING_WIDTH, FOCUS_RING_OFFSET,
@@ -175,6 +179,12 @@ public:
     // A row's image (specs/trinket/listview.md, file_requester.md): the imported
     // MUI drawer/volume artwork, scaled into the rect. Icon::NONE draws nothing.
     virtual void draw_icon(Canvas& canvas, const Rect& rect, Icon icon);
+    // A tab (specs/trinket/tabs.md): its chamfered raised face and its title,
+    // whose rectangle the widget computes. `active`'s bottom edge is left open
+    // where it meets the page body, so the two read as one; `hovered` lightens
+    // the face as a button's does.
+    virtual void draw_tab(Canvas& canvas, const Rect& rect,
+                          std::u32string_view title, bool active, bool hovered);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,
                                const char* text);

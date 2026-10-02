@@ -173,6 +173,14 @@ int main(int argc, char** argv) {
     theme->draw_scrollbar(canvas, hbar_inc, false, hp_inc.trough, hp_inc.thumb,
                           hp_inc.decrement, hp_inc.increment, false, true);
 
+    /* A tab strip (specs/trinket/tabs.md): chamfered raised faces over a framed
+     * body, the active tab (leftmost) connected to it, the second plain and the
+     * third hovered. No titles: the render has no font (see the stub above). */
+    theme->draw_panel(canvas, {226, 299, 224, 45}, Panel::Style::FRAME, U"", false);
+    theme->draw_tab(canvas, {230, 278, 70, 22}, U"", true, false);
+    theme->draw_tab(canvas, {302, 278, 70, 22}, U"", false, false);
+    theme->draw_tab(canvas, {374, 278, 70, 22}, U"", false, true);
+
     /* The row icons (specs/trinket/listview.md): the imported MUI drawer and
      * volume artwork, one per role. */
     Icon const icons[] = {Icon::DRAWER, Icon::HARD_DISK, Icon::DISK,

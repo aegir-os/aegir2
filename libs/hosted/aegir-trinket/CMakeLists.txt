@@ -123,6 +123,7 @@ add_library(aegir-trinket STATIC
     src/textbox.cc
     src/panel.cc
     src/group.cc
+    src/tab_group.cc
     src/radio_group.cc
     src/scrollbar.cc
     src/slider.cc

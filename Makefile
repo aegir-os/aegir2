@@ -39,7 +39,7 @@ DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-pattern check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-slider check-cycle check-listview check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-pattern check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
 
 all: help
 
@@ -124,7 +124,10 @@ check-cycle: ## run the cycle's stepping against its host cases (host)
 check-listview: ## run the list's scroll offset against its host cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_listview.py
 
-check-file-path: ## run the file requester's path and size helpers against their host cases (host)
+check-tab-group: ## run the tab group's strip layout against its host cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_tab_group.py
+
+check-file-path: ## run the file requester's path helpers against their host cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_file_path.py
 
 check-popup: ## run the popup anchor rule against its host cases (host)

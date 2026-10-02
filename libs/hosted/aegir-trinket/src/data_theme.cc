@@ -279,6 +279,46 @@ public:
         run(recipe, canvas, fit_sprite(kSprites[recipe.steps[0].sprite], rect));
     }
 
+    void draw_tab(Canvas& canvas, const Rect& rect, std::u32string_view title,
+                  bool active, bool hovered) override {
+        /* A chamfered face, the title centred (specs/trinket/tabs.md). The face
+         * is the group's own (PANEL_BG), so a tab and the body are one colour
+         * and the bevel alone says where the tab is; what a page paints inside
+         * is the app's. The face is filled row by row so the two top corners
+         * are cut and the raised edge follows the cut; the active tab leaves
+         * its bottom edge open where it meets the body, so the two read as
+         * one. */
+        static_cast<void>(hovered);  // the XEN tab has no hover state
+        int const cut = metric(MetricRole::TAB_CHAMFER);
+        Color const face = color(ColorRole::PANEL_BG);
+        Color const light = color(ColorRole::GADGET_HIGHLIGHT);
+        Color const dark = color(ColorRole::GADGET_SHADOW);
+        for (int row = 0; row < rect.height; ++row) {
+            int const step = cut - row;
+            int const inset = step > 0 ? step : 0;
+            int const width = rect.width - 2 * inset;
+            if (width <= 0) continue;
+            canvas.fill_rect({rect.x + inset, rect.y + row, width, 1}, face);
+        }
+        int const top = rect.y;
+        int const bottom = rect.y + rect.height - 1;
+        int const last = rect.x + rect.width - 1;
+        canvas.draw_line({rect.x, top + cut}, {rect.x + cut, top}, light);
+        canvas.draw_hline(rect.x + cut, last - cut, top, light);
+        canvas.draw_vline(top + cut, bottom, rect.x, light);
+        canvas.draw_line({last - cut, top}, {last, top + cut}, dark);
+        canvas.draw_vline(top + cut, bottom, last, dark);
+        if (!active) {
+            canvas.draw_hline(rect.x, last, bottom, dark);
+        }
+        Font* const font = Application::instance()->default_font();
+        if (font == nullptr || title.empty()) return;
+        Size const text = font->measure(title);
+        canvas.draw_text({rect.x + (rect.width - text.width) / 2,
+                          rect.y + (rect.height - font->height()) / 2},
+                         title, font, color(ColorRole::TEXT));
+    }
+
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
      * button and the field draw it, so there is no separate ring. */
     void draw_focus_ring(Canvas&, const Rect&) override {}
