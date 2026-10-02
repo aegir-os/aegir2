@@ -180,6 +180,12 @@ second, ASCII-case-folded (specs/fat.md).
   directory's size is zero. Like list it needs no handle and no per-client
   state; it is the call `std::filesystem::status` stands on (`specs/cxx.md`
   step 5).
+- **space** — no words. Reply: the volume's total and free bytes
+  (`kSpaceTailWords` words). The capacity is the filesystem's own: a BFS
+  volume's blocks, a FAT partition's sectors less the free clusters, a
+  read-only initrd's free zero. It is what a volume list shows beside the
+  label, so a fancier per-file quota form is not needed yet
+  (`specs/trinket/file_requester.md`).
 
 Writes are a different shape, because a usable userspace API is one: a
 program opens a file and then streams, and asking it to re-walk the path and

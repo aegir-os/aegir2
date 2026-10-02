@@ -178,6 +178,15 @@ public:
     };
     bool stat(char const *path, uint32_t length, Info &out) noexcept;
 
+    /** The volume's capacity in bytes: its whole size and what is free
+     *  (volume::kMethodSpace). False when the volume refuses; a filesystem
+     *  with no size answers zero, not false. */
+    struct Space {
+        uint64_t total;
+        uint64_t free;
+    };
+    bool space(Space &out) noexcept;
+
     /* The write side (specs/vfs.md): handles, the only per-client state a
      * filesystem holds. Zero is never a handle, and one is never reused. */
     uint64_t open(char const *path, uint32_t length, uint64_t flags) noexcept;

@@ -976,6 +976,21 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 
+void answer_space(aegir::ipc::Owner &port) noexcept
+{
+    /* The volume's whole size and what the allocator has taken. No path, no
+     * badge: the capacity is the volume's, the same for every caller
+     * (specs/vfs.md). */
+    uint64_t const block_bytes = g_volume.block_size();
+    uint64_t const total = g_volume.num_blocks() * block_bytes;
+    uint64_t const used = g_volume.used_blocks() * block_bytes;
+    uint64_t const answer[aegir::volume::kSpaceTailWords] = {
+        total,
+        used < total ? total - used : 0,
+    };
+    port.reply_words(answer, aegir::volume::kSpaceTailWords);
+}
+
 /* A query returns named entries: attribute inodes, attribute directories and
  * the index directory are the filesystem's own, not names a client asked
  * about. */
@@ -1918,6 +1933,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodStat:
             answer_stat(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodSpace:
+            answer_space(vol);
             break;
         case aegir::volume::kMethodOpen:
             answer_open(vol, words, count, badge);

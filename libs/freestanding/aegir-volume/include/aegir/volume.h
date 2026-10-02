@@ -113,6 +113,13 @@ constexpr uint32_t kMethodTruncate = 11; /* in: path words, size; answer: 1, or 
  * (aegir/metadata.h), which share this port; this is the next free one. */
 constexpr uint32_t kMethodReadHandle = 23; /* in: handle, offset, max; answer: count, eof, bytes */
 
+/* space: how much room the volume has. No words; the answer is two -- total
+ * bytes then free bytes (kSpaceTailWords). What a volume list shows beside
+ * the label, and what a writer could ask before a large write. The capacity
+ * is the filesystem's own: `stat` answers a file's size, `space` the whole
+ * volume's (specs/vfs.md). */
+constexpr uint32_t kMethodSpace = 24;
+
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
 constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */
@@ -149,5 +156,10 @@ constexpr uint32_t kListTailWords = 3;
  *  last-write time as whole seconds since the Unix epoch (zero when the
  *  filesystem has no time source). */
 constexpr uint32_t kStatTailWords = 3;
+
+/** space's answer: the volume's total then free bytes. A read-only volume (an
+ *  initrd) answers free zero; a filesystem with no size answers both zero, the
+ *  same "no answer" a list entry's zero size carries. */
+constexpr uint32_t kSpaceTailWords = 2;
 
 }  // namespace aegir::volume

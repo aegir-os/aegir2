@@ -371,6 +371,22 @@ bool Volume::stat(char const *path, uint32_t length, Info &out) noexcept
     return true;
 }
 
+bool Volume::space(Space &out) noexcept
+{
+    /* No path and no words: the capacity is the volume's, the same for every
+     * caller (volume::kMethodSpace). */
+    uint64_t answer[volume::kSpaceTailWords];
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(volume::kMethodSpace, nullptr, 0, answer,
+                         volume::kSpaceTailWords);
+    if (reply.error != 0 || reply.count != volume::kSpaceTailWords) {
+        return false;
+    }
+    out.total = answer[0];
+    out.free = answer[1];
+    return true;
+}
+
 uint64_t Volume::open(char const *path, uint32_t length, uint64_t flags) noexcept
 {
     uint64_t request[nmspace::kPathMax / 8 + 2];

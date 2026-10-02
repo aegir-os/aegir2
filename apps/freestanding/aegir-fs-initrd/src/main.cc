@@ -201,6 +201,14 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 
+void answer_space(aegir::ipc::Owner &port) noexcept
+{
+    /* The archive's size, and no free room: the boot image is read-only, so
+     * there is nowhere for a write to land (specs/vfs.md). */
+    uint64_t const answer[aegir::volume::kSpaceTailWords] = {g_archive_bytes, 0};
+    port.reply_words(answer, aegir::volume::kSpaceTailWords);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -310,6 +318,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodStat:
             answer_stat(port, words, count);
+            break;
+        case aegir::volume::kMethodSpace:
+            answer_space(port);
             break;
         default:
             /* A method this version does not know is answered by saying

@@ -71,6 +71,10 @@ uint8_t *g_window = nullptr;
 uint64_t g_first = 0;
 uint32_t g_window_sectors = 0;
 uint32_t g_cluster_count = 0;
+/* The partition's whole size in bytes, so `space` reports the volume's
+ * capacity, not only the data clusters it hands out (the FAT and the
+ * reserved sectors are capacity a user sees in use). */
+uint64_t g_range_bytes = 0;
 aegir::fat::Volume g_volume{};
 
 /* The write side's state: whether this volume takes writes at all (the
@@ -1792,6 +1796,43 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 
+/* How many clusters the FAT marks free: alloc_cluster's scan without the
+ * claim, counting the free entries instead of taking the first. */
+uint64_t free_cluster_count() noexcept
+{
+    uint64_t held = ~0ull;
+    uint64_t free = 0;
+    for (uint32_t c = 2; c < 2 + g_cluster_count; ++c) {
+        uint64_t const rel = (static_cast<uint64_t>(c) * entry_bytes()) / kSectorBytes;
+        if (rel != held) {
+            if (!read(g_volume.fat_start + rel, 1)) {
+                return free;
+            }
+            held = rel;
+        }
+        if (window_next(c) == aegir::fat::kFreeCluster) {
+            ++free;
+        }
+    }
+    return free;
+}
+
+void answer_space(aegir::ipc::Owner &port) noexcept
+{
+    /* The partition's whole size, less the clusters the FAT marks free -- so
+     * the reserved sectors and the FAT copies read as in use, as a volume's
+     * overhead does (specs/vfs.md). */
+    uint64_t const cluster_bytes =
+        static_cast<uint64_t>(g_volume.sectors_per_cluster) * kSectorBytes;
+    uint64_t const free = free_cluster_count() * cluster_bytes;
+    uint64_t const total = g_range_bytes;
+    uint64_t const answer[aegir::volume::kSpaceTailWords] = {
+        total,
+        free < total ? free : total,
+    };
+    port.reply_words(answer, aegir::volume::kSpaceTailWords);
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -1906,6 +1947,7 @@ int main(int argc, char *argv[])
     g_volume = volume;
     g_cluster_count = static_cast<uint32_t>((range_sectors - volume.data_start) /
                                             volume.sectors_per_cluster);
+    g_range_bytes = range_sectors * kSectorBytes;
 
     /* The handle table's page, when the spawner gave one: the block's
      * untyped entry is where a memory grant's address and size travel
@@ -2154,6 +2196,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodStat:
             answer_stat(vol, words, count);
+            break;
+        case aegir::volume::kMethodSpace:
+            answer_space(vol);
             break;
         case aegir::volume::kMethodOpen:
             answer_open(vol, words, count, badge);
