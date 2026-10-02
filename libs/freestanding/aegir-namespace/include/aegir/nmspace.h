@@ -147,6 +147,12 @@ constexpr uint32_t kNameMax = 24;
  *  `filenote` says which filesystem has no attributes (specs/dos.md). */
 constexpr uint32_t kTypeMax = 16;
 
+/** The longest device name a volume may carry, NUL not included: the block
+ *  device's own identify name ("BD0"), which is eight bytes on the wire
+ *  (aegir/block.h's Identify). Empty for a volume that is not on a block
+ *  device -- the initrd archive (specs/vfs.md). */
+constexpr uint32_t kDeviceMax = 8;
+
 /** The longest path a resolve may carry: what fits the envelope after the
  *  length word (aegir/ipc's kMaxWords words, less one). A path longer than
  *  that is a protocol that wants the buffer form, when it exists. */
@@ -195,6 +201,8 @@ struct Row {
     uint64_t bound;      /* 1 when a filesystem's cap is held for it */
     uint64_t owner;      /* the owner badge; zero for the system's */
     char type[kTypeMax]; /* the filesystem's type, NUL-terminated; empty when unknown */
+    char device[kDeviceMax]; /* the block device's identify name, NUL-padded; empty
+                              * when the volume is not on one */
 };
 
 /** The Row as the message carries it. */

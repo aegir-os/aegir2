@@ -499,7 +499,8 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                                                 aegir::nmspace::kTypeMax, &type,
                                                 &type_length);
         }
-        uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 3];
+        uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 +
+                     aegir::nmspace::kDeviceMax / 8 + 4];
         uint32_t out_words = aegir::nmspace::pack_string(out, label, label_length,
                                                          aegir::nmspace::kNameMax);
         /* Flags: not read-only -- a FAT volume takes writes, which the
@@ -516,6 +517,12 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
         out[out_words++] = flags;
         out_words += aegir::nmspace::pack_string(out + out_words, type, type_length,
                                                  aegir::nmspace::kTypeMax);
+        /* The backing device's name rides after the type: the block protocol's
+         * identify name, which the walk read when it found this partition, so
+         * a volume list can show it beside the label (specs/vfs.md). */
+        out_words += aegir::nmspace::pack_string(out + out_words, device_name,
+                                                 device_name_length,
+                                                 aegir::nmspace::kDeviceMax);
         aegir::ipc::WordsReply const registered = nmspace.call_transfer(
             aegir::nmspace::kMethodRegister, out, out_words, volume_caller, in,
             aegir::nmspace::kNameMax / 8 + 1, nullptr);

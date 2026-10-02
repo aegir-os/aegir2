@@ -53,6 +53,9 @@ struct Volume {
     uint64_t owner; /* the owner badge; zero for the system's (specs/ownership.md) */
     char type[aegir::nmspace::kTypeMax]; /* the filesystem's type, e.g. BFS */
     uint8_t type_length;
+    char device[aegir::nmspace::kDeviceMax]; /* the block device's identify name,
+                                              * NUL-padded; empty when none */
+    uint8_t device_length;
     char const *base;     /* a view's base path within its source, in the arena;
                            * null for an ordinary volume */
     uint32_t base_length;
@@ -294,9 +297,24 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
      * registrant that sends none leaves it empty (specs/vfs.md). */
     char const *type = "";
     uint32_t type_length = 0;
+    uint32_t const type_words =
+        count > name_words + 1
+            ? 1 + static_cast<uint32_t>((words[name_words + 1] + 7) / 8)
+            : 0;
     if (count > name_words + 1) {
         (void)aegir::nmspace::unpack_string(words + name_words + 1, count - name_words - 1,
                                             aegir::nmspace::kTypeMax, &type, &type_length);
+    }
+    /* The backing device's name is a string after the type; a registrant that
+     * sends none -- the initrd archive, an older filesystem -- leaves it empty
+     * (specs/vfs.md). */
+    char const *device = "";
+    uint32_t device_length = 0;
+    if (count > name_words + 1 + type_words) {
+        (void)aegir::nmspace::unpack_string(words + name_words + 1 + type_words,
+                                            count - name_words - 1 - type_words,
+                                            aegir::nmspace::kDeviceMax, &device,
+                                            &device_length);
     }
     if (count == 0 ||
         !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kNameMax, &name,
@@ -328,6 +346,15 @@ void answer_register(aegir::ipc::Owner &port, uint64_t const *words, uint32_t co
     }
     for (uint32_t i = volume->type_length; i < aegir::nmspace::kTypeMax; ++i) {
         volume->type[i] = '\0';
+    }
+    volume->device_length = static_cast<uint8_t>(
+        device_length < aegir::nmspace::kDeviceMax ? device_length
+                                                   : aegir::nmspace::kDeviceMax - 1);
+    for (uint32_t i = 0; i < volume->device_length; ++i) {
+        volume->device[i] = device[i];
+    }
+    for (uint32_t i = volume->device_length; i < aegir::nmspace::kDeviceMax; ++i) {
+        volume->device[i] = '\0';
     }
     volume->base = nullptr;
     volume->base_length = 0;
@@ -939,6 +966,9 @@ void fill_row(aegir::nmspace::Row &row, Volume const &volume) noexcept
     row.owner = volume.owner;
     for (uint32_t i = 0; i < volume.type_length; ++i) {
         row.type[i] = volume.type[i];
+    }
+    for (uint32_t i = 0; i < volume.device_length; ++i) {
+        row.device[i] = volume.device[i];
     }
 }
 
