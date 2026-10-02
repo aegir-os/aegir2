@@ -1155,3 +1155,20 @@ checks the caller's badge, and a session's home is a private view whose
 directory carries the user's uid and mode 0700. That needed a filesystem with
 owners, so the system volume migrated from FAT to BFS (`specs/bfs.md`), and the
 same arc added `Protect` and `Owner` and the mode check to BFS.
+
+## Future: the service bootstrap is copied into every service
+
+Every freestanding service bootstraps its CSpace the same way: it finds the
+first slot the block did not name, and adopts the rest --
+
+    first_free = ...
+    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free,
+                          0, aegir::bootstrap::cnode_bits());
+
+-- and the code around it (reading the block, the untyped, the vspace window) is
+near-identical in each. The repetition is not only noise: the radix was the one
+argument that differed and it was missing from twelve services, which is how the
+merge came to delete at the wrong depth -- the "0 bytes available" bug
+(specs/memory.md). A shared `bootstrap::adopt_cspace(allocator)` would remove the
+copy, and the class of bug with it, because the block already knows where the
+slots start and how wide the CNode is.

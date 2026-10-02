@@ -148,6 +148,17 @@ This is deliberately a milestone, not a side quest: the accounts
 (`specs/authority.md`) already charge every allocation, so the data exists; what
 is missing is the reporting and the queries.
 
+## Future: an arch-neutral page table
+
+`alloc_page` names the kernel's object *type* for a frame, so a caller asks for a
+page and gets one rather than naming `seL4_RISCV_4K_Page` from a library that
+should not know which machine it is on (AGENTS.md). A page *table* has no such
+call: the device manager retypes `seL4_RISCV_PageTableObject` directly
+(apps/freestanding/aegir-device-manager/src/main.cc), which is the same
+architecture leak in the other direction. It wants the matching
+`alloc_page_table`, so the object type stays inside aegir-mem and a service asks
+for a table the way it asks for a frame.
+
 ## What this is not
 
 Freeing a *slot* (a capability) -- still the deferral `specs/userland.md`
