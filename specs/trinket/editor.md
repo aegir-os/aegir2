@@ -103,6 +103,30 @@ font's, so the rows follow the font as the terminal's do, and the inset is the
 terminal view's own four pixels rather than a metric -- the two text views stay
 against their frames the same way.
 
+## The application
+
+`aegir-editor` (`apps/hosted/aegir-editor`) is the editor the widget was built
+for, and the widget's proof on the target. A launcher starts it as a windowed
+program (specs/launch.md's kind 2): its own console.gui and runtime, its own
+window. It is the command `edit` in Sys:C, so a shell resolves it like `view`.
+
+- **A file is a tab.** The window's content is the `TabGroup` itself: one page
+  per open file, each page the `TextEdit` beside its scrollbar. A file named
+  after the program -- `edit Sys:Note.txt` -- opens at start; a new file, or no
+  argument, is an `Untitled` page.
+- **The File menu.** New, Open..., Save, Save As... and Quit, registered with
+  the bureau's menu server as the demo's are (specs/workbench.md), so the screen
+  bar carries them while the editor is active. Open... and Save As... raise the
+  toolkit's file requester (specs/trinket/file_requester.md).
+- **The namespace is the file layer.** A file's bytes come and go through the
+  session's `vfs.namespace` with the runtime's POSIX calls -- `::open`/`::read`
+  to load, `::open(O_WRONLY|O_CREAT|O_TRUNC)`/`::write` to save
+  (specs/cxx.md step 5).
+- **The cues the runner reads.** `editor: ready`, `editor: opened <path>`,
+  `editor: saved <path>`, `editor: tab <n>`, and `editor: insert` /
+  `editor: overwrite` on the mode toggle -- so the acceptance paces a screendump
+  on each and reads the cursor's shape, the text and the tab strip back.
+
 ## What this is not
 
 - **A word processor.** No wrapping by word beyond the viewport edge, no
