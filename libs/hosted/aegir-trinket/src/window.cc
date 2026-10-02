@@ -46,56 +46,6 @@ void collect_focusables(Widget* widget, std::vector<Widget*>& out) {
     if (widget->focusable()) out.push_back(widget);
 }
 
-/* A titlebar gadget, drawn on the bar (its plate is the bar's own fill) with
- * the Workbench glyphs (specs/amiga-fidelity.md): a near-black outline, and
- * white and grey interiors. When the window is not active every fill becomes
- * the bar's colour, so the glyph reads hollow. */
-void draw_gadget(Canvas& canvas, Rect const& r, int kind, bool active,
-                 Color bar, Color outline, Color white, Color grey) {
-    Color const inner = active ? white : bar;
-    if (kind == 1) {
-        /* Close: a small square, white fill, centred. */
-        Rect const box{r.x + 4, r.y + 4, 8, 8};
-        canvas.fill_rect(box, inner);
-        canvas.draw_rect(box, outline);
-    } else if (kind == 2) {
-        /* Zoom: a box in a box -- outer the bar's fill, inner upper-left. */
-        Rect const outer{r.x + 2, r.y + 2, 12, 12};
-        canvas.fill_rect(outer, bar);
-        canvas.draw_rect(outer, outline);
-        Rect const box{r.x + 4, r.y + 4, 6, 6};
-        canvas.fill_rect(box, inner);
-        canvas.draw_rect(box, outline);
-    } else {
-        /* Depth: two cascaded squares, upper grey, lower white. */
-        Rect const upper{r.x + 2, r.y + 2, 10, 10};
-        canvas.fill_rect(upper, active ? grey : bar);
-        canvas.draw_rect(upper, outline);
-        Rect const lower{r.x + 5, r.y + 5, 10, 10};
-        canvas.fill_rect(lower, inner);
-        canvas.draw_rect(lower, outline);
-    }
-}
-
-/* The resize gadget: a white right triangle, near-black outline, right angle
- * at the bottom-right, inset from the bar's bevel, with a white line down its
- * left separating it from the bar (specs/amiga-fidelity.md). */
-void draw_resize_gadget(Canvas& canvas, Rect const& r, Color white,
-                        Color outline) {
-    int const tri = (r.width * 5) / 8;
-    int const gap = (r.width - tri) / 2;
-    Rect const t{r.x + r.width - gap - tri, r.y + r.height - gap - tri, tri, tri};
-    canvas.draw_vline(r.y, r.y + r.height - 1, r.x, white);
-    for (int row = 0; row < t.height; ++row) {
-        int const left =
-            t.x + (t.width - 1) * (t.height - 1 - row) / (t.height > 1 ? t.height - 1 : 1);
-        canvas.draw_hline(left, t.x + t.width - 1, t.y + row, white);
-    }
-    canvas.draw_vline(t.y, t.y + t.height - 1, t.x + t.width - 1, outline);
-    canvas.draw_hline(t.x, t.x + t.width - 1, t.y + t.height - 1, outline);
-    canvas.draw_line({t.x + t.width - 1, t.y}, {t.x, t.y + t.height - 1}, outline);
-}
-
 }  // namespace
 
 Window::Window(Application& app)
@@ -807,43 +757,25 @@ Rect Window::paint() {
                            theme.color(ColorRole::WINDOW_BG));
 
     if (bar > 0) {
-        frame_canvas.fill_rect({0, 0, frame.width, bar},
-                               theme.color(ColorRole::TITLEBAR_BG));
-        if (bar > 2) {
-            frame_canvas.draw_hline(0, frame.width - 1, 1,
-                                    theme.color(ColorRole::TITLEBAR_HIGHLIGHT));
-        }
-        frame_canvas.draw_hline(0, frame.width - 1, bar - 1,
-                                theme.color(ColorRole::TITLEBAR_SHADOW));
-
-        Font* const font = app_.default_font();
-        if (font != nullptr && !title_.empty()) {
-            int const pad = theme.metric(MetricRole::TITLEBAR_PADDING_H);
-            int const size = theme.metric(MetricRole::TITLEBAR_BUTTON_SIZE);
-            int const gap = theme.metric(MetricRole::SPACING_SMALL);
-            int const x = (gadgets_ & kGadgetClose) != 0 ? pad + size + gap : pad;
-            std::string const title = utf32_to_utf8(title_);
-            frame_canvas.draw_text({x, (bar - font->height()) / 2}, title, font,
-                                   theme.color(ColorRole::TITLEBAR_TEXT));
-        }
-
-        Color const outline = theme.color(ColorRole::GADGET_OUTLINE);
-        Color const white = theme.color(ColorRole::GADGET_WHITE);
-        Color const grey = theme.color(ColorRole::GADGET_GREY);
-        Color const bar_fill = theme.color(ColorRole::TITLEBAR_BG);
+        /* The bar and its gadgets are the theme's (specs/trinket/chrome.md): the
+         * window places them and the theme draws the look, so a theme can carry
+         * the chrome as it carries a button. */
+        std::string const title = utf32_to_utf8(title_);
+        theme.draw_titlebar(frame_canvas, {0, 0, frame.width, bar}, title.c_str(),
+                            active_, (gadgets_ & kGadgetClose) != 0);
         if ((gadgets_ & kGadgetClose) != 0) {
-            draw_gadget(frame_canvas, close_gadget_rect(), 1, active_, bar_fill,
-                        outline, white, grey);
+            theme.draw_gadget(frame_canvas, close_gadget_rect(),
+                              Theme::GadgetKind::CLOSE, active_);
         }
         int index = 0;
         if ((gadgets_ & kGadgetDepth) != 0) {
-            draw_gadget(frame_canvas, gadget_rect(index), 3, active_, bar_fill,
-                        outline, white, grey);
+            theme.draw_gadget(frame_canvas, gadget_rect(index),
+                              Theme::GadgetKind::DEPTH, active_);
             ++index;
         }
         if ((gadgets_ & kGadgetZoom) != 0) {
-            draw_gadget(frame_canvas, gadget_rect(index), 2, active_, bar_fill,
-                        outline, white, grey);
+            theme.draw_gadget(frame_canvas, gadget_rect(index),
+                              Theme::GadgetKind::ZOOM, active_);
             ++index;
         }
     }
@@ -873,17 +805,8 @@ Rect Window::paint() {
 
     if (bottom > 0) {
         int const top = frame.height - bottom;
-        frame_canvas.fill_rect({0, top, frame.width, bottom},
-                               theme.color(ColorRole::TITLEBAR_BG));
-        if (bottom > 2) {
-            frame_canvas.draw_hline(0, frame.width - 1, top + 1,
-                                    theme.color(ColorRole::BOTTOMBAR_HIGHLIGHT));
-        }
-        frame_canvas.draw_hline(0, frame.width - 1, frame.height - 2,
-                                theme.color(ColorRole::BOTTOMBAR_SHADOW));
-        draw_resize_gadget(frame_canvas, resize_gadget_rect(),
-                           theme.color(ColorRole::GADGET_WHITE),
-                           theme.color(ColorRole::GADGET_OUTLINE));
+        theme.draw_bottombar(frame_canvas, {0, top, frame.width, bottom});
+        theme.draw_resize_gadget(frame_canvas, resize_gadget_rect());
     }
 
     if (decorated_) {

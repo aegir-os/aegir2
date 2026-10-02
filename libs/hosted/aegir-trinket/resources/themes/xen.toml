@@ -369,3 +369,68 @@ steps = [{ sprite = "Volume" }]
 
 [gadgets.icon.network]
 steps = [{ sprite = "Network" }]
+
+# ---- the window chrome ----
+# The window manager's furniture (specs/trinket/chrome.md): the title bar, the
+# bottom bar, the frame, and the close/zoom/depth gadgets. A bar's light line is
+# one pixel down from its top (the frame's own light line is above it) and its
+# dark line the last row, so those are `line` steps, one edge each. A gadget's
+# glyph is a sub-rectangle of the cell in sixteenths (`at`), which is how the
+# close box, the zoom box-in-a-box and the cascaded depth squares are recipes.
+
+[gadgets.titlebar.inactive]
+steps = [{ fill = "$TITLEBAR_BG_INACTIVE" },
+         { line = "top", color = "$TITLEBAR_HIGHLIGHT", inset = 1 },
+         { line = "bottom", color = "$TITLEBAR_SHADOW" }]
+
+[gadgets.titlebar.active]
+steps = [{ fill = "$TITLEBAR_BG" },
+         { line = "top", color = "$TITLEBAR_HIGHLIGHT", inset = 1 },
+         { line = "bottom", color = "$TITLEBAR_SHADOW" }]
+
+[gadgets.bottombar]
+steps = [{ fill = "$TITLEBAR_BG" },
+         { line = "top", color = "$BOTTOMBAR_HIGHLIGHT", inset = 1 },
+         { line = "bottom", color = "$BOTTOMBAR_SHADOW", inset = 1 }]
+
+[gadgets.frame]
+steps = [{ line = "top", color = "$FRAME_LIGHT" },
+         { line = "left", color = "$FRAME_LIGHT" },
+         { line = "bottom", color = "$FRAME_DARK" },
+         { line = "right", color = "$FRAME_DARK" }]
+
+# Close: an 8x8 box centred in the 16x16 cell, white when the window is active
+# and the bar's fill when not, so the glyph reads hollow.
+[gadgets.gadget.close_active]
+steps = [{ fill = "$GADGET_WHITE", at = [4, 4, 12, 12] },
+         { outline = "$GADGET_OUTLINE", at = [4, 4, 12, 12] }]
+
+[gadgets.gadget.close_inactive]
+steps = [{ fill = "$TITLEBAR_BG", at = [4, 4, 12, 12] },
+         { outline = "$GADGET_OUTLINE", at = [4, 4, 12, 12] }]
+
+# Zoom: a box in a box; the outer is the bar's fill, the inner the upper-left.
+[gadgets.gadget.zoom_active]
+steps = [{ fill = "$TITLEBAR_BG", at = [2, 2, 14, 14] },
+         { outline = "$GADGET_OUTLINE", at = [2, 2, 14, 14] },
+         { fill = "$GADGET_WHITE", at = [4, 4, 10, 10] },
+         { outline = "$GADGET_OUTLINE", at = [4, 4, 10, 10] }]
+
+[gadgets.gadget.zoom_inactive]
+steps = [{ fill = "$TITLEBAR_BG", at = [2, 2, 14, 14] },
+         { outline = "$GADGET_OUTLINE", at = [2, 2, 14, 14] },
+         { fill = "$TITLEBAR_BG", at = [4, 4, 10, 10] },
+         { outline = "$GADGET_OUTLINE", at = [4, 4, 10, 10] }]
+
+# Depth: two cascaded squares, the upper grey and the lower white.
+[gadgets.gadget.depth_active]
+steps = [{ fill = "$GADGET_GREY", at = [2, 2, 12, 12] },
+         { outline = "$GADGET_OUTLINE", at = [2, 2, 12, 12] },
+         { fill = "$GADGET_WHITE", at = [5, 5, 15, 15] },
+         { outline = "$GADGET_OUTLINE", at = [5, 5, 15, 15] }]
+
+[gadgets.gadget.depth_inactive]
+steps = [{ fill = "$TITLEBAR_BG", at = [2, 2, 12, 12] },
+         { outline = "$GADGET_OUTLINE", at = [2, 2, 12, 12] },
+         { fill = "$TITLEBAR_BG", at = [5, 5, 15, 15] },
+         { outline = "$GADGET_OUTLINE", at = [5, 5, 15, 15] }]

@@ -37,7 +37,13 @@ void Theme::draw_menubar(Canvas&, const Rect&) {}
 
 void Theme::draw_menu_item(Canvas&, const Rect&, const char*, bool, bool, bool, bool) {}
 
-void Theme::draw_titlebar(Canvas&, const Rect&, const char*, bool) {}
+void Theme::draw_titlebar(Canvas&, const Rect&, const char*, bool, bool) {}
+
+void Theme::draw_gadget(Canvas&, const Rect&, GadgetKind, bool) {}
+
+void Theme::draw_bottombar(Canvas&, const Rect&) {}
+
+void Theme::draw_resize_gadget(Canvas&, const Rect&) {}
 
 void Theme::draw_window_frame(Canvas&, const Rect&, bool) {}
 

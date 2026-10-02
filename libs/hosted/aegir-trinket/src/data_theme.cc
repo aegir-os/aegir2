@@ -162,31 +162,63 @@ public:
     }
 
     void draw_titlebar(Canvas& canvas, const Rect& rect,
-                        const char* title, bool active) override {
-        Color bg = active ? color(ColorRole::TITLEBAR_BG) : color(ColorRole::TITLEBAR_BG_INACTIVE);
-        Color text = active ? color(ColorRole::TITLEBAR_TEXT) : color(ColorRole::TITLEBAR_TEXT_INACTIVE);
-
-        canvas.fill_rect(rect, bg);
-
-        Font* font = Application::instance()->default_font();
-        if (font && title) {
-            int x = rect.x + metric(MetricRole::TITLEBAR_PADDING_H);
-            int y = rect.y + (rect.height - font->height()) / 2;
-            canvas.draw_text({x, y}, utf8_to_utf32(title),
-                             font, text);
+                        const char* title, bool active,
+                        bool close_gadget) override {
+        run(kRecipeTitlebar[active ? 1 : 0], canvas, rect);
+        if (title == nullptr) {
+            return;
         }
+        Font* const font = Application::instance()->default_font();
+        if (font == nullptr) {
+            return;
+        }
+        /* The title starts past the close gadget at the bar's far left, or at the
+         * padding when there is none (specs/amiga-fidelity.md). */
+        int x = rect.x + metric(MetricRole::TITLEBAR_PADDING_H);
+        if (close_gadget) {
+            x += metric(MetricRole::TITLEBAR_BUTTON_SIZE) +
+                 metric(MetricRole::SPACING_SMALL);
+        }
+        int const y = rect.y + (rect.height - font->height()) / 2;
+        canvas.draw_text({x, y}, utf8_to_utf32(title), font,
+                         color(active ? ColorRole::TITLEBAR_TEXT
+                                      : ColorRole::TITLEBAR_TEXT_INACTIVE));
+    }
+
+    void draw_gadget(Canvas& canvas, const Rect& rect,
+                      GadgetKind kind, bool active) override {
+        run(kRecipeGadget[static_cast<int>(kind) * 2 + (active ? 1 : 0)], canvas, rect);
+    }
+
+    void draw_bottombar(Canvas& canvas, const Rect& rect) override {
+        run(kRecipeBottombar, canvas, rect);
+    }
+
+    /* The resize gadget: a white right triangle, near-black outline, right angle
+     * at the bottom-right, inset from the bar's bevel, with a white line down its
+     * left separating it from the bar (specs/amiga-fidelity.md). Its geometry has
+     * no recipe form, so it stays here (specs/trinket/chrome.md). */
+    void draw_resize_gadget(Canvas& canvas, const Rect& rect) override {
+        Color const white = color(ColorRole::GADGET_WHITE);
+        Color const outline = color(ColorRole::GADGET_OUTLINE);
+        int const tri = (rect.width * 5) / 8;
+        int const gap = (rect.width - tri) / 2;
+        Rect const t{rect.x + rect.width - gap - tri, rect.y + rect.height - gap - tri,
+                     tri, tri};
+        canvas.draw_vline(rect.y, rect.y + rect.height - 1, rect.x, white);
+        for (int row = 0; row < t.height; ++row) {
+            int const left = t.x + (t.width - 1) * (t.height - 1 - row) /
+                                       (t.height > 1 ? t.height - 1 : 1);
+            canvas.draw_hline(left, t.x + t.width - 1, t.y + row, white);
+        }
+        canvas.draw_vline(t.y, t.y + t.height - 1, t.x + t.width - 1, outline);
+        canvas.draw_hline(t.x, t.x + t.width - 1, t.y + t.height - 1, outline);
+        canvas.draw_line({t.x + t.width - 1, t.y}, {t.x, t.y + t.height - 1}, outline);
     }
 
     void draw_window_frame(Canvas& canvas, const Rect& rect, bool active) override {
         static_cast<void>(active);  // the Workbench frame is the same either way
-        Color const light = color(ColorRole::FRAME_LIGHT);
-        Color const dark = color(ColorRole::FRAME_DARK);
-        canvas.draw_hline(rect.x, rect.x + rect.width - 1, rect.y, light);
-        canvas.draw_vline(rect.y, rect.y + rect.height - 1, rect.x, light);
-        canvas.draw_hline(rect.x, rect.x + rect.width - 1,
-                          rect.y + rect.height - 1, dark);
-        canvas.draw_vline(rect.y, rect.y + rect.height - 1,
-                          rect.x + rect.width - 1, dark);
+        run(kRecipeWindowFrame, canvas, rect);
     }
 
     void draw_scrollbar(Canvas& canvas, const Rect& rect, bool vertical,
@@ -351,11 +383,12 @@ public:
 
 private:
     /* Run a gadget's recipe (specs/trinket/theming.md): each step draws one
-     * primitive into the gadget's rectangle, set in by its inset. */
+     * primitive into the gadget's rectangle, set in by its inset and narrowed to
+     * its `at` sub-rectangle (specs/trinket/chrome.md). */
     void run(Recipe const& recipe, Canvas& canvas, Rect const& rect) {
         for (int i = 0; i < recipe.count; ++i) {
             Step const& step = recipe.steps[i];
-            Rect const r = rect.inflated(-step.inset);
+            Rect const r = sub_rect(rect, step);
             switch (step.op) {
                 case Prim::FILL:
                     canvas.fill_rect(r, Color(step.color));
@@ -373,10 +406,41 @@ private:
                     draw_mark(canvas, r, step.kind, Color(step.color), Color(step.color2),
                               step.num, step.den);
                     break;
+                case Prim::LINE:
+                    draw_edge(canvas, r, step.kind, Color(step.color));
+                    break;
                 case Prim::SPRITE:
                     blit_sprite(canvas, r, step.sprite);
                     break;
             }
+        }
+    }
+
+    /* The step's rectangle: the gadget set in by its inset, then narrowed to its
+     * `at` sub-rectangle in sixteenths -- the whole of it by default. The
+     * sub-rectangle is what offsets and nests a gadget's glyph inside its cell,
+     * which a uniform inset cannot (specs/trinket/chrome.md). */
+    static Rect sub_rect(Rect const& rect, Step const& step) {
+        Rect const r = rect.inflated(-step.inset);
+        if (step.x0 == 0 && step.y0 == 0 && step.x1 == 16 && step.y1 == 16) {
+            return r;
+        }
+        int const x0 = r.x + r.width * step.x0 / 16;
+        int const y0 = r.y + r.height * step.y0 / 16;
+        int const x1 = r.x + r.width * step.x1 / 16;
+        int const y1 = r.y + r.height * step.y1 / 16;
+        return {x0, y0, x1 - x0, y1 - y0};
+    }
+
+    /* One edge of the rectangle (specs/trinket/chrome.md): kind 0 top, 1 bottom,
+     * 2 left, 3 right. The bars' light and dark lines are single edges, not the
+     * four-edge bevel a gadget wears. */
+    static void draw_edge(Canvas& canvas, Rect const& r, int kind, Color color) {
+        switch (kind) {
+        case 0: canvas.draw_hline(r.x, r.x + r.width - 1, r.y, color); break;
+        case 1: canvas.draw_hline(r.x, r.x + r.width - 1, r.y + r.height - 1, color); break;
+        case 2: canvas.draw_vline(r.y, r.y + r.height - 1, r.x, color); break;
+        default: canvas.draw_vline(r.y, r.y + r.height - 1, r.x + r.width - 1, color); break;
         }
     }
 

@@ -150,8 +150,17 @@ public:
     virtual void draw_menu_item(Canvas& canvas, const Rect& rect,
                                  const char* label, bool hovered,
                                  bool checked, bool disabled, bool separator);
+    // The window chrome (specs/trinket/chrome.md): the widget computes the
+    // geometry and the theme draws the look. `close_gadget` tells the title bar
+    // where the title starts, past the close gadget at its far left.
     virtual void draw_titlebar(Canvas& canvas, const Rect& rect,
-                                const char* title, bool active);
+                                const char* title, bool active,
+                                bool close_gadget);
+    enum class GadgetKind { CLOSE, ZOOM, DEPTH };
+    virtual void draw_gadget(Canvas& canvas, const Rect& rect,
+                              GadgetKind kind, bool active);
+    virtual void draw_bottombar(Canvas& canvas, const Rect& rect);
+    virtual void draw_resize_gadget(Canvas& canvas, const Rect& rect);
     virtual void draw_window_frame(Canvas& canvas, const Rect& rect,
                                     bool active);
     // The scrollbar (specs/trinket/scrollbar.md): its trough, thumb and two arrow

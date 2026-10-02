@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     char const* path = argc > 1 ? argv[1] : "render.ppm";
 
     constexpr int kWidth = 460;
-    constexpr int kHeight = 444;
+    constexpr int kHeight = 560;
     std::vector<uint32_t> pixels(static_cast<size_t>(kWidth) * kHeight, 0);
     Canvas canvas(pixels.data(), kWidth, kHeight, kWidth);
 
@@ -197,6 +197,33 @@ int main(int argc, char** argv) {
     canvas.fill_rect({150, 414, 44, 20}, Color(0x00BFBFBF));
     theme->draw_cursor(canvas, {152, 416, 12, 16}, Theme::CursorShape::BLOCK);
     theme->draw_cursor(canvas, {174, 416, 12, 16}, Theme::CursorShape::UNDERLINE);
+
+    /* The window chrome (specs/trinket/chrome.md): an active and an inactive
+     * title bar with their close/zoom/depth gadgets, a bottom bar with its
+     * resize gadget, the frame, and the menu bar. The gadgets' cells are the
+     * window's arithmetic; the theme draws each cell's look. */
+    int const pad = theme->metric(MetricRole::TITLEBAR_PADDING_H);
+    int const size = theme->metric(MetricRole::TITLEBAR_BUTTON_SIZE);
+    int const gap = theme->metric(MetricRole::SPACING_SMALL);
+    Rect const bars[] = {{10, 452, 300, 24}, {10, 480, 300, 24}};
+    for (int i = 0; i < 2; ++i) {
+        bool const active = i == 0;
+        Rect const bar = bars[i];
+        int const y = bar.y + (bar.height - size) / 2;
+        theme->draw_titlebar(canvas, bar, "Aegir", active, true);
+        theme->draw_gadget(canvas, {bar.x + pad, y, size, size},
+                           Theme::GadgetKind::CLOSE, active);
+        int const depth_x = bar.x + bar.width - pad - size;
+        theme->draw_gadget(canvas, {depth_x, y, size, size},
+                           Theme::GadgetKind::DEPTH, active);
+        theme->draw_gadget(canvas, {depth_x - size - gap, y, size, size},
+                           Theme::GadgetKind::ZOOM, active);
+    }
+    Rect const bottom{10, 508, 200, 24};
+    theme->draw_bottombar(canvas, bottom);
+    theme->draw_resize_gadget(canvas, {bottom.x + bottom.width - 24, bottom.y, 24, 24});
+    theme->draw_window_frame(canvas, {330, 452, 120, 80}, true);
+    theme->draw_menubar(canvas, {10, 536, 440, 22});
 
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {

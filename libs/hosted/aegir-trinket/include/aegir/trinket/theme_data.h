@@ -25,10 +25,15 @@ namespace aegir::trinket {
  *   MARK    kind (0 up, 1 down, 2 left, 3 right), color (light), color2 (dark),
  *           and num/den, the mark's half-extent as a fraction of the smaller
  *           side of the rectangle
+ *   LINE    kind (0 top, 1 bottom, 2 left, 3 right) and color -- one edge, not
+ *           the whole bevel: the title bar's two lines and the menu bar's
+ *           underline (specs/trinket/chrome.md)
  *   SPRITE  index into kSprites, blitted centred
- * Every step also carries `inset`, the number of pixels its rectangle is set in
- * from the gadget's. */
-enum class Prim : uint8_t { FILL, BEVEL, OUTLINE, DITHER, MARK, SPRITE };
+ * Every step draws into `inset` pixels in from the gadget's rectangle, then --
+ * when x0/y0/x1/y1 name a sub-rectangle -- into the sixteenths of that: the box
+ * a gadget's glyph sits in, which a uniform inset cannot offset or nest
+ * (specs/trinket/chrome.md). The default is the whole rectangle. */
+enum class Prim : uint8_t { FILL, BEVEL, OUTLINE, DITHER, MARK, LINE, SPRITE };
 
 struct Step {
     Prim op;
@@ -39,6 +44,12 @@ struct Step {
     uint32_t color = 0;
     uint32_t color2 = 0;
     uint16_t sprite = 0;
+    /* The sub-rectangle, in sixteenths of the (inset) rectangle; the default is
+     * the whole of it. */
+    uint8_t x0 = 0;
+    uint8_t y0 = 0;
+    uint8_t x1 = 16;
+    uint8_t y1 = 16;
 };
 
 /* A bitmap sprite: the theme's imported art (specs/trinket/theming.md). Pixels
@@ -88,6 +99,13 @@ extern const Recipe kRecipeListSelected;
 // A row's image, indexed by Icon: NONE, DRAWER, HARD_DISK, DISK, CHIP, VOLUME,
 // NETWORK (specs/trinket/listview.md).
 extern const Recipe kRecipeIcon[7];
+// The window chrome (specs/trinket/chrome.md): the title bar in its state, the
+// bottom bar, the window frame, and the close/zoom/depth gadgets (indexed
+// kind * 2 + (active ? 1 : 0)).
+extern const Recipe kRecipeTitlebar[2];  // inactive, active
+extern const Recipe kRecipeBottombar;
+extern const Recipe kRecipeWindowFrame;
+extern const Recipe kRecipeGadget[6];
 
 }  // namespace aegir::trinket
 

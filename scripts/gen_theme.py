@@ -34,6 +34,7 @@ HEADER = TRINKET / "include" / "aegir" / "trinket" / "theme.h"
 
 BEVEL = {"raised": 0, "sunken": 1}
 MARK = {"up": 0, "down": 1, "left": 2, "right": 3}
+LINE = {"top": 0, "bottom": 1, "left": 2, "right": 3}
 
 
 def enum_names(header: str, name: str) -> list[str]:
@@ -63,40 +64,66 @@ def resolve(value: str, palette: dict) -> int:
 
 
 def collect_sprites(gadgets: dict) -> list[str]:
-    """Every sprite the recipes name, in first-seen order."""
+    """Every sprite the recipes name, in first-seen order. A `gadgets.X` is
+    either one recipe (`bottombar`, `frame`) or a table of them (`button.normal`);
+    both shapes are walked."""
     names: list[str] = []
+
+    def scan(recipe: dict) -> None:
+        for step in recipe["steps"]:
+            name = step.get("sprite")
+            if name is not None and name not in names:
+                names.append(name)
+
     for group in gadgets.values():
-        for recipe in group.values():
-            for step in recipe["steps"]:
-                name = step.get("sprite")
-                if name is not None and name not in names:
-                    names.append(name)
+        if "steps" in group:
+            scan(group)
+        else:
+            for recipe in group.values():
+                scan(recipe)
     return names
+
+
+def parse_at(step: dict) -> tuple[int, int, int, int]:
+    """The step's sub-rectangle in sixteenths (specs/trinket/chrome.md)."""
+    at = step.get("at", [0, 0, 16, 16])
+    if len(at) != 4:
+        raise SystemExit(f"`at` must be [x0, y0, x1, y1], got {at!r}")
+    x0, y0, x1, y1 = (int(v) for v in at)
+    return x0, y0, x1, y1
 
 
 def parse_step(step: dict, palette: dict, sprites: dict[str, int]) -> tuple:
     inset = int(step.get("inset", 0))
     if "fill" in step:
-        return ("FILL", 0, inset, 0, 1, resolve(step["fill"], palette), 0, 0)
-    if "bevel" in step:
-        return ("BEVEL", BEVEL[step["bevel"]], inset, 0, 1, 0, 0, 0)
-    if "outline" in step:
-        return ("OUTLINE", 0, inset, 0, 1, resolve(step["outline"], palette), 0, 0)
-    if "dither" in step:
+        op = ("FILL", 0, inset, 0, 1, resolve(step["fill"], palette), 0, 0)
+    elif "bevel" in step:
+        op = ("BEVEL", BEVEL[step["bevel"]], inset, 0, 1, 0, 0, 0)
+    elif "outline" in step:
+        op = ("OUTLINE", 0, inset, 0, 1, resolve(step["outline"], palette), 0, 0)
+    elif "dither" in step:
         fg, bg = step["dither"]
-        return ("DITHER", 0, inset, 0, 1, resolve(fg, palette), resolve(bg, palette), 0)
-    if "mark" in step:
+        op = ("DITHER", 0, inset, 0, 1, resolve(fg, palette), resolve(bg, palette), 0)
+    elif "mark" in step:
         num, den = step.get("size", [1, 4])
         light = step.get("light", step.get("color", "#ffffff"))
         dark = step.get("dark", step.get("color", "#000000"))
-        return ("MARK", MARK[step["mark"]], inset, num, den,
-                resolve(light, palette), resolve(dark, palette), 0)
-    if "sprite" in step:
+        op = ("MARK", MARK[step["mark"]], inset, num, den,
+              resolve(light, palette), resolve(dark, palette), 0)
+    elif "line" in step:
+        # One edge, not the whole bevel (specs/trinket/chrome.md).
+        if "color" not in step:
+            raise SystemExit(f"a line step needs a color: {step}")
+        op = ("LINE", LINE[step["line"]], inset, 0, 1,
+              resolve(step["color"], palette), 0, 0)
+    elif "sprite" in step:
         name = step["sprite"]
         if name not in sprites:
             raise SystemExit(f"no sprite {name!r} in [sprites]")
-        return ("SPRITE", 0, inset, 0, 1, 0, 0, sprites[name])
-    raise SystemExit(f"unknown step: {step}")
+        op = ("SPRITE", 0, inset, 0, 1, 0, 0, sprites[name])
+    else:
+        raise SystemExit(f"unknown step: {step}")
+    return (*op, *parse_at(step))
 
 
 def emit_recipe(name: str, recipe: dict, palette: dict, sprites: dict[str, int]) -> tuple[str, str]:
@@ -108,9 +135,11 @@ def emit_recipe(name: str, recipe: dict, palette: dict, sprites: dict[str, int])
         return "", "{nullptr, 0}"
     lines = [f"static const Step {name}[] = {{"]
     for step in steps:
-        op, kind, inset, num, den, color, color2, sprite = parse_step(step, palette, sprites)
+        (op, kind, inset, num, den, color, color2, sprite,
+         x0, y0, x1, y1) = parse_step(step, palette, sprites)
         lines.append(f"    {{Prim::{op}, {kind}, {inset}, {num}, {den}, "
-                     f"0x{color:06x}, 0x{color2:06x}, {sprite}}},")
+                     f"0x{color:06x}, 0x{color2:06x}, {sprite}, "
+                     f"{x0}, {y0}, {x1}, {y1}}},")
     lines.append("};")
     return "\n".join(lines), f"{{{name}, {len(steps)}}}"
 
@@ -283,6 +312,22 @@ def main() -> int:
         emit_array("kRecipeIcon",
                    [g["icon"][n] for n in ("none", "drawer", "hard_disk", "disk",
                                            "chip", "volume", "network")],
+                   palette, sprite_index),
+        "",
+        # The window chrome (specs/trinket/chrome.md): the title bar, the bottom
+        # bar, the frame, and the gadgets (kind * 2 + active).
+        emit_array("kRecipeTitlebar",
+                   [g["titlebar"][n] for n in ("inactive", "active")],
+                   palette, sprite_index),
+        "",
+        emit_single("kRecipeBottombar", g["bottombar"], palette, sprite_index),
+        "",
+        emit_single("kRecipeWindowFrame", g["frame"], palette, sprite_index),
+        "",
+        emit_array("kRecipeGadget",
+                   [g["gadget"][n] for n in ("close_inactive", "close_active",
+                                             "zoom_inactive", "zoom_active",
+                                             "depth_inactive", "depth_active")],
                    palette, sprite_index),
         "",
         "}  // namespace aegir::trinket",
