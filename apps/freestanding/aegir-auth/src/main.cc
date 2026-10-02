@@ -761,6 +761,18 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
                     aegir::bootstrap::kSlotFirstDeclared + count, kit.mem_main,
                     seL4_CapRights_new(1, 1, 0, 1), spec.badge, 0};
     ++count;
+    /* The bureau.menu *source* (specs/workbench.md): the launcher mints each of
+     * its commands a caller half from it, so a launched program can register
+     * the menus the screen bar shows while it is active -- the Workbench model,
+     * where until now only the demo, a boot service, could. Unbadged, because a
+     * badged cap cannot be minted again; a command's own badge is what the
+     * bureau reads. A boot whose director made no such port passes none. */
+    if (g_spawn_bureau_menu != 0) {
+        ports[count] = {"bureau.menu", 11,
+                        aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_bureau_menu,
+                        seL4_AllRights, 0, 0};
+        ++count;
+    }
     aegir::spawn::Request request{};
     request.name = spec.name;
     request.name_length = text_length(spec.name);

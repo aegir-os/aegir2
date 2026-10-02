@@ -116,8 +116,11 @@ window. It is the command `edit` in Sys:C, so a shell resolves it like `view`.
   argument, is an `Untitled` page.
 - **The File menu.** New, Open..., Save, Save As... and Quit, registered with
   the bureau's menu server as the demo's are (specs/workbench.md), so the screen
-  bar carries them while the editor is active. Open... and Save As... raise the
-  toolkit's file requester (specs/trinket/file_requester.md).
+  bar carries them while the editor is active. It is the first *launched*
+  program to have menus: the spawn kit now carries a caller half of
+  `bureau.menu` (specs/launch.md), which the launcher mints each command from,
+  where before only a boot service could register one. Open... and Save As...
+  raise the toolkit's file requester (specs/trinket/file_requester.md).
 - **The namespace is the file layer.** A file's bytes come and go through the
   session's `vfs.namespace` with the runtime's POSIX calls -- `::open`/`::read`
   to load, `::open(O_WRONLY|O_CREAT|O_TRUNC)`/`::write` to save

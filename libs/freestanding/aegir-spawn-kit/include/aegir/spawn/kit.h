@@ -46,6 +46,12 @@ struct Kit {
     /* Unbadged delegates. */
     seL4_CPtr log = 0;
     seL4_CPtr console_gui = 0;
+    /* The caller half of the bureau.menu port (specs/workbench.md), so a
+     * *launched* program can register the menus the screen bar shows while it
+     * is active -- the Workbench model, where the demo, a boot service, was
+     * until now the only client. Optional: a launcher with none hands its
+     * commands none, and they run without menus. */
+    seL4_CPtr bureau_menu = 0;
     seL4_CPtr mem_main = 0;
     seL4_CPtr asid_pool = 0;
     seL4_CPtr clock = 0; /* optional */

@@ -326,10 +326,10 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * clients' streams must not be confused. */
     seL4_CPtr const saved_stream = kit_.stream;
     kit_.stream = command.stream;
-    aegir::spawn::PortGrant ports[8];
+    aegir::spawn::PortGrant ports[9];
     uint32_t const port_count = command.output_view
-                                    ? aegir::spawn::output_ports(kit_, child, ports, 8)
-                                    : aegir::spawn::command_ports(kit_, child, ports, 8);
+                                    ? aegir::spawn::output_ports(kit_, child, ports, 9)
+                                    : aegir::spawn::command_ports(kit_, child, ports, 9);
     kit_.stream = saved_stream;
 
     aegir::spawn::Request request{};

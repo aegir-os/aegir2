@@ -147,10 +147,14 @@ Rights rights_for(PortGraph::Name name) noexcept
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
     if (name_is(name, "bureau.menu", 11)) {
-        /* The owner reads: it receives the port's calls (specs/workbench.md).
-         * The caller writes, and carries Grant because register transfers the
-         * doorbell capability -- the namespace's reason, above. */
-        return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
+        /* The owner receives the port's calls (specs/workbench.md); the caller
+         * writes and carries Grant, because register transfers the doorbell
+         * capability -- the namespace's reason, above. The owner half holds
+         * everything a caller's mint derives (the console's reason): a session's
+         * launcher is given this as a *source* and mints each of its commands a
+         * caller half, so a launched program can register the menus the screen
+         * bar shows, not only a boot service (specs/launch.md). */
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
     if (name_is(name, "font.main", 9)) {
         /* The caller hands over its transfer page on every glyph call

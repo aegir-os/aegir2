@@ -81,6 +81,15 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
                   aegir::console::kPortNameLength, kit.console_gui,
                   seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
+    /* The caller's bureau.menu (specs/workbench.md): a windowed program registers
+     * the menus the screen bar shows while it is the active window -- the
+     * Workbench model, where before only the demo, a boot service, could. Minted
+     * with the child's own badge, so the bureau learns who called; the source is
+     * the unbadged delegate (specs/launch.md). */
+    if (kit.bureau_menu != 0) {
+        (void)put(out, capacity, n++, "bureau.menu", 11, kit.bureau_menu,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
                   aegir::clock::kPortNameLength, kit.clock, seL4_CapRights_new(1, 0, 0, 1),

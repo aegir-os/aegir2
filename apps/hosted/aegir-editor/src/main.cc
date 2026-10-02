@@ -282,7 +282,10 @@ int main(int argc, char *argv[])
             if (write_file(path.c_str(), utf32_to_utf8(tab.edit->text()))) {
                 tab.path = path;
                 tabs_ptr->set_title(tabs_ptr->active(), tab_name(path));
-                write_path("  editor: saved ", path);
+                /* Save As... saves under a new name; Save overwrites the one a
+                 * tab already has, and the two cues read apart (a step answers
+                 * one cue, specs/trinket/editor.md). */
+                write_path("  editor: saved as ", path);
             } else {
                 write_path("  editor: cannot save ", path);
             }
@@ -297,24 +300,32 @@ int main(int argc, char *argv[])
         write_path("  editor: opened ", path);
     };
 
-    /* The bureau.menu registration (specs/workbench.md), as the demo's is: a
-     * menu tree crosses once the bureau's backdrop is up and the window has the
-     * focus, and the doorbell wakes the poll that fetches an action. */
+    /* The bureau.menu registration (specs/workbench.md): a menu tree crosses
+     * once the window has the focus, and the doorbell wakes the poll that
+     * fetches an action. A *session* client (this one) starts after the bureau,
+     * so its first focus is enough to know the port has an owner; the console's
+     * screen-owner nudge -- which a client started at boot waits for, because
+     * calling a port with no owner blocks -- may already have passed it by. */
     bool bureau_up = false;
+    bool focus_seen = false;
     bool registered = false;
     bool want_active = false;
     auto ensure_registered = [&]() {
-        if (registered || !bureau_up || !bureau.valid()) {
+        if (registered || !bureau.valid() || (!bureau_up && !focus_seen)) {
             return;
         }
         seL4_CPtr const doorbell = app.alloc_slot();
         if (doorbell != 0 && app.mint_event_notification(doorbell) &&
             aegir::bureau::menu::register_menus(bureau, editor_menus(), doorbell)) {
             registered = true;
+            write("  editor: menus up\n");
         }
     };
     auto report_focus = [&](bool is_active) {
         want_active = is_active;
+        if (is_active) {
+            focus_seen = true;
+        }
         ensure_registered();
         if (registered) {
             (void)aegir::bureau::menu::set_active(bureau, is_active);
@@ -383,10 +394,12 @@ int main(int argc, char *argv[])
         switch (action) {
         case 1: /* New */
             add_tab("", "");
+            write("  editor: new\n");
             break;
         case 2: /* Open... */
             saving = false;
             requester->show();
+            write("  editor: open requester\n");
             break;
         case 3: /* Save */
             save_active();
@@ -394,8 +407,10 @@ int main(int argc, char *argv[])
         case 4: /* Save As... */
             saving = true;
             requester->show();
+            write("  editor: save requester\n");
             break;
         case 5: /* Quit */
+            write("  editor: quit\n");
             app.quit(0);
             break;
         default:

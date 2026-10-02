@@ -84,9 +84,11 @@ exactly what the launcher should not do.
 
 - **A command** shares the launcher's (a shell's) console stream, and is handed
   its own `console.gui` among the rest -- the session namespace, the clock and
-  timer, and `mem.main`, its memory growing through the service under its own
-  badge (specs/memory.md). It opens a window whenever it wants the GUI. `Run`
-  is this kind, without waiting.
+  timer, `mem.main` (its memory growing through the service under its own badge,
+  specs/memory.md), and a caller half of `bureau.menu`, so it registers the menus
+  the screen bar shows while it is active: any Workbench program's menus, not
+  only a boot service's (specs/workbench.md). It opens a window whenever it
+  wants the GUI. `Run` is this kind, without waiting.
 - **A launching program** itself launches programs, so it also needs a spawn
   kit: an untyped, an ASID pool, and the unbadged ports it will hand its own
   children. A Terminal and a Workbench are this kind. A launching child is a

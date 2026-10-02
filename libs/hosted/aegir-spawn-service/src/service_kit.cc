@@ -204,6 +204,16 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
         spawn_console_gui = static_cast<seL4_CPtr>(spawn_gui_slot);
     }
 
+    /* The bureau.menu source (specs/workbench.md): the launcher mints each of
+     * its commands a caller half from it, so a launched program can register
+     * the menus the screen bar shows while it is active. Optional -- a launcher
+     * given none hands its commands none, and they run without menus. */
+    uint64_t bureau_menu_slot = 0;
+    seL4_CPtr bureau_menu_holder = 0;
+    if (aegir::bootstrap::capability("bureau.menu", 11, &bureau_menu_slot)) {
+        bureau_menu_holder = static_cast<seL4_CPtr>(bureau_menu_slot);
+    }
+
     /* The launch caller half (specs/launch.md): the launcher's own copy, the
      * `spawn:launch.session` auth granted it, so it can hand a nested terminal
      * the same caller half a shell gets; a terminal that owns no launcher reads
@@ -228,6 +238,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
      * builders read. */
     kit_.log = log_port_;
     kit_.console_gui = spawn_console_gui;
+    kit_.bureau_menu = bureau_menu_holder;
     kit_.mem_main = mem_port_;
     kit_.asid_pool = asid_pool_;
     kit_.clock = command_clock_port_;
