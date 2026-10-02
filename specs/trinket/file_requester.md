@@ -100,6 +100,10 @@ missing is the *body* and what it stands on:
 - **Volumes toggles.** A first press lists the browsable volumes; a second press
   leaves them and lists the drawer again. OK and Cancel still close.
 
+- **Each open starts unnamed.** `show()` clears the File box and the chosen
+  name, so a second open does not append to the first's name: the name belongs
+  to the open, not to the requester's last use of it.
+
 - **The body is a widget the requester is handed, not the requester's own.**
   A `FileRequester` builds the body -- the list and its scrollbar, the
   Pattern label and field, the Drawer toggle and path, the File label and

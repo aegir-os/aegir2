@@ -330,6 +330,12 @@ int main(int argc, char *argv[])
         if (registered) {
             (void)aegir::bureau::menu::set_active(bureau, is_active);
         }
+        /* The window's focus is the screen bar's: dropping the menu needs the
+         * bureau to know whose it is, and the requester (a window of its own,
+         * focused and then gone) leaves no window focused when it closes, so
+         * the editor has to be clicked back. These cues pace that -- the
+         * set_active has returned by the time one prints. */
+        write(is_active ? "  editor: active\n" : "  editor: away\n");
     };
     app.on_screen_owner = [&](bool up) {
         if (!up) {
@@ -398,6 +404,10 @@ int main(int argc, char *argv[])
             break;
         case 2: /* Open... */
             saving = false;
+            /* Open sorts the system volume, where the readable files are; Save
+             * As sorts the session's own Home:, which Sys: -- read-only -- is
+             * not, so a save has somewhere to go (specs/auth.md). */
+            requester->open_at(U"Sys:");
             requester->show();
             write("  editor: open requester\n");
             break;
@@ -406,10 +416,16 @@ int main(int argc, char *argv[])
             break;
         case 4: /* Save As... */
             saving = true;
+            requester->open_at(U"Home:");
             requester->show();
             write("  editor: save requester\n");
             break;
         case 5: /* Quit */
+            /* Tell the bureau the editor is no longer the active client before
+             * it goes: the registry would otherwise keep its tree, and the
+             * screen bar would never drop the bureau's own menus again -- the
+             * exit is not a window the console can report focus for. */
+            report_focus(false);
             write("  editor: quit\n");
             app.quit(0);
             break;

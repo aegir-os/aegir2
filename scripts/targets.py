@@ -765,24 +765,189 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pixels=(("gpu0", 438, 236, 102, 136, 187),),
                 press="<insert>",
             ),
-            # Insert mode again, the block back at the caret. Then the window's
-            # own close gadget (the titlebar's left), so the editor exits and the
-            # shell has its prompt back.
+            # Insert mode again, the block back at the caret. From here the File
+            # menu drives the rest: the click on the bar drops it.
             QmpStep(
                 r"editor: insert",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 438, 228, 102, 136, 187),),
+                # The editor is the active window, so the screen bar's first
+                # title -- "Ed" -- is its menu. The click is at the title's
+                # left, x 10, not the demo's x 30: "Ed" is two cells wide and
+                # its slot ends before 30 (desktop.cc title_slots), so the
+                # demo's coordinate would land past it and drop nothing.
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 11110}},
-                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
-            # The editor closed, so the shell is at its prompt: the viewer is
-            # launched where the later steps expect it.
-            QmpStep(r"editor: closed", events=TERMINAL_CLICK,
+            # The menu dropped. Its rows are 22 pixels at y 33, 55, 77, 99 and
+            # 121 from the bar: New, Open..., Save, Save As..., Quit. Save As...
+            # is the fourth, and raises the requester in save mode.
+            QmpStep(
+                r"bureau: client menu Ed",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The bar still, and the menu below it: its first row's face,
+                # and the five items' ink in the block the rows occupy.
+                pixels=(
+                    ("gpu0", 100, 5, 102, 136, 187),
+                    ("gpu0", 100, 33, 240, 240, 240),
+                ),
+                dark=(("gpu0", 0, 22, 120, 110, 20),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 4055}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The requester is up over the namespace, its drawer at Sys:, its
+            # Pattern box focused. Type a name into its File box and Return: the
+            # box's on_submit is the default OK, so the editor writes the buffer
+            # under the new name (specs/trinket/file_requester.md).
+            QmpStep(
+                r"editor: save requester",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The requester's titlebar, and its list of Home:'s entries.
+                pixels=(("gpu0", 700, 232, 102, 136, 187),),
+                dark=(("gpu0", 424, 261, 404, 160, 150),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 17278}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20155}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                press="EDITED.TXT\n",
+                press_delay=0.2,
+            ),
+            # Save As... wrote Home:EDITED.TXT and renamed the tab. The
+            # requester closed, and the console clears the focus with the window
+            # it had -- so the editor is clicked back first (its titlebar, clear
+            # of the requester), then the bar's title and Save: the active tab
+            # now has a name of its own, so this is the other write path.
+            QmpStep(
+                r"editor: saved as Home:EDITED\.TXT",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The editor's titlebar and the tab Save As... renamed to the
+                # file it wrote -- present whether the requester has closed yet.
+                pixels=(("gpu0", 700, 190, 102, 136, 187),),
+                dark=(("gpu0", 424, 202, 110, 18, 6),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
+                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 3154}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # Save wrote the tab's own name; New then makes a fresh Untitled tab.
+            QmpStep(
+                r"editor: saved Home:EDITED\.TXT",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # Save left the editor alone on the screen: its titlebar, the
+                # named tab, and the buffer's first line under it.
+                pixels=(("gpu0", 700, 190, 102, 136, 187),),
+                dark=(("gpu0", 424, 202, 110, 18, 6),
+                      ("gpu0", 432, 226, 220, 12, 20)),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
+                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 1352}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # New made a third tab; Open... reads a system file, the readable
+            # side, where Save As... proved the writable one.
+            QmpStep(
+                r"editor: new",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # New added a tab: two labels now cross the strip, where Save
+                # left one.
+                pixels=(("gpu0", 700, 190, 102, 136, 187),),
+                dark=(("gpu0", 424, 202, 150, 18, 8),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
+                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 2253}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The open-mode requester, its drawer at Sys:: the version file is a
+            # fixture the read can name (scripts/make_disk.py).
+            QmpStep(
+                r"editor: open requester",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The requester again, this time over Sys:'s entries.
+                pixels=(("gpu0", 700, 232, 102, 136, 187),),
+                dark=(("gpu0", 424, 261, 404, 160, 150),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 17278}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20155}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                press="VER.TXT\n",
+                press_delay=0.2,
+            ),
+            # The read crossed: the tab holds the file Open... named. Quit
+            # returns the shell its prompt.
+            QmpStep(
+                r"editor: opened Sys:VER\.TXT",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # Open added a third tab: three labels cross the strip.
+                pixels=(("gpu0", 700, 190, 102, 136, 187),),
+                dark=(("gpu0", 424, 202, 220, 18, 8),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
+                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 256}},
+                    {"type": "abs", "data": {"axis": "y", "value": 4955}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # Quit returns the shell its prompt: the viewer is launched where
+            # the later steps expect it.
+            QmpStep(r"editor: quit", events=TERMINAL_CLICK,
                     press="view Sys:AEGIR.TXT\n"),
             QmpStep(r"launcher: command started view"),
             # The viewer is up: its window is its own default (no launcher
@@ -1141,7 +1306,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # (kBackdropTakesFocus). Clicking the first item prints the demo's
             # cue: proof the tree crossed to the bureau and the action back.
             QmpStep(
-                r"bureau: client menu",
+                r"bureau: client menu Demo",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(

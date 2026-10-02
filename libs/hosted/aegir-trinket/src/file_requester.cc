@@ -505,7 +505,14 @@ void FileRequester::progress(Action action)
 
 void FileRequester::show()
 {
-    /* List again on every show, so a second open is fresh. */
+    /* List again on every show, so a second open is fresh -- and name nothing
+     * yet. A name left in the File box from the last open would be typed into
+     * rather than replaced, so the second pick grows the first one's name
+     * (Sys:EDITED.TXT plus VER.TXT, not Sys:VER.TXT). */
+    chosen_.clear();
+    if (file_box_ != nullptr) {
+        file_box_->set_text(std::u32string());
+    }
     if (drawer_.empty()) {
         list_volumes();
     } else {

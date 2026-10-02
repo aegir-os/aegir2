@@ -120,15 +120,26 @@ window. It is the command `edit` in Sys:C, so a shell resolves it like `view`.
   program to have menus: the spawn kit now carries a caller half of
   `bureau.menu` (specs/launch.md), which the launcher mints each command from,
   where before only a boot service could register one. Open... and Save As...
-  raise the toolkit's file requester (specs/trinket/file_requester.md).
+  raise the toolkit's file requester (specs/trinket/file_requester.md); Open...
+  sorts `Sys:`, where the readable files are, and Save As... sorts the session's
+  `Home:`, because `Sys:` is read-only and a save needs a volume that is not
+  (specs/auth.md).
 - **The namespace is the file layer.** A file's bytes come and go through the
   session's `vfs.namespace` with the runtime's POSIX calls -- `::open`/`::read`
   to load, `::open(O_WRONLY|O_CREAT|O_TRUNC)`/`::write` to save
   (specs/cxx.md step 5).
 - **The cues the runner reads.** `editor: ready`, `editor: opened <path>`,
-  `editor: saved <path>`, `editor: tab <n>`, and `editor: insert` /
+  `editor: saved <path>` (Save) and `editor: saved as <path>` (Save As...),
+  `editor: new`, `editor: quit`, `editor: menus up`, `editor: open requester` /
+  `editor: save requester`, `editor: tab <n>`, and `editor: insert` /
   `editor: overwrite` on the mode toggle -- so the acceptance paces a screendump
   on each and reads the cursor's shape, the text and the tab strip back.
+- **The window's focus is the screen bar's.** A requester takes the focus while
+  it is up and the console clears it as the requester's window goes, so the
+  editor is clicked back before the next menu; `editor: active` / `editor: away`
+  report the window's focus as it changes, the same set_active the bureau is
+  told (a cue a client's screen-bar menu needs, since the bar drops the active
+  client's tree).
 
 ## What this is not
 
@@ -157,3 +168,13 @@ window. It is the command `edit` in Sys:C, so a shell resolves it like `view`.
   glyphs the typing landed. The component itself lands on the two checks above;
   it is not wired into the widget test-bed, whose tab strip has no room left for
   another page.
+- **The File menu is walked, item by item, on the target.** The runner clicks
+  the screen bar's first title -- the editor's `Ed`, at the title's own left,
+  because "Ed" is two cells wide and the demo's x 30 lands past its slot -- and
+  reads the five items back from a screendump. It drives each: Save As... writes
+  `Home:EDITED.TXT` and renames the tab, Save writes the tab's own name, New
+  adds an `Untitled` tab, Open... reads the `Sys:VER.TXT` fixture into a third
+  tab, and Quit returns the shell. A bar click needs the editor to be the active
+  client, and the requester takes the focus and leaves none when its window goes
+  (the console clears focus with the window), so the editor is clicked back and
+  `editor: active` / `editor: away` pace the next menu.

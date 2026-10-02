@@ -29,6 +29,7 @@
 #include <aegir/trinket/requester.h>
 #include <aegir/trinket/textbox.h>
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/unicode.h>
 #include <aegir/trinket/window.h>
 #include <sel4/sel4.h>
 #include <memory>
@@ -260,9 +261,23 @@ int main(int argc, char *argv[])
         execute->close();
     };
 
-    desktop->on_menu_opened = [&](int) {
-        write(registry.active() != nullptr ? "  bureau: client menu\n"
-                                           : "  bureau: menu\n");
+    desktop->on_menu_opened = [&](int menu) {
+        Client* const active = registry.active();
+        if (active == nullptr) {
+            write("  bureau: menu\n");
+            return;
+        }
+        /* Name the client by the opened menu's title. Two clients' menus are
+         * then two cues -- "bureau: client menu Ed" and "... Demo" -- which is
+         * what the acceptance needs: the string alone is the same for every
+         * client, and a second step answering it would race the first. */
+        std::u32string const& title =
+            (menu >= 0 && menu < static_cast<int>(active->menus.size()))
+                ? active->menus[static_cast<size_t>(menu)].title
+                : std::u32string();
+        write("  bureau: client menu ");
+        write(aegir::trinket::utf32_to_utf8(title).c_str());
+        write("\n");
     };
     /* The screen layer (specs/workbench.md): an open menu is composited above
      * the windows, so a window over the desktop never hides it. */

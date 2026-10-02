@@ -288,6 +288,17 @@ def send_key(socket_path: Path, keys: str, delay: float = 0.05) -> bool:
         qcodes.append((qcode,))
         index += 1
     for qcode in qcodes:
+        # The pace is kept *before* every key, the first included. A step that
+        # clicks the field it then types into sends the click and the keys with
+        # no gap otherwise, and the click's focus and the first key arrive
+        # close enough that the key is routed before the field is focused: the
+        # first character is lost (file_requester.cc's note is the same race).
+        # The guest's input queue is eight descriptors deep
+        # (libs/aegir-virtio's kQueueSize) and QEMU drops what does not fit:
+        # sixteen keys sent back to back arrive as a press burst at QMP speed,
+        # and the tail is lost. A typist's pace is what a queue without flow
+        # control is given.
+        time.sleep(delay)
         qmp_command(
             socket_path,
             {
@@ -295,12 +306,6 @@ def send_key(socket_path: Path, keys: str, delay: float = 0.05) -> bool:
                 "arguments": {"keys": [{"type": "qcode", "data": q} for q in qcode]},
             },
         )
-        # The guest's input queue is eight descriptors deep
-        # (libs/aegir-virtio's kQueueSize) and QEMU drops what does not fit:
-        # sixteen keys sent back to back arrive as a press burst at QMP
-        # speed, and the tail is lost. A typist's pace is what a queue
-        # without flow control is given.
-        time.sleep(delay)
     return True
 
 
