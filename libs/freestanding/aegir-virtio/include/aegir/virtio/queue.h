@@ -131,6 +131,9 @@ public:
 
     volatile uint8_t *page() const noexcept { return page_; }
     uint64_t physical() const noexcept { return physical_; }
+    /** The size the device kept, set by set_up: a driver that posts one buffer
+     *  per descriptor posts this many, not the number it asked for. */
+    uint32_t size() const noexcept { return size_; }
 
     /** Set the queue up: tell the device where the pages are *physically*.
      *  Handles both layouts: the modern registers are written first, and a
@@ -168,9 +171,24 @@ private:
     /** The shared tail: fill the raw state and consume one used entry past
      *  `last_used_`, if there is one. */
     UsedResult harvest(Registers const &registers) noexcept;
+
+    /** The rings' offsets for the size the *device kept*, not the size that was
+     *  asked for: QueueNumMax caps the request, and the device lays the rings
+     *  out for what it kept (virtio 1.x, 2.6.1), so the driver must read them
+     *  there. A queue that indexed by the requested size while the device kept
+     *  a smaller one read the wrong used entry once the device wrapped. */
+    uint32_t avail_offset() const noexcept { return size_ * 16; }
+    uint32_t used_offset() const noexcept
+    {
+        uint32_t const end = size_ * 16 + 4 + 2 * size_ + 2;
+        return (end + kPageBytes - 1) & ~(kPageBytes - 1);
+    }
+
     volatile uint8_t *page_ = nullptr;
     uint64_t physical_ = 0;
     uint32_t index_ = 0;
+    /* The size the device kept, set by set_up before anything uses a ring. */
+    uint32_t size_ = 0;
     /* The driver-side cursors of the two rings. A ring's index only ever
      * advances, and the device only ever appends: which available slot the
      * next chain takes, and which used entry the driver has seen, are what a

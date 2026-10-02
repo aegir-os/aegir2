@@ -78,8 +78,11 @@ void Queue::set_up(Registers const &registers, uint32_t index, uint32_t num,
     registers.write(kLegacyQueuePfn, static_cast<uint32_t>(physical_ / kPageBytes));
 
     /* A queue with no size is a queue the device will not use, so the size is the smaller of
-     * what the caller asked for and what the device offers. */
+     * what the caller asked for and what the device offers -- and the rings are laid out for
+     * the size the device *kept*, which is why size_ is set here and every ring offset below
+     * is read through it. */
     uint32_t const size = local.num_max < num ? local.num_max : num;
+    size_ = size;
     registers.write(kQueueNum, size);
     local.num_back = registers.read(kQueueNum);
 
@@ -87,8 +90,8 @@ void Queue::set_up(Registers const &registers, uint32_t index, uint32_t num,
      * these registers -- they are past the end of its map -- and leaves the ready bit zero,
      * which is how the two are told apart without trusting the version register. */
     uint64_t const desc_at = physical_ + kDescOffset;
-    uint64_t const avail_at = physical_ + kAvailOffset;
-    uint64_t const used_at = physical_ + kUsedOffset;
+    uint64_t const avail_at = physical_ + avail_offset();
+    uint64_t const used_at = physical_ + used_offset();
     registers.write(kQueueDescLow, static_cast<uint32_t>(desc_at));
     registers.write(kQueueDescHigh, static_cast<uint32_t>(desc_at >> 32));
     registers.write(kQueueDriverLow, static_cast<uint32_t>(avail_at));
@@ -142,9 +145,9 @@ void Queue::publish(Registers const &registers, uint16_t head, ChainBuf const *b
      * before the descriptors it refers to. The in-tree legacy driver brackets
      * its own `avail->idx++` the same way
      * (projects/util_libs/libethdrivers/src/virtio_pci.c:286-289). */
-    volatile uint16_t *avail = half_at(page_, kAvailOffset);
+    volatile uint16_t *avail = half_at(page_, avail_offset());
     avail[0] = 0; /* flags */
-    avail[2 + next_avail_ % kQueueSize] = head;
+    avail[2 + next_avail_ % size_] = head;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     avail[1] = static_cast<uint16_t>(next_avail_ + 1); /* idx, last */
     __atomic_thread_fence(__ATOMIC_RELEASE);
@@ -164,7 +167,7 @@ UsedResult Queue::wait_used(Registers const &registers) noexcept
      * config change is the other kind -- just waits again. Without one, virtio
      * promises progress anyway, so polling is legal -- and the bound keeps "it
      * never answered" a report rather than a hang. */
-    volatile uint16_t *used = half_at(page_, kUsedOffset);
+    volatile uint16_t *used = half_at(page_, used_offset());
     if (used[1] == last_used_) {
         if (irq_notification_ != 0) {
             while (used[1] == last_used_) {
@@ -192,7 +195,7 @@ UsedResult Queue::harvest(Registers const &registers) noexcept
 
     /* On a timeout the raw state is the evidence, not a summary: the used
      * ring's own words, and the device's status register. */
-    volatile uint16_t *used = half_at(page_, kUsedOffset);
+    volatile uint16_t *used = half_at(page_, used_offset());
     result.used_flags = used[0];
     result.used_idx = used[1];
     result.device_status = registers.read(kStatus);
@@ -204,7 +207,7 @@ UsedResult Queue::harvest(Registers const &registers) noexcept
      * the first entry's words are the first request's forever, and a queue
      * that serves many reads the one it is owed. */
     volatile uint32_t *elem =
-        word_at(page_, kUsedOffset + 4 + (last_used_ % kQueueSize) * 8);
+        word_at(page_, used_offset() + 4 + (last_used_ % size_) * 8);
     result.head = elem[0];
     result.bytes = elem[1];
     ++last_used_;

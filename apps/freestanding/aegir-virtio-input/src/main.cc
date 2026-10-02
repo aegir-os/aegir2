@@ -202,7 +202,11 @@ int main(int argc, char *argv[])
      * the first keypress on. */
     uint64_t const buffers_physical = memory_physical + kBuffersOffset;
     volatile uint8_t *const buffers = memory + kBuffersOffset;
-    for (uint32_t i = 0; i < aegir::virtio::kQueueSize; ++i) {
+    /* One buffer per descriptor the device *kept*: its available ring has that
+     * many slots, and posting more wraps the slots and re-points the device at
+     * buffers it has already seen. A device whose QueueNumMax is below the
+     * request keeps fewer, and its rings are laid out for what it kept. */
+    for (uint32_t i = 0; i < eventq.size(); ++i) {
         aegir::virtio::ChainBuf const buffer[] = {
             {buffers_physical + i * kBufferStride, kBufferStride, true},
         };
