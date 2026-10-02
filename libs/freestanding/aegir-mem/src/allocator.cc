@@ -693,7 +693,8 @@ bool Allocator::adopt_untyped(seL4_CPtr cap, seL4_Word size_bits, uint64_t paddr
     return add_untyped(cap, size_bits, false, paddr);
 }
 
-void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept
+void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth,
+                            seL4_Word radix) noexcept
 {
     slots_first_ = first;
     slots_next_ = first;
@@ -701,9 +702,11 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) n
     slots_descend_ = false;
     slots_used_ = 0;
     cnode_depth_ = depth;
+    cnode_size_bits_ = static_cast<unsigned>(radix);
 }
 
-void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept
+void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth,
+                                 seL4_Word radix) noexcept
 {
     slots_first_ = first;
     slots_next_ = first + count;
@@ -711,6 +714,7 @@ void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word dep
     slots_descend_ = true;
     slots_used_ = 0;
     cnode_depth_ = depth;
+    cnode_size_bits_ = static_cast<unsigned>(radix);
 }
 
 seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,

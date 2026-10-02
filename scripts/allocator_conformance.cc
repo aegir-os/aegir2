@@ -465,7 +465,7 @@ int main()
             allocator.reset();
             host_sel4::release_all();
             g_chunks = 0;
-            allocator.adopt_slots(1, 7999, 12);
+            allocator.adopt_slots(1, 7999, 12, 12);
             live.clear();
         }
         if (host_sel4::refusals() != before || host_sel4::spent() != before_spent ||

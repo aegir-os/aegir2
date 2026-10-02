@@ -400,7 +400,8 @@ int main(int argc, char *argv[])
              * table takes a slot per half it leaves behind, so one slot is not a
              * service's working set -- the rest of the CSpace is. The size is the
              * one the spawner builds (kCNodeBits in libs/aegir-spawn/src/process.cc). */
-            g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+            g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0,
+                              aegir::bootstrap::cnode_bits());
             seL4_Error error = seL4_NoError;
             table = g_objects.alloc_object(seL4_RISCV_PageTableObject, seL4_PageTableBits, me, &error);
             if (table == 0) {

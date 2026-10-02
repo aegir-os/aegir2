@@ -190,9 +190,8 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     /* A service addresses its own slots at depth zero (the node itself), and
      * the allocator has to be told (adopt_slots explains); there is no cursor
      * because the pool is the slot source. */
-    g_command_mem.adopt_slots(0, 0, 0);
+    g_command_mem.adopt_slots(0, 0, 0, aegir::bootstrap::cnode_bits());
     g_command_mem.adopt_slot_pool(&slot_pool_, 0);
-    g_command_mem.set_cnode_size_bits(aegir::bootstrap::cnode_bits());
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
 
     /* The launcher kit (specs/launch.md): the unbadged console.gui a nested
@@ -339,7 +338,6 @@ bool ServiceKit::begin(uint32_t owner)
      * reset, so live commands' slots stay marked and are handed to nobody. */
     g_command_mem.reset();
     g_command_mem.adopt_slot_pool(&slot_pool_, owner);
-    g_command_mem.set_cnode_size_bits(aegir::bootstrap::cnode_bits());
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
     g_command_mem_call = 0;
     /* The staging mark is the window position before the *first* still-live

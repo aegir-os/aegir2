@@ -418,8 +418,7 @@ int main(int argc, char *argv[])
     g_slots.adopt(static_cast<seL4_CPtr>(first_free),
                   slot_count < kMaxSlots ? slot_count : kMaxSlots, g_slot_owners);
     g_pool.adopt_nodes(g_nodes, sizeof(g_nodes));
-    g_pool.adopt_slots(0, 0, 0);
-    g_pool.set_cnode_size_bits(aegir::bootstrap::kCNodeBits);
+    g_pool.adopt_slots(0, 0, 0, aegir::bootstrap::kCNodeBits);
     g_pool.adopt_slot_pool(&g_slots, kPoolOwner);
     if (!g_pool.adopt_untyped(static_cast<seL4_CPtr>(pool_slot), pool_bits, pool_physical)) {
         write("  memory: the pool would not be adopted\n");

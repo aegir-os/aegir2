@@ -191,15 +191,24 @@ public:
                          seL4_Word size_bits = seL4_PageBits) noexcept;
 
     /**
-     * Adopt a run of slots this process may put capabilities in, and the depth that
-     * addresses them. A service's CSpace is its own -- the slots the block did not
-     * name are nobody else's -- and its allocator has to be told where they are and
-     * how to reach them, the way director's is told by the kernel. `depth` is the
-     * whole word for the kernel's root CNode; a *service* addresses its own slots
-     * with depth zero, where the destination capability *is* the CNode
-     * (kernel/src/object/untyped.c, `decodeUntypedInvocation`).
+     * Adopt a run of slots this process may put capabilities in, the depth that
+     * addresses them, and the radix of the CNode they live in. A service's CSpace
+     * is its own -- the slots the block did not name are nobody else's -- and its
+     * allocator has to be told where they are and how to reach them, the way
+     * director's is told by the kernel.
+     *
+     * `depth` is where the CNode cap is reached: the whole word for the kernel's
+     * root CNode, and zero for a *service*, whose own-CNode cap is the node itself
+     * (kernel/src/object/untyped.c, `decodeUntypedInvocation`). `radix` is that
+     * CNode's size in bits, and it is a second, different depth: a slot delete or
+     * revoke addresses the slot *in* the CNode, at the CNode's radix, not at the
+     * depth the CNode cap was reached
+     * (libs/freestanding/aegir-bootstrap/include/aegir/bootstrap.h:64-72). A caller
+     * that gives the wrong radix deletes at the wrong depth and takes nothing, so
+     * the allocator is told once, here.
      */
-    void adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept;
+    void adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth,
+                     seL4_Word radix) noexcept;
 
     /**
      * Adopt a run of slots to be handed out from the *top* down. Two allocators
@@ -214,7 +223,8 @@ public:
      * every bit its CNode does not index, so the CPtr walk always ends in the
      * root (kernel/src/kernel/cspace.c:51, :126-192).
      */
-    void adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth) noexcept;
+    void adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth,
+                          seL4_Word radix) noexcept;
 
     /**
      * Draw this allocator's slots from a shared pool instead of its own
@@ -246,15 +256,6 @@ public:
         untyped_source_ = source;
         untyped_context_ = context;
     }
-
-    /**
-     * The radix of this process's own CNode, for the slot operations that
-     * address a *slot* rather than the node: `free_piece` deletes a capability
-     * at this depth, and a service -- whose retype depth is zero, the node
-     * itself -- must say so (specs/memory.md). Director is told this by
-     * `initialise`.
-     */
-    void set_cnode_size_bits(unsigned bits) noexcept { cnode_size_bits_ = bits; }
 
     /**
      * An ASID pool, for a process that will build address spaces of its own.

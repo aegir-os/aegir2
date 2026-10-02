@@ -202,6 +202,12 @@ thing that must hold. So it is the allocator's job, not the caller's:
   region carves the untyped, retypes the frames, and on release deletes them and
   gives the piece back -- whole, because the allocator revoked it. The service
   never sees an untyped capability, and the sequence above lives in one place.
+- **A caller names its CSpace once.** `adopt_slots` carries both the depth at
+  which the CNode cap is reached and the CNode's radix, because a slot delete or
+  revoke addresses the slot *in* the CNode, at the radix, not at the depth the
+  cap was reached. Twelve owners had set only the first, so their merges deleted
+  at the wrong depth and took nothing -- a piece came back spent. The allocator
+  now takes both from one call, and the separate `set_cnode_size_bits` is gone.
 
 This is `malloc`'s promise applied to a service: the caller names what it needs
 and the mechanism is somebody else's job. The runtime's `mmap`/`malloc` edge

@@ -869,7 +869,8 @@ void start_session(uint32_t user, bool bureau) noexcept
      * inside a nested CNode cannot be invoked, because the root's guard covers
      * every bit its CNode does not index, so the CPtr walk always ends in the
      * root (kernel/src/kernel/cspace.c:51, :126-192). */
-    g_session_mem.adopt_slots_down(g_slots_first, g_slots_end - g_slots_first, 0);
+    g_session_mem.adopt_slots_down(g_slots_first, g_slots_end - g_slots_first, 0,
+                                   aegir::bootstrap::cnode_bits());
     g_session_mem.set_untyped_source(session_untyped_source, &g_session_mem);
     aegir::mem::Arena session_arena(g_session_mem, g_scratch, session_account);
 
@@ -1545,7 +1546,8 @@ int main(int argc, char *argv[])
      * destination capability of a retype *is* the CNode
      * (kernel/src/object/untyped.c). The size is the one the spawner builds
      * (kCNodeBits in libs/aegir-spawn/src/process.cc). */
-    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0);
+    g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0,
+                          aegir::bootstrap::cnode_bits());
     g_slots_first = first_free;
     g_slots_end = 1u << aegir::bootstrap::cnode_bits();
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),

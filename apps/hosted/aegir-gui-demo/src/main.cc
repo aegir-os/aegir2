@@ -24,6 +24,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/file_requester.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/button.h>
 #include <aegir/trinket/cycle.h>
@@ -40,7 +41,9 @@
 #include <aegir/trinket/terminal_view.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/translation.h>
+#include <aegir/trinket/unicode.h>
 #include <aegir/trinket/window.h>
+#include <aegir/vfs.h>
 #include <sel4/sel4.h>
 #include <cstdio>
 #include <memory>
@@ -73,6 +76,9 @@ std::vector<aegir::trinket::MenuBar::Menu> demo_menus()
     demo.items = {
         {1, U"About Demo", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
         {2, U"Reset", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
+        /* The file requester (specs/trinket/file_requester.md): the toolkit's
+         * first VFS client, opened on a drawer of the system volume. */
+        {3, U"Open...", aegir::trinket::KeyCode::UNKNOWN, 0, MenuItem::NONE, {}},
     };
     return {std::move(demo)};
 }
@@ -509,6 +515,22 @@ int main(int argc, char *argv[])
         if (!up) popup_is_object = false;
     };
 
+    /* The file requester (specs/trinket/file_requester.md): built before exec so
+     * its window is reserved -- the console sizes one slice at exec -- and shown
+     * by the Demo menu's Open... item. The VFS is this program's own, through
+     * the manifest's vfs.namespace grant; the drawer it opens on is the system
+     * volume, whose entries the runner reads back. */
+    aegir::vfs::Namespace vfs = aegir::vfs::Namespace::find();
+    auto file_requester = std::make_unique<FileRequester>(app, vfs, U"Open File");
+    file_requester->open_at(U"Sys:");
+    file_requester->on_action = [&file_requester](FileRequester::Action action) {
+        if (action == FileRequester::OK) {
+            write("  demo: opened ");
+            write(utf32_to_utf8(file_requester->chosen()).c_str());
+            write("\n");
+        }
+    };
+
     /* The bureau rings the doorbell for an action; fetch it and print the cue
      * the runner reads. Nothing to fetch until the tree is registered. */
     app.on_poll = [&]() {
@@ -587,6 +609,11 @@ int main(int argc, char *argv[])
             write("  demo: about\n");
         } else if (action == 2) {
             write("  demo: reset\n");
+        } else if (action == 3) {
+            /* Open...: the file requester, on the drawer it was built with. The
+             * cue paces a dump on it (specs/trinket/file_requester.md). */
+            write("  demo: requester up\n");
+            file_requester->show();
         }
     };
 

@@ -353,7 +353,8 @@ int main(int argc, char *argv[])
      * command's capabilities can be revoked and its slots returned whole
      * (specs/memory.md Phase 5). */
     uint64_t const total_slots = 1ull << aegir::bootstrap::cnode_bits();
-    g_objects.adopt_slots(first_free, total_slots - first_free, 0);
+    g_objects.adopt_slots(first_free, total_slots - first_free, 0,
+                          aegir::bootstrap::cnode_bits());
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
