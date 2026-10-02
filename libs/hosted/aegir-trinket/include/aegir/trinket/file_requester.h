@@ -78,12 +78,22 @@ private:
     /** One listed entry: the name and what the volume's `list` answered. */
     struct Entry {
         std::u32string name;
-        /* The Assign column while the list is the volumes: the path a binding
-         * stands for. Empty for a volume row. */
+        /* The second column while the list is the volumes: the literal word
+         * "Assign" for a binding, empty for a volume (which shows its backing
+         * device's name in `device` instead). */
         std::u32string detail;
+        /* A volume's backing block device name, from the namespace Row. Empty
+         * for a binding or a volume not on a block device. */
+        std::u32string device;
         uint64_t size = 0;
         uint64_t kind = 0;
         uint64_t mtime = 0;
+        /* A volume's capacity in bytes, from `space`; zero when unknown. */
+        uint64_t total = 0;
+        uint64_t free = 0;
+        /* A binding row, not a volume: its second column is `detail`, and the
+         * capacity columns are blank. */
+        bool assign = false;
         bool directory() const { return kind == aegir::volume::kKindDir; }
     };
 

@@ -1163,14 +1163,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             # The volumes list: the namespace's volumes less NIL: and PIPE:,
-            # which carry kFlagNoDir -- seven rows. The cue names the count, so
-            # their absence is checked rather than merely unread; the rows under
-            # the titles hold ink.
+            # which carry kFlagNoDir -- seven rows, each with its backing device
+            # and capacity beside the label. The cue names the count, so their
+            # absence is checked rather than merely unread; the rows hold ink,
+            # and the capacity columns (x 640 up, where no label reaches) ink
+            # only when `space` answered.
             QmpStep(
                 r"demo: volumes ",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                dark=(("gpu0", 424, 276, 400, 140, 40),),
+                dark=(("gpu0", 424, 276, 400, 140, 40),
+                      ("gpu0", 640, 276, 190, 64, 30)),
                 # Type a name into the File box and press Return: the default OK
                 # takes it, and the demo reports the name it chose.
                 events=(

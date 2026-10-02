@@ -50,12 +50,15 @@ missing is the *body* and what it stands on:
   drawer.
 
 - **Volumes shows the block volumes, then the assigns.** The list opens with
-  the browsable volumes (a Label per volume; the driver's device name and the
-  capacity columns are the follow-up), then the namespace's bindings as the
-  Amiga's Assign rows: the assign's label (`C:`, `Home:`, ...) under `Label`,
-  and the literal word `Assign` under the second column -- not the path it
-  stands for, which a binding can hold several of. The columns swap for the
-  visit and swap back when the file list returns.
+  the browsable volumes: the label, the backing block device's name (the
+  namespace `Row`'s `device`, the block protocol's identify name), and the
+  capacity the volume's `space` answers -- `%full`, and `Free` and `In use` as
+  whole KiB, comma-grouped. A volume that will not resolve or refuses `space`
+  keeps its capacity cells blank. Then the namespace's bindings as the Amiga's
+  Assign rows: the assign's label (`C:`, `Home:`, ...) under `Label`, the
+  literal word `Assign` under the second column -- not the path it stands for,
+  which a binding can hold several of -- and the capacity columns blank. The
+  columns swap for the visit and swap back when the file list returns.
 
 - **Volumes enumerates; `kFlagNoDir` is the hide.** The button asks the VFS's
   namespace for `volume_count` and `describe` -- the `Row` is name, flags,

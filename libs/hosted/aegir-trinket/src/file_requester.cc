@@ -31,6 +31,23 @@ namespace {
 /* The body's own shape: a wide list over the three control rows. */
 constexpr int kBodyWidth = 440;
 constexpr int kListRows = 10;
+
+/* A capacity cell: whole KiB, comma-grouped as `List` writes a size, because a
+ * volume's byte count is too many digits to read at a glance. */
+std::u32string kib(uint64_t bytes)
+{
+    return utf8_to_utf32(file_path::format_size(bytes / 1024));
+}
+
+/* How full a volume is, in whole percent: "78%". Empty when the capacity is
+ * unknown (a volume that refused `space`). */
+std::u32string percent(uint64_t used, uint64_t total)
+{
+    if (total == 0) {
+        return std::u32string();
+    }
+    return utf8_to_utf32(std::to_string(used * 100 / total) + "%");
+}
 }  // namespace
 
 FileRequester::FileRequester(Application& app, aegir::vfs::Namespace& vfs,
@@ -290,15 +307,18 @@ void FileRequester::list_volumes()
     entries_.clear();
     showing_volumes_ = true;
     /* The volume list's own columns: the Amiga's Volumes shows a Label with the
-     * device beside it (the device name and the capacity columns are the
-     * follow-up), and the assigns under Label | Assign
-     * (specs/trinket/file_requester.md). */
+     * backing device beside it, then how full the volume is and its free and
+     * used room; an assign's second cell is the literal word "Assign" and the
+     * capacity columns are blank (specs/trinket/file_requester.md). */
     if (list_ != nullptr) {
         list_->set_columns({
             {U"Label", 0, ListView::Alignment::LEFT},
-            {U"Assign", 0, ListView::Alignment::LEFT},
+            {U"Device", 64, ListView::Alignment::LEFT},
+            {U"%full", 48, ListView::Alignment::RIGHT},
+            {U"Free", 72, ListView::Alignment::RIGHT},
+            {U"In use", 72, ListView::Alignment::RIGHT},
         });
-        /* No titles row: the Amiga's Volumes has no Label | Assign header. */
+        /* No titles row: the Amiga's Volumes has no header band. */
         list_->set_show_titles(false);
     }
     uint64_t count = 0;
@@ -315,7 +335,25 @@ void FileRequester::list_volumes()
             }
             Entry e;
             e.name = utf8_to_utf32(std::string_view(row.name));
+            e.device = utf8_to_utf32(std::string_view(row.device));
             e.kind = aegir::volume::kKindDir;
+            /* The capacity: resolve the volume and ask it. A volume that will
+             * not resolve for us (a private one) or refuses `space` keeps its
+             * capacity columns blank, as the icon shows nothing rather than a
+             * guess (specs/trinket/file_requester.md). */
+            std::string const path = std::string(row.name) + ":";
+            aegir::vfs::Namespace::Resolved resolved{};
+            if (vfs_.resolve(path.c_str(), static_cast<uint32_t>(path.size()),
+                             resolve_slot_, resolved)) {
+                aegir::vfs::Volume volume(resolved.volume);
+                aegir::vfs::Volume::Space space{};
+                if (volume.space(space)) {
+                    e.total = space.total;
+                    e.free = space.free;
+                }
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, resolve_slot_,
+                                  aegir::bootstrap::cnode_bits());
+            }
             entries_.push_back(std::move(e));
         }
     }
@@ -333,6 +371,7 @@ void FileRequester::list_volumes()
             Entry e;
             e.name = utf8_to_utf32(std::string_view(binding.name));
             e.detail = U"Assign";
+            e.assign = true;
             e.kind = aegir::volume::kKindDir;
             entries_.push_back(std::move(e));
         }
@@ -368,9 +407,15 @@ void FileRequester::apply_filter()
         std::vector<std::u32string> cells;
         cells.push_back(e.name);
         if (showing_volumes_) {
-            /* Label | Assign: the volume or binding's name, and the path a
-             * binding stands for (empty for a volume). */
-            cells.push_back(e.detail);
+            /* Label | Device | %full | Free | In use: a binding shows the
+             * literal word "Assign" and leaves the capacity columns blank; a
+             * volume shows the device it sits on and what `space` answered
+             * (specs/trinket/file_requester.md). */
+            uint64_t const used = e.total > e.free ? e.total - e.free : 0;
+            cells.push_back(e.assign ? e.detail : e.device);
+            cells.push_back(e.total > 0 ? percent(used, e.total) : std::u32string());
+            cells.push_back(e.total > 0 ? kib(e.free) : std::u32string());
+            cells.push_back(e.total > 0 ? kib(used) : std::u32string());
         } else {
             cells.push_back(e.directory() ? std::u32string()
                                           : utf8_to_utf32(file_path::format_size(e.size)));
