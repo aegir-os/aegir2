@@ -58,6 +58,8 @@ void Theme::draw_icon(Canvas&, const Rect&, Icon) {}
 
 void Theme::draw_tab(Canvas&, const Rect&, std::u32string_view, bool, bool) {}
 
+void Theme::draw_cursor(Canvas&, const Rect&, CursorShape) {}
+
 void Theme::draw_focus_ring(Canvas&, const Rect&) {}
 
 void Theme::draw_tooltip(Canvas&, const Rect&, const char*) {}

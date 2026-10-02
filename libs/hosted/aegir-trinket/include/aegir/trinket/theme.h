@@ -34,6 +34,10 @@ enum class ColorRole {
     INPUT_BG, INPUT_TEXT, INPUT_PLACEHOLDER, INPUT_BORDER, INPUT_FOCUS_BORDER,
     // Selection
     SELECTION_BG, SELECTION_TEXT,
+    // The editor's caret (specs/trinket/editor.md): the blue a block insert
+    // mode fills and an underline overwrite mode draws its line in, and the
+    // colour a glyph under a block is drawn in.
+    CURSOR_BG, CURSOR_TEXT,
     // Accent
     ACCENT, ACCENT_HOVER, ACCENT_PRESSED,
     // Borders
@@ -185,6 +189,13 @@ public:
     // the face as a button's does.
     virtual void draw_tab(Canvas& canvas, const Rect& rect,
                           std::u32string_view title, bool active, bool hovered);
+    // The editor's caret (specs/trinket/editor.md): the cell rectangle is the
+    // widget's, the shape is the mode's. BLOCK fills the cell and UNDERLINE
+    // draws a line along its foot, both in CURSOR_BG; the widget draws the glyph
+    // under a block in CURSOR_TEXT. Insert mode is the block, overwrite the
+    // underline.
+    enum class CursorShape { BLOCK, UNDERLINE };
+    virtual void draw_cursor(Canvas& canvas, const Rect& cell, CursorShape shape);
     virtual void draw_focus_ring(Canvas& canvas, const Rect& rect);
     virtual void draw_tooltip(Canvas& canvas, const Rect& rect,
                                const char* text);

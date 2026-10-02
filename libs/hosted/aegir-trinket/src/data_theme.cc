@@ -319,6 +319,20 @@ public:
                          title, font, color(ColorRole::TEXT));
     }
 
+    /* The editor's caret (specs/trinket/editor.md): insert mode is a block
+     * filled in the Workbench blue, overwrite an underline along the cell's
+     * foot. The widget computes the cell and draws any glyph over the block. */
+    void draw_cursor(Canvas& canvas, const Rect& cell, CursorShape shape) override {
+        Color const ink = color(ColorRole::CURSOR_BG);
+        if (shape == CursorShape::BLOCK) {
+            canvas.fill_rect(cell, ink);
+            return;
+        }
+        int const thickness = cell.height >= 8 ? 2 : 1;
+        canvas.fill_rect({cell.x, cell.y + cell.height - thickness, cell.width,
+                          thickness}, ink);
+    }
+
     /* Focus is the gadget's own active state (specs/trinket/theme-xen.md): the
      * button and the field draw it, so there is no separate ring. */
     void draw_focus_ring(Canvas&, const Rect&) override {}

@@ -191,6 +191,13 @@ int main(int argc, char** argv) {
         ix += 20;
     }
 
+    /* The editor's carets (specs/trinket/editor.md): insert mode's block and
+     * overwrite's underline, both the cursor's blue -- on a light face so the
+     * fill reads against it. */
+    canvas.fill_rect({150, 414, 44, 20}, Color(0x00BFBFBF));
+    theme->draw_cursor(canvas, {152, 416, 12, 16}, Theme::CursorShape::BLOCK);
+    theme->draw_cursor(canvas, {174, 416, 12, 16}, Theme::CursorShape::UNDERLINE);
+
     std::FILE* out = std::fopen(path, "wb");
     if (out == nullptr) {
         std::fprintf(stderr, "cannot write %s\n", path);
