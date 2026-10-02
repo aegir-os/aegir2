@@ -77,8 +77,10 @@ files = [
 # The Common Locale Data Repository (CLDR), fetched as individually pinned
 # files under the cldr-json tree, the same shape as the UCD above. CLDR 46.0.0
 # is the release built on UCD 16.0.0. Nine languages carry number, currency,
-# date, list and layout data (scripts/gen_locale_data.py compiles them into the
-# toolkit's .locale blobs); plurals.json and numberingSystems.json are shared.
+# date, list, layout and digital-unit data (scripts/gen_locale_data.py compiles
+# them into the toolkit's .locale blobs); plurals.json and numberingSystems.json
+# are shared. CLDR's digital units are decimal (byte/kB/MB/GB/TB); it publishes
+# no binary kibibyte/mebibyte, so a size shows the decimal ones.
 # CLDR publishes no release signature for these files, so the sha256 is the
 # pin. CLDR data is redistributed under the Unicode License v3.
 #
@@ -138,6 +140,15 @@ files = [
   { name = "cldr-dates-full/main/ru/ca-gregorian.json", sha256 = "c2735c56482c92ca7a6bcb2c08e66421e405d02abe0074ca52a3b5ccd10fc916" },
   { name = "cldr-misc-full/main/ru/listPatterns.json", sha256 = "defb1a77756d628416c94309b7b9e02bedca012a75cb4283d02881bb0c4fff35" },
   { name = "cldr-misc-full/main/ru/layout.json", sha256 = "868c9d08bb855a7a979df8f46e2cf54b85731bb82314dadd4ecaf7a948ed02c6" },
+  { name = "cldr-units-full/main/en/units.json", sha256 = "334e097aaf5ed98fdef711fc1ab676b1cc1a131936c124ad0e699171def39c89" },
+  { name = "cldr-units-full/main/de/units.json", sha256 = "d8dfa37be233f8514cc3fd0e8d659d2c097418bd0888ced917115898151ccbac" },
+  { name = "cldr-units-full/main/fr/units.json", sha256 = "f68909529c9b7d4d2ecae2bae799a9bbebba6c12a0d1709864fa7fb809e888f9" },
+  { name = "cldr-units-full/main/es/units.json", sha256 = "06fc47becf975424a61e7fb8f6b05e73a18b1c424fc0ae1e7ce9896277cf26e0" },
+  { name = "cldr-units-full/main/ja/units.json", sha256 = "8fc127a0675bba3e7d4f9a24b2c762c5ee8f98c673537abbbde10cd17a57c8e7" },
+  { name = "cldr-units-full/main/zh/units.json", sha256 = "236248bce4191229bd3c0ccd0c5986be6baa01f36f87bdf86b968a2b58f1a481" },
+  { name = "cldr-units-full/main/ar/units.json", sha256 = "aa4cf055c4322eeac9a06d5de38e755ea14920940cefaa8321d36ba73141213d" },
+  { name = "cldr-units-full/main/he/units.json", sha256 = "16d0ef94de9a11552a3d4717f366c47a4e1745d98a463ee7b14dd017baddc934" },
+  { name = "cldr-units-full/main/ru/units.json", sha256 = "9a00e67011ded59771d657925a509ed36da1ba00209eb9a6df8bc1161001fabd" },
   { name = "cldr-core/supplemental/plurals.json", sha256 = "ce19668400e9f7904e8b3939d1f0a2872fe8da7bdea9f45f5d50b3a2bac3b382" },
   { name = "cldr-core/supplemental/numberingSystems.json", sha256 = "213dab3fa71e00b52bd5ad091cf79f12602968d1482f1a15889a29984ea5c4ac" },
 ]

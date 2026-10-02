@@ -27,6 +27,9 @@ import pins
 CLDR = pins.ROOT / "projects" / "cldr" / "46.0.0"
 MANIFEST = pins.ROOT / "manifests" / "locales.toml"
 TRINKET = pins.ROOT / "libs" / "hosted" / "aegir-trinket"
+# locale.cc shares the size-scaling header (aegir/size.h) with aegir-filesystem,
+# so the conformance build needs that library's include directory.
+FILESYSTEM = pins.ROOT / "libs" / "hosted" / "aegir-filesystem"
 DRIVER = pins.ROOT / "scripts" / "locale_conformance.cc"
 
 
@@ -55,6 +58,8 @@ def main() -> int:
             str(TRINKET / "include"),
             "-I",
             str(TRINKET / "src"),
+            "-I",
+            str(FILESYSTEM / "include"),
             str(DRIVER),
             str(tables),
             str(TRINKET / "src" / "locale.cc"),

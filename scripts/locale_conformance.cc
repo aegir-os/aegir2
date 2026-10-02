@@ -58,15 +58,21 @@ int main(int argc, char **argv)
     expect_string(en.format_currency(5.0, "XTS"), "XTS5.00", "unknown currency falls back to the code");
     expect_string(en.format_scientific(12345.0), "1.2345E4", "en scientific");
     expect_string(en.format_scientific(0.0), "0E0", "en scientific zero");
+    expect_string(en.format_size(0), "0 byte", "en size, below a unit");
+    expect_string(en.format_size(8900), "8.9 kB", "en size, decimal kilo");
+    expect_string(en.format_size(1500000), "1.5 MB", "en size, one decimal and its unit");
     expect(en.direction() == BidiDirection::LTR, "en is left-to-right");
 
     Locale const de("de");
     expect_string(de.format_number(1234567.891), "1.234.567,891", "de separators are swapped");
     expect_string(de.format_currency(1234.5, "EUR"), "1.234,50\u00a0\u20ac", "de currency, suffix");
+    expect_string(de.format_size(8900), "8,9 kB", "de size, its own decimal mark");
+    expect_string(de.format_size(3000000000ull), "3\u00a0GB", "de size, its own unit spacing");
 
     Locale const fr("fr");
     expect_string(fr.format_number(1234567.891), "1\u202f234\u202f567,891", "fr narrow no-break group");
     expect_string(fr.format_currency(1234.5, "USD"), "1\u202f234,50\u00a0$US", "fr currency and its own dollar symbol");
+    expect_string(fr.format_size(8900), "8,9\u202fko", "fr size, its own unit word");
 
     Locale const ru("ru");
     expect_string(ru.format_number(1234567.891), "1\u00a0234\u00a0567,891", "ru no-break group and comma decimal");
@@ -80,6 +86,7 @@ int main(int argc, char **argv)
 
     Locale const ja("ja");
     expect_string(ja.format_currency(500.0, "JPY"), "\uffe5500.00", "ja yen symbol from its own data");
+    expect_string(ja.format_size(8900), "8.9 KB", "ja size, its own unit letters");
 
     Locale const zh("zh");
 

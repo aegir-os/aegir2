@@ -99,6 +99,26 @@ def list_properties(cluster: Path, loc: str) -> dict[str, str]:
     }
 
 
+# The digital units a human-readable size scales through, in order: bytes, then
+# kB, MB, GB, TB. CLDR's digital units are decimal (1000-based) and there is no
+# binary kibibyte/mebibyte in it, so a size is decimal like `df -H`. Each
+# property is the short unit pattern the number lands in ("{0} kB"); a locale
+# that omits one leaves the reader's default (`Locale::format_size`).
+SIZE_UNITS = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte"]
+
+
+def unit_properties(cluster: Path, loc: str) -> dict[str, str]:
+    short = load(cluster / "cldr-units-full" / "main" / loc / "units.json")["main"][loc][
+        "units"
+    ]["short"]
+    properties: dict[str, str] = {}
+    for unit in SIZE_UNITS:
+        pattern = short.get(f"digital-{unit}", {}).get("unitPattern-count-other")
+        if pattern:
+            properties[f"size.unit.{unit}"] = pattern
+    return properties
+
+
 MONTH_KEYS = [str(i) for i in range(1, 13)]
 DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
 
@@ -174,6 +194,7 @@ def locale_properties(cluster: Path, loc: str) -> dict[str, str]:
     properties.update(list_properties(cluster, loc))
     properties.update(date_properties(cluster, loc))
     properties.update(plural_properties(cluster, loc))
+    properties.update(unit_properties(cluster, loc))
     return properties
 
 

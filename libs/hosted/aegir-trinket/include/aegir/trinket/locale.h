@@ -53,6 +53,12 @@ public:
     std::string format_percent(double value) const;
     std::string format_scientific(double value) const;
 
+    // A byte count in its largest decimal digital unit, to one decimal, in the
+    // locale's own unit words and number form -- "8.9 MB", "1,4 GB" in de. The
+    // units are CLDR's decimal ones (no binary KiB: CLDR has none), so the
+    // scale is 1000. A locale with no unit data falls back to a plain table.
+    std::string format_size(uint64_t bytes) const;
+
     // Date/time formatting
     enum class DateFormat { SHORT, MEDIUM, LONG, FULL };
     enum class TimeFormat { SHORT, MEDIUM, LONG, FULL };

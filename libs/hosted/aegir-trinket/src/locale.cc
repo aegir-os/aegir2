@@ -24,6 +24,8 @@
 
 #include <aegir/trinket/locale.h>
 
+#include <aegir/size.h>
+
 #include "locale_data.h"
 
 #include <algorithm>
@@ -1068,6 +1070,42 @@ std::string Locale::format_scientific(double value) const
                            : std::string(symbols.infinity);
     }
     return scientific_text(value, pattern, symbols);
+}
+
+std::string Locale::format_size(uint64_t bytes) const
+{
+    /* The unit the value falls in is arithmetic (aegir/size.h); its *name* and
+     * where it sits relative to the number are CLDR's short unit patterns,
+     * compiled into the blob as size.unit.* (scripts/gen_locale_data.py). */
+    static constexpr char const *kKeys[5] = {
+        "size.unit.byte", "size.unit.kilobyte", "size.unit.megabyte",
+        "size.unit.gigabyte", "size.unit.terabyte"};
+    static constexpr char const *kDefaults[5] = {"{0} bytes", "{0} kB", "{0} MB",
+                                                 "{0} GB", "{0} TB"};
+    aegir::filesystem::ScaledSize const size = aegir::filesystem::scale_size(bytes);
+    NumberSymbols const symbols = impl_ ? impl_->symbols() : NumberSymbols{};
+    NumberPattern const pattern = parse_pattern("#,##0.#");
+    std::string const number = format_fixed(
+        static_cast<double>(size.whole) + static_cast<double>(size.tenths) / 10.0, pattern,
+        symbols, {}, false);
+    std::string_view const unit =
+        impl_ ? impl_->pattern(kKeys[size.unit], kDefaults[size.unit])
+              : std::string_view(kDefaults[size.unit]);
+    /* Place the number where the pattern's {0} is; some locales write the unit
+     * before it or join with a no-break space, so the whole pattern is kept. */
+    std::string out;
+    std::size_t at = 0;
+    for (;;) {
+        std::size_t const brace = unit.find("{0}", at);
+        if (brace == std::string_view::npos) {
+            out.append(unit.substr(at));
+            break;
+        }
+        out.append(unit.substr(at, brace - at));
+        out.append(number);
+        at = brace + 3;
+    }
+    return out;
 }
 
 std::string Locale::format_date(int64_t timestamp, DateFormat fmt) const

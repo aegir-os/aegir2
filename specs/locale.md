@@ -116,7 +116,9 @@ for the numbering system's digits), the per-code currency symbols
 `list.end`, `list.two`), and the gregorian calendar -- the date, time and
 combining patterns (`date.pattern.*`, `time.pattern.*`, `datetime.pattern.*`),
 the joined names (`months.*`, `days.*`, `periods.*`, `eras.*`), each a U+001F
-list, and the plural rules (`plural.<category>`, the category's condition).
+list, the plural rules (`plural.<category>`, the category's condition), and the
+digital size units (`size.unit.<byte|kilobyte|...>`, each the short unit pattern
+-- `{0} kB` -- that a human-readable size is written in).
 
 `Locale(name)` embeds one blob per shipped locale and resolves a name by its
 language (so `en_GB` uses the `en` blob); a name that matches no shipped locale
@@ -131,8 +133,9 @@ way as the UCD, through the file-source half of `manifests/sources.toml`:
 CLDR **46.0.0** (the release built on UCD 16.0.0) under
 `projects/cldr/46.0.0/`, nine languages -- `en`, `de`, `fr`, `es`, `ja`, `zh`,
 `ar`, `he`, `ru` -- with their numbers, currencies, gregorian dates, list
-patterns and layout files, plus the shared `plurals.json` and
-`numberingSystems.json`. `manifests/locales.toml` names the shipped locales and
+patterns, layout and digital-unit files, plus the shared `plurals.json` and
+`numberingSystems.json`. CLDR's digital units are decimal (`byte`, `kB`, `MB`,
+...); it publishes no binary kibibyte, so a size is decimal, like `df -H`. `manifests/locales.toml` names the shipped locales and
 the default; adding one is a name there and its files in the pin, and the
 generated catalog grows with the list. `scripts/gen_locale_data.py` (an
 `add_custom_command`) compiles them into `locale_data.cc` and a `.locale` file
@@ -145,8 +148,9 @@ generated blobs with the host compiler and runs `scripts/locale_conformance.cc`,
 which asserts the exact string CLDR's data produces for the shipped locales --
 separators, groupings, currency position and symbols, the negative subpattern,
 scientific form, list joins, date and time patterns with their names, quoting
-and day periods, the plural category for numbers across the rule families,
-direction, fallback and `Locale::load`. It is
+and day periods, the plural category for numbers across the rule families, the
+human-readable size in each locale's own unit words (`format_size`, e.g. fr's
+`8,9\u202fko`), direction, fallback and `Locale::load`. It is
 whole-run and exact. The target side is the same bytes: the build compiles and
 links them, and `apps/hosted/aegir-gui-demo` parses the embedded German blob at
 startup and prints `demo: locale de says 1.234,50 € on 01.01.70`, which the
