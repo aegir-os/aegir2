@@ -78,6 +78,9 @@ private:
     /** One listed entry: the name and what the volume's `list` answered. */
     struct Entry {
         std::u32string name;
+        /* The Assign column while the list is the volumes: the path a binding
+         * stands for. Empty for a volume row. */
+        std::u32string detail;
         uint64_t size = 0;
         uint64_t kind = 0;
         uint64_t mtime = 0;

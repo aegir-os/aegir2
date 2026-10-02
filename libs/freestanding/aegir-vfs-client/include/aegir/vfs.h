@@ -78,6 +78,24 @@ public:
      *  to no volume. */
     bool describe_path(char const *path, uint32_t length, nmspace::Row &row) const noexcept;
 
+    /** The bindings (assigns), and one BindingRow each: the name, its flags, a
+     *  union id, and how many members it has
+     *  (nmspace::kMethodBindCount/kMethodBindDescribe). A binding is an alias --
+     *  `assign` -- the thing the Amiga's Volumes lists under Assigns. */
+    bool bind_count(uint64_t &count) const noexcept;
+    bool bind_describe(uint64_t index, nmspace::BindingRow &row) const noexcept;
+
+    /** One member of a binding: the volume it pins, its flags, whether it holds
+     *  a volume, and -- after the row -- the volume-relative rest as a packed
+     *  string, copied into `rest` (nmspace::kPathMax bytes is enough).
+     *  `rest_length` is what was copied. False when the member index is past
+     *  the binding's members (nmspace::kMethodBindMember). A DOS `assign` with
+     *  no arguments walks these to list the bind mounts; the requester's
+     *  Assign column does not need them, it shows the literal word
+     *  (specs/trinket/file_requester.md). */
+    bool bind_member(uint64_t binding, uint64_t member, nmspace::MemberRow &row,
+                     char *rest, uint32_t &rest_length) const noexcept;
+
     /** Bind `name` to `path` in the caller's *own* namespace. The badge is the
      *  caller's, taken from the call (nmspace::kMethodBindSelf), because a
      *  caller cannot read the badge on the namespace capability it holds; so a

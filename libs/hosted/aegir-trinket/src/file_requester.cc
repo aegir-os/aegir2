@@ -220,6 +220,15 @@ void FileRequester::list_drawer()
 {
     entries_.clear();
     showing_volumes_ = false;
+    /* Back to the file list's columns, after a Volumes visit swapped them. */
+    if (list_ != nullptr) {
+        list_->set_columns({
+            {U"Name", 0, ListView::Alignment::LEFT},
+            {U"Size", 72, ListView::Alignment::RIGHT},
+            {U"Date", 100, ListView::Alignment::LEFT},
+            {U"Time", 72, ListView::Alignment::LEFT},
+        });
+    }
     if (vfs_.valid() && resolve_slot_ != 0 && !drawer_.empty()) {
         std::string const path = utf32_to_utf8(drawer_);
         aegir::vfs::Namespace::Resolved resolved{};
@@ -261,6 +270,16 @@ void FileRequester::list_volumes()
 {
     entries_.clear();
     showing_volumes_ = true;
+    /* The volume list's own columns: the Amiga's Volumes shows a Label with the
+     * device beside it (the device name and the capacity columns are the
+     * follow-up), and the assigns under Label | Assign
+     * (specs/trinket/file_requester.md). */
+    if (list_ != nullptr) {
+        list_->set_columns({
+            {U"Label", 0, ListView::Alignment::LEFT},
+            {U"Assign", 0, ListView::Alignment::LEFT},
+        });
+    }
     uint64_t count = 0;
     if (vfs_.valid() && vfs_.volume_count(count)) {
         for (uint64_t index = 0; index < count; ++index) {
@@ -275,6 +294,24 @@ void FileRequester::list_volumes()
             }
             Entry e;
             e.name = utf8_to_utf32(std::string_view(row.name));
+            e.kind = aegir::volume::kKindDir;
+            entries_.push_back(std::move(e));
+        }
+    }
+    /* The assigns: every binding the namespace holds, as Label | Assign -- the
+     * assign's label (C:, Home:, ...) in the first cell and the literal word
+     * "Assign" in the second, the Amiga's own row (specs/trinket/file_requester.md).
+     * A binding may hold several members; the label is still the one name. */
+    uint64_t binds = 0;
+    if (vfs_.valid() && vfs_.bind_count(binds)) {
+        for (uint64_t index = 0; index < binds; ++index) {
+            aegir::nmspace::BindingRow binding{};
+            if (!vfs_.bind_describe(index, binding)) {
+                continue;
+            }
+            Entry e;
+            e.name = utf8_to_utf32(std::string_view(binding.name));
+            e.detail = U"Assign";
             e.kind = aegir::volume::kKindDir;
             entries_.push_back(std::move(e));
         }
@@ -309,16 +346,22 @@ void FileRequester::apply_filter()
         }
         std::vector<std::u32string> cells;
         cells.push_back(e.name);
-        cells.push_back(e.directory() ? std::u32string()
-                                      : utf8_to_utf32(file_path::format_size(e.size)));
-        cells.push_back(e.mtime != 0
-                            ? utf8_to_utf32(app_.locale().format_date(
-                                  static_cast<int64_t>(e.mtime)))
-                            : std::u32string());
-        cells.push_back(e.mtime != 0
-                            ? utf8_to_utf32(app_.locale().format_time(
-                                  static_cast<int64_t>(e.mtime)))
-                            : std::u32string());
+        if (showing_volumes_) {
+            /* Label | Assign: the volume or binding's name, and the path a
+             * binding stands for (empty for a volume). */
+            cells.push_back(e.detail);
+        } else {
+            cells.push_back(e.directory() ? std::u32string()
+                                          : utf8_to_utf32(file_path::format_size(e.size)));
+            cells.push_back(e.mtime != 0
+                                ? utf8_to_utf32(app_.locale().format_date(
+                                      static_cast<int64_t>(e.mtime)))
+                                : std::u32string());
+            cells.push_back(e.mtime != 0
+                                ? utf8_to_utf32(app_.locale().format_time(
+                                      static_cast<int64_t>(e.mtime)))
+                                : std::u32string());
+        }
         list_->set_row(row, std::move(cells), e.directory() ? Icon::DRAWER : Icon::NONE);
         ++row;
     }

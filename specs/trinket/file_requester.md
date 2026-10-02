@@ -49,6 +49,14 @@ missing is the *body* and what it stands on:
   holds, because a volume is not a name the wildcard picks from the open
   drawer.
 
+- **Volumes shows the block volumes, then the assigns.** The list opens with
+  the browsable volumes (a Label per volume; the driver's device name and the
+  capacity columns are the follow-up), then the namespace's bindings as the
+  Amiga's Assign rows: the assign's label (`C:`, `Home:`, ...) under `Label`,
+  and the literal word `Assign` under the second column -- not the path it
+  stands for, which a binding can hold several of. The columns swap for the
+  visit and swap back when the file list returns.
+
 - **Volumes enumerates; `kFlagNoDir` is the hide.** The button asks the VFS's
   namespace for `volume_count` and `describe` -- the `Row` is name, flags,
   bound and type -- and lists the volumes whose flags lack `kFlagNoDir`

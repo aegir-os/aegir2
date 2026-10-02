@@ -178,6 +178,57 @@ bool Namespace::describe_path(char const *path, uint32_t length,
     return true;
 }
 
+bool Namespace::bind_count(uint64_t &count) const noexcept
+{
+    uint64_t answer[1];
+    aegir::ipc::WordsReply const reply =
+        port_.call_words(nmspace::kMethodBindCount, nullptr, 0, answer, 1);
+    if (reply.error != 0 || reply.count != 1) {
+        return false;
+    }
+    count = answer[0];
+    return true;
+}
+
+bool Namespace::bind_describe(uint64_t index, nmspace::BindingRow &row) const noexcept
+{
+    uint64_t answer[nmspace::kBindingRowWords];
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        nmspace::kMethodBindDescribe, &index, 1, answer, nmspace::kBindingRowWords);
+    if (reply.error != 0 || reply.count != nmspace::kBindingRowWords) {
+        return false;
+    }
+    row = *reinterpret_cast<nmspace::BindingRow const *>(answer);
+    return true;
+}
+
+bool Namespace::bind_member(uint64_t binding, uint64_t member, nmspace::MemberRow &row,
+                            char *rest, uint32_t &rest_length) const noexcept
+{
+    uint64_t request[2] = {binding, member};
+    uint64_t answer[nmspace::kMemberRowWords + nmspace::kPathMax / 8 + 1];
+    aegir::ipc::WordsReply const reply = port_.call_words(
+        nmspace::kMethodBindMember, request, 2, answer,
+        nmspace::kMemberRowWords + nmspace::kPathMax / 8 + 1);
+    if (reply.error != 0 || reply.count < nmspace::kMemberRowWords) {
+        return false;
+    }
+    row = *reinterpret_cast<nmspace::MemberRow const *>(answer);
+    rest_length = 0;
+    char const *text = nullptr;
+    uint32_t length = 0;
+    if (!nmspace::unpack_string(answer + nmspace::kMemberRowWords,
+                                reply.count - nmspace::kMemberRowWords,
+                                nmspace::kPathMax, &text, &length)) {
+        return true; /* the row is good; the rest is empty */
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        rest[i] = text[i];
+    }
+    rest_length = length;
+    return true;
+}
+
 bool Namespace::bind(char const *name, uint32_t name_length, char const *path,
                      uint32_t path_length, uint64_t flags) noexcept
 {

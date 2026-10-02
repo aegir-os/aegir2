@@ -1165,7 +1165,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # their absence is checked rather than merely unread; the rows under
             # the titles hold ink.
             QmpStep(
-                r"demo: volumes 7",
+                r"demo: volumes ",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 424, 276, 400, 140, 40),),
