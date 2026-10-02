@@ -153,7 +153,10 @@ Size Button::preferred_size() const {
     int const padding_v = theme.metric(MetricRole::BUTTON_PADDING_V);
 
     if (type_ == Type::CHECK || type_ == Type::RADIO) {
-        /* The indicator, the gap and the label (specs/trinket/checkbox.md). */
+        /* The indicator, the gap and the label (specs/trinket/checkbox.md). A
+         * toggle with no text is the indicator alone: the padding and the gap
+         * frame a label, and carrying them for an empty one makes an inline
+         * checkbox taller than the field it sits beside. */
         bool const radio = type_ == Type::RADIO;
         int const indicator_w =
             theme.metric(radio ? MetricRole::RADIO_INDICATOR_WIDTH
@@ -161,7 +164,10 @@ Size Button::preferred_size() const {
         int const indicator_h =
             theme.metric(radio ? MetricRole::RADIO_INDICATOR_HEIGHT
                                : MetricRole::CHECK_INDICATOR_HEIGHT);
-        int const gap = text_.empty() ? 0 : theme.metric(MetricRole::SPACING_SMALL);
+        if (text_.empty()) {
+            return {indicator_w, indicator_h};
+        }
+        int const gap = theme.metric(MetricRole::SPACING_SMALL);
         return {indicator_w + gap + text_size.width + 2 * padding_h,
                 std::max(indicator_h, text_size.height) + 2 * padding_v};
     }

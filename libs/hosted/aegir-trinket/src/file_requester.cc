@@ -102,30 +102,40 @@ void FileRequester::build_body()
     list_row->set_weight(scrollbar_, 0);
 
     /* The three control rows share a label column: its width is the widest
-     * leading widget, each leading widget is at least that wide (the labels
+     * leading segment, each segment is at least that wide (the labels
      * right-aligned in it), and the field fills the rest -- so Pattern, Drawer
      * and File line up and their boxes end at the list's right edge
-     * (specs/trinket/file_requester.md). */
+     * (specs/trinket/file_requester.md). The Drawer row's segment is the
+     * toggle and its label: the toggle sits at the segment's left, before the
+     * label, as the Amiga's does. */
     auto pattern_label = std::make_unique<Label>(U"Pattern");
     pattern_label->set_alignment(Label::Alignment::RIGHT);
-    auto drawer_label = std::make_unique<Button>(U"Drawer", Button::Type::CHECK);
-    drawer_toggle_ = drawer_label.get();
+    auto drawer_toggle = std::make_unique<Button>(U"", Button::Type::CHECK);
+    drawer_toggle_ = drawer_toggle.get();
     drawer_toggle_->set_checked(true);
     drawer_toggle_->on_click = [this](bool) { apply_filter(); };
+    auto drawer_label = std::make_unique<Label>(U"Drawer");
+    drawer_label->set_alignment(Label::Alignment::RIGHT);
     auto file_label = std::make_unique<Label>(U"File");
     file_label->set_alignment(Label::Alignment::RIGHT);
     /* The width comes from minimum_size(), which is public; a widget's own
-     * preferred_size is protected, and for a fresh label the two agree. */
+     * preferred_size is protected, and for a fresh widget the two agree. The
+     * Drawer row's toggle and the gap after it are part of its segment. */
+    int const toggle_width = drawer_toggle->minimum_size().width;
     int label_width = pattern_label->minimum_size().width;
-    if (drawer_label->minimum_size().width > label_width) {
-        label_width = drawer_label->minimum_size().width;
-    }
     if (file_label->minimum_size().width > label_width) {
         label_width = file_label->minimum_size().width;
     }
+    int const drawer_width = drawer_label->minimum_size().width + toggle_width + gap;
+    if (drawer_width > label_width) {
+        label_width = drawer_width;
+    }
     pattern_label->set_min_size({label_width, 0});
-    drawer_label->set_min_size({label_width, 0});
     file_label->set_min_size({label_width, 0});
+    /* The Drawer label takes its segment less the toggle and the gap, so the
+     * toggle can sit at the segment's left and the label still ends at the
+     * field, and every box starts at the same edge. */
+    drawer_label->set_min_size({label_width - toggle_width - gap, 0});
 
     /* The Pattern box: a keystroke filters the rows already listed. */
     auto pattern = std::make_unique<TextBox>();
@@ -157,10 +167,14 @@ void FileRequester::build_body()
     };
     auto drawer_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, gap);
     Group* const drawer_row_ptr = drawer_row.get();
+    drawer_row->add_child(std::move(drawer_toggle));
     drawer_row->add_child(std::move(drawer_label));
     drawer_row->add_child(std::move(drawer));
     drawer_row->add_child(edge_spacer());
     drawer_row->set_weight(drawer_box_, 100);
+    /* The toggle is the indicator's own height, so it centres in the row
+     * rather than setting it; every field is the box's height. */
+    drawer_row->set_align(drawer_toggle_, Group::Align::CENTER);
 
     /* The File box: the chosen name, typed or set by a row's click. */
     auto file = std::make_unique<TextBox>();

@@ -33,9 +33,13 @@ XEN they are meant to match. Phase D named MUI's artwork (`CheckMark`,
 
 - **The gadget is the `Button`.** A `Button` of `Type::CHECK` or `Type::RADIO`
   draws the indicator at its left, centred vertically, and the label to its right;
-  the preferred width is the indicator plus the gap plus the text. A click or
-  Space/Enter toggles `checked_`, as it always did -- the change is where the mark
-  comes from, not how it behaves. MUI, too, builds a checkmark as an image button
+  the preferred width is the indicator plus the gap plus the text, and its height
+  the taller of the indicator and the text plus the button padding. A toggle with
+  no text is the indicator alone -- no gap and no padding, which frame a label --
+  so an inline checkbox (the file requester's `Drawer`) is the artwork's own size
+  and does not stand taller than the field beside it. A click or Space/Enter
+  toggles `checked_`, as it always did -- the change is where the mark comes from,
+  not how it behaves. MUI, too, builds a checkmark as an image button
   with a separate label; `Button` keeps the label inside for convenience.
 
 ## The shape

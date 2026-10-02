@@ -1124,9 +1124,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             # The file requester (specs/trinket/file_requester.md): a window
             # centered on the screen, its content (408,246,464,308), the list
-            # (420,258,416,168), the Pattern box (466,430,100,20), the File box
-            # (448,488,100,20) and the four buttons at y 518, OK first. The
-            # list's titles row and the entries under it are ink.
+            # (420,258,416,168), and the three control rows -- the shared label
+            # column ends at x 481, so every box is (487,*,343,19): Pattern at
+            # y 440, Drawer at 464 with its toggle at (420,465,22,18), File at
+            # 488 -- and the four buttons at y 518, OK first. The list's titles
+            # row and the entries under it are ink.
             QmpStep(
                 r"demo: requester up",
                 dumps=("gpu0",),
