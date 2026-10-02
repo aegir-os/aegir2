@@ -179,6 +179,7 @@ target_link_libraries(aegir-trinket PUBLIC
     aegir-font-protocol
     aegir-namespace
     aegir-vfs-client
+    aegir-filesystem
     aegir-pattern
     aegir-bootstrap
     aegir-mem

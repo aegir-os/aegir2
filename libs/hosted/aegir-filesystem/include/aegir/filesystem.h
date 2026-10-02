@@ -36,6 +36,32 @@ struct VolumeInfo {
 std::vector<VolumeInfo> volumes();
 std::vector<VolumeInfo> volumes(std::error_code &error);
 
+/** A byte count broken into the largest binary unit it fills, to one decimal
+ *  -- what `df -h` writes. `unit` is the unit's ordinal: 0 for a value under
+ *  1024 (bytes), then KiB, MiB, GiB, TiB; `tenths` is the fraction 0..9. It
+ *  is pure arithmetic and names no words: the unit's *name* and the number's
+ *  own spelling are a locale's, so a caller that has one formats from these
+ *  fields (`format_size` is the English default). */
+struct ScaledSize {
+    uint64_t whole;  /* the value in its unit */
+    uint64_t tenths; /* the fraction of that unit, 0..9 */
+    unsigned unit;   /* the unit's ordinal (0 Bytes .. 4 TiB) */
+};
+
+/** `bytes` scaled to the largest binary unit it fills, to one decimal. */
+ScaledSize scale_size(uint64_t bytes) noexcept;
+
+/** The five English unit names: "Bytes", "KiB", "MiB", "GiB", "TiB". A locale
+ *  passes its own table to `format_size`; these are the ones that will move
+ *  into one. */
+extern char const *const kSizeUnits[5];
+
+/** `bytes` as `df -h` writes it with `units` -- "8.9 MiB", "143.5 KiB",
+ *  "0 Bytes". The default table is `kSizeUnits`, English; a locale passes its
+ *  own names, and may format the number from `scale_size` for its own decimal
+ *  mark. */
+std::string format_size(uint64_t bytes, char const *const units[5] = kSizeUnits);
+
 }  // namespace aegir::filesystem
 
 #endif  // AEGIR_FILESYSTEM_H

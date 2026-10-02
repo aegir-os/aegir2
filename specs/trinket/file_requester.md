@@ -49,16 +49,22 @@ missing is the *body* and what it stands on:
   holds, because a volume is not a name the wildcard picks from the open
   drawer.
 
-- **Volumes shows the block volumes, then the assigns.** The list opens with
-  the browsable volumes: the label, the backing block device's name (the
-  namespace `Row`'s `device`, the block protocol's identify name), and the
-  capacity the volume's `space` answers -- `%full`, and `Free` and `In use` as
-  whole KiB, comma-grouped. A volume that will not resolve or refuses `space`
-  keeps its capacity cells blank. Then the namespace's bindings as the Amiga's
-  Assign rows: the assign's label (`C:`, `Home:`, ...) under `Label`, the
-  literal word `Assign` under the second column -- not the path it stands for,
-  which a binding can hold several of -- and the capacity columns blank. The
-  columns swap for the visit and swap back when the file list returns.
+- **Volumes shows the block volumes, then the assigns, under a header.** The
+  columns are `Label | Device | % Full | Available Space | Used Space`, so the
+  list keeps its titles row -- a table whose header the Amiga would not draw,
+  but whose numbers are unreadable without it. The list opens with the
+  browsable volumes: the label, the backing block device's name (the namespace
+  `Row`'s `device`, the block protocol's identify name), and the capacity the
+  volume's `space` answers. The two sizes are `aegir::filesystem::format_size`'s
+  -- human-readable like `df -h`, the largest unit the value fills (Bytes,
+  KiB, MiB, GiB, TiB) to one decimal, so the requester does not own a second
+  size formatter (`specs/cxx.md` step 5).
+  A volume that will not resolve or refuses `space` keeps its capacity cells
+  blank. Then the namespace's bindings as the Amiga's Assign rows: the assign's
+  label (`C:`, `Home:`, ...) under `Label`, the literal word `Assign` under the
+  second column -- not the path it stands for, which a binding can hold several
+  of -- and the capacity columns blank. The columns swap for the visit and swap
+  back when the file list returns.
 
 - **Volumes enumerates; `kFlagNoDir` is the hide.** The button asks the VFS's
   namespace for `volume_count` and `describe` -- the `Row` is name, flags,

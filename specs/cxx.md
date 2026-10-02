@@ -344,7 +344,11 @@ The order:
       `aegir::filesystem`, hosted, with `std::filesystem`'s error model — a
       throwing overload and an `error_code` one — over the transport. Its
       first call is `volumes()`, the enumeration `std::filesystem` has no
-      path for (capability-free, answered on the namespace port). The
+      path for (capability-free, answered on the namespace port). A byte
+      count's human-readable form also lives here (`scale_size` and
+      `format_size`, the `df -h` shape), split so the unit words can move
+      into a locale and the scaling, which is the same in every one, stays.
+      The
       path operations that need a resolved volume capability wait for
       `std::filesystem` to want them, where the capability's slot and its
       reuse are decided.

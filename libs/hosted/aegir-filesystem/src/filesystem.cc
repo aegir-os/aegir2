@@ -73,4 +73,34 @@ std::vector<VolumeInfo> volumes()
     return result;
 }
 
+char const *const kSizeUnits[5] = {"Bytes", "KiB", "MiB", "GiB", "TiB"};
+
+ScaledSize scale_size(uint64_t bytes) noexcept
+{
+    ScaledSize size{bytes, 0, 0};
+    while (size.unit < 4 && size.whole >= 1024) {
+        size.tenths = size.whole % 1024;
+        size.whole /= 1024;
+        ++size.unit;
+    }
+    /* The remainder of the last division is the fraction of the unit shown. */
+    if (size.unit > 0) {
+        size.tenths = size.tenths * 10 / 1024;
+    }
+    return size;
+}
+
+std::string format_size(uint64_t bytes, char const *const units[5])
+{
+    ScaledSize const size = scale_size(bytes);
+    std::string text = std::to_string(size.whole);
+    if (size.tenths != 0) {
+        text += ".";
+        text += std::to_string(size.tenths);
+    }
+    text += " ";
+    text += units[size.unit];
+    return text;
+}
+
 }  // namespace aegir::filesystem
