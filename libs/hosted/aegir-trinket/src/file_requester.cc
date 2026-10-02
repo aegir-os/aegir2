@@ -79,6 +79,17 @@ void FileRequester::build_body()
 
     auto scrollbar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
     scrollbar_ = scrollbar.get();
+    /* The list is the body's width less the scrollbar, so the control rows
+     * reserve the same width on their right to end at the list's edge
+     * (specs/trinket/file_requester.md). */
+    int const edge = scrollbar->minimum_size().width;
+    /* An empty label the width of the scrollbar, so each control row's field
+     * ends where the list does. */
+    auto edge_spacer = [edge]() {
+        auto spacer = std::make_unique<Label>();
+        spacer->set_min_size({edge, 0});
+        return spacer;
+    };
     scrollbar_->on_scroll = [this](int first) {
         if (list_ != nullptr) {
             list_->set_first(first);
@@ -89,6 +100,32 @@ void FileRequester::build_body()
     list_row->add_child(std::move(list));
     list_row->add_child(std::move(scrollbar));
     list_row->set_weight(scrollbar_, 0);
+
+    /* The three control rows share a label column: its width is the widest
+     * leading widget, each leading widget is at least that wide (the labels
+     * right-aligned in it), and the field fills the rest -- so Pattern, Drawer
+     * and File line up and their boxes end at the list's right edge
+     * (specs/trinket/file_requester.md). */
+    auto pattern_label = std::make_unique<Label>(U"Pattern");
+    pattern_label->set_alignment(Label::Alignment::RIGHT);
+    auto drawer_label = std::make_unique<Button>(U"Drawer", Button::Type::CHECK);
+    drawer_toggle_ = drawer_label.get();
+    drawer_toggle_->set_checked(true);
+    drawer_toggle_->on_click = [this](bool) { apply_filter(); };
+    auto file_label = std::make_unique<Label>(U"File");
+    file_label->set_alignment(Label::Alignment::RIGHT);
+    /* The width comes from minimum_size(), which is public; a widget's own
+     * preferred_size is protected, and for a fresh label the two agree. */
+    int label_width = pattern_label->minimum_size().width;
+    if (drawer_label->minimum_size().width > label_width) {
+        label_width = drawer_label->minimum_size().width;
+    }
+    if (file_label->minimum_size().width > label_width) {
+        label_width = file_label->minimum_size().width;
+    }
+    pattern_label->set_min_size({label_width, 0});
+    drawer_label->set_min_size({label_width, 0});
+    file_label->set_min_size({label_width, 0});
 
     /* The Pattern box: a keystroke filters the rows already listed. */
     auto pattern = std::make_unique<TextBox>();
@@ -103,16 +140,13 @@ void FileRequester::build_body()
     };
     auto pattern_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, gap);
     Group* const pattern_row_ptr = pattern_row.get();
-    pattern_row->add_child(std::make_unique<Label>(U"Pattern"));
+    pattern_row->add_child(std::move(pattern_label));
     pattern_row->add_child(std::move(pattern));
+    pattern_row->add_child(edge_spacer());
     pattern_row->set_weight(pattern_box_, 100);
 
     /* The Drawer toggle and the path box: checked keeps the drawers listed,
      * unchecked hides them, and Enter in the box opens the path. */
-    auto toggle = std::make_unique<Button>(U"Drawer", Button::Type::CHECK);
-    drawer_toggle_ = toggle.get();
-    drawer_toggle_->set_checked(true);
-    drawer_toggle_->on_click = [this](bool) { apply_filter(); };
     auto drawer = std::make_unique<TextBox>();
     drawer_box_ = drawer.get();
     drawer_box_->set_text(drawer_);
@@ -123,8 +157,9 @@ void FileRequester::build_body()
     };
     auto drawer_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, gap);
     Group* const drawer_row_ptr = drawer_row.get();
-    drawer_row->add_child(std::move(toggle));
+    drawer_row->add_child(std::move(drawer_label));
     drawer_row->add_child(std::move(drawer));
+    drawer_row->add_child(edge_spacer());
     drawer_row->set_weight(drawer_box_, 100);
 
     /* The File box: the chosen name, typed or set by a row's click. */
@@ -136,8 +171,9 @@ void FileRequester::build_body()
     };
     auto file_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, gap);
     Group* const file_row_ptr = file_row.get();
-    file_row->add_child(std::make_unique<Label>(U"File"));
+    file_row->add_child(std::move(file_label));
     file_row->add_child(std::move(file));
+    file_row->add_child(edge_spacer());
     file_row->set_weight(file_box_, 100);
 
     auto body = std::make_unique<Group>(Group::Orientation::VERTICAL, gap);
@@ -207,6 +243,16 @@ void FileRequester::list_drawer()
          * emptying it lets the next resolve mint into it again. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, resolve_slot_,
                           aegir::bootstrap::cnode_bits());
+        /* Directories first, then alphabetically. The collation is the
+         * filesystem's: BFS names are case-sensitive, FAT folds ASCII case
+         * (specs/vfs.md). The volume does not yet say which it is, so the sort
+         * is case-sensitive for now -- the BFS case. */
+        std::sort(entries_.begin(), entries_.end(), [](Entry const& a, Entry const& b) {
+            if (a.directory() != b.directory()) {
+                return a.directory();
+            }
+            return utf32_to_utf8(a.name) < utf32_to_utf8(b.name);
+        });
     }
     apply_filter();
 }
@@ -326,7 +372,13 @@ void FileRequester::progress(Action action)
         chosen_ = file_box_ != nullptr ? file_box_->text() : chosen_;
         break;
     case VOLUMES:
-        list_volumes();
+        /* The button toggles: a second press leaves the volume list and lists
+         * the drawer again (specs/trinket/file_requester.md). */
+        if (showing_volumes_) {
+            list_drawer();
+        } else {
+            list_volumes();
+        }
         break;
     case PARENT:
         set_drawer(file_path::parent_of(drawer_));

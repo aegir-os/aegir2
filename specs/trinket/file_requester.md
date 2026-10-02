@@ -67,6 +67,22 @@ missing is the *body* and what it stands on:
   than a `stat` call per row. This is the arc's one protocol change, and it
   is a change to a writer and its readers at once, not two commits.
 
+- **The control rows line up.** The Pattern box, the Drawer toggle and the File
+  box share one label column: its width is the widest leading widget, each label
+  is right-aligned in it, the field takes the rest, and a spacer the scrollbar's
+  width ends every field at the list's edge rather than the body's. A form's
+  labels line up because the column is a width, not because the labels happen to
+  measure the same.
+
+- **The listing is folders first, then the filesystem's collation.** Directories
+  sort before files, and each group sorts alphabetically in the manner of the
+  filesystem behind it -- BFS case-sensitively, FAT with its ASCII fold
+  (`specs/vfs.md`). The volume does not report which collation it uses yet, so
+  the sort is case-sensitive today; a per-volume signal is the follow-up.
+
+- **Volumes toggles.** A first press lists the browsable volumes; a second press
+  leaves them and lists the drawer again. OK and Cancel still close.
+
 - **The body is a widget the requester is handed, not the requester's own.**
   A `FileRequester` builds the body -- the list and its scrollbar, the
   Pattern label and field, the Drawer toggle and path, the File label and

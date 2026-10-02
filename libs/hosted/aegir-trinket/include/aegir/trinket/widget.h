@@ -76,6 +76,11 @@ public:
     void set_rect(Rect r);
     void set_pos(Point p) { rect_.x = p.x; rect_.y = p.y; }
     void set_size(Size s) { rect_.width = s.width; rect_.height = s.height; }
+    /* A floor under the size a layout may give this widget: a form aligns a
+     * column of labels by handing each the widest one's width, and a label's
+     * own preferred is only its text (specs/trinket/layout.md). */
+    void set_min_size(Size s) { min_size_ = s; damage(); }
+    Size min_size() const { return min_size_; }
 
     // Visibility and enabled state
     bool visible() const { return visible_; }
@@ -158,6 +163,7 @@ protected:
     friend class Window;
 
     Rect rect_;
+    Size min_size_{};
     bool visible_ = true;
     bool enabled_ = true;
     bool focused_ = false;

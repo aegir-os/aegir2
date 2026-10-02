@@ -72,6 +72,7 @@ protected:
     void on_focus_gained() override;
     void on_focus_lost() override;
     Size preferred_size() const override;
+    Size maximum_size() const override;
 
 private:
     std::u32string text_;

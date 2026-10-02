@@ -70,11 +70,17 @@ Size Widget::preferred_size() const {
 }
 
 Size Widget::minimum_size() const {
-    return preferred_size();
+    Size const p = preferred_size();
+    int const w = p.width > min_size_.width ? p.width : min_size_.width;
+    int const h = p.height > min_size_.height ? p.height : min_size_.height;
+    return {w, h};
 }
 
 Size Widget::maximum_size() const {
-    return preferred_size();
+    /* At least the floor: a widget whose preferred is under its floor would
+     * otherwise report a maximum below its own minimum, and the layout sizes it
+     * at the minimum anyway (specs/trinket/layout.md). */
+    return minimum_size();
 }
 
 void Widget::damage(const Rect& r) {

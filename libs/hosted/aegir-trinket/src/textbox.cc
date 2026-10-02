@@ -7,6 +7,7 @@
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/unicode.h>
 #include <algorithm>
+#include <limits>
 
 namespace aegir::trinket {
 
@@ -240,6 +241,12 @@ Size TextBox::preferred_size() const {
     Size text_size = font->measure(text_.empty() ? placeholder_ : text_);
     return {std::max(100, text_size.width + 2 * padding_h),
             text_size.height + 2 * padding_v};
+}
+
+Size TextBox::maximum_size() const {
+    /* A field stretches to the room its host gives it: the preferred size is
+     * the floor its text needs, not a cap (specs/trinket/layout.md). */
+    return {std::numeric_limits<int>::max(), preferred_size().height};
 }
 
 } // namespace aegir::trinket

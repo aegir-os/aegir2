@@ -26,7 +26,10 @@ identical rectangles, and the greeter's and bureau's acceptance is untouched.
   current rectangle; a widget that draws something overrides it, and the two new
   methods default to it, so the base is *fixed* -- minimum = preferred =
   maximum.) A widget with a range to give overrides the maximum; nothing else
-  needs to.
+  needs to. Two additions serve forms: `set_min_size` is a floor under both the
+  minimum and the maximum -- a label column is as wide as the widest label, so
+  every field in the form starts at the same x -- and a `TextBox` reports an
+  unbounded maximum width, so a host may stretch it to its own edge.
 
   Content-derivation is what keeps a layout idempotent (`specs/trinket/overview.md`:
   a rectangle change is a damage, a damage is a repaint, a repaint lays out

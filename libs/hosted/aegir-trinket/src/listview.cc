@@ -175,7 +175,13 @@ ListView::ColumnLayout ListView::column_layout(std::vector<Column> const& column
     ColumnLayout out;
     if (columns.empty()) return out;
     if (padding < 0) padding = 0;
-    int const content = width - 2 * padding;
+    /* A gap between columns: a right-aligned cell ends at its column's right
+     * edge and the next column's left-aligned cell begins at that same edge, so
+     * with no gap the two touch -- a size against the date beside it
+     * (specs/trinket/listview.md). */
+    int const gap = Application::instance()->theme().metric(MetricRole::SPACING_SMALL);
+    int const gaps = (static_cast<int>(columns.size()) - 1) * gap;
+    int const content = width - 2 * padding - gaps;
     int fixed = 0;
     int free_columns = 0;
     for (Column const& c : columns) {
@@ -192,7 +198,7 @@ ListView::ColumnLayout ListView::column_layout(std::vector<Column> const& column
         int const w = c.width > 0 ? c.width : share;
         out.x.push_back(x);
         out.width.push_back(w);
-        x += w;
+        x += w + gap;
     }
     return out;
 }

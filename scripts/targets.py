@@ -1172,8 +1172,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # Type a name into the File box and press Return: the default OK
                 # takes it, and the demo reports the name it chose.
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 12748}},
-                    {"type": "abs", "data": {"axis": "y", "value": 20397}},
+                    {"type": "abs", "data": {"axis": "x", "value": 17278}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20155}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
