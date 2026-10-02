@@ -176,6 +176,16 @@ shell's next command: when the shell reads the finished status, the handler
 hands the leftover bytes to the line editor, so nothing typed ahead is lost
 (`specs/dos.md`'s `more` is the caller this was built for).
 
+A key that arrives while the shell is between prompts -- before its editor has
+begun, or while an earlier key is still held -- is held in the terminal and
+replayed when the editor is ready, in order, so a line typed faster than the
+shell reads it neither is lost nor overtakes itself. The replay feeds one
+line's worth at a time: a key that ends a line stops the editor, and the keys
+behind it are the next prompt's, so they wait for the shell's next `read_line`
+rather than being handed to an editor that is not editing -- `LineEditor`
+ignores a key while it is not editing, and feeding the whole queue at once
+would silently drop every line after the first.
+
 **Where the protocol lives.** The wire vocabulary -- the port name, the
 method numbers, the modes, the byte bound and the namespace's string shape --
 is `aegir/console_stream.h`, and it deliberately pulls no kernel header,

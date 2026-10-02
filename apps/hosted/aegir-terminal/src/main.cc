@@ -442,17 +442,25 @@ int main(int argc, char *argv[])
             announce_view = false;
             write("  terminal: boot failed, the view is up\n");
         }
-        if (pending_keys.empty()) {
-            return;
-        }
-        LineEditor *const editor = server.editor(kShellStream);
-        if (editor == nullptr || (!editor->editing() && !server.in_command(kShellStream))) {
-            return;
-        }
-        std::vector<KeyEvent> keys;
-        keys.swap(pending_keys);
-        for (KeyEvent const &event : keys) {
+        /* Replay the keys held while the shell was between prompts, one line's
+         * worth at a time (specs/terminal.md). A key that ends a line stops the
+         * editor, and the keys behind it belong to the next prompt: feeding
+         * them now would lose them, because the editor ignores a key while it
+         * is not editing, and the shell would wait at a prompt no line ever
+         * reaches. So the replay stops at the end of the line it fed and
+         * resumes on the next poll, once the shell has begun the next prompt. */
+        while (!pending_keys.empty()) {
+            LineEditor *const editor = server.editor(kShellStream);
+            bool const command = server.in_command(kShellStream);
+            if (editor == nullptr || (!editor->editing() && !command)) {
+                return;
+            }
+            KeyEvent const event = pending_keys.front();
+            pending_keys.erase(pending_keys.begin());
             (void)server.on_key(kShellStream, event);
+            if (!command && !editor->editing()) {
+                return;
+            }
         }
     };
 
