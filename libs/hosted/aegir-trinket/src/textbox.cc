@@ -91,8 +91,10 @@ void TextBox::on_paint(Canvas& canvas, const PaintEvent& event) {
             std::u32string selected = text_.substr(sel_start, sel_end - sel_start);
             Size before_size = font->measure(before);
             Size sel_size = font->measure(selected);
-            Rect sel_rect = {text_x + before_size.width, r.y + padding_v, sel_size.width, font->height()};
-            canvas.fill_rect(sel_rect, theme.color(ColorRole::SELECTION_BG));
+            Rect const sel_rect = {text_x + before_size.width, r.y + padding_v,
+                                   sel_size.width, font->height()};
+            /* The highlight is the theme's (specs/trinket/chrome.md). */
+            theme.draw_selection(canvas, sel_rect);
         }
     }
 
@@ -115,10 +117,12 @@ void TextBox::on_paint(Canvas& canvas, const PaintEvent& event) {
     if (focused_ && !read_only_) {
         std::u32string before = display.substr(0, cursor_);
         Size before_size = font->measure(before);
-        int cx = text_x + before_size.width;
-        int cy = text_y;
-        int ch = font->height();
-        canvas.draw_vline(cy, cy + ch, cx, theme.color(ColorRole::ACCENT));
+        int const cx = text_x + before_size.width;
+        int const cy = text_y;
+        int const ch = font->height();
+        /* One pixel wide and a line tall; the old vline ran cy..cy+ch, so the
+         * cell is ch+1 rows (specs/trinket/chrome.md). */
+        theme.draw_caret(canvas, {cx, cy, 1, ch + 1});
     }
 }
 

@@ -263,9 +263,9 @@ void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
                       columns_[static_cast<size_t>(c)].align);
         }
         /* A single rule under the titles, so the header reads apart from the
-         * rows (specs/trinket/listview.md). */
-        canvas.draw_hline(area.x, area.x + area.width - 1, titles_band.y + h - 1,
-                          theme.color(ColorRole::BORDER_DARK));
+         * rows (specs/trinket/listview.md): the theme draws it
+         * (specs/trinket/chrome.md). */
+        theme.draw_list_header(canvas, {area.x, titles_band.y, area.width, h});
     }
 
     ColumnLayout const layout =

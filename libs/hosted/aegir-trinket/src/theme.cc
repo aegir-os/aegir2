@@ -67,6 +67,12 @@ void Theme::draw_list(Canvas&, const Rect&) {}
 
 void Theme::draw_list_row(Canvas&, const Rect&, ListRow) {}
 
+void Theme::draw_list_header(Canvas&, const Rect&) {}
+
+void Theme::draw_selection(Canvas&, const Rect&) {}
+
+void Theme::draw_caret(Canvas&, const Rect&) {}
+
 void Theme::draw_icon(Canvas&, const Rect&, Icon) {}
 
 void Theme::draw_tab(Canvas&, const Rect&, std::u32string_view, bool, bool) {}

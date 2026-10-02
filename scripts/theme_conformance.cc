@@ -157,6 +157,12 @@ int main(int argc, char** argv) {
     theme->draw_list_row(canvas, {row_area.x, row_area.y + 2 * row_h, row_area.width, row_h},
                          Theme::ListRow::SELECTED);
 
+    /* A list's header rule, a selection's highlight and a line editor's caret
+     * (specs/trinket/chrome.md). */
+    theme->draw_list_header(canvas, {10, 256, 200, 22});
+    theme->draw_selection(canvas, {220, 256, 70, 20});
+    theme->draw_caret(canvas, {300, 256, 1, 21});
+
     /* Horizontal scrollbars: the same widget turned, drawing the MUI
      * ArrowLeft/ArrowRight art -- normal, the decrement arrow held and the
      * increment held, so both selected frames are on the sheet. */

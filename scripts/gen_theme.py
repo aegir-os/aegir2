@@ -308,6 +308,12 @@ def main() -> int:
         "",
         emit_single("kRecipeListSelected", g["list"]["selected"], palette, sprite_index),
         "",
+        emit_single("kRecipeListHeader", g["list_header"], palette, sprite_index),
+        "",
+        emit_single("kRecipeSelection", g["selection"], palette, sprite_index),
+        "",
+        emit_single("kRecipeCaret", g["caret"], palette, sprite_index),
+        "",
         # The row icons, indexed by Icon (specs/trinket/listview.md).
         emit_array("kRecipeIcon",
                    [g["icon"][n] for n in ("none", "drawer", "hard_disk", "disk",

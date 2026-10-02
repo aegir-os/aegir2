@@ -197,6 +197,12 @@ public:
     enum class ListRow { NORMAL, CURSOR, SELECTED };
     virtual void draw_list(Canvas& canvas, const Rect& rect);
     virtual void draw_list_row(Canvas& canvas, const Rect& rect, ListRow state);
+    // The list's header rule (specs/trinket/listview.md), a selection's
+    // highlight (a field's, the editor's later), and a line editor's caret
+    // (specs/trinket/chrome.md).
+    virtual void draw_list_header(Canvas& canvas, const Rect& rect);
+    virtual void draw_selection(Canvas& canvas, const Rect& rect);
+    virtual void draw_caret(Canvas& canvas, const Rect& rect);
     // A row's image (specs/trinket/listview.md, file_requester.md): the imported
     // MUI drawer/volume artwork, scaled into the rect. Icon::NONE draws nothing.
     virtual void draw_icon(Canvas& canvas, const Rect& rect, Icon icon);

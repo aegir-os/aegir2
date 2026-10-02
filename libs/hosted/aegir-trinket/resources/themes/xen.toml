@@ -343,6 +343,19 @@ steps = [{ dither = ["$SELECTION_BG", "$GADGET_FACE"] }]
 [gadgets.list.selected]
 steps = [{ fill = "$SELECTION_BG" }]
 
+# A list's header rule, a selection's highlight and a line editor's caret
+# (specs/trinket/chrome.md). The caret is one edge of its cell -- a one-pixel
+# line -- which a fill of sixteenths cannot make.
+
+[gadgets.list_header]
+steps = [{ line = "bottom", color = "$BORDER_DARK" }]
+
+[gadgets.selection]
+steps = [{ fill = "$SELECTION_BG" }]
+
+[gadgets.caret]
+steps = [{ line = "left", color = "$ACCENT" }]
+
 # ---- icons ----
 # A row's image (specs/trinket/listview.md, specs/trinket/file_requester.md): the
 # imported MUI drawer and volume artwork, one recipe per role, the sprite scaled

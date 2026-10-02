@@ -323,6 +323,18 @@ public:
         }
     }
 
+    void draw_list_header(Canvas& canvas, const Rect& rect) override {
+        run(kRecipeListHeader, canvas, rect);
+    }
+
+    void draw_selection(Canvas& canvas, const Rect& rect) override {
+        run(kRecipeSelection, canvas, rect);
+    }
+
+    void draw_caret(Canvas& canvas, const Rect& rect) override {
+        run(kRecipeCaret, canvas, rect);
+    }
+
     void draw_icon(Canvas& canvas, const Rect& rect, Icon icon) override {
         /* The imported MUI artwork, one recipe per role (specs/trinket/listview.md).
          * The art is a small wide bitmap, so it is fitted into the cell rather

@@ -91,7 +91,9 @@ draws through `draw_panel`, so a group box and a panel are the same pixels.
   MUI screenshot shows, and the `PopUp`/`PopFile`/`PopDrawer` image as the whole
   button -- but neither opens anything yet: the list, and the requester that
   would host it, is its own, larger piece.
-- **The window manager's look.** Chrome, per `specs/amiga-fidelity.md`.
+- **The window manager's look.** Landed: the window chrome -- the title bar and
+  its gadgets, the bottom bar, the frame -- and the screen bar and menus are the
+  theme's (`specs/trinket/chrome.md`).
 - **Hover beyond a lightening.** A hovered button's face is a shade lighter; the
   screenshots show no hover state.
 

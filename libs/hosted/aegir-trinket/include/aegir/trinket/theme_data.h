@@ -96,6 +96,11 @@ extern const Recipe kRecipePopup[6];
 extern const Recipe kRecipeListWell;
 extern const Recipe kRecipeListCursor;
 extern const Recipe kRecipeListSelected;
+// The list's header rule, a selection's highlight and a caret
+// (specs/trinket/chrome.md).
+extern const Recipe kRecipeListHeader;
+extern const Recipe kRecipeSelection;
+extern const Recipe kRecipeCaret;
 // A row's image, indexed by Icon: NONE, DRAWER, HARD_DISK, DISK, CHIP, VOLUME,
 // NETWORK (specs/trinket/listview.md).
 extern const Recipe kRecipeIcon[7];

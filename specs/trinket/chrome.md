@@ -90,19 +90,28 @@ steps = [{ fill = "$GADGET_WHITE", at = [4, 4, 12, 12] },
          { outline = "$GADGET_OUTLINE", at = [4, 4, 12, 12] }]
 ```
 
-## Pieces
+## Landed
 
-Each is its own landing, the build the checkpoint:
+Each was its own landing, the build the checkpoint:
 
 - **A. The window chrome.** The vocabulary extension (`line`, `at`) and its
-  generator; the window-chrome recipes; `Window::paint` through the theme; the
-  preview renders them.
+  generator; the title bar, bottom bar, frame and gadget recipes;
+  `Window::paint` through the theme; the preview renders them.
 - **B. The menu bar.** `draw_menubar`/`draw_menu_item` completed and called by
-  `MenuBar` and the bureau's `Desktop`; the popup box and the accelerator keycap
-  become theme methods too.
-- **C. The small furniture.** The list header's underline, the text field's
-  caret and selection, and the terminal's cursor, each through the theme's own
-  method (`draw_cursor` for a caret, the selection's role for a highlight).
+  `MenuBar` and the bureau's `Desktop`; the screen bar, the popup well and the
+  accelerator keycap are theme methods too.
+- **C. The small furniture.** The list's header rule, the text field's caret and
+  selection, each through the theme's own method.
+
+## What this is not
+
+- **A widget's own background.** `Widget::on_paint`'s fill, a panel's flat
+  background, and the text edit's and the terminal's wells are the widget filling
+  its own rectangle with a theme colour, not furniture a theme restyles
+  shape-by-shape. They stay.
+- **The terminal's cell cursor.** A terminal's inverse cell is its rendering, not
+  the window furniture; `Theme::draw_cursor` is the editor's caret, not the
+  terminal's block.
 
 ## Acceptance
 
