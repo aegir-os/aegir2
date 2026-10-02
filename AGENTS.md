@@ -95,3 +95,12 @@
 - Any third party dependencies will be vendored - we will not commit third party sources
   to this project repo. Pin the dependency (use the SHA hash!) and extract upon demand.
   We can maintain a patches/ folder for any changes needed to the third_party dependency.
+- **A `QmpStep`'s `trigger` must be unique within its target.** The runner fires every step
+  whose regex matches a console line (`scripts/run_target.py:497-501`), so two steps that
+  share a cue both fire on the *first* occurrence, in list order. `times` caps how often one
+  step fires; it does not order the steps or reserve the second occurrence for the second
+  step. So two steps with one `trigger` are a race, and the later step's action lands on the
+  first cue's line -- a latent flake that survives only while both actions happen to be
+  harmless together. A cue that genuinely repeats (once per session, say) is *one* step with
+  `times=0`, or a distinct cue per occurrence: when a new step wants an existing cue, the
+  writer must print a distinguishing word for it, not reuse the string.
