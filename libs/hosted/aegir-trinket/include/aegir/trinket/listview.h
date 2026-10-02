@@ -59,6 +59,11 @@ public:
      * Setting a table leaves the rows already added as the first column's
      * cells. */
     void set_columns(std::vector<Column> columns);
+    /* Whether the titles row draws. A columned list without titles is a row of
+     * cells with no header band -- the file requester's Volumes, whose
+     * Label | Assign header the Amiga does not draw
+     * (specs/trinket/file_requester.md). */
+    void set_show_titles(bool show) { show_titles_ = show; damage(); }
     int column_count() const { return static_cast<int>(columns_.size()); }
     Column const& column(int index) const;
 
@@ -125,6 +130,8 @@ private:
     Rect data_rect() const;
     void select(int index);  // the user's choice
     void ensure_visible(int index);
+    /* Whether the titles row is drawn: a table of columns, unless hidden. */
+    bool titles() const { return show_titles_ && !columns_.empty(); }
 
     struct Row {
         std::vector<std::u32string> cells;
@@ -133,6 +140,7 @@ private:
 
     std::vector<Row> rows_;
     std::vector<Column> columns_;
+    bool show_titles_ = true;
     /* Whether any row carries an image: the leading strip the columns start
      * after. Set by set_row, cleared by clear. */
     bool has_icons_ = false;

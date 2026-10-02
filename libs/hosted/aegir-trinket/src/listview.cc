@@ -138,7 +138,7 @@ Rect ListView::rows_rect() const {
 
 Rect ListView::data_rect() const {
     Rect const area = rows_rect();
-    if (columns_.empty()) return area;
+    if (!titles()) return area;
     /* The titles row is the top row of the well. */
     int const titles = row_height();
     int const height = area.height - titles > 0 ? area.height - titles : 0;
@@ -166,8 +166,8 @@ int ListView::height_for_rows(int rows) const {
      * one of these and forgets the well gets a list one row shorter than it
      * asked for -- which is how the menu first came up showing two of its three
      * entries. */
-    int const titles = columns_.empty() ? 0 : row_height();
-    return 2 * kWell + titles + std::max(0, rows) * row_height();
+    int const titles_band = titles() ? row_height() : 0;
+    return 2 * kWell + titles_band + std::max(0, rows) * row_height();
 }
 
 ListView::ColumnLayout ListView::column_layout(std::vector<Column> const& columns,
@@ -241,15 +241,19 @@ void ListView::on_paint(Canvas& canvas, const PaintEvent& event) {
 
     /* The titles row, when there is a column table: the columns' own layout,
      * with no image and no row state. */
-    if (!columns_.empty()) {
-        Rect const titles{area.x, area.y, area.width, h};
-        ColumnLayout const layout = column_layout(columns_, titles.width - strip, pad);
+    if (titles()) {
+        Rect const titles_band{area.x, area.y, area.width, h};
+        ColumnLayout const layout = column_layout(columns_, titles_band.width - strip, pad);
         for (int c = 0; c < column_count() && c < static_cast<int>(layout.x.size()); ++c) {
-            Rect const cell_rect{titles.x + strip + layout.x[c], titles.y,
+            Rect const cell_rect{titles_band.x + strip + layout.x[c], titles_band.y,
                                  layout.width[c], h};
             draw_cell(canvas, font, theme, cell_rect, columns_[static_cast<size_t>(c)].title,
                       columns_[static_cast<size_t>(c)].align);
         }
+        /* A single rule under the titles, so the header reads apart from the
+         * rows (specs/trinket/listview.md). */
+        canvas.draw_hline(area.x, area.x + area.width - 1, titles_band.y + h - 1,
+                          theme.color(ColorRole::BORDER_DARK));
     }
 
     ColumnLayout const layout =

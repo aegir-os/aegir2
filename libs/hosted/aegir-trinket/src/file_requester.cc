@@ -228,6 +228,7 @@ void FileRequester::list_drawer()
             {U"Date", 100, ListView::Alignment::LEFT},
             {U"Time", 72, ListView::Alignment::LEFT},
         });
+        list_->set_show_titles(true);
     }
     if (vfs_.valid() && resolve_slot_ != 0 && !drawer_.empty()) {
         std::string const path = utf32_to_utf8(drawer_);
@@ -279,6 +280,8 @@ void FileRequester::list_volumes()
             {U"Label", 0, ListView::Alignment::LEFT},
             {U"Assign", 0, ListView::Alignment::LEFT},
         });
+        /* No titles row: the Amiga's Volumes has no Label | Assign header. */
+        list_->set_show_titles(false);
     }
     uint64_t count = 0;
     if (vfs_.valid() && vfs_.volume_count(count)) {
