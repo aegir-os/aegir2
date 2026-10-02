@@ -32,6 +32,15 @@ BLOCK = 2048
 NODE = 2048  # the B+tree node size (the service reads it from the tree header)
 SECTOR = 512
 
+# The timestamp every initial entry carries: a fixed epoch, not the build time,
+# so the image is byte-for-byte reproducible (specs/bfs.md). 2026-09-25 09:41:00
+# UTC is the fixture date Sys:VER.TXT names. The on-disk encoding is the seconds
+# in the high 48 bits and a zero sub-second field (specs/bfs.md's BFS times), so
+# the raw seconds are shifted; a reader recovers them with `time >> 16`. Writing
+# the bare seconds here read back as the top half -- 1970-01-01 07:35:18.
+FIXTURE_SECONDS = 1790329260
+FIXTURE_TIME = FIXTURE_SECONDS << 16
+
 # BFS's magic numbers, as the C multicharacter constants pack them (big-endian
 # into an int, then written little-endian), which is why the on-disk magic is
 # not the ASCII string.
@@ -378,11 +387,12 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
                 inodes.append((child_block, _inode(
                     run=_run(child_block, 1, ag_shift), mode=S_IFREG | 0o644,
                     parent=_run(own_block, 1, ag_shift), attributes=ZERO_RUN,
-                    size=len(content), runs=runs, name=name.encode("utf-8"), time=0)))
+                    size=len(content), runs=runs, name=name.encode("utf-8"),
+                    time=FIXTURE_TIME)))
                 table.append((name.encode("utf-8"), child_block))
                 name_index.append((name.encode("utf-8"), child_block))
                 size_index.append((struct.pack("<q", len(content)), child_block))
-                mtime_index.append((struct.pack("<q", 0), child_block))
+                mtime_index.append((struct.pack("<q", FIXTURE_TIME), child_block))
             else:  # dir
                 table.append((name.encode("utf-8"), child_block))
                 name_index.append((name.encode("utf-8"), child_block))
@@ -401,7 +411,7 @@ def make_bfs(buf: bytearray, offset: int, size: int, label: str,
             parent=_run(parent_block, 1, ag_shift), attributes=ZERO_RUN,
             size=len(tree_bytes), runs=[_run(tree_base, tree_blocks, ag_shift)],
             name=own_name.encode("utf-8") if own_name is not None else None,
-            time=0)))
+            time=FIXTURE_TIME)))
 
     root_block = take()
     build(tree, root_block, root_block)
