@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the file requester's path and size helpers against their host cases.
+"""Run the file requester's path helpers against their host cases.
 
     python3 scripts/check_file_path.py
 
@@ -58,7 +58,7 @@ def main() -> int:
         sys.stderr.write(ran.stderr)
         ok = ran.returncode == 0
 
-    pins.report(ok, "the file requester's path and size")
+    pins.report(ok, "the file requester's path helpers")
     return 0 if ok else 1
 
 

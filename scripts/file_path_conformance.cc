@@ -1,11 +1,10 @@
 /*
- * Host conformance for the file requester's path and size helpers
+ * Host conformance for the file requester's path helpers
  * (specs/trinket/file_requester.md).
  *
- * The drawer above a path, the join of a drawer and a name, and a size as the
- * AmigaDOS `List` writes it: pure strings, so synthetic ones are enough, and a
- * wrong parent or a missing separator is exactly what a screen shows only by
- * luck.
+ * The drawer above a path and the join of a drawer and a name: pure strings, so
+ * synthetic ones are enough, and a wrong parent or a missing separator is
+ * exactly what a screen shows only by luck.
  *
  * Host tools only (python3 and a C++ compiler); not part of any target build.
  * Run through scripts/check_file_path.py.
@@ -18,7 +17,6 @@
 
 namespace {
 
-using aegir::trinket::file_path::format_size;
 using aegir::trinket::file_path::join;
 using aegir::trinket::file_path::parent_of;
 
@@ -54,11 +52,6 @@ void expect_join(std::u32string const &drawer, std::u32string const &name,
     check(got == want, what + ": got " + narrow(got) + ", want " + narrow(want));
 }
 
-void expect_size(uint64_t bytes, std::string const &want, std::string const &what) {
-    std::string const got = format_size(bytes);
-    check(got == want, what + ": got " + got + ", want " + want);
-}
-
 }  // namespace
 
 int main() {
@@ -76,13 +69,6 @@ int main() {
     expect_join(U"AEGIR:Docs", U"X", U"AEGIR:Docs/X", "a drawer takes a slash");
     expect_join(U"AEGIR:Docs/", U"X", U"AEGIR:Docs/X", "a trailing slash is not doubled");
     expect_join(U"AEGIR:", U"", U"AEGIR:", "an empty name is the drawer alone");
-
-    /* The size is a comma every three digits. */
-    expect_size(0, "0", "zero has no comma");
-    expect_size(999, "999", "three digits have none");
-    expect_size(1000, "1,000", "four digits have one");
-    expect_size(2136, "2,136", "the sample the MUI screenshot shows");
-    expect_size(1000000, "1,000,000", "seven digits have two");
 
     std::printf("file-path: %u checks, %u failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

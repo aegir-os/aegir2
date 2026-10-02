@@ -1,5 +1,5 @@
 /*
- * Trinket file-requester path and size helpers (see the header).
+ * Trinket file-requester path helpers (see the header).
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
@@ -44,19 +44,6 @@ std::u32string join(std::u32string_view drawer, std::u32string_view name) {
         out.push_back(U'/');
     }
     out.append(name);
-    return out;
-}
-
-std::string format_size(uint64_t bytes) {
-    std::string const digits = std::to_string(bytes);
-    std::string out;
-    out.reserve(digits.size() + digits.size() / 3);
-    for (size_t i = 0; i < digits.size(); ++i) {
-        if (i > 0 && (digits.size() - i) % 3 == 0) {
-            out.push_back(',');
-        }
-        out.push_back(digits[i]);
-    }
     return out;
 }
 

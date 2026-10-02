@@ -119,10 +119,11 @@ missing is the *body* and what it stands on:
   the drawer: Enter in it opens the path, and a click on a directory row opens
   it, as the Amiga's requester does.
 
-- **The path and the size are pure, so a host check pins them.** The parent of
-  a path, the join of a drawer and a name, and a size as `List` writes it (a
-  comma every three digits) are `file_path.h`'s, with no theme and no VFS, so
-  `make check-file-path` covers them without a boot.
+- **The path is pure, so a host check pins it.** The parent of a path and the
+  join of a drawer and a name are `file_path.h`'s, with no theme and no VFS, so
+  `make check-file-path` covers them without a boot. A size is not here: it is
+  the locale's (`Locale::format_size`, `Locale::format_number`,
+  `specs/locale.md`), so the requester owns no size formatter.
 
 ## The shape
 
@@ -139,7 +140,6 @@ void set_row(int index, std::vector<std::u32string> cells, Icon icon);
 // file_path.h -- the pure helpers, host-checked
 std::u32string parent_of(std::u32string_view path);
 std::u32string join(std::u32string_view drawer, std::u32string_view name);
-std::string format_size(uint64_t bytes);
 
 // file_requester.h
 class FileRequester {
@@ -190,8 +190,8 @@ public:
   **`make check-listview`** the columns' (`specs/trinket/listview.md`); this arc
   adds nothing to either.
 - **`make check-file-path`** (`scripts/check_file_path.py` +
-  `scripts/file_path_conformance.cc`): the parent of a path, the join of a
-  drawer and a name, and a size as `List` writes it.
+  `scripts/file_path_conformance.cc`): the parent of a path and the join of a
+  drawer and a name.
 - **The demo** opens a file requester on a known drawer, reads its columns
   and its list back from a screendump, types a pattern and reads the list
   filtered, presses Volumes and reads the browsable volumes -- with `NIL:`
