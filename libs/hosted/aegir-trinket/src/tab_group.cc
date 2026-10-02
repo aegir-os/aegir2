@@ -12,6 +12,7 @@
 #include <aegir/trinket/theme.h>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace aegir::trinket {
@@ -246,6 +247,16 @@ Size TabGroup::preferred_size() const
         content = active->preferred_size();
     }
     return {std::max(tabs, content.width + 2 * border), strip + content.height + 2 * border};
+}
+
+Size TabGroup::maximum_size() const
+{
+    /* The group fills the room it is given. It has no `Layout` to answer a
+     * maximum, so without this `Container::maximum_size` would fall back to the
+     * minimum and a host could not stretch it -- the page would sit at its
+     * least and leave the body empty (specs/trinket/tabs.md). */
+    int const big = std::numeric_limits<int>::max();
+    return {big, big};
 }
 
 Size TabGroup::minimum_size() const

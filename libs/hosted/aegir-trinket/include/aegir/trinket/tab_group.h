@@ -63,6 +63,7 @@ public:
 
     Size preferred_size() const override;
     Size minimum_size() const override;
+    Size maximum_size() const override;
 
 protected:
     void on_layout() override;
