@@ -44,7 +44,10 @@ missing is the *body* and what it stands on:
   `specs/pattern.md`'s, shared with the shell's globbing and `dir`/`list` --
   not a second one in the requester. The box's contents filter the rows the
   list already holds: the directory is listed once and `pattern::match` keeps
-  the names it accepts, so a keystroke is a filter, not a re-list.
+  the names it accepts, so a keystroke is a filter, not a re-list. It is the
+  *file* list's filter: Volumes lists every browsable volume whatever the box
+  holds, because a volume is not a name the wildcard picks from the open
+  drawer.
 
 - **Volumes enumerates; `kFlagNoDir` is the hide.** The button asks the VFS's
   namespace for `volume_count` and `describe` -- the `Row` is name, flags,

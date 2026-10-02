@@ -451,12 +451,15 @@ restart    = never
 # them. It maps its own arena slice, like the test bed, and its memory is
 # what the toolkit's heap and page tables come from. font.main is what its
 # label draws a Noto Sans face through: the toolkit's ServerFont is a client
-# of the service, and the demo is its first caller (specs/fonts.md).
+# of the service, and the demo is its first caller (specs/fonts.md). Its
+# Open... item is the toolkit's first VFS client, so the demo holds the
+# namespace and the requester lists the drawer it is given
+# (specs/trinket/file_requester.md).
 [demo]
 binary    = aegir-gui-demo
 authority = system
 account   = boot
-needs     = log.main, console.gui, bureau.menu, font.main
+needs     = log.main, console.gui, bureau.menu, font.main, vfs.namespace
 maps      = true
 memory_kib = 4096
 restart   = never

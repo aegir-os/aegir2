@@ -37,6 +37,11 @@ class QmpStep:
     trigger: str
     times: int = 1  # how often the action may run; 0 is every match
     press: str | None = None
+    # The typist's pace between keys: the terminal's grid keeps up at the
+    # default 0.05 s, but a widget that repaints its window and waits on the GPU
+    # per keystroke does not, and a dropped key mangles the line
+    # (run_target.send_key).
+    press_delay: float = 0.05
     dumps: tuple[str, ...] = ()
     expect: tuple[tuple[int, int], ...] = ()
     bands: tuple[str, ...] = ()
@@ -1103,6 +1108,82 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"demo: about",
+                # The About pick closed the demo's menu; reopen it from the
+                # bar's first title and click Open... -- the third item, the
+                # menu's rows 22 pixels at y 33, 55 and 77.
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 450}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    {"type": "abs", "data": {"axis": "x", "value": 768}},
+                    {"type": "abs", "data": {"axis": "y", "value": 3154}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The file requester (specs/trinket/file_requester.md): a window
+            # centered on the screen, its content (408,246,464,308), the list
+            # (420,258,416,168), the Pattern box (466,430,100,20), the File box
+            # (448,488,100,20) and the four buttons at y 518, OK first. The
+            # list's titles row and the entries under it are ink.
+            QmpStep(
+                r"demo: requester up",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                # The requester's titlebar, so the check fails if the cue fired
+                # before the window was up.
+                pixels=(("gpu0", 700, 232, 102, 136, 187),),
+                dark=(
+                    ("gpu0", 424, 261, 404, 160, 150),
+                ),
+                # Type a wildcard into the Pattern box. The requester opens it
+                # focused (FileRequester::show), so no click is needed: a click
+                # races the first key and loses it. The box opens holding #?
+                # with the cursor at its head, so the keys land before it and
+                # AEGIR#? is the pattern the cue then names.
+                press="AEGIR",
+            ),
+            # The pattern kept one row, AEGIR.TXT: the cue says so and the
+            # first row under the titles holds its ink.
+            QmpStep(
+                r"demo: filtered AEGIR\#\? 1",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 424, 276, 400, 15, 8),),
+                # Volumes: the browsable volumes replace the list. The button is
+                # the second of the four.
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 16998}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21708}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The volumes list: the namespace's volumes less NIL: and PIPE:,
+            # which carry kFlagNoDir -- seven rows. The cue names the count, so
+            # their absence is checked rather than merely unread; the rows under
+            # the titles hold ink.
+            QmpStep(
+                r"demo: volumes 7",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                dark=(("gpu0", 424, 276, 400, 140, 40),),
+                # Type a name into the File box and press Return: the default OK
+                # takes it, and the demo reports the name it chose.
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 12748}},
+                    {"type": "abs", "data": {"axis": "y", "value": 20397}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+                press="AEGIR.TXT\n",
+                press_delay=0.2,
+            ),
+            # OK resolved the name and the requester closed; the demo's own
+            # window is clear again, so close it from its titlebar.
+            QmpStep(
+                r"demo: opened AEGIR.TXT",
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 23448}},
                     {"type": "abs", "data": {"axis": "y", "value": 17938}},

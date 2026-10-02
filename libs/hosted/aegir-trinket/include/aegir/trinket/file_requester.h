@@ -57,8 +57,15 @@ public:
     std::u32string const& pattern() const { return pattern_; }
     /** The name in the File box when OK resolved, empty otherwise. */
     std::u32string const& chosen() const { return chosen_; }
+    /** The rows the list holds after the last listing or filter, so a caller
+     *  can cue on what Volumes found. */
+    int row_count() const;
 
     std::function<void(Action)> on_action;
+
+    /** The list was re-filtered by the Pattern box: the wildcard it now holds
+     *  and the row count it kept, so a caller can pace a read on it. */
+    std::function<void(std::u32string const&, int)> on_filter;
 
     void show();
     void close();

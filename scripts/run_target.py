@@ -217,7 +217,11 @@ _PRESS_CHORDS = {":": ("shift", "semicolon"),
                  "<": ("shift", "comma"),
                  "$": ("shift", "4"),
                  "\"": ("shift", "apostrophe"),
-                 "|": ("shift", "backslash")}
+                 "|": ("shift", "backslash"),
+                 # The file requester's Pattern box types an AmigaDOS wildcard
+                 # (`#?`, specs/pattern.md), so the two keys it needs are here.
+                 "#": ("shift", "3"),
+                 "?": ("shift", "slash")}
 
 # The keys that are not characters, spelled between angle brackets in a step's
 # `press` -- the editor's arrows and editing keys (specs/terminal.md). A token
@@ -243,12 +247,14 @@ _PRESS_KEYS = {
 }
 
 
-def send_key(socket_path: Path, keys: str) -> bool:
+def send_key(socket_path: Path, keys: str, delay: float = 0.05) -> bool:
     """Keypresses through QEMU's QMP socket, one per key of `keys`: the
     acceptance check's fingers. A printable character is itself, and a key
     with no character -- an arrow, Backspace -- is `<name>` (_PRESS_KEYS).
     False -- and nothing sent -- when a key has no qcode, because half a typed
-    password is worse than none."""
+    password is worse than none. `delay` is the typist's pace: a widget that
+    repaints a whole window and waits on the GPU per key is not the terminal's
+    grid, and QEMU drops what the guest's input ring cannot take."""
     qcodes: list[tuple[str, ...]] = []
     index = 0
     while index < len(keys):
@@ -291,7 +297,7 @@ def send_key(socket_path: Path, keys: str) -> bool:
         # sixteen keys sent back to back arrive as a press burst at QMP
         # speed, and the tail is lost. A typist's pace is what a queue
         # without flow control is given.
-        time.sleep(0.05)
+        time.sleep(delay)
     return True
 
 
@@ -596,7 +602,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     # The guest said it is waiting: type the keys. Events
                     # persist in the driver's posted buffers, so the presses
                     # are not a race.
-                    if not send_key(socket_path, step.press):
+                    if not send_key(socket_path, step.press, step.press_delay):
                         print(
                             f"    runner: FAIL a character of '{step.press}' has no qcode",
                             flush=True,

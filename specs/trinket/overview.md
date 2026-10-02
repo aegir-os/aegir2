@@ -126,7 +126,11 @@ Focus is the toolkit's, on top of console's click-to-focus: a `Widget` gains
 `focusable()` (true for `TextBox` and `Button`), the window holds the focused
 widget, a pointer-down focuses the focusable it lands in, and Tab cycles to
 the next. A key event goes to the focused widget; `TextBox::on_submit` and
-`Button::on_click` are how a client acts on Enter and a click.
+`Button::on_click` are how a client acts on Enter and a click. Tab order is
+tree order today -- workable while the focusables are few, and not good enough
+for a keyboard-driven session: a deliberate order across a composite widget
+(a file requester's list, Pattern, Drawer and File) is a milestone once the
+widget set is complete.
 
 ### `Window` and `Canvas`
 

@@ -97,6 +97,9 @@ void FileRequester::build_body()
     pattern_box_->on_text_changed = [this](std::u32string_view text) {
         pattern_ = std::u32string(text);
         apply_filter();
+        if (on_filter) {
+            on_filter(pattern_, list_ != nullptr ? list_->count() : 0);
+        }
     };
     auto pattern_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, gap);
     Group* const pattern_row_ptr = pattern_row.get();
@@ -247,10 +250,16 @@ void FileRequester::apply_filter()
         if (e.directory() && !show_drawers) {
             continue;
         }
-        std::string const name = utf32_to_utf8(e.name);
-        if (!aegir::pattern::match(pattern.c_str(), static_cast<uint32_t>(pattern.size()),
-                                   name.c_str(), static_cast<uint32_t>(name.size()))) {
-            continue;
+        /* The wildcard is the file list's: the Volumes list is the volumes the
+         * namespace holds, whole -- the acceptance reads them with NIL: and
+         * PIPE: absent (specs/trinket/file_requester.md). */
+        if (!showing_volumes_) {
+            std::string const name = utf32_to_utf8(e.name);
+            if (!aegir::pattern::match(pattern.c_str(),
+                                       static_cast<uint32_t>(pattern.size()),
+                                       name.c_str(), static_cast<uint32_t>(name.size()))) {
+                continue;
+            }
         }
         std::vector<std::u32string> cells;
         cells.push_back(e.name);
@@ -340,6 +349,13 @@ void FileRequester::show()
         list_drawer();
     }
     requester_.show();
+    /* The Pattern box is the field a caller types into first, so it takes the
+     * focus. A click on it after the window is up races the first keystroke:
+     * the click's focus and the first key arrive close enough that the key is
+     * routed before the box is focused, and the first key is lost. */
+    if (pattern_box_ != nullptr) {
+        requester_.window().set_focus(pattern_box_);
+    }
 }
 
 void FileRequester::close()
@@ -350,6 +366,11 @@ void FileRequester::close()
 bool FileRequester::visible() const
 {
     return requester_.visible();
+}
+
+int FileRequester::row_count() const
+{
+    return list_ != nullptr ? list_->count() : 0;
 }
 
 }  // namespace aegir::trinket

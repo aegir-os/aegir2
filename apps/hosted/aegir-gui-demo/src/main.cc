@@ -523,11 +523,30 @@ int main(int argc, char *argv[])
     aegir::vfs::Namespace vfs = aegir::vfs::Namespace::find();
     auto file_requester = std::make_unique<FileRequester>(app, vfs, U"Open File");
     file_requester->open_at(U"Sys:");
+    /* The requester's cues (specs/trinket/file_requester.md): the acceptance
+     * paces a dump on each, so the pattern's filter and the Volumes list are
+     * read back from a screendump. The pattern cue carries the wildcard and the
+     * rows it kept. */
+    file_requester->on_filter = [](std::u32string const& pattern, int count) {
+        std::string line("  demo: filtered ");
+        line += utf32_to_utf8(pattern);
+        line += " ";
+        line += std::to_string(count);
+        line += "\n";
+        write(line.c_str());
+    };
     file_requester->on_action = [&file_requester](FileRequester::Action action) {
         if (action == FileRequester::OK) {
             write("  demo: opened ");
             write(utf32_to_utf8(file_requester->chosen()).c_str());
             write("\n");
+        } else if (action == FileRequester::VOLUMES) {
+            /* The browsable volumes, counted: NIL: and PIPE: carry kFlagNoDir
+             * and are not among them (specs/trinket/file_requester.md). */
+            std::string line("  demo: volumes ");
+            line += std::to_string(file_requester->row_count());
+            line += "\n";
+            write(line.c_str());
         }
     };
 
@@ -611,9 +630,11 @@ int main(int argc, char *argv[])
             write("  demo: reset\n");
         } else if (action == 3) {
             /* Open...: the file requester, on the drawer it was built with. The
-             * cue paces a dump on it (specs/trinket/file_requester.md). */
-            write("  demo: requester up\n");
+             * cue paces a dump on it (specs/trinket/file_requester.md), and it
+             * is written after the show so the dump sees the window rather than
+             * the frame before it. */
             file_requester->show();
+            write("  demo: requester up\n");
         }
     };
 
