@@ -1716,6 +1716,39 @@ void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words, uint32_t
     serve_read(port, dirent, offset, wanted);
 }
 
+/* Whether a directory entry's name is the "." or ".." the filesystem keeps but
+ * a client's listing does not show: the Amiga's directories have no dot
+ * entries, and the parent is the requester's Parent button or the "/"-is-parent
+ * walk (specs/vfs.md). */
+bool is_dot_entry(aegir::fat::Dirent const &dirent) noexcept
+{
+    if (dirent.name_length == 1) {
+        return dirent.name[0] == '.';
+    }
+    return dirent.name_length == 2 && dirent.name[0] == '.' && dirent.name[1] == '.';
+}
+
+/* The directory entry a client's `index` names, with the dot entries skipped:
+ * the chain's order, less the two a listing never shows. */
+bool visible_entry(Dir const &dir, uint64_t index, aegir::fat::Dirent *out) noexcept
+{
+    uint64_t visible = 0;
+    for (uint32_t raw = 0;; ++raw) {
+        aegir::fat::Dirent dirent;
+        if (!find_in_dir(dir, nullptr, 0, raw, &dirent)) {
+            return false;
+        }
+        if (is_dot_entry(dirent)) {
+            continue;
+        }
+        if (visible == index) {
+            *out = dirent;
+            return true;
+        }
+        ++visible;
+    }
+}
+
 void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     char const *path = nullptr;
@@ -1738,8 +1771,7 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         return;
     }
     aegir::fat::Dirent dirent;
-    if (!find_in_dir(dir, nullptr, 0, static_cast<uint32_t>(words[path_words]),
-                     &dirent)) {
+    if (!visible_entry(dir, words[path_words], &dirent)) {
         port.reply_words(nullptr, 0);
         return;
     }

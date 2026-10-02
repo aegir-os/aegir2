@@ -159,8 +159,10 @@ The path a method takes is the component path from above: `/` separates
 components, each a name in the directory above it, the empty path is the
 root, and an empty component is the parent (the Amiga convention — `//`
 from a subdirectory is the root, and the parent of the root is the root).
-FAT matches each component against the long name first and the 8.3 name
-second, ASCII-case-folded (specs/fat.md).
+`.` and `..` are **not** components here: the Amiga's directories have none,
+so a filesystem does not special-case them, and normalizing them is the
+POSIX layer's job when it exists. FAT matches each component against the
+long name first and the 8.3 name second, ASCII-case-folded (specs/fat.md).
 
 - **read** — words: path (after the colon), offset. The walk ends at the
   file the path names. Reply: data words inline
@@ -174,7 +176,11 @@ second, ASCII-case-folded (specs/fat.md).
 - **list** — words: path, an index. The walk ends at the *directory* the
   path names — the empty path lists the root. Reply: one entry (name, size,
   kind, time), or end-of-directory. The cursor is the caller's index, the
-  registry describe pattern again. The time is the entry's last write, as
+  registry describe pattern again, and it skips a filesystem's `.`/`..`
+  entries: they are storage, not names a client sees. The Amiga's directories
+  have no dot entries and the parent is the path walk or the requester's
+  Parent button (`specs/trinket/file_requester.md`), so a listing is the
+  volume's own names whether the filesystem underneath keeps the two or not. The time is the entry's last write, as
   `stat` answers it, because a file list shows it for every row and a `stat`
   per row is a call per row (`specs/trinket/file_requester.md`); a filesystem
   with no clock answers zero.

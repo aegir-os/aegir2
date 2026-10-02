@@ -248,11 +248,14 @@ bool may_see(uint64_t badge, aegir::bfs::Inode const &inode) noexcept
     return false;
 }
 
-/* Walk a component path from the root. The empty path is the root; an empty
- * component and ".." are the parent, "." the directory itself (specs/vfs.md's
- * Amiga convention). Every directory a step descends from must be executable
- * by the caller, which is what keeps a user out of another user's home even
- * when a file inside it is world-readable (specs/ownership.md). */
+/* Walk a component path from the root. The empty path is the root and an empty
+ * component is the parent (specs/vfs.md's Amiga convention -- `/` is the
+ * parent, `//` two up). "." and ".." are not special here: the Amiga's
+ * directories have no dot entries, so those components belong to the POSIX
+ * layer to normalize, and a step is a name lookup like any other. Every
+ * directory a step descends from must be executable by the caller, which is
+ * what keeps a user out of another user's home even when a file inside it is
+ * world-readable (specs/ownership.md). */
 bool walk(uint64_t badge, char const *path, uint32_t length,
           aegir::bfs::Inode *out, uint64_t *out_block = nullptr) noexcept
 {
@@ -272,13 +275,6 @@ bool walk(uint64_t badge, char const *path, uint32_t length,
         }
         uint32_t const component = end - start;
         if (component == 0) {
-            block = g_volume.to_block(inode.parent);
-            if (!g_volume.read_inode(block, &inode)) {
-                return false;
-            }
-        } else if (component == 1 && path[start] == '.') {
-            /* the directory itself: nothing to do */
-        } else if (component == 2 && path[start] == '.' && path[start + 1] == '.') {
             block = g_volume.to_block(inode.parent);
             if (!g_volume.read_inode(block, &inode)) {
                 return false;
@@ -331,10 +327,6 @@ bool walk_parent(uint64_t badge, char const *path, uint32_t length,
             return false;
         }
         if (component == 0) {
-            dir_block = g_volume.to_block(dir.parent);
-        } else if (component == 1 && path[start] == '.') {
-            /* the directory itself */
-        } else if (component == 2 && path[start] == '.' && path[start + 1] == '.') {
             dir_block = g_volume.to_block(dir.parent);
         } else {
             uint64_t child = 0;
@@ -899,6 +891,42 @@ void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words, uint32_t
                      aegir::volume::kReadHeaderWords + static_cast<uint32_t>((got + 7) / 8));
 }
 
+/* Whether a directory entry's name is the "." or ".." the filesystem keeps but
+ * a client's listing does not show: the Amiga's directories have no dot
+ * entries, and the parent is the requester's Parent button or the "/"-is-parent
+ * walk (specs/vfs.md). */
+bool is_dot_entry(char const *name, uint32_t length) noexcept
+{
+    if (length == 1) {
+        return name[0] == '.';
+    }
+    return length == 2 && name[0] == '.' && name[1] == '.';
+}
+
+/* The directory entry a client's `index` names, with the dot entries skipped:
+ * the tree order, less the two a listing never shows. */
+bool visible_dir_entry(aegir::bfs::Inode const &dir, uint64_t index, char *name,
+                       uint32_t *name_length, uint64_t *block) noexcept
+{
+    uint64_t visible = 0;
+    for (uint32_t raw = 0;; ++raw) {
+        uint32_t length = 0;
+        uint64_t at = 0;
+        if (!g_volume.dir_entry(dir, raw, name, &length, &at)) {
+            return false;
+        }
+        if (is_dot_entry(name, length)) {
+            continue;
+        }
+        if (visible == index) {
+            *name_length = length;
+            *block = at;
+            return true;
+        }
+        ++visible;
+    }
+}
+
 void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                  uint64_t badge) noexcept
 {
@@ -924,8 +952,7 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     char name[aegir::bfs::kMaxName];
     uint32_t name_length = 0;
     uint64_t block = 0;
-    if (!g_volume.dir_entry(dir, static_cast<uint32_t>(words[path_words]), name,
-                            &name_length, &block)) {
+    if (!visible_dir_entry(dir, words[path_words], name, &name_length, &block)) {
         port.reply_words(nullptr, 0);
         return;
     }
