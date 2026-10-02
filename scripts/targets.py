@@ -735,16 +735,55 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
-                # The windowed customer (specs/launch.md): the shell launches a
-                # program by its bare name, and the program opens its own window
-                # when it wants the GUI -- it is not classified before it runs.
-                # The launcher hands it its own console.gui with the rest of a
-                # command's grant; the viewer resolves from C: and reads the file
-                # through the session's namespace. It is cued here, after the DOS
-                # and nested-terminal sequence, so the viewer's focus does not
-                # race a press still owed to the shell.
-                press="view Sys:AEGIR.TXT\n",
+                # The editor (specs/trinket/editor.md): the second windowed
+                # customer, launched by its bare name. The launcher hands it its
+                # own console.gui; it resolves C:, reads the file through the
+                # session's namespace, and opens it in a tab. It comes before the
+                # viewer and closes before it, so the two never share the screen.
+                press="edit Sys:AEGIR.TXT\n",
             ),
+            QmpStep(r"launcher: command started edit"),
+            # The editor is up: the block cursor of insert mode at the head of
+            # the file's first line, its cell the theme's blue, with the glyph
+            # under it drawn in the cursor's own colour.
+            QmpStep(
+                r"editor: ready",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 426, 227, 102, 136, 187),),
+                dark=(("gpu0", 432, 226, 220, 12, 20),),
+                # Type at the head and toggle to overwrite in the same press, so
+                # the cue that paces the next dump is the mode, not a keystroke.
+                press="Hi<insert>",
+            ),
+            # Overwrite mode: the cursor is the simple underline now, along the
+            # foot of the cell the two keys moved the caret to.
+            QmpStep(
+                r"editor: overwrite",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 438, 236, 102, 136, 187),),
+                press="<insert>",
+            ),
+            # Insert mode again, the block back at the caret. Then the window's
+            # own close gadget (the titlebar's left), so the editor exits and the
+            # shell has its prompt back.
+            QmpStep(
+                r"editor: insert",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(("gpu0", 438, 228, 102, 136, 187),),
+                events=(
+                    {"type": "abs", "data": {"axis": "x", "value": 11110}},
+                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "btn", "data": {"button": "left", "down": True}},
+                    {"type": "btn", "data": {"button": "left", "down": False}},
+                ),
+            ),
+            # The editor closed, so the shell is at its prompt: the viewer is
+            # launched where the later steps expect it.
+            QmpStep(r"editor: closed", events=TERMINAL_CLICK,
+                    press="view Sys:AEGIR.TXT\n"),
             QmpStep(r"launcher: command started view"),
             # The viewer is up: its window is its own default (no launcher
             # AEGIR_WINDOW was set), its content is the Workbench grey, and the

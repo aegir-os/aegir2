@@ -157,6 +157,12 @@ void TextEdit::scroll_by(int rows) {
 
 void TextEdit::ensure_cursor_visible() {
     if (active_font() == nullptr) return;
+    /* Before the window lays the content out the rectangle is empty, and a
+     * scroll computed from it is one cell wide: `h_scroll_` would be set here
+     * and the caret would sit a cell left of the text, with the line's first
+     * glyph -- and the glyph over a block cursor -- clipped away. No rect, no
+     * scroll, as the terminal's own layout guard (specs/trinket/editor.md). */
+    if (rect_.width <= 0 || rect_.height <= 0) return;
     TextDocument::Cursor const cursor = document_.cursor();
     int const row = row_of(cursor.line, cursor.column);
     if (row < first_row_) {

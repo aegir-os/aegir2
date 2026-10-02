@@ -241,6 +241,9 @@ _PRESS_KEYS = {
     "esc": "esc",
     "backspace": "backspace",
     "delete": "delete",
+    # The editor's mode toggle (specs/trinket/editor.md): insert mode draws the
+    # block cursor, overwrite the underline.
+    "insert": "insert",
     # A screen shortcut (specs/workbench.md): a chord, so the modifier is held
     # with the key in one send-key. Super+Space is the bureau's Execute.
     "win-space": ("meta_l", "spc"),
