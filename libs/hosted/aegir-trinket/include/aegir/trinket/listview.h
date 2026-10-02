@@ -89,6 +89,11 @@ public:
     /* The user chose a row (a click or a key), not set_active. */
     std::function<void(int)> on_select;
 
+    /* The rectangle changed what the list can show, and so `visible_rows`, so a
+     * client wiring a scrollbar re-syncs it. Reported only on a change, so a
+     * layout that moved nothing does not spin (specs/trinket/listview.md). */
+    std::function<void()> on_visible_changed;
+
     /* The row's height -- the font's line and its pad -- and the row a point in
      * the widget is over, or -1. */
     int row_height() const;
@@ -117,6 +122,7 @@ public:
     Size maximum_size() const override;
 
 protected:
+    void on_layout() override;
     void on_paint(Canvas& canvas, const PaintEvent& event) override;
     void on_mouse_down(const MouseEvent& event) override;
     void on_mouse_move(const MouseEvent& event) override;
@@ -147,6 +153,8 @@ private:
     Alignment align_ = Alignment::LEFT;
     int active_ = -1;
     int cursor_ = -1;
+    /* The last rectangle's share, so `on_visible_changed` fires on a change. */
+    int last_visible_ = -1;
     int first_ = 0;
 };
 

@@ -91,6 +91,10 @@ private:
     void list_drawer();
     void list_volumes();
     void apply_filter();
+    /* Tell the scrollbar the list's rows and what it shows. The list's rectangle
+     * is only known once it is laid out, so this also runs from the list's
+     * on_visible_changed (specs/trinket/listview.md). */
+    void sync_scrollbar();
     void set_drawer(std::u32string drawer);
     void choose(int row);
     Entry const* entry_named(std::u32string const& name) const;

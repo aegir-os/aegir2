@@ -95,6 +95,10 @@ void FileRequester::build_body()
             list_->set_first(first);
         }
     };
+    /* The list's rectangle is known only when it is laid out -- after the range
+     * was first handed to the bar -- so a layout that changes what it shows
+     * re-syncs (specs/trinket/listview.md). */
+    list_->on_visible_changed = [this]() { sync_scrollbar(); };
     auto list_row = std::make_unique<Group>(Group::Orientation::HORIZONTAL, 0);
     Group* const list_row_ptr = list_row.get();
     list_row->add_child(std::move(list));
@@ -383,10 +387,16 @@ void FileRequester::apply_filter()
         ++row;
     }
     list_->set_first(0);
-    if (scrollbar_ != nullptr) {
-        scrollbar_->set_range(list_->count(), list_->visible_rows());
-        scrollbar_->set_value(list_->first());
+    sync_scrollbar();
+}
+
+void FileRequester::sync_scrollbar()
+{
+    if (list_ == nullptr || scrollbar_ == nullptr) {
+        return;
     }
+    scrollbar_->set_range(list_->count(), list_->visible_rows());
+    scrollbar_->set_value(list_->first());
 }
 
 FileRequester::Entry const* FileRequester::entry_named(std::u32string const& name) const

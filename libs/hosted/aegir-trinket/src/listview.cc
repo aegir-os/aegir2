@@ -42,6 +42,17 @@ ListView::ListView() = default;
 
 ListView::~ListView() = default;
 
+void ListView::on_layout() {
+    /* The rectangle's share of the row height is what the list can show, and a
+     * client that wires a scrollbar must re-sync it; report the first layout
+     * and each change, but nothing else, so a layout that moved nothing does
+     * not spin (specs/trinket/listview.md). */
+    int const visible = visible_rows();
+    if (visible == last_visible_) return;
+    last_visible_ = visible;
+    if (on_visible_changed) on_visible_changed();
+}
+
 void ListView::add(std::u32string_view text) {
     rows_.emplace_back();
     rows_.back().cells.emplace_back(text);

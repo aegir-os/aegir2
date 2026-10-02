@@ -74,7 +74,11 @@ palette screen; nothing is inverted). That is a correction to what
   height; `set_first` clamps to `[0, count - visible_rows]`. The `Scrollbar` is
   the control, as it is for the terminal's scrollback: the client wires
   `set_range(count, visible)` and `set_first`, and the list does not own one.
-  The pure mapping -- `first` and the clamped value -- is host-checked.
+  The rectangle is known only once the list is laid out, so the list reports
+  each change of what it shows with `on_visible_changed` and the client
+  re-syncs: a range set before layout carries `visible` zero and pins the
+  thumb to its minimum, which reads as far more rows than there are. The pure
+  mapping -- `first` and the clamped value -- is host-checked.
 
 - **Every affordance is a move.** A click selects the row under it; the arrows
   move the selection a row, Page Up/Down a page, Home/End to the ends, and the
