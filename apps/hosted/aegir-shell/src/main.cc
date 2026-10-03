@@ -359,14 +359,23 @@ public:
      * Home:S file first and the system's under it. Run once, before the loop
      * reads the console; the first that reads is the one that runs, and a
      * session with neither just starts. */
-    void run_startup()
+    void run_startup(bool session)
     {
         static char const *const kStartup[] = {"S:Shell-Startup",
                                                "Sys:S/Shell-Startup"};
         for (char const *candidate : kStartup) {
             if (start_script(candidate) == ScriptStart::Started) {
-                return;
+                break;
             }
+        }
+        /* The session's additions (specs/session.md): `Home:S/User-Startup`
+         * once, by the session's own shell -- the one auth marked `--session`
+         * -- and not by a nested shell. The frames are a stack, so the file
+         * pushed last drains first: the user's additions run before
+         * Shell-Startup, and a session whose file is absent runs only
+         * Shell-Startup. */
+        if (session && start_script("Home:S/User-Startup") == ScriptStart::Started) {
+            aegir::debug_write("  shell: User-Startup\n");
         }
     }
 
@@ -480,7 +489,7 @@ public:
         if (start_script(path) == ScriptStart::Started) {
             return;
         }
-        run_startup();
+        run_startup(false);
     }
 
 private:
@@ -1280,14 +1289,20 @@ int main(int argc, char **argv)
      * `NEWSHELL FROM` startup (specs/launch.md): it runs the named file as its
      * startup. One started with none is interactive and runs Shell-Startup
      * (specs/shell.md). */
-    if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') {
+    /* `--session` (specs/session.md): the terminal auth started for the
+     * session's own composition, so the shell runs `Home:S/User-Startup` once
+     * before Shell-Startup. An argument, not an environment entry, because a
+     * child inherits the environment and a nested shell must not run it. */
+    if (argc > 1 && argv[1] != nullptr && std::string(argv[1]) == "--session") {
+        shell.run_startup(true);
+    } else if (argc > 1 && argv[1] != nullptr && argv[1][0] != '\0') {
         if (shell.has_boot_status()) {
             shell.run_boot_script(argv[1]);
         } else {
             shell.run_startup_file(argv[1]);
         }
     } else {
-        shell.run_startup();
+        shell.run_startup(false);
     }
     shell.loop();
     return 0;

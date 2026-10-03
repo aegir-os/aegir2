@@ -277,6 +277,19 @@ AEGIR_BFS_TREE = [
         ("file", "Nested-Startup",
          b"; the newshell FROM startup (specs/launch.md).\naegir-echo 77\n"),
     ]),
+    # The user's home (specs/auth.md's Homes, specs/session.md's User-Startup):
+    # the row's `Sys:Homes/rroland`, made and owned at login, and this ships the
+    # session's additions so the hook has something to run. The session's own
+    # shell runs it once, before Shell-Startup; a nested shell does not.
+    ("dir", "Homes", [
+        ("dir", "rroland", [
+            ("dir", "S", [
+                ("file", "User-Startup",
+                 b"; the session's additions, run once (specs/session.md).\n"
+                 b"Echo UserStartup-OK\n"),
+            ]),
+        ]),
+    ]),
 ]
 
 # The BFS volume's tree: a known file and a directory with a nested file, so

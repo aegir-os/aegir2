@@ -2,8 +2,8 @@
 
 Status: decided (2026-10). `specs/auth.md` keeps the login port, the user
 database, the homes and the reclaim; this is the composition a successful login
-builds. The manifest reader is built; the `datatypes` broker and `User-Startup`
-are not (see *Phases*).
+builds. The manifest reader, the `datatypes` broker and `User-Startup` are built
+(see *Phases*).
 
 ## A session is one user class, a range of serials, and a launcher
 
@@ -100,10 +100,18 @@ idle service is a later feature, not a rule here.
 ## User-Startup
 
 Once the manifest's services are up, the session runs `Home:S/User-Startup`
-**once** (not per shell), through the launcher, so a user can start extra
-programs beyond the manifest -- the manifest is structure, User-Startup the
-user's additions. Recorded here so the manifest and the script are one design;
-`specs/shell.md`'s `S:Shell-Startup` is the per-shell sibling.
+**once** (not per shell), so a user can start extra programs beyond the
+manifest -- the manifest is structure, User-Startup the user's additions. It is
+the session's *own* shell that runs it: auth marks the shell host it starts for
+the session's composition with the argument `--session`, and a shell that sees
+it runs the file before `Shell-Startup`. A nested shell is started by the
+launcher and carries no such argument, so it runs only `Shell-Startup` -- which
+is what makes it once per session and not once per shell. An argument, not an
+environment entry: a child inherits its parent's environment, so an env mark
+would reach a nested shell and run User-Startup again. The commands it starts go
+through the launcher, like every other command. `specs/shell.md`'s
+`S:Shell-Startup` is the per-shell sibling; when the desktop lands it is the
+session's shell and runs User-Startup the same way.
 
 ## Phases and acceptance
 
@@ -126,4 +134,7 @@ user's additions. Recorded here so the manifest and the script are one design;
    broker port from the session's own allocator and hands the launcher its
    source, so the client asks the broker when present and falls back to the
    direct serve-launch when not.
-4. **User-Startup.** Run once at session start, after the services are up.
+4. **User-Startup.** Landed. `Home:S/User-Startup` runs once by the session's
+   own shell, before `Shell-Startup`; a nested shell does not. The
+   `Sys:Homes/<name>` the auth row names ships with it (the disk's), and the
+   acceptance cues on the shell's own line so a per-shell run would be visible.

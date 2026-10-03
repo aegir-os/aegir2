@@ -1466,11 +1466,22 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
     request.give_vspace = spec.maps;
     request.untyped_physical = untyped_physical;
     request.untyped_bits = spec.memory_bits;
-    /* A launcher-shaped service hands its children a serial range
-     * (specs/launch.md): the serials past the session's own children, so no two
-     * of a session's processes share one. */
+    /* A launcher-shaped service is the session's shell host, and is marked as
+     * the session's own composition by an argument, so its shell runs
+     * `Home:S/User-Startup` once (specs/session.md). An argument, not an
+     * environment entry: a child inherits its parent's environment, so a nested
+     * shell would inherit an env mark and run User-Startup again -- the
+     * per-shell bug the once rule exists to avoid. The launcher auth starts
+     * itself carries no mark, and a nested terminal is started by the launcher,
+     * so neither runs it. The same service also hands its children a serial
+     * range (specs/launch.md): the serials past the session's own children, so
+     * no two of a session's processes share one. */
     char const *environment[1] = {nullptr};
     if (spec.launcher) {
+        static char const kSessionMark[] = "--session";
+        static char const *const kSessionArguments[1] = {kSessionMark};
+        request.arguments = kSessionArguments;
+        request.argument_count = 1;
         environment[0] = badge_range_env(range_base, aegir::ipc::kSessionSerialStride - 3);
         request.environment = environment;
         request.environment_count = 1;

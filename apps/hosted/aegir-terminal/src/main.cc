@@ -158,12 +158,21 @@ int main(int argc, char *argv[])
 
     /* A launcher's `FROM <file>` (specs/launch.md) rides as this program's own
      * arguments: the shell this terminal starts runs the named file instead of
-     * Shell-Startup. */
+     * Shell-Startup. `--session` marks the terminal auth started for the
+     * session's own composition, whose shell runs `Home:S/User-Startup` once
+     * (specs/session.md); a nested terminal does not carry it. */
     std::string startup_file;
-    for (int i = 1; i + 1 < argc; ++i) {
-        if (argv[i] != nullptr && std::string(argv[i]) == "FROM" && argv[i + 1] != nullptr) {
+    bool session_startup = false;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] == nullptr) {
+            continue;
+        }
+        std::string const arg(argv[i]);
+        if (arg == "--session") {
+            session_startup = true;
+        } else if (arg == "FROM" && i + 1 < argc && argv[i + 1] != nullptr) {
             startup_file = argv[i + 1];
-            break;
+            ++i;
         }
     }
 
@@ -489,12 +498,18 @@ int main(int argc, char *argv[])
                  * (specs/shell.md, specs/boot.md). The boot terminal is the one
                  * auth granted the boot status. */
                 static char const kBootScript[] = "Sys:S/Startup-Sequence";
+                static char const kSessionStartup[] = "--session";
                 char const *arguments[1] = {kBootScript};
                 uint32_t argument_count = boot ? 1 : 0;
                 /* A nested terminal started with `FROM <file>` (specs/launch.md):
                  * its shell runs that file instead of Shell-Startup. */
                 if (!boot && !startup_file.empty()) {
                     arguments[0] = startup_file.c_str();
+                    argument_count = 1;
+                } else if (!boot && session_startup) {
+                    /* The session's own terminal (specs/session.md): its shell
+                     * runs `Home:S/User-Startup` once, before Shell-Startup. */
+                    arguments[0] = kSessionStartup;
                     argument_count = 1;
                 }
                 if (!spawn_kit.spawn_shell(image.data(), image.size(), cwd.c_str(),

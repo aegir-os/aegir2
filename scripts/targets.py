@@ -500,6 +500,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 500, 300, 170, 170, 170),
                 ),
             ),
+            # The session's additions (specs/session.md): the session's own
+            # shell runs `Home:S/User-Startup` once, before Shell-Startup. The
+            # cue is the shell's, printed only when the marked session shell
+            # finds and starts the file -- a nested shell does not run it, so a
+            # session that ran it per shell would print it more than once.
+            QmpStep(r"shell: User-Startup"),
             # The DOS toolset (specs/dos.md). Every command here is a program
             # read from Sys:C and started by the terminal on the shell's
             # request, and each step is cued by the *name* of the command that

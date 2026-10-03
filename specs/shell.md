@@ -311,7 +311,10 @@ this arc's record of the order.
   neither simply starts. The system's sets the alias `l` for `list`, so the
   acceptance typing `l` and `list` starting is the proof the startup ran. A
   user's own `Home:S/Shell-Startup` overriding it is a new shell's to read,
-  which waits for the re-login arc.
+  which waits for the re-login arc. The session's `Home:S/User-Startup` is the
+  once-per-session sibling (`specs/session.md`): the shell runs it before
+  Shell-Startup when auth marked it `--session`, and a nested shell -- the
+  launcher's, unmarked -- does not.
 - **Phase 11 — the boot session.** `specs/boot.md`: the system's
   `Sys:S/Startup-Sequence` is system-only, runs once before the greeter, and is
   run by a `system.boot` terminal and shell that auth spawns; the shell sends
