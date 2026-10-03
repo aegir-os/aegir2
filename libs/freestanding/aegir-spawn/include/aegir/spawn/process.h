@@ -196,6 +196,14 @@ struct Request {
     char const *boot = nullptr;
     uint32_t boot_length = 0;
     uint32_t priority;
+    /* The core the child is placed on, when the spawner was told one. Absent
+     * (`has_core` false) leaves the kernel's own default: a fresh TCB's
+     * affinity is the core its spawner created it on
+     * (kernel/src/object/objecttype.c:533), so placement is inherited by a
+     * service's own children. The spawner applies a declared core with
+     * seL4_TCB_SetAffinity before the child is resumed (specs/services.md). */
+    bool has_core = false;
+    uint32_t core = 0;
     /** The child's CSpace size in slots-bits (specs/authority.md), or zero for
      *  the default `kCNodeBits`. A child that will spawn large children of its
      *  own -- a launcher -- is given a larger CSpace, because staging a

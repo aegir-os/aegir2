@@ -212,11 +212,14 @@ every service. It is an open decision, not a deferred default.
 (`specs/build.md`'s envelope), which core a service runs on is a resource
 decision of its own: the kernel brings the other harts up and then leaves them
 idle, and a thread runs where it was told to (`seL4_TCB_SetAffinity`). Director
-currently gives everything to the core it started on, which is the honest default
-while there is one service — and the manifest is the obvious place to declare
-placement when there are more, because it is already where a service's authority
-is declared. Not designed yet; recorded so the first multi-core service is not
-the thing that discovers it.
+gives everything to the core it started on unless the manifest says otherwise,
+which is the honest default while there is one core's worth of work. Placement is
+designed now (`specs/services.md`): a manifest entry may declare `core = N`, the
+spawner sets it before the child is resumed, and an entry that declares none
+inherits its spawner's core, so placing a service places everything it starts.
+Director honors the key for the boot set first; each other spawner follows as it
+is taught the key, and a `core` it cannot yet honor is refused rather than
+ignored.
 
 ## Multiuser
 

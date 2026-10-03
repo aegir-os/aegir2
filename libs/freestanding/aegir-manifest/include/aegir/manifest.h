@@ -103,6 +103,15 @@ struct Entry {
      * shared constant saying it for everyone (specs/services.md,
      * specs/authority.md). A power of two, rounded up when parsed. */
     uint32_t delegate_mib;
+    /* The core this service is placed on, when the manifest declares one.
+     * Absent (`has_core` false) keeps the kernel's own default: a fresh TCB's
+     * affinity is the core its spawner created it on
+     * (kernel/src/object/objecttype.c:533), so placement is inherited by
+     * everything a service spawns unless a child names a core of its own
+     * (specs/services.md). The value is checked against the machine's core
+     * count by the spawner that honors it. */
+    bool has_core;
+    uint32_t core;
     /* The flat initrd, mapped read-only, for a service that reads the boot
      *  image itself rather than spawning from it: the initrd service
      *  serves the archive as the Initrd: volume (specs/vfs.md). The same

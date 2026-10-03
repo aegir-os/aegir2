@@ -47,6 +47,10 @@ struct Started {
     /** The badge every other service sees when this one calls. */
     uint64_t badge;
     uint64_t entry;
+    /** The core it was placed on, and whether the manifest declared one: the
+     *  boot report says where each service runs (specs/services.md). */
+    bool has_core;
+    uint32_t core;
 };
 
 /** How the boot set went. */
@@ -86,7 +90,7 @@ struct Device {
 class Services {
 public:
     Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
-             spawn::Initrd const &initrd) noexcept;
+             spawn::Initrd const &initrd, uint32_t num_nodes) noexcept;
 
     /** Check the manifest against the image, then create what it declares.
      *  `started` needs room for `manifest.size()` entries. */
@@ -136,6 +140,10 @@ private:
     spawn::Spawner spawner_;
     char const *boot_flags_ = nullptr;
     uint32_t boot_flags_length_ = 0;
+    /* The cores the machine actually has (seL4_BootInfo::numNodes): what a
+     * manifest `core` is checked against before anything is created
+     * (specs/services.md). */
+    uint32_t num_nodes_ = 1;
 };
 
 }  // namespace aegir::director

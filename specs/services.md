@@ -112,6 +112,7 @@ restart   = always
 | `environment` | no | the `NAME=VALUE` items it starts with, comma separated (specs/environment.md) |
 | `cwd` | no | its current directory, a VFS path; absent means none (specs/environment.md) |
 | `stack_kib` | no | the stack the process is given, in KiB, rounded up to whole pages; absent means the floor (8 KiB, `aegir-spawn`'s `kDefaultStackPages`) — a C++ program asks for more (specs/cxx.md, specs/auth.md) |
+| `core` | no | the core this service is placed on; absent inherits the core its spawner runs on, which is also what everything the service spawns inherits (Placement, below; specs/authority.md) |
 
 ### Validation, and failing loudly
 
@@ -129,10 +130,41 @@ boot with a message rather than starting a partial system:
 - every `spawns` names entries that exist, and no entry may spawn something with
   more authority than it holds itself;
 - a `user` entry may not declare `grants`, `irq-control` or device custody;
+- every `core` names a core the machine actually has, and the spawner that honors it must be the one that creates the service (Placement, below);
 - `format` must be a version director understands.
 
 Where the manifest lives in the repo, and whether it stays one file or becomes
 one per service, is an open item below.
+
+### Placement
+
+On a machine with more than one core, *which* core a process runs on is a
+resource decision of its own, not a detail (specs/authority.md). A service may
+say `core = N` to make that decision; `N` is a core index, the same number the
+kernel uses.
+
+The default is deliberately not a number in this file. A fresh TCB's affinity is
+the core its spawner created it on
+(`kernel/src/object/objecttype.c:533`), so a service that declares no `core`
+runs where its spawner does. That is what makes placement **inherited**: putting
+`auth` on core 1 puts every session it starts there too, and putting the device
+manager there carries all its drivers, without each driver entry repeating it.
+An entry's declared `core` moves only that service; its own children inherit the
+new core.
+
+The spawner applies the declaration with `seL4_TCB_SetAffinity` *before* the
+child is resumed, so it never runs on the wrong core. The kernel refuses a core
+the machine does not have; director additionally checks every `core` against
+`seL4_BootInfo::numNodes` before it creates anything, so an out-of-range value
+stops the boot with a message rather than a thread that quietly stays put.
+
+Only director's own entries are honored today. An entry another service starts
+-- a driver, a filesystem, a session service -- is created by that service, so
+its placement follows its spawner's core; a `core` on such an entry is refused
+rather than ignored, until the spawner that creates it honors the key. This is
+the manifest's own rule (a silently ignored line is an error) applied to a field
+whose honoring is still partial: placement is inherited first, declared per
+spawner after.
 
 ## Ports
 

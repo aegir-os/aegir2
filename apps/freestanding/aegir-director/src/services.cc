@@ -104,14 +104,15 @@ void for_each_spawn(manifest::View spawns, F &&each) noexcept
 }  // namespace
 
 Services::Services(mem::Allocator &allocator, mem::Scratch &scratch, mem::Arena &arena,
-                   spawn::Initrd const &initrd) noexcept
+                   spawn::Initrd const &initrd, uint32_t num_nodes) noexcept
     : allocator_(allocator), arena_(arena), initrd_(initrd), fault_endpoint_(0),
       graph_(allocator, arena),
       /* Director's own pool is the boot set's: delegation hands a service a pool
        * of its own, so only director-spawned address spaces come from the
        * initial one (specs/authority.md). */
       spawner_(allocator, scratch, arena, initrd, seL4_CapInitThreadASIDPool,
-               seL4_CapInitThreadCNode, seL4_WordBits)
+               seL4_CapInitThreadCNode, seL4_WordBits),
+      num_nodes_(num_nodes == 0 ? 1 : num_nodes)
 {
 }
 
@@ -225,6 +226,31 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
                 return;
             }
         }
+        /* Placement (specs/services.md): `core` is honored by the spawner that
+         * creates the service. Only director's own entries are honored today:
+         * a service another spawner starts inherits that spawner's core, so a
+         * `core` on such an entry would be silently ignored -- exactly the
+         * declaration this manifest refuses. A core the machine does not have
+         * is refused here too, before anything is created. */
+        if (entry.has_core) {
+            bool delegated = false;
+            for (uint32_t j = 0; j < manifest.size() && !delegated; ++j) {
+                for_each_spawn(manifest[j].spawns, [&](manifest::View item) {
+                    if (spawn_covers(item, entry.name)) {
+                        delegated = true;
+                    }
+                });
+            }
+            if (delegated) {
+                boot.problem = "`core` is declared for a service another entry spawns; "
+                               "its placement follows its spawner's core for now";
+                return;
+            }
+            if (entry.core >= num_nodes_) {
+                boot.problem = "a service names a core the machine does not have";
+                return;
+            }
+        }
         /* Every `spawns` item -- a name or a `prefix*` class -- must resolve to
          * at least one declared entry: a spawn right over nothing is a typo that
          * would only surface as a driver that never starts, so it is checked
@@ -296,6 +322,10 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         }
         request.priority = priority_for(entry);
         request.stack_pages = entry.stack_kib / 4u;
+        /* Placement (specs/services.md): a declared core travels to the
+         * spawner, which sets it before the service is resumed. */
+        request.has_core = entry.has_core;
+        request.core = entry.core;
         /* The service's CSpace, when the manifest names one: a spawner whose
          * children's images keep frames alive needs slots for them
          * (specs/authority.md). Zero keeps the default. */
@@ -761,6 +791,8 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         started[boot.started].tcb = process.tcb;
         started[boot.started].badge = request.badge;
         started[boot.started].entry = process.entry;
+        started[boot.started].has_core = request.has_core;
+        started[boot.started].core = request.core;
         if (supervisor != nullptr) {
             supervisor->record(boot.started, request.badge, process.tcb, process.supervision,
                                entry.name.data, entry.name.length);

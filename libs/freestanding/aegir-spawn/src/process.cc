@@ -731,6 +731,19 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (error != seL4_NoError) {
         return fail("the child's priority could not be set");
     }
+    /* Placement (specs/services.md): a declared core is set before the child is
+     * ever resumed, so it is never scheduled on the wrong one. The kernel
+     * refuses a core the machine does not have, so an out-of-range value is a
+     * loud failure rather than a thread that quietly stays where it was
+     * created. Not declaring one leaves the kernel's default -- the core the
+     * TCB was created on -- which is what makes placement inherited by a
+     * spawning service's own children. */
+    if (request.has_core) {
+        error = seL4_TCB_SetAffinity(process.tcb, request.core);
+        if (error != seL4_NoError) {
+            return fail("the child's core could not be set");
+        }
+    }
 
     seL4_UserContext context = {};
     context.pc = elf.entry();

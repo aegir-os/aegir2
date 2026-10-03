@@ -209,6 +209,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
     bool delegate_seen = false;
     bool initrd_seen = false;
     bool maps_seen = false;
+    bool core_seen = false;
     uint32_t failure_line = 1;
     char const *failure = nullptr;
 
@@ -260,6 +261,7 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
             delegate_seen = false;
             initrd_seen = false;
             maps_seen = false;
+            core_seen = false;
             return true;
         }
 
@@ -525,6 +527,37 @@ bool Manifest::parse(char const *text, uint32_t length) noexcept
                 rounded <<= 1;
             }
             current->delegate_mib = rounded;
+            return true;
+        }
+
+        if (equals(key, "core")) {
+            if (core_seen) {
+                failure_line = number;
+                failure = "this key is declared twice in the section";
+                return false;
+            }
+            core_seen = true;
+            /* A decimal core index. The machine's core count is a runtime fact
+             * the parser cannot see, so this only insists on a number; the
+             * spawner that honors `core` checks it against the cores the
+             * machine actually has before it creates anything
+             * (specs/services.md). */
+            uint32_t core = 0;
+            if (value.length == 0 || value.length > 3) {
+                failure_line = number;
+                failure = "core is a decimal core index";
+                return false;
+            }
+            for (uint32_t d = 0; d < value.length; ++d) {
+                if (value.data[d] < '0' || value.data[d] > '9') {
+                    failure_line = number;
+                    failure = "core is a decimal core index";
+                    return false;
+                }
+                core = core * 10 + static_cast<uint32_t>(value.data[d] - '0');
+            }
+            current->has_core = true;
+            current->core = core;
             return true;
         }
 

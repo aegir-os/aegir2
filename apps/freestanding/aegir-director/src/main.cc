@@ -740,7 +740,8 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
                    aegir::mem::Arena &arena, aegir::mem::Account &account,
                    void const *devices, uint32_t devices_bytes,
                    aegir::director::Device const *bus, uint32_t bus_count,
-                   aegir::spawn::PortGrant const *extra, uint32_t extra_count) noexcept
+                   aegir::spawn::PortGrant const *extra, uint32_t extra_count,
+                   uint32_t num_nodes) noexcept
 {
     auto *started =
         static_cast<Started *>(arena.allocate(sizeof(Started) * (manifest.size() + 1)));
@@ -749,7 +750,7 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
         return false;
     }
 
-    Services services(allocator, scratch, arena, initrd);
+    Services services(allocator, scratch, arena, initrd, num_nodes);
     if (!services.prepare(account)) {
         problem("no memory for the shared fault endpoint");
         return false;
@@ -839,6 +840,11 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
         aegir::debug_write_hex(started[i].entry);
         write(", badge ");
         number(started[i].badge);
+        /* Placement (specs/services.md): director runs on core 0, so a service
+         * that declared no core runs on 0 -- the kernel default is the core
+         * the spawner created the TCB on. */
+        write(", core ");
+        number(started[i].has_core ? started[i].core : 0);
         write("\n");
     }
     if (boot.problem[0] != '\0') {
@@ -1073,7 +1079,8 @@ int main(int argc, char *argv[])
                                                     platform_count, manifest, bus, bus_slots,
                                                     &bus_count);
         booted = boot_services(initrd, manifest, allocator, scratch, arena, system, device_tree,
-                               device_tree_bytes, bus, bus_count, delegated, 1);
+                               device_tree_bytes, bus, bus_count, delegated, 1,
+                               static_cast<uint32_t>(bootinfo->numNodes));
     }
 
     /* Director's own inbox. Nothing signals it yet; it exists so the boot thread
