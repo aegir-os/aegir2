@@ -185,8 +185,17 @@ viewer at once, and each lives in one process rather than in each caller.
   Image tab. The acceptance pins a pixel in each half of the frame -- red left,
   green right -- so a decode at the wrong stride or depth is a smudge rather than
   a passing call.
-- **Phase 2 -- PNG**, through the vendored libpng; a second class proves the
-  class list and the identification.
+- **Phase 2 -- PNG.** Landed, but for one piece. `png.datatype` decodes through
+  the vendored libpng (and its zlib), normalising palette, alpha and greyscale
+  to RGBA; the demo opens `Sys:TestImage.png` from the session and the
+  acceptance pins a pixel in each half, as it does for ILBM -- and the two
+  fixtures are different colours, so neither class's proof can stand in for the
+  other's. Two class files now sit in `Sys:DataTypes` and both are found by
+  name, so the class list is proved. What is *not* yet built is the choice: the
+  client still picks a class by the file's extension, not by asking each class
+  to `identify` the content first (the protocol method and the
+  `new_object(class_name, path)` forcing form both exist); a `datatypes` broker
+  that walks `DataTypes:` is the next piece.
 - **Phase 3 -- JPEG**, libjpeg-turbo.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property
