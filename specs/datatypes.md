@@ -20,22 +20,26 @@ must start a component the caller did not name at build time.
 
 - **A class is a user resource library** (`specs/libraries.md`). It reads the
   caller's file, and its code may be the caller's own from `Home:DataTypes`, so
-  it runs with the **caller's authority** -- a child of the session's launching
-  machinery, reclaimed with the session, never spawned by a system service. Its
+  it runs as the **caller's user class** -- a child of the session's launching
+  machinery, reclaimed with the session, never spawned by a system service (a
+  system service may not launch out of a user's `Home:DataTypes` at all). Its
   binary lives in `DataTypes/` (`png.datatype`) and is found by name on the
   caller's search path.
-- **A class is started under the caller's badge, not the system's.** The
-  session's launcher (`specs/launch.md`) starts it and the caller talks to the
-  port the launch produced. The mechanism is the launch's **serve kind**: the
-  caller makes the class endpoint, keeps its caller half and hands the owner
-  half as the request's one capability, so the class runs as the caller and only
-  the caller reaches it. Identification -- which class reads this file -- runs
-  candidate classes, so it too happens under the caller's authority; there is no
-  system `datatypes` service that reads the user's file on the user's behalf.
-  The first cut is the calling program (a launching program such as the Bureau or
-  the demo) starting the class through the launcher it already holds; a
-  per-session broker any of the session's processes may ask is the
-  generalization.
+- **A class runs as the caller's *user class*, not the system's.** A badge is a
+  user class and a serial: the user index is the authority and the serial is
+  accounting (`specs/authority.md`), so "as the caller" means a badge of the
+  caller's user index -- which is what the session's launcher hands out -- never
+  a system badge. The session's launcher (`specs/launch.md`) starts the class
+  and the caller talks to the port the launch produced. The mechanism is the
+  launch's **serve kind**: the caller makes the class endpoint, keeps its caller
+  half and hands the owner half as the request's one capability, so only the
+  caller reaches it. Identification -- which class reads this file -- runs
+  candidate classes, so it too happens as the caller's user; there is no system
+  `datatypes` service that reads the user's file on the user's behalf. The first
+  cut is the calling program (a launching program such as the Bureau or the demo)
+  starting the class through the launcher it already holds; the per-session
+  broker any of the session's processes may ask is the decided generalization
+  (`specs/libraries.md`), and it starts its classes as the session's user class.
 - **The class decodes once and serves the frame a page at a time.** A message
   carries one capability (`specs/launch.md`, `specs/signal.md`), so an image
   larger than a page cannot cross in one call. The class decodes into its own
@@ -116,7 +120,7 @@ and method numbers make it additive (`specs/services.md`).
   time; a class is a file in it, so adding one is dropping it in -- no registry
   to update and no second list to keep in step, the same reason `LIBS:` is the
   list (`specs/libraries.md`). Identification is content-first: the broker
-  starts a class -- under the caller's badge, and it lives for the session -- and
+  starts a class -- as the caller's user class, and it lives for the session -- and
   asks it to `identify` the file, and the class, not a data file, is the
   authority on what it reads. A file extension may choose which class to ask
   first, but the class decides. A file no class claims is reported "no class",
@@ -136,7 +140,7 @@ client library. The first cut:
 | `read` | a path, an offset, one page capability | the bytes of the frame filled |
 | `dispose_object` | -- | 1 |
 
-The class holds the decoded object between calls, scoped to the caller's badge,
+The class holds the decoded object between calls, scoped to the caller,
 so a picture larger than a page is several `read` calls -- each carrying one
 page the caller owns, which the class maps a copy of, writes and unmaps before
 answering (`specs/fonts.md`'s transfer page). A refusal leaves the caller's page
@@ -157,14 +161,15 @@ viewer at once, and each lives in one process rather than in each caller.
 
 ## Authority
 
-- A class runs as the caller: the session's launcher starts it under the
-  caller's badge, and it is reclaimed with the session.
+- A class runs as the caller's **user class**: the session's launcher starts it
+  with a badge of the caller's user index, and it is reclaimed with the session.
 - It is given the caller's `vfs.namespace` (to read the file), its own memory
   from the session's pool, and the ability to map the pages a `read` carries. It
   gets no other caller port.
-- Because the class resolves the path on the *caller's* badge, a file the caller
-  may not read is a file the class cannot decode for it -- and a class the caller
-  supplies from `Home:DataTypes` has only the caller's own authority to abuse.
+- Because the class resolves the path on the *caller's* user class, a file the
+  caller may not read is a file the class cannot decode for it -- and a class the
+  caller supplies from `Home:DataTypes` has only the caller's own authority to
+  abuse.
 
 ## What this is not
 
@@ -177,8 +182,8 @@ viewer at once, and each lives in one process rather than in each caller.
 ## Phases and acceptance
 
 - **Phase 1 -- one class, the client, and the launch.** Landed. `ilbm.datatype`
-  (a class service) and the `aegir-datatypes` client, the class started under the
-  caller's badge through the `launch.session` caller half a command holds
+  (a class service) and the `aegir-datatypes` client, the class started as the
+  caller's user class through the `launch.session` caller half a command holds
   (`spawn_serve`, the `kKindServe` kind). Proved by the GUI demo (now a session
   command, started by `Run gui-demo` in `Sys:S/Shell-Startup`) opening
   `Sys:TestImage.ilbm` through the class and showing the decoded frame on its

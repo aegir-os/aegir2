@@ -76,11 +76,15 @@ handles, and that is what decides its authority. Two kinds:
   started**: a manager owns its memory and a session *leases* it, so it outlives
   the session that first wanted it.
 - **A user resource library** handles a caller's data, and its code may be the
-  caller's own -- a class from `Home:DataTypes`. It must run with the
-  **caller's authority**, as a child of the session's launching machinery,
-  reclaimed with the session. It is **never** spawned by a system service, or
-  user-authored code would run as the system. That is not a policy to be careful
-  about; it is the reason this distinction exists.
+  caller's own -- a class from `Home:DataTypes`. It must run as the caller's
+  **user class** -- a badge of the caller's user index, never a system one -- as
+  a child of the session's launching machinery, reclaimed with the session. A
+  badge is a user class and a serial, and only the class is authority: the serial
+  is accounting (`specs/authority.md`), so "as the caller" is the user index
+  shared by everyone in the session. It is **never** spawned by a system
+  service; a system service may not launch out of a user's `Home:DataTypes` at
+  all, or user-authored code would run as the system. That is not a policy to be
+  careful about; it is the reason this distinction exists.
 
 The rule is one sentence: **a provider runs with the authority of whoever owns
 the data it handles, or less.** A system library is safe to share because it owns
@@ -94,11 +98,12 @@ the resource; a class that decodes *your* picture is yours and runs as you.
   memory. The device manager and the partition manager are the pattern
   (`specs/services.md`).
 - **A user library has no system manager.** The session's launcher starts the
-  provider under the caller's badge, the way it starts a command
+  provider as the caller's user class, the way it starts a command
   (`specs/launch.md`), and the caller talks to the port the launch produced. The
   `open_library` idiom is the client library's, over whatever started the
-  provider; a session service that brokers a whole domain is a later
-  generalization. `specs/datatypes.md` is the first user resource library.
+  provider; a session service that brokers a whole domain is the decided
+  generalization (below). `specs/datatypes.md` is the first user resource
+  library.
 
 ### The filesystem is the list
 
@@ -144,17 +149,18 @@ visible to its `open_library` and to no other's.
   a *user* provider lives for the session (`Whose authority`, above). Reclaiming
   an idle system provider is available but not a feature here.
 - **A plugin loader for untrusted code.** A provider is a service with exactly
-  the authority whoever starts it grants it -- a system service for a system
-  library, the caller's own badge for a user library -- not arbitrary code in the
-  caller's process. That is the point of the service shape.
+  the authority whoever starts it grants it -- system authority for a system
+  library, a badge of the caller's user class for a user library -- not arbitrary
+  code in the caller's process. That is the point of the service shape.
 
 ## Open, for review
 
-- **A per-session broker.** The first user resource library is launched by the
-  program that wants it (`specs/datatypes.md`); a per-session service that any of
-  the session's processes may ask to open a class, holding the session's launcher
-  kit, is the generalization -- and it is a session service, so it waits on "what
-  a session is made of" (`specs/auth.md`).
+- **How a session starts its services.** The per-session broker is decided
+  (`specs/datatypes.md`): a service holding the session's launcher kit that any
+  of the session's processes may ask to open a class, started as the session's
+  user class. What remains open is the general shape -- where auth puts a
+  session's services beside the bureau and terminal, and whether that list is
+  declared rather than coded into auth. That is `specs/auth.md`'s.
 - **What `version` names.** The first cut is the port's protocol version,
   because a port already has one; a provider that also carries an Amiga-style
   `lib_Version` word can have both, with the protocol version checked first.
