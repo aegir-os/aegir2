@@ -841,8 +841,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             # Save As... wrote Home:EDITED.TXT and renamed the tab. The
             # requester closed, and the console clears the focus with the window
-            # it had -- so the editor is clicked back first (its titlebar, clear
-            # of the requester), then the bar's title and Save: the active tab
+            # it had -- so the editor is clicked back first (its content, not its
+            # titlebar: a titlebar click can begin a drag if the pointer's next
+            # move is drained before the button-up, and the window would slide
+            # off its rectangle), then the bar's title and Save: the active tab
             # now has a name of its own, so this is the other write path.
             QmpStep(
                 r"editor: saved as Home:EDITED\.TXT",
@@ -853,8 +855,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 110, 18, 6),),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
-                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
+                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                     {"type": "abs", "data": {"axis": "x", "value": 256}},
@@ -878,8 +880,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dark=(("gpu0", 424, 202, 110, 18, 6),
                       ("gpu0", 432, 226, 220, 12, 20)),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
-                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
+                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                     {"type": "abs", "data": {"axis": "x", "value": 256}},
@@ -903,8 +905,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 150, 18, 8),),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
-                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
+                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                     {"type": "abs", "data": {"axis": "x", "value": 256}},
@@ -945,8 +947,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 220, 18, 8),),
                 events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 12800}},
-                    {"type": "abs", "data": {"axis": "y", "value": 7660}},
+                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
+                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                     {"type": "abs", "data": {"axis": "x", "value": 256}},
@@ -1361,23 +1363,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # (the "info" -> "nfo" flake). Then it reads the command start and
             # the view's own start; the view cues when the command's exit has
             # been seen, and the screendump there proves the text landed.
-            # The Bureau's Execute: the open menu overlaps the view window, and
-            # the console routes a pointer to the window under the point rather
-            # than to the screen layer the menu is composited in -- so a click
-            # into the item row hits the view, and the row is clicked where the
-            # view is not (the pinned x). The rect cues would stand here too once
-            # the menu takes the pointer (specs/workbench.md).
+            # The Bureau's Execute: reopen the Bureau menu and click its third
+            # item. The open menu is the console's screen layer, so a click into
+            # it is the menu's, not a window overlapping it
+            # (specs/workbench.md's pointer routing).
             QmpStep(
                 r"view: ready",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 3154}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                clicks=(
+                    ("bureau.title.1", 0.5, 0.5),
+                    ("bureau.item.3", 0.5, 0.5),
                 ),
             ),
             # The requester is up and focused: the Bureau cued it after the

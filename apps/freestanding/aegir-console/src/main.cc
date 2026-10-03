@@ -316,9 +316,17 @@ uint64_t g_motion_old_x = 0;
 uint64_t g_motion_old_y = 0;
 
 /* The topmost window covering a point, or none. The list is bottom first,
- * so the last coverer is the answer. */
+ * so the last coverer is the answer. The open menu's layer is above them all:
+ * its rectangle is composited over every window, so a point inside it is the
+ * layer owner's -- a click into the menu is the menu's, not the window
+ * underneath it, which is what a window overlapping the menu would otherwise
+ * take (specs/workbench.md). */
 Window *window_at(uint64_t x, uint64_t y) noexcept
 {
+    if (g_layer_window != nullptr && x >= g_layer_x && x < g_layer_x + g_layer_width &&
+        y >= g_layer_y && y < g_layer_y + g_layer_height) {
+        return g_layer_window;
+    }
     Window *found = nullptr;
     for (Window *w = g_windows; w != nullptr; w = w->next) {
         if (x >= w->x && x < w->x + w->width && y >= w->y && y < w->y + w->height) {
