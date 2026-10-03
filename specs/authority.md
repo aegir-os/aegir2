@@ -219,7 +219,9 @@ spawner sets it before the child is resumed, and an entry that declares none
 inherits its spawner's core, so placing a service places everything it starts.
 Director honors the key for the boot set first; each other spawner follows as it
 is taught the key, and a `core` it cannot yet honor is refused rather than
-ignored.
+ignored. On the QEMU RISC-V target no entry declares one, because running
+userland on the second hart wedges today (`specs/build.md`'s SMP finding, seL4
+#1345): the mechanism is for real hardware and for the day that is fixed.
 
 ## Multiuser
 

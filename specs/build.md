@@ -92,8 +92,28 @@ single-core. The verification claim was already traded away for the default
 `lp64d` ABI earlier in this file; this is the same kind of trade, recorded rather
 than assumed. What the kernel guarantees is that the other harts come up and
 idle. *Placing* work on them is userland's -- `seL4_TCB_SetAffinity`
-(`out/aegir/libsel4/include/interfaces/sel4_client.h:1727`) -- and director does
-not do that yet (`specs/authority.md`).
+(`out/aegir/libsel4/include/interfaces/sel4_client.h:1727`) -- and the manifest
+now declares it (`specs/services.md`, `specs/authority.md`).
+
+**But placing work on the second hart is not usable on this target yet.** A
+manifest `core = 1` does set the affinity and the thread does run there, and then
+the guest wedges. Two upstream things are behind it, and neither is ours:
+
+- Cross-core IPC under QEMU's TCG is pathologically slow. seL4#1345 (open,
+  *"QEMU riscv32 SMP stucks"*) is the same symptom, and the maintainer's answer
+  there is that the inter-AS IPC tests are *"very slow on real RISC-V hardware
+  too... emulated SMP RISC-V in QEMU is even worse."*
+- The hart logs `Spurious interrupt!` (`kernel/src/api/syscall.c:59`) when
+  `getActiveIRQ()` returns `irqInvalid` on an interrupt entry
+  (`kernel/src/arch/riscv/machine/hardware.c:97-131`); `handleSpuriousIRQ()`
+  does nothing, and upstream's RISC-V PLIC handling is itself open for review
+  (seL4#1482, seL4#464). That function is byte-identical in upstream master.
+
+The seL4 "QEMU bug" the immediate-claim workaround responds to has no issue
+number in its commit (`d11179e`, *"riscv: fix interrupt claim"*, 2023-02-03), and
+QEMU's tracker has no matching open RISC-V SMP report to follow. So the boot
+manifest declares no `core`: the mechanism is landed and the QEMU target stays
+single-hart until real hardware or an upstream fix makes the second hart pay.
 
 ## Toolchain
 
