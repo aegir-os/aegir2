@@ -9,6 +9,7 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/theme.h>
 
 #include <algorithm>
@@ -132,6 +133,14 @@ Scrollbar::Parts Scrollbar::parts() const {
     parts.thumb = vertical ? Rect{well.x, well.y + thumb.pos, well.width, thumb.size}
                            : Rect{well.x + thumb.pos, well.y, thumb.size, well.height};
     return parts;
+}
+
+void Scrollbar::report_parts(char const *prefix) const {
+    Parts const p = parts();
+    report_rect_prefix(prefix, "decrement", screen_rect_of(*this, p.decrement));
+    report_rect_prefix(prefix, "increment", screen_rect_of(*this, p.increment));
+    report_rect_prefix(prefix, "trough", screen_rect_of(*this, p.trough));
+    report_rect_prefix(prefix, "thumb", screen_rect_of(*this, p.thumb));
 }
 
 Size Scrollbar::preferred_size() const {

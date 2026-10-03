@@ -40,6 +40,11 @@ public:
 
     int count() const { return static_cast<int>(members_.size()); }
 
+    /* Report each member's screen rectangle as a rect cue, `prefix.radio.<n>`
+     * with n one-based (specs/testing.md), so the acceptance clicks a member by
+     * name rather than at a coordinate the layout decides. */
+    void report_parts(char const *prefix) const override;
+
     /* The active member changed: by click, by arrow key, or by `set_active`. */
     std::function<void(int)> on_changed;
 

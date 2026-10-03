@@ -6,6 +6,7 @@
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
 #include <aegir/trinket/theme.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/console.h>
 #include <aegir/input.h>
 #include <aegir/ipc/port.h>
@@ -589,6 +590,30 @@ Rect Window::frame_for(const Rect& content) const {
     int const bar = titlebar_height();
     int const bottom = bottombar_height();
     return {content.x, content.y - bar, content.width, content.height + bar + bottom};
+}
+
+void Window::report_rects(char const *prefix) const {
+    report_rect_prefix(prefix, "window", rect_);
+    Rect const frame = frame_for(rect_);
+    report_rect_prefix(prefix, "frame", frame);
+    if (!decorated_) return;
+    /* A gadget rect is frame-local (gadget_rect, close_gadget_rect,
+     * resize_gadget_rect), so the cue shifts it by the frame's screen origin. */
+    auto gadget_cue = [&](char const *name, Rect const &g) {
+        report_rect_prefix(prefix, name,
+                           {frame.x + g.x, frame.y + g.y, g.width, g.height});
+    };
+    if ((gadgets_ & kGadgetClose) != 0) gadget_cue("close", close_gadget_rect());
+    int index = 0;
+    if ((gadgets_ & kGadgetDepth) != 0) {
+        gadget_cue("depth", gadget_rect(index));
+        ++index;
+    }
+    if ((gadgets_ & kGadgetZoom) != 0) {
+        gadget_cue("zoom", gadget_rect(index));
+        ++index;
+    }
+    if (resizable_) gadget_cue("resize", resize_gadget_rect());
 }
 
 void Window::set_gadgets(uint32_t gadgets) {

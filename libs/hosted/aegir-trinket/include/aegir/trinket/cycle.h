@@ -50,6 +50,11 @@ public:
      * clamping. Pure, so the host check pins it (specs/trinket/cycle.md). */
     static int step_index(int active, int count, int delta, bool wrap);
 
+    /* Report the button cell and the text area as rect cues under `prefix` --
+     * `cell`, where a click steps the entry, and `text`, where a click opens the
+     * menu (specs/testing.md, cycle.cc's on_mouse_up). */
+    void report_parts(char const *prefix) const override;
+
     bool focusable() const override { return true; }
     Size preferred_size() const override;
     Size minimum_size() const override;

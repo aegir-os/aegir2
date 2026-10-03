@@ -64,6 +64,11 @@ public:
     /* The tab a point's x is over, or -1. */
     static int tab_at(TabLayout const& layout, int x);
 
+    /* Report each tab's screen rectangle as a rect cue, `prefix.tab.<n>` with n
+     * one-based (specs/testing.md), so the acceptance clicks a tab by name
+     * wherever the titles' measured widths put it. */
+    void report_parts(char const *prefix) const override;
+
     bool focusable() const override { return true; }
 
     Size preferred_size() const override;

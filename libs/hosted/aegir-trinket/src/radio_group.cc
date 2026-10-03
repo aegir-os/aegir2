@@ -8,6 +8,7 @@
 #include <aegir/trinket/radio_group.h>
 
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/unicode.h>
 
 #include <memory>
@@ -18,6 +19,15 @@ RadioGroup::RadioGroup(Orientation orientation, int spacing)
     : Group(orientation, spacing) {}
 
 RadioGroup::~RadioGroup() = default;
+
+void RadioGroup::report_parts(char const *prefix) const {
+    for (size_t i = 0; i < members_.size(); ++i) {
+        if (members_[i] != nullptr) {
+            report_rect_indexed(prefix, "radio", static_cast<int>(i) + 1,
+                                members_[i]->screen_rect());
+        }
+    }
+}
 
 Button* RadioGroup::add(std::u32string_view text) {
     auto button = std::make_unique<Button>(text, Button::Type::RADIO);

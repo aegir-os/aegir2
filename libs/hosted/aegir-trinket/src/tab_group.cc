@@ -9,6 +9,7 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/theme.h>
 
 #include <algorithm>
@@ -116,6 +117,21 @@ int TabGroup::tab_at(TabLayout const& layout, int x)
         }
     }
     return -1;
+}
+
+void TabGroup::report_parts(char const *prefix) const
+{
+    Theme& theme = Application::instance()->theme();
+    TabLayout const layout =
+        tab_layout(measured_title_widths(), theme.metric(MetricRole::TAB_PADDING_H),
+                   theme.metric(MetricRole::TAB_GAP));
+    int const strip = theme.metric(MetricRole::TAB_HEIGHT);
+    Rect const group = screen_rect();
+    for (int i = 0; i < page_count(); ++i) {
+        Rect const tab{group.x + layout.x[static_cast<size_t>(i)], group.y,
+                       layout.width[static_cast<size_t>(i)], strip};
+        report_rect_indexed(prefix, "tab", i + 1, tab);
+    }
 }
 
 std::vector<int> TabGroup::measured_title_widths() const

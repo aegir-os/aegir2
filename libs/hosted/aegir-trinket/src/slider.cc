@@ -9,6 +9,7 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/theme.h>
 
 #include <limits>
@@ -108,6 +109,12 @@ Slider::Parts Slider::parts() const {
                      ? Rect{well.x + knob.pos, well.y, knob.size, well.height}
                      : Rect{well.x, well.y + knob.pos, well.width, knob.size};
     return parts;
+}
+
+void Slider::report_parts(char const *prefix) const {
+    Parts const p = parts();
+    report_rect_prefix(prefix, "trough", screen_rect_of(*this, p.trough));
+    report_rect_prefix(prefix, "knob", screen_rect_of(*this, p.knob));
 }
 
 Size Slider::preferred_size() const {

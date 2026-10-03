@@ -23,6 +23,13 @@ Window* Widget::window() const {
     return widget != nullptr ? widget->window_ : nullptr;
 }
 
+Rect Widget::screen_rect() const {
+    Window* const w = window();
+    if (w == nullptr) return rect_;
+    Rect const content = w->rect();
+    return {content.x + rect_.x, content.y + rect_.y, rect_.width, rect_.height};
+}
+
 void Widget::set_rect(Rect r) {
     if (rect_ != r) {
         rect_ = r;
@@ -32,6 +39,8 @@ void Widget::set_rect(Rect r) {
         }
     }
 }
+
+void Widget::report_parts(char const *) const {}
 
 void Widget::set_focused(bool f) {
     if (focused_ != f) {

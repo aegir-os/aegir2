@@ -54,6 +54,11 @@ public:
     static Thumb thumb_for(int track, int total, int page, int value, int min_handle);
     static int value_for_pos(int track, int total, int page, int pos, int min_handle);
 
+    /* Report the bar's parts as rect cues under `prefix` -- `decrement`,
+     * `increment`, `trough`, `thumb` (specs/testing.md) -- so the acceptance
+     * clicks an arrow by name, not at a fraction the theme's arrow size moves. */
+    void report_parts(char const *prefix) const override;
+
 protected:
     void on_paint(Canvas& canvas, const PaintEvent& event) override;
     void on_mouse_down(const MouseEvent& event) override;

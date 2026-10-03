@@ -117,6 +117,13 @@ public:
     Size minimum_size() const override;
     Size maximum_size() const override;
 
+    /* Report each visible row's screen rectangle as a rect cue,
+     * `prefix.row.<n>` with n the one-based row index (specs/testing.md), so
+     * the acceptance clicks a row by name; a row's height is the font's, so a
+     * fixed fraction of the list would not name the same row after a font
+     * change. */
+    void report_parts(char const *prefix) const override;
+
 protected:
     void on_layout() override;
     void on_paint(Canvas& canvas, const PaintEvent& event) override;

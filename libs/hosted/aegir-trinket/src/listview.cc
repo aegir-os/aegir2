@@ -9,6 +9,7 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/theme.h>
 
 #include <algorithm>
@@ -179,6 +180,20 @@ int ListView::height_for_rows(int rows) const {
      * entries. */
     int const titles_band = titles() ? row_height() : 0;
     return 2 * kWell + titles_band + std::max(0, rows) * row_height();
+}
+
+void ListView::report_parts(char const *prefix) const {
+    int const h = row_height();
+    if (h <= 0) return;
+    Rect const data = data_rect();
+    int const visible = visible_rows();
+    for (int i = 0; i < visible; ++i) {
+        int const index = first_ + i;
+        if (index >= count()) break;
+        Rect const row_rect{data.x, data.y + i * h, data.width, h};
+        report_rect_indexed(prefix, "row", index + 1,
+                            screen_rect_of(*this, row_rect));
+    }
 }
 
 ListView::ColumnLayout ListView::column_layout(std::vector<Column> const& columns,

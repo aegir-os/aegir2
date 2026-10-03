@@ -98,9 +98,26 @@ public:
     // the cycle's menu -- needs it (specs/trinket/popup.md).
     Window* window() const;
 
+    // The widget's rectangle in screen coordinates. The layouts place a child
+    // at its parent's origin plus the parent's inset (layout.cc), so `rect_` is
+    // already absolute to the content root and the only thing left to add is
+    // the window's content origin -- not a walk of the parents, which would add
+    // every ancestor twice. A widget with no window has no screen position and
+    // answers its own rectangle. It is what a client reports as a rect cue, so
+    // the acceptance can click a widget wherever the layout put it
+    // (specs/testing.md's rect cues).
+    Rect screen_rect() const;
+
     // Whether a pointer-down or Tab may focus this widget. A text field and a
     // button are focusable; a label is not.
     virtual bool focusable() const { return false; }
+
+    // Report this widget's internal parts as rect cues under `prefix`
+    // (specs/testing.md's rect cues): `  rect <prefix>.<part> ...`. The base
+    // has no parts; a widget whose parts the pointer hit-tests -- a tab
+    // strip's tabs, a scrollbar's arrow cells, a list's rows -- overrides it,
+    // so the acceptance clicks a part by name wherever the layout put it.
+    virtual void report_parts(char const *prefix) const;
 
     // The size this widget wants, which layouts arrange it at. The base has no
     // content, so it asks for what it already is; a label or a button overrides

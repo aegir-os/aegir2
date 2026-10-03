@@ -58,6 +58,10 @@ public:
     static Knob knob_for(int track, int min, int max, int value, int knob);
     static int value_for_pos(int track, int min, int max, int pos, int knob);
 
+    /* Report the trough and the knob as rect cues under `prefix` (specs/testing.md),
+     * so the acceptance clicks the trough by name wherever the layout put it. */
+    void report_parts(char const *prefix) const override;
+
 protected:
     void on_paint(Canvas& canvas, const PaintEvent& event) override;
     void on_mouse_down(const MouseEvent& event) override;

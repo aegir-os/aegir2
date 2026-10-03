@@ -9,6 +9,7 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/group.h>
 #include <aegir/trinket/listview.h>
 #include <aegir/trinket/popup.h>
@@ -105,6 +106,21 @@ Rect Cycle::mark_rect() const {
     int const cell_h = std::max(0, rect_.height - 2);
     int const s = std::min(side, std::min(cell_w, cell_h));
     return Rect{cell_x + (cell_w - s) / 2, rect_.y + 1 + (cell_h - s) / 2, s, s};
+}
+
+void Cycle::report_parts(char const *prefix) const {
+    Rect const divider = divider_rect();
+    int const h = std::max(0, rect_.height - 2);
+    /* The button cell is left of the divider, the text area right of it -- the
+     * same split on_mouse_up makes (cycle.cc). */
+    int const cell_x = rect_.x + 1;
+    int const cell_w = std::max(0, divider.x - cell_x);
+    report_rect_prefix(prefix, "cell",
+                       screen_rect_of(*this, Rect{cell_x, rect_.y + 1, cell_w, h}));
+    int const text_x = divider.x + 1;
+    int const text_w = std::max(0, rect_.x + rect_.width - 1 - text_x);
+    report_rect_prefix(prefix, "text",
+                       screen_rect_of(*this, Rect{text_x, rect_.y + 1, text_w, h}));
 }
 
 Size Cycle::preferred_size() const {

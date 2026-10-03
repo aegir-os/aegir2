@@ -95,6 +95,13 @@ public:
     uint64_t console_window_id() const { return console_window_id_; }
     uint64_t frame_window_id() const { return frame_window_id_; }
 
+    // Report the window's screen rectangles as rect cues, each under `prefix`:
+    // the content (`window`), the frame (`frame`), and every chrome part it
+    // carries (`close`, `zoom`, `depth`, `resize`). The acceptance clicks them
+    // by name (specs/testing.md's rect cues), so a font that changes the
+    // titlebar moves the click with the gadget.
+    void report_rects(char const *prefix) const;
+
     // Callbacks
     std::function<void()> on_close_requested;
     std::function<void()> on_shown;

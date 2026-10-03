@@ -24,6 +24,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/file_requester.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/button.h>
@@ -300,6 +301,7 @@ int main(int argc, char *argv[])
      * specs/trinket/popup_button.md) share a row above the slider's, so the
      * slider keeps the geometry the acceptance reads. */
     auto cycle = std::make_unique<Cycle>();
+    Cycle* const cycle_ptr = cycle.get();
     /* The first entry is short and the one the acceptance cycles to is long, so
      * the ink in the text band tells the two apart (scripts/targets.py). */
     cycle->add(U"A500");
@@ -381,6 +383,7 @@ int main(int argc, char *argv[])
      * test-bed grows by a tab rather than by another band. Lists opens first:
      * it holds the widgets the acceptance reads at boot. */
     auto tabs = std::make_unique<TabGroup>();
+    TabGroup* const tabs_ptr = tabs.get();
     tabs->on_change = [&tab_changed](int index) { tab_changed = index; };
 
     /* Toggles: the checkbox and the radio group (specs/trinket/checkbox.md,
@@ -525,7 +528,15 @@ int main(int argc, char *argv[])
     /* The popup layer is the window's (specs/trinket/popup.md): a cue as one
      * opens and closes, so the runner can pace a dump on it. The cycle's menu
      * and the popup button's object are both this window's. */
-    window.on_popup = [&popup_is_object](bool up) {
+    window.on_popup = [&window, &popup_is_object](bool up) {
+        /* The popup's own rectangle first, so the runner has it in hand before
+         * the cue line that makes it click a row (specs/testing.md's rect cues;
+         * a cue opens its step, so what the step clicks must already be
+         * reported). */
+        if (up && window.popup() != nullptr) {
+            report_rect("demo.popup", *window.popup());
+            window.popup()->report_parts("demo.popup");
+        }
         if (popup_is_object) {
             write(up ? "  demo: object 1\n" : "  demo: object 0\n");
         } else {
@@ -574,6 +585,25 @@ int main(int argc, char *argv[])
     /* The bureau rings the doorbell for an action; fetch it and print the cue
      * the runner reads. Nothing to fetch until the tree is registered. */
     app.on_poll = [&]() {
+        /* The rect cues (specs/testing.md): report where the widgets stand, so
+         * the acceptance clicks them by name and a font or metric change moves
+         * the click with the widget. Emitted before the cue lines below, because
+         * the runner answers a cue by sending the next step's events -- each
+         * rectangle must be in hand before the cue that clicks it. A widget on a
+         * hidden page keeps the rectangle it had when last shown (the layouts
+         * skip what is not visible), so a cue is never a collapsed rectangle. */
+        window.report_rects("demo");
+        tabs_ptr->report_parts("demo.tabs");
+        report_rect("demo.list", *list_ptr);
+        list_ptr->report_parts("demo.list");
+        list_scrollbar_ptr->report_parts("demo.list_scrollbar");
+        hbar_ptr->report_parts("demo.hbar");
+        scrollbar_ptr->report_parts("demo.scrollbar");
+        slider_ptr->report_parts("demo.slider");
+        cycle_ptr->report_parts("demo.cycle");
+        report_rect("demo.popup_button", *popup_ptr);
+        radios_ptr->report_parts("demo.radios");
+        report_rect("demo.check", *check_ptr);
         if (scrolled) {
             scrolled = false;
             write("  demo: scrolled\n");
