@@ -28,6 +28,7 @@
 #include <aegir/console.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/manifest.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
@@ -103,6 +104,9 @@ constexpr uint64_t kBootLauncherBadge = 770;
  * what the next one needs. */
 aegir::ipc::Consumer g_nmspace;
 seL4_CPtr g_home_slot = 0;
+/* The slot a session-manifest resolve's capability lands in (specs/session.md),
+ * its own so it never collides with a home resolve's. */
+seL4_CPtr g_manifest_slot = 0;
 
 /* The session allocator (specs/memory.md, specs/auth.md's Session reclaim): a
  * session's objects and its spawn's staging are retyped from memory the
@@ -837,6 +841,96 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
     return true;
 }
 
+/* Read a whole file through the namespace into `buffer`, up to `capacity`
+ * bytes: resolve the path to a volume, then read it one envelope at a time --
+ * the shape the user database is read with (specs/vfs.md). Answer the length,
+ * or 0 when the file is absent, unreadable, or larger than the buffer. */
+uint32_t read_file(char const *path, uint32_t path_length, char *buffer,
+                   uint32_t capacity) noexcept
+{
+    if (g_manifest_slot == 0) {
+        return 0;
+    }
+    uint64_t out[aegir::nmspace::kPathMax / 8 + 1];
+    uint32_t const out_words =
+        aegir::nmspace::pack_string(out, path, path_length, aegir::nmspace::kPathMax);
+    uint64_t in[aegir::nmspace::kResolveWords];
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const resolved = g_nmspace.call_transfer(
+        aegir::nmspace::kMethodResolve, out, out_words, 0, in,
+        aegir::nmspace::kResolveWords, &cap_arrived);
+    char rest[aegir::nmspace::kPathMax];
+    uint32_t rest_length = 0;
+    char const *text = nullptr;
+    uint32_t length = 0;
+    if (out_words == 0 || resolved.error != 0 || !cap_arrived ||
+        !aegir::nmspace::unpack_string(in, resolved.count, aegir::nmspace::kPathMax,
+                                       &text, &length) ||
+        !aegir::ipc::take_received_cap(g_manifest_slot)) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        rest[i] = text[i];
+    }
+    rest_length = length;
+
+    aegir::ipc::Consumer const file(g_manifest_slot);
+    uint32_t total = 0;
+    for (;;) {
+        uint64_t read_out[aegir::nmspace::kPathMax / 8 + 2];
+        uint32_t read_words = aegir::nmspace::pack_string(
+            read_out, rest, rest_length, aegir::nmspace::kPathMax);
+        if (read_words == 0) {
+            total = 0;
+            break;
+        }
+        read_out[read_words++] = total;
+        read_out[read_words++] = aegir::volume::kReadMax;
+        uint64_t read_in[aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8];
+        aegir::ipc::WordsReply const answer = file.call_words(
+            aegir::volume::kMethodRead, read_out, read_words, read_in,
+            aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8);
+        if (answer.error != 0 || answer.count < aegir::volume::kReadHeaderWords) {
+            total = 0;
+            break;
+        }
+        uint64_t const count = read_in[0];
+        uint64_t const eof = read_in[1];
+        if (count > aegir::volume::kReadMax ||
+            answer.count < aegir::volume::kReadHeaderWords + (count + 7) / 8 ||
+            total + count > capacity) {
+            total = 0;
+            break;
+        }
+        char const *bytes =
+            reinterpret_cast<char const *>(read_in + aegir::volume::kReadHeaderWords);
+        for (uint64_t i = 0; i < count; ++i) {
+            buffer[total + i] = bytes[i];
+        }
+        total += static_cast<uint32_t>(count);
+        if (eof != 0 || count == 0) {
+            break;
+        }
+    }
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_manifest_slot,
+                      aegir::bootstrap::cnode_bits());
+    return total;
+}
+
+/* The session's manifest (specs/session.md): the user's `Home:S/session.manifest`
+ * if it exists, else the shipped `Sys:S/session.manifest`. Answer the length, 0
+ * when neither is there. */
+uint32_t read_session_manifest(char *buffer, uint32_t capacity) noexcept
+{
+    static char const kUser[] = "Home:S/session.manifest";
+    static char const kSystem[] = "Sys:S/session.manifest";
+    uint32_t const user = read_file(kUser, sizeof(kUser) - 1, buffer, capacity);
+    if (user != 0) {
+        return user;
+    }
+    return read_file(kSystem, sizeof(kSystem) - 1, buffer, capacity);
+}
+
 /* A successful login starts a session (specs/auth.md): the smoke over the
  * serial line, the bureau when the caller is the greeter (specs/console.md's
  * login arc). The badge is the user class bit, the row as the user id, and
@@ -908,6 +1002,38 @@ void start_session(uint32_t user, bool bureau) noexcept
                                    aegir::bootstrap::cnode_bits());
     g_session_mem.set_untyped_source(session_untyped_source, &g_session_mem);
     aegir::mem::Arena session_arena(g_session_mem, g_scratch, session_account);
+
+    /* The session manifest (specs/session.md): the session's services as data.
+     * Read and parse it before anything is spawned. The reader that starts the
+     * services from it is the next step; this proves the file reaches auth and
+     * parses, and announces a malformed one loudly -- the parser's line and
+     * reason -- rather than silently running the built-in session. */
+    if (bureau) {
+        char manifest_text[4096];
+        uint32_t const manifest_length =
+            read_session_manifest(manifest_text, sizeof(manifest_text));
+        if (manifest_length == 0) {
+            write("      auth: no session.manifest; the built-in session stands\n");
+        } else {
+            aegir::manifest::Manifest parsed(session_arena, session_account);
+            if (!parsed.parse(manifest_text, manifest_length)) {
+                aegir::manifest::Manifest::Problem const problem = parsed.problem();
+                char line_text[20];
+                uint32_t const line_length = decimal(line_text, problem.line);
+                write("      auth: session.manifest: line ");
+                write(line_text, line_length);
+                write(": ");
+                write(problem.message);
+                write("\n");
+            } else {
+                char count_text[20];
+                uint32_t const count_length = decimal(count_text, parsed.size());
+                write("      auth: session.manifest: ");
+                write(count_text, count_length);
+                write(" service(s)\n");
+            }
+        }
+    }
 
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_session_mem.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
@@ -1659,12 +1785,15 @@ int main(int argc, char *argv[])
      * deleted after each use, so a login does not spend what the next one
      * needs. */
     g_home_slot = g_objects.alloc_slot();
+    /* The session manifest's resolve lands here (specs/session.md). */
+    g_manifest_slot = g_objects.alloc_slot();
     /* A slot for the session's mem.main copy (specs/auth.md's Session
      * reclaim): minted fresh for each login's badge, below every session's
      * mark, so it is auth's own and not part of the session's range. */
     g_session_mem_call = g_objects.alloc_slot();
     g_kit_nmspace_slot = g_objects.alloc_slot();
-    if (g_home_slot == 0 || g_session_mem_call == 0 || g_kit_nmspace_slot == 0) {
+    if (g_home_slot == 0 || g_manifest_slot == 0 || g_session_mem_call == 0 ||
+        g_kit_nmspace_slot == 0) {
         write("      FAIL auth: no slot for the home or the session's mem.main\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
