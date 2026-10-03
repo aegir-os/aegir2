@@ -257,19 +257,25 @@ def font_tree() -> list:
     return to_tree(root)
 
 
-def aegir_tree(commands) -> list:
-    """The system volume's tree, with the command set as Sys:C.
+def aegir_tree(commands, datatypes) -> list:
+    """The system volume's tree, with the command set as Sys:C and the datatype
+    classes as Sys:DataTypes.
 
     `commands` is a list of (name, bytes): each becomes C/<name>, the flat
-    lowercase command name the shell resolves (specs/dos.md)."""
+    lowercase command name the shell resolves (specs/dos.md). `datatypes` is the
+    same for DataTypes/<name>, the classes a file is decoded by
+    (specs/datatypes.md)."""
     tree = list(AEGIR_BFS_TREE)
     if commands:
         tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
+    if datatypes:
+        tree.append(("dir", "DataTypes",
+                     [("file", name, data) for name, data in datatypes]))
     tree.append(("dir", "Fonts", font_tree()))
     return tree
 
 
-def partition_table(commands) -> list:
+def partition_table(commands, datatypes) -> list:
     """Lay the partitions out from their contents.
 
     AEGIR's size is its tree's, computed (specs/dos.md); every start is the
@@ -287,7 +293,7 @@ def partition_table(commands) -> list:
             # cannot take a session's first write. `bfs_minimum_bytes` is the
             # tree alone, so the reserve is a second tree's worth: the volume
             # is sized to be written, not only read (specs/bfs.md).
-            needed = bfs_minimum_bytes(aegir_tree(commands), name) * 2
+            needed = bfs_minimum_bytes(aegir_tree(commands, datatypes), name) * 2
             sectors = (needed + SECTOR - 1) // SECTOR
             sectors = ((sectors + 2047) // 2048) * 2048
         last = first + sectors - 1
@@ -332,13 +338,21 @@ def main() -> int:
         "--commands", type=Path, default=None,
         help="a directory of command images, one per file, packed as Sys:C "
              "(specs/dos.md); the AEGIR partition is sized from them")
+    parser.add_argument(
+        "--datatypes", type=Path, default=None,
+        help="a directory of datatype class images, one per file, packed as "
+             "Sys:DataTypes (specs/datatypes.md)")
     args = parser.parse_args()
 
     commands = []
     if args.commands is not None and args.commands.is_dir():
         commands = [(path.name, path.read_bytes())
                     for path in sorted(args.commands.iterdir()) if path.is_file()]
-    partitions = partition_table(commands)
+    datatypes = []
+    if args.datatypes is not None and args.datatypes.is_dir():
+        datatypes = [(path.name, path.read_bytes())
+                     for path in sorted(args.datatypes.iterdir()) if path.is_file()]
+    partitions = partition_table(commands, datatypes)
     total_bytes = disk_bytes(partitions)
 
     for tool in ("sgdisk", "mformat", "mcopy", "mdir"):
@@ -478,7 +492,7 @@ def main() -> int:
     with args.image.open("r+b") as handle:
         handle.seek(0)
         image = bytearray(handle.read())
-        for name, tree in (("AEGIR", aegir_tree(commands)), ("BFS", BFS_TREE)):
+        for name, tree in (("AEGIR", aegir_tree(commands, datatypes)), ("BFS", BFS_TREE)):
             first = next(p[1] for p in partitions if p[0] == name)
             last = next(p[2] for p in partitions if p[0] == name)
             make_bfs(image, first * SECTOR, (last - first + 1) * SECTOR, name, tree)

@@ -431,9 +431,12 @@ def ensure_disk(build_dir: Path) -> None:
     repository, where scratch belongs."""
     disk = build_dir / "disk.img"
     commands = build_dir / "sys-c"
+    datatypes = build_dir / "sys-datatypes"
     command = [sys.executable, str(Path(__file__).parent / "make_disk.py"), str(disk)]
     if commands.is_dir():
         command += ["--commands", str(commands)]
+    if datatypes.is_dir():
+        command += ["--datatypes", str(datatypes)]
     subprocess.run(command, check=True)
 
 

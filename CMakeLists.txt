@@ -218,6 +218,26 @@ foreach(pair IN LISTS aegir_commands)
 endforeach()
 add_custom_target(aegir-sys-c ALL DEPENDS ${aegir_command_images})
 
+# The datatype classes on Sys:DataTypes (specs/datatypes.md): ilbm.datatype,
+# staged and stripped like the commands and packed by scripts/make_disk.py.
+# Only when the hosted runtime is on, because a class is a hosted program.
+if(AEGIR_HOSTED_CXX)
+  set(aegir_datatypes_dir "${CMAKE_BINARY_DIR}/sys-datatypes")
+  set(aegir_datatype_images)
+  set(datatype_image "${aegir_datatypes_dir}/ilbm.datatype")
+  add_custom_command(
+    OUTPUT "${datatype_image}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${aegir_datatypes_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:aegir-ilbm-datatype>"
+            "${datatype_image}"
+    COMMAND "${CMAKE_STRIP}" "${datatype_image}"
+    DEPENDS aegir-ilbm-datatype
+    VERBATIM
+  )
+  list(APPEND aegir_datatype_images "${datatype_image}")
+  add_custom_target(aegir-sys-datatypes ALL DEPENDS ${aegir_datatype_images})
+endif()
+
 if(SIMULATION)
   include(simulation)
   # No SetSimulationScriptProperty(MEM_SIZE ...) here on purpose. The device
