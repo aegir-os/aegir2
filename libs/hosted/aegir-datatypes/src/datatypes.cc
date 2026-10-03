@@ -8,6 +8,7 @@
 #include <aegir/datatypes_client.h>
 
 #include <aegir/bootstrap.h>
+#include <aegir/environment.h>
 #include <aegir/launch_client.h>
 #include <aegir/nmspace.h>
 #include <sel4/sel4.h>
@@ -168,7 +169,10 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
          * the request's one capability. */
         uint64_t request[aegir::ipc::kMaxWords] = {};
         uint32_t words = 0;
-        std::string const program_dir; /* the first cut does not track it */
+        /* The caller's own program directory: a class shipped beside this
+         * binary is found before `DataTypes:` (specs/datatypes.md), and only the
+         * caller knows it. */
+        std::string const program_dir(aegir::environment::program_dir());
         if (put_string(request, words, class_name) && put_string(request, words, path) &&
             put_string(request, words, program_dir)) {
             uint64_t answer[1] = {};

@@ -87,7 +87,7 @@ constexpr uint32_t kCNodeBits = 12;
 constexpr int kAuxvTag = 80;
 
 constexpr uint32_t kMagic = 0x41474253; /* "AGBS" */
-constexpr uint32_t kVersion = 9;
+constexpr uint32_t kVersion = 10;
 
 /** What a block entry describes. Unknown kinds are the reader's problem to
  *  skip, not an error. */
@@ -182,6 +182,12 @@ enum class EntryKind : uint32_t {
      *  (specs/authority.md), so it cannot be a compile-time constant. Absent
      *  means `kCNodeBits`. */
     CNodeBits = 18,
+    /** The directory the child's own binary was loaded from: a VFS path, a
+     *  string entry like `CurrentDir`. It is the child's own, not inherited --
+     *  a program started from anywhere still has its own directory -- so it
+     *  cannot be an environment entry. Empty or absent when the spawner
+     *  resolved no directory: an initrd binary (specs/environment.md). */
+    ProgramDir = 19,
 };
 
 struct Entry {
@@ -241,6 +247,11 @@ struct Contents {
     /* The child's current directory (specs/environment.md), or empty for none. */
     char const *cwd;
     uint32_t cwd_length;
+    /* The directory the child's own binary was loaded from, or empty for none
+     * (an initrd binary) (specs/environment.md). The child's own, not
+     * inherited. */
+    char const *program_dir;
+    uint32_t program_dir_length;
     /* The child's redirected standard input and output (specs/shell.md), or
      * empty for the console stream. */
     char const *std_in;
@@ -302,6 +313,11 @@ uint32_t cnode_bits() noexcept;
  *  (specs/environment.md). The pointer is into the block, valid as long as the
  *  block is. */
 char const *current_dir(uint32_t *length) noexcept;
+
+/** The directory this process's own binary was loaded from, or nullptr when it
+ *  was given none (an initrd binary) (specs/environment.md). The pointer is
+ *  into the block, valid as long as the block is. */
+char const *program_dir(uint32_t *length) noexcept;
 
 /** The firmware's boot flags, or nullptr when this child was given none
  *  (specs/boot.md). The pointer is into the block. */

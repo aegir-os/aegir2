@@ -48,19 +48,19 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
 
-    /* Sixteen fixed entries -- size, name, account, page bits, devices, device,
+    /* Seventeen fixed entries -- size, name, account, page bits, devices, device,
      * untyped, binaries, window, shared window, current directory, standard
-     * input, standard output, boot flags, the child's badge, its CSpace size --
-     * then one per device capability, then one per port, because what a process
-     * is given is part of who it is. Growing the block means bumping the version
-     * rather than gambling on a layout, and `entry_count` is what makes that safe
-     * for readers that know less. */
-    uint32_t const entries = 16 + contents.device_cap_count + contents.port_count;
+     * input, standard output, boot flags, the program directory, the child's
+     * badge, its CSpace size -- then one per device capability, then one per
+     * port, because what a process is given is part of who it is. Growing the
+     * block means bumping the version rather than gambling on a layout, and
+     * `entry_count` is what makes that safe for readers that know less. */
+    uint32_t const entries = 17 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(contents.name_length) +
                          contents.account_length + contents.cwd_length +
                          contents.std_in_length + contents.std_out_length +
-                         contents.boot_length;
+                         contents.boot_length + contents.program_dir_length;
     for (uint32_t i = 0; i < contents.port_count; ++i) {
         data_size += contents.ports[i].name_length;
     }
@@ -118,6 +118,14 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         return nullptr;
     }
     room -= contents.boot_length;
+    uint32_t const program_dir_copied =
+        copy(data + contents.name_length + contents.account_length + contents.cwd_length +
+                 contents.std_in_length + contents.std_out_length + contents.boot_length,
+             contents.program_dir, contents.program_dir_length, static_cast<uint32_t>(room));
+    if (program_dir_copied != contents.program_dir_length) {
+        return nullptr;
+    }
+    room -= contents.program_dir_length;
 
     uint32_t const name_offset = static_cast<uint32_t>(header_size);
     uint32_t const account_offset = static_cast<uint32_t>(header_size + contents.name_length);
@@ -129,6 +137,8 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
         static_cast<uint32_t>(std_in_offset + contents.std_in_length);
     uint32_t const boot_offset =
         static_cast<uint32_t>(std_out_offset + contents.std_out_length);
+    uint32_t const program_dir_offset =
+        static_cast<uint32_t>(boot_offset + contents.boot_length);
     block->entries[0] = Entry{EntryKind::Size, 0, header_size + data_size, 0, 0};
     block->entries[1] = Entry{EntryKind::Name, contents.name_length, 0, name_offset, 0};
     block->entries[2] = Entry{EntryKind::Account, contents.account_length, 0, account_offset, 0};
@@ -183,9 +193,13 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     block->entries[15] = Entry{EntryKind::CNodeBits, 0,
                                contents.cnode_bits != 0 ? contents.cnode_bits : kCNodeBits,
                                0, 0};
+    /* The directory the child's own binary came from (specs/environment.md): a
+     * string entry, empty when the spawner resolved none. */
+    block->entries[16] =
+        Entry{EntryKind::ProgramDir, contents.program_dir_length, 0, program_dir_offset, 0};
 
     for (uint32_t i = 0; i < contents.device_cap_count; ++i) {
-        block->entries[16 + i] =
+        block->entries[17 + i] =
             Entry{EntryKind::DeviceCapability, contents.device_caps[i].bytes,
                   contents.device_caps[i].physical, 0,
                   static_cast<uint32_t>(contents.device_caps[i].slot)};
@@ -194,7 +208,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     uint64_t next_offset = static_cast<uint64_t>(header_size) + contents.name_length +
                            contents.account_length + contents.cwd_length +
                            contents.std_in_length + contents.std_out_length +
-                           contents.boot_length;
+                           contents.boot_length + contents.program_dir_length;
     for (uint32_t i = 0; i < contents.port_count; ++i) {
         uint32_t const copied = copy(data + (next_offset - header_size),
                                      contents.ports[i].name,
@@ -204,7 +218,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
             return nullptr;
         }
         room -= contents.ports[i].name_length;
-        block->entries[16 + contents.device_cap_count + i] =
+        block->entries[17 + contents.device_cap_count + i] =
             Entry{EntryKind::Capability, contents.ports[i].name_length,
                   contents.ports[i].slot, static_cast<uint32_t>(next_offset),
                   contents.ports[i].size_bits};
@@ -515,6 +529,22 @@ char const *current_dir(uint32_t *length) noexcept
 {
     uint32_t len = 0;
     char const *found = string(EntryKind::CurrentDir, &len);
+    if (found == nullptr || len == 0) {
+        if (length != nullptr) {
+            *length = 0;
+        }
+        return nullptr;
+    }
+    if (length != nullptr) {
+        *length = len;
+    }
+    return found;
+}
+
+char const *program_dir(uint32_t *length) noexcept
+{
+    uint32_t len = 0;
+    char const *found = string(EntryKind::ProgramDir, &len);
     if (found == nullptr || len == 0) {
         if (length != nullptr) {
             *length = 0;

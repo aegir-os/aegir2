@@ -223,9 +223,18 @@ viewer at once, and each lives in one process rather than in each caller.
   before the system's and a name the two share is the user's. The acceptance
   drops a class into `Home:DataTypes` and proves the union reaches it: the
   broker's walk finds the user's class and it claims a PNG under a name no
-  extension hints at. What is still not built is the program-directory half of
-  the search (`specs/libraries.md`), and a same-name override -- a user class
-  that **shadows** a system one -- which the next arc can prove destructively.
+  extension hints at. A same-name override -- a user class that **shadows** a
+  system one -- is the next arc's to prove destructively.
+- **Phase 2e -- the program-directory search.** Landed. The spawner records the
+  directory a child's own binary was resolved from (`ProgramDir`, a bootstrap
+  block entry, `specs/environment.md`) and `aegir::environment::program_dir()`
+  answers it; the client's `new_object` carries it to the broker, and the broker
+  resolves each class **name** through it first, then `DataTypes:`. The
+  acceptance ships `png.datatype` in `Sys:C` beside the demo's binary: the cue
+  names `C:png.datatype`, not `DataTypes:png.datatype`, proving the program
+  directory was searched first. What is still open: a program-directory class
+  with a **new** name is not listed for content-first identification (the class
+  *list* is `DataTypes:`), only a name the extension hints is resolved there.
 - **Phase 3 -- JPEG**, libjpeg-turbo.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property

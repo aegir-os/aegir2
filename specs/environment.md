@@ -44,7 +44,11 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   own, not inherited: a program started from anywhere still has its own
   directory. It is a VFS path like the current directory, and empty when the
   spawner resolved no directory -- a boot service loaded from the flat initrd has
-  none.
+  none. **Landed** (specs/datatypes.md's Phase 2e): the bootstrap block carries a
+  `ProgramDir` entry, the spawner writes it from the image path it resolved, and
+  `aegir::environment::program_dir()` answers it. The launcher is the spawner
+  that resolves an image through the VFS, so it sets the field; director reads a
+  flat initrd and leaves it empty.
 - **The persistent environment is layered, as a union.** `ENV:` is a
   `specs/namespace.md` union — a name read as one directory — whose members are
   `Sys:Prefs/Env-Archive` (the base) and `Home:Prefs/Env-Archive` (first, so the

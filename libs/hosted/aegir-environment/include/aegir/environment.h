@@ -52,6 +52,12 @@ std::string_view current_dir() noexcept;
  *  path clears it, so a relative path is then refused (specs/environment.md). */
 bool set_current_dir(std::string_view path) noexcept;
 
+/** The directory this process's own binary was loaded from, or an empty view
+ *  when it has none (a binary from the flat initrd). The process's own, never
+ *  inherited: a program finds its own libraries and data beside itself
+ *  (specs/environment.md, specs/libraries.md's search path). */
+std::string_view program_dir() noexcept;
+
 }  // namespace aegir::environment
 
 #endif  // AEGIR_ENVIRONMENT_H

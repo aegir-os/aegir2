@@ -122,17 +122,37 @@ std::vector<std::string> class_candidates(std::string const &hint)
     return names;
 }
 
-/* Start `class_name` under the caller's badge, serving the class port the
+/* Resolve a class `name` to a program path (specs/datatypes.md): the caller's
+ * **program directory** first, `DataTypes:` under it. A class shipped beside a
+ * program's binary is found whatever the current directory is -- the same order
+ * and reason as `LIBS:` (specs/libraries.md). The caller's program directory is
+ * its own, which is why the broker cannot work it out and the request carries
+ * it. */
+std::string class_path(std::string const &program_dir, std::string const &name)
+{
+    if (!program_dir.empty()) {
+        std::string candidate(program_dir);
+        if (candidate.back() != ':' && candidate.back() != '/') {
+            candidate.push_back('/');
+        }
+        candidate.append(name);
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error) && !error) {
+            return candidate;
+        }
+    }
+    std::string fallback("DataTypes:");
+    fallback.append(name);
+    return fallback;
+}
+
+/* Start the class at `path` under the caller's badge, serving the class port the
  * caller made (`class_cap`). `badge_out` is the class's, for a release if it
  * then declines the file. */
-bool start_class(std::string const &class_name, seL4_CPtr class_cap,
-                 uint64_t *badge_out)
+bool start_class(std::string const &path, seL4_CPtr class_cap, uint64_t *badge_out)
 {
-    std::string program("DataTypes:");
-    program.append(class_name);
-    return aegir::launch::spawn_serve(program.c_str(),
-                                      static_cast<uint32_t>(program.size()), class_cap,
-                                      badge_out);
+    return aegir::launch::spawn_serve(path.c_str(), static_cast<uint32_t>(path.size()),
+                                      class_cap, badge_out);
 }
 
 /* Ask a started class to identify `path`: true when it claims the file. */
@@ -194,23 +214,26 @@ void handle_open(uint64_t const *words, uint32_t count, bool cap_arrived, uint64
         class_name = class_from_extension(path);
     }
     /* Content-first (specs/datatypes.md): ask the hint first, then walk
-     * `DataTypes:`; the class, not the name, decides. A class that declines the
-     * file is released, so the next candidate is the only one serving the
-     * caller's port. */
+     * `DataTypes:`; the class, not the name, decides. Each name resolves through
+     * the caller's program directory first, then `DataTypes:`. A class that
+     * declines the file is released, so the next candidate is the only one
+     * serving the caller's port. The cue names the path the class was loaded
+     * from, so the program-directory half of the search is visible. */
     for (std::string const &candidate : class_candidates(class_name)) {
+        std::string const resolved = class_path(program_dir, candidate);
         uint64_t badge = 0;
-        if (!start_class(candidate, g_class_slot, &badge)) {
+        if (!start_class(resolved, g_class_slot, &badge)) {
             continue;
         }
         if (identify_class(g_class_slot, path)) {
             aegir::debug_write("  datatypes: open ");
-            aegir::debug_write(candidate.c_str());
+            aegir::debug_write(resolved.c_str());
             aegir::debug_write("\n");
             reply[0] = 1;
             break;
         }
         aegir::debug_write("  datatypes: ");
-        aegir::debug_write(candidate.c_str());
+        aegir::debug_write(resolved.c_str());
         aegir::debug_write(" declines\n");
         release_class(badge);
     }

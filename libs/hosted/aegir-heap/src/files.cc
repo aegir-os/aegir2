@@ -137,6 +137,32 @@ void set_current_dir(char const *path, uint32_t length) noexcept
     g_cwd_loaded = true;
 }
 
+/* The directory this process's own binary came from (specs/environment.md):
+ * read once from the bootstrap block, which is read-only, and kept here. Not
+ * the current directory: it is the process's own, never inherited, so it does
+ * not change. */
+char const *program_dir(uint32_t *length) noexcept
+{
+    static bool loaded = false;
+    static char dir[kPathCapacity];
+    static uint32_t dir_length = 0;
+    if (!loaded) {
+        loaded = true;
+        uint32_t found_length = 0;
+        char const *found = aegir::bootstrap::program_dir(&found_length);
+        if (found != nullptr && found_length > 0 && found_length <= kPathCapacity) {
+            for (uint32_t i = 0; i < found_length; ++i) {
+                dir[i] = found[i];
+            }
+            dir_length = found_length;
+        }
+    }
+    if (length != nullptr) {
+        *length = dir_length;
+    }
+    return dir_length != 0 ? dir : nullptr;
+}
+
 uint32_t text_length(char const *text) noexcept
 {
     uint32_t length = 0;
@@ -1376,4 +1402,12 @@ extern "C" int aegir_heap_set_current_dir(char const *path, uint32_t length) noe
     }
     aegir::heap::files::set_current_dir(path, length);
     return 0;
+}
+
+/* The program directory, for aegir::environment: a plain-C bridge, the same
+ * shape as the current directory's, so the libc++-facing unit can declare it
+ * (specs/environment.md). */
+extern "C" char const *aegir_heap_program_dir(uint32_t *length) noexcept
+{
+    return aegir::heap::files::program_dir(length);
 }

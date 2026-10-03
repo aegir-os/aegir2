@@ -379,8 +379,17 @@ def aegir_tree(commands, datatypes) -> list:
     # until png.datatype claims it by content. The demo opens it to prove the
     # class, not the name, decides.
     tree.append(("file", "Mystery.ilbm", make_png()))
+    png_class = next((data for name, data in datatypes if name == "png.datatype"), None)
     if commands:
-        tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
+        c_files = [("file", name, data) for name, data in commands]
+        # The program's own class (specs/datatypes.md): a class shipped beside a
+        # program's binary is resolved before `DataTypes:`. `png.datatype` sits
+        # in `C:` with the demo, so the demo's class search finds it there and
+        # the cue names `C:png.datatype` -- proof the program-directory half of
+        # the search ran.
+        if png_class is not None:
+            c_files.append(("file", "png.datatype", png_class))
+        tree.append(("dir", "C", c_files))
     if datatypes:
         tree.append(("dir", "DataTypes",
                      [("file", name, data) for name, data in datatypes]))
@@ -394,7 +403,6 @@ def aegir_tree(commands, datatypes) -> list:
     # hints at, caught by the user's class before the system's (this one is the
     # png class under a name that sorts first, so the union's user member is the
     # one the broker reaches).
-    png_class = next((data for name, data in datatypes if name == "png.datatype"), None)
     home_children = [
         ("dir", "S", [
             ("file", "User-Startup",

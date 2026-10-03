@@ -116,7 +116,27 @@ bool ServiceKit::load_image(std::string const &path)
         image_.insert(image_.end(), chunk, chunk + have);
     }
     ::close(fd);
-    return !image_.empty();
+    if (image_.empty()) {
+        return false;
+    }
+    image_path_ = path;
+    return true;
+}
+
+/* The directory a spawned program's own binary came from (specs/environment.md):
+ * the resolved image path's directory, or empty for an initrd read -- a flat
+ * image has no directory. A child finds its own libraries and classes beside
+ * its binary, whatever the current directory is. */
+std::string program_directory(std::string const &path)
+{
+    if (path.rfind("Initrd:", 0) == 0) {
+        return {};
+    }
+    std::size_t const cut = path.find_last_of(":/");
+    if (cut == std::string::npos) {
+        return {};
+    }
+    return path.substr(0, cut + 1);
 }
 
 bool ServiceKit::load_program(std::string const &name, std::string const *path,
@@ -355,6 +375,9 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     request.environment_count = static_cast<uint32_t>(environment_pointers.size());
     request.cwd = command.cwd->c_str();
     request.cwd_length = static_cast<uint32_t>(command.cwd->size());
+    std::string const program_dir = program_directory(image_path_);
+    request.program_dir = program_dir.empty() ? nullptr : program_dir.c_str();
+    request.program_dir_length = static_cast<uint32_t>(program_dir.size());
     request.std_in = command.std_in != nullptr && !command.std_in->empty()
                          ? command.std_in->c_str()
                          : nullptr;

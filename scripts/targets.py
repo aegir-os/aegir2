@@ -207,21 +207,27 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The session's datatypes broker (specs/datatypes.md): the demo
             # asked it to open each file, and it started the class through the
             # session launcher rather than the client starting one directly. The
-            # cue is the broker's, so a session that fell back to the direct
-            # serve-launch would miss it.
-            QmpStep(r"datatypes: open ilbm\.datatype"),
-            QmpStep(r"datatypes: open png\.datatype"),
+            # cue is the broker's, and it names the path the class was resolved
+            # from, so a session that fell back to the direct serve-launch would
+            # miss it.
+            QmpStep(r"datatypes: open DataTypes:ilbm\.datatype"),
+            # The program-directory half of the search (specs/datatypes.md): the
+            # demo's own directory is `Sys:C`, and `png.datatype` ships there
+            # beside the demo's binary, so the class resolves to `C:png.datatype`
+            # before `DataTypes:`. The cue names that path -- proof the program
+            # directory was searched first.
+            QmpStep(r"datatypes: open C:png\.datatype"),
             # The content-first walk (specs/datatypes.md): the demo opens a PNG
             # named `.ilbm`, so the extension's hint is ilbm.datatype -- which
-            # declines -- and the broker walks `DataTypes:` until a class claims
-            # it by content. The decline cue proves the hint did not win; the
-            # class that claims is the user's, from Home:DataTypes (shipped as
-            # `aaa.datatype`, the png class under a name the sort reaches first),
-            # so the union's user member is proved too -- a session that searched
-            # only Sys:DataTypes would claim with png.datatype instead. The RGBA
-            # the class states proves the class, not the name, decided.
-            QmpStep(r"datatypes: ilbm\.datatype declines"),
-            QmpStep(r"datatypes: open aaa\.datatype"),
+            # declines -- and the broker walks the candidates until a class
+            # claims it by content. The decline cue proves the hint did not win;
+            # the class that claims is the user's, from Home:DataTypes (shipped
+            # as `aaa.datatype`, the png class under a name the sort reaches
+            # first), so the union's user member is proved too -- a session that
+            # searched only Sys:DataTypes would claim with png.datatype instead.
+            # The RGBA the class states proves the class, not the name, decided.
+            QmpStep(r"datatypes: DataTypes:ilbm\.datatype declines"),
+            QmpStep(r"datatypes: open DataTypes:aaa\.datatype"),
             QmpStep(r"demo: mystery 64x48 format 2 palette 0"),
             # The datatypes client's first call (specs/datatypes.md): the demo
             # opened Sys:TestImage.ilbm through the ilbm class, which decoded

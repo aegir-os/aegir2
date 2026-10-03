@@ -288,6 +288,10 @@ private:
     uint64_t pipeline_serial_ = 0;
     uint64_t owner_serial_ = 0;
     std::vector<char> image_;
+    /* The path `load_image` last resolved, so a child is handed the directory
+     * its own binary came from (specs/environment.md). Empty for an initrd
+     * read. */
+    std::string image_path_;
     std::vector<Started> live_;
 
     aegir::mem::Allocator *allocator_ = nullptr;

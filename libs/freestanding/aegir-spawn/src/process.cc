@@ -549,6 +549,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     bootstrap::Contents const contents{
         request.name,       request.name_length,   request.account, request.account_length,
         request.cwd,        request.cwd_length,
+        request.program_dir, request.program_dir_length,
         request.std_in,     request.std_in_length, request.std_out, request.std_out_length,
         request.boot,       request.boot_length,
         port_entries,       port_count,            devices_address, request.devices_bytes,

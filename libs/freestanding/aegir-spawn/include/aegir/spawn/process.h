@@ -183,6 +183,13 @@ struct Request {
      * null/0 for none (specs/environment.md). */
     char const *cwd = nullptr;
     uint32_t cwd_length = 0;
+    /* The directory the child's own binary was loaded from, a VFS path, or
+     * null/0 for none (specs/environment.md). The child's own, not inherited:
+     * a spawner that reads an image through the VFS (the launcher, a broker)
+     * knows the directory it resolved and sets it; one that reads a flat initrd
+     * (director) leaves it empty. */
+    char const *program_dir = nullptr;
+    uint32_t program_dir_length = 0;
     /* The child's redirected standard input and output, VFS paths, or null/0
      * for the console stream (specs/shell.md). A spawner that redirects a
      * command's command line sets these; the runtime opens the path and routes
