@@ -74,6 +74,7 @@ set(aegir_initrd_binaries
     aegir-terminal-app
     aegir-auth
     aegir-session-smoke
+    aegir-datatypes-broker
     aegir-test
     aegir-shell
     aegir-launcher
@@ -109,6 +110,7 @@ set(aegir_initrd_binary_names
     "aegir-terminal"
     "aegir-auth"
     "aegir-session-smoke"
+    "aegir-datatypes-broker"
     "aegir-test"
     "aegir-shell"
     "aegir-launcher"

@@ -119,9 +119,11 @@ user's additions. Recorded here so the manifest and the script are one design;
    built-in terminal; an absent one does the same quietly. `needs` is resolved
    through a closed vocabulary, `owns` through what auth can make; the launcher
    is not a section and is still started by auth.
-3. **The datatypes broker.** The first *new* service the manifest declares: owns
-   `datatypes.main`, needs `vfs.namespace` and `launch.session`, starts classes
-   as the session's user class (`specs/datatypes.md`, `specs/libraries.md`). The
-   client asks it when present and falls back to the direct serve-launch when
-   not.
+3. **The datatypes broker.** Landed. The first *new* service the manifest
+   declares: `aegir-datatypes-broker` owns `datatypes.main`, needs
+   `vfs.namespace` and `launch.session`, and starts classes as the session's
+   user class (`specs/datatypes.md`, `specs/libraries.md`). auth makes the
+   broker port from the session's own allocator and hands the launcher its
+   source, so the client asks the broker when present and falls back to the
+   direct serve-launch when not.
 4. **User-Startup.** Run once at session start, after the services are up.

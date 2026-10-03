@@ -204,6 +204,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the session's Shell-Startup, so this cue comes after the login,
             # not before it.
             QmpStep(r"demo: outline A \d+x\d+ advance \d+"),
+            # The session's datatypes broker (specs/datatypes.md): the demo
+            # asked it to open each file, and it started the class through the
+            # session launcher rather than the client starting one directly. The
+            # cue is the broker's, so a session that fell back to the direct
+            # serve-launch would miss it.
+            QmpStep(r"datatypes: open ilbm\.datatype"),
+            QmpStep(r"datatypes: open png\.datatype"),
             # The datatypes client's first call (specs/datatypes.md): the demo
             # opened Sys:TestImage.ilbm through the ilbm class, which decoded
             # the file and served the frame a page at a time. The cue names what

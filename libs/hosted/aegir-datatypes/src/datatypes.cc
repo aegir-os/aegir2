@@ -46,6 +46,28 @@ std::string class_from_extension(std::string_view path)
     return {};
 }
 
+/* The session's datatypes broker, found under `datatypes.main` through the
+ * bootstrap block (specs/datatypes.md). Invalid when the session declares no
+ * broker, and the caller starts its class directly. */
+aegir::ipc::Consumer broker() noexcept
+{
+    return aegir::ipc::Consumer::find(aegir::datatypes::kBrokerPortName,
+                                      aegir::datatypes::kBrokerPortNameLength);
+}
+
+/* Append a namespace-shaped string to a request, answering false when the words
+ * would not fit. */
+bool put_string(uint64_t *words, uint32_t &at, std::string_view text)
+{
+    uint32_t const packed = aegir::nmspace::pack_string(
+        words + at, text.data(), static_cast<uint32_t>(text.size()), aegir::nmspace::kPathMax);
+    if (packed == 0 || at + packed > aegir::ipc::kMaxWords) {
+        return false;
+    }
+    at += packed;
+    return true;
+}
+
 } // namespace
 
 void Object::reset() noexcept
@@ -119,7 +141,7 @@ bool Object::dispose_object()
 Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                   std::string_view class_name, std::string_view path)
 {
-    if (class_name.empty() || path.empty()) {
+    if (path.empty()) {
         return Object{};
     }
     Object object;
@@ -127,9 +149,9 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
     object.scratch_ = &scratch;
     object.path_ = std::string(path);
 
-    /* The class's port: this makes it, the launcher installs the other half in
-     * the class, and the client keeps this one to call. The class runs under
-     * the caller's badge (specs/libraries.md). */
+    /* The class's port: this makes it; the broker, or -- without one -- the
+     * launcher installs the other half in the class, and the client keeps this
+     * one to call. The class runs under the caller's badge (specs/libraries.md). */
     aegir::mem::Account account{"datatypes", 0, 0, 0};
     seL4_Error error = seL4_NoError;
     seL4_CPtr const endpoint =
@@ -137,18 +159,37 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
     if (endpoint == 0) {
         return Object{};
     }
-    std::string program("DataTypes:");
-    program.append(class_name);
-    uint64_t badge = 0;
-    if (!aegir::launch::spawn_serve(program.c_str(),
-                                    static_cast<uint32_t>(program.size()), endpoint,
-                                    &badge)) {
+    aegir::ipc::Consumer const broker_port = broker();
+    bool started = false;
+    if (broker_port.valid()) {
+        /* The session's broker starts the class (specs/datatypes.md): the
+         * request carries the class name (empty to identify from the file), the
+         * path and the caller's program directory, and the class port rides as
+         * the request's one capability. */
+        uint64_t request[aegir::ipc::kMaxWords] = {};
+        uint32_t words = 0;
+        std::string const program_dir; /* the first cut does not track it */
+        if (put_string(request, words, class_name) && put_string(request, words, path) &&
+            put_string(request, words, program_dir)) {
+            uint64_t answer[1] = {};
+            aegir::ipc::WordsReply const reply = broker_port.call_transfer(
+                kMethodOpen, request, words, endpoint, answer, 1, nullptr);
+            started = reply.error == 0 && reply.count >= 1 && answer[0] == 1;
+        }
+    } else if (!class_name.empty()) {
+        /* No broker: start the class directly -- the first cut. */
+        std::string program("DataTypes:");
+        program.append(class_name);
+        uint64_t badge = 0;
+        started = aegir::launch::spawn_serve(
+            program.c_str(), static_cast<uint32_t>(program.size()), endpoint, &badge);
+    }
+    if (!started) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, endpoint,
                           aegir::bootstrap::cnode_bits());
         return Object{};
     }
     object.class_ = aegir::ipc::Consumer(endpoint);
-    static_cast<void>(badge);
 
     /* info: the path; answer 1 and the Info words. */
     uint64_t request[aegir::ipc::kMaxWords] = {};
@@ -179,11 +220,10 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
 Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                   std::string_view path)
 {
-    std::string const class_name = class_from_extension(path);
-    if (class_name.empty()) {
-        return Object{};
-    }
-    return new_object(allocator, scratch, class_name, path);
+    /* The extension is the first cut's hint; the broker identifies from the
+     * content, so an empty class name is still worth asking it. Without a broker
+     * an empty name starts nothing. */
+    return new_object(allocator, scratch, class_from_extension(path), path);
 }
 
 bool Object::read(Decoded &into)

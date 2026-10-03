@@ -326,14 +326,18 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * clients' streams must not be confused. */
     seL4_CPtr const saved_stream = kit_.stream;
     kit_.stream = command.stream;
-    aegir::spawn::PortGrant ports[10];
+    /* Sized to the grant builders' maximum, not to what one child happens to
+     * need: a builder counts a port it could not write (kit.cc's `put` advances
+     * its index either way), so a too-small array makes the count name a slot
+     * past the array and the spawner reads uninitialized memory. */
+    aegir::spawn::PortGrant ports[16];
     uint32_t port_count = 0;
     if (command.output_view) {
-        port_count = aegir::spawn::output_ports(kit_, child, ports, 10);
+        port_count = aegir::spawn::output_ports(kit_, child, ports, 16);
     } else if (command.serve) {
-        port_count = aegir::spawn::serve_ports(kit_, child, ports, 10);
+        port_count = aegir::spawn::serve_ports(kit_, child, ports, 16);
     } else {
-        port_count = aegir::spawn::command_ports(kit_, child, ports, 10);
+        port_count = aegir::spawn::command_ports(kit_, child, ports, 16);
     }
     kit_.stream = saved_stream;
 

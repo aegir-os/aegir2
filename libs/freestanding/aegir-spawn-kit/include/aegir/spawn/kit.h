@@ -57,6 +57,12 @@ struct Kit {
      * parse itself -- a TrueType or OpenType one. Optional: a launcher with none
      * hands its commands none, and they keep the built-in Terminus. */
     seL4_CPtr font_main = 0;
+    /* The unbadged datatypes.main source (specs/datatypes.md): the session's
+     * broker, so a launched program asks it to open a file rather than starting
+     * a class itself. Optional: a launcher handed none hands its commands none,
+     * and a client falls back to starting the class through its launcher
+     * (specs/datatypes.md's client API). */
+    seL4_CPtr datatypes = 0;
     seL4_CPtr mem_main = 0;
     seL4_CPtr asid_pool = 0;
     seL4_CPtr clock = 0; /* optional */

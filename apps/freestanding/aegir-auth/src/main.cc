@@ -27,6 +27,7 @@
 #include <aegir/debug.h>
 #include <aegir/console.h>
 #include <aegir/ipc/port.h>
+#include <aegir/datatypes.h>
 #include <aegir/log.h>
 #include <aegir/manifest.h>
 #include <aegir/mem/allocator.h>
@@ -78,6 +79,11 @@ seL4_CPtr g_spawn_login = 0;
  * a session is not director's to spawn, so the owner copy the director made
  * reaches the bureau through auth, as the caller copies do. */
 seL4_CPtr g_spawn_bureau_menu = 0;
+/* The session's datatypes broker port (specs/datatypes.md): the broker owns it
+ * and auth makes the endpoint itself, from the session's own allocator, so a
+ * client asks the broker rather than starting a class. Zero when the session
+ * declares no broker, and a client starts its class directly. */
+seL4_CPtr g_spawn_datatypes = 0;
 /* The font service's caller half (specs/fonts.md): the session's windows draw a
  * Sys:Fonts face through it, an OpenType one the toolkit cannot parse itself. */
 seL4_CPtr g_spawn_font = 0;
@@ -761,8 +767,8 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
     child.runtime = untyped;
     child.runtime_bits = kLauncherUntypedBits;
     child.launcher = true;
-    aegir::spawn::PortGrant ports[16];
-    uint32_t count = aegir::spawn::launcher_ports(kit, child, ports, 16);
+    aegir::spawn::PortGrant ports[20];
+    uint32_t count = aegir::spawn::launcher_ports(kit, child, ports, 20);
     /* The endpoint's owner half: the launcher serves on it. An owner needs Read
      * to receive; the caller's halves carry Write instead, the other side of the
      * same endpoint. */
@@ -798,6 +804,17 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
     if (g_spawn_font != 0) {
         ports[count] = {"font.main", 9,
                         aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_font,
+                        seL4_AllRights, 0, 0};
+        ++count;
+    }
+    /* The unbadged datatypes.main source (specs/datatypes.md): the launcher
+     * mints each of its commands a caller half from it, so a launched program
+     * asks the session's broker to open a file. Absent when the session declares
+     * no broker, and a client starts its class directly. */
+    if (g_spawn_datatypes != 0) {
+        ports[count] = {aegir::datatypes::kBrokerPortName,
+                        aegir::datatypes::kBrokerPortNameLength,
+                        aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_datatypes,
                         seL4_AllRights, 0, 0};
         ++count;
     }
@@ -1208,11 +1225,37 @@ bool append_needs(aegir::manifest::View needs, seL4_CPtr launch_port, uint64_t b
     return true;
 }
 
+/* The capability auth made for an `owns` name, making the endpoint now if it is
+ * not yet (specs/session.md): the owner half a session service serves, or the
+ * source the launcher mints a caller from. `known` says whether the name is one
+ * auth can compose at all; only the session's own ports are. */
+seL4_CPtr own_endpoint(aegir::manifest::View name, aegir::mem::Account &account,
+                       bool *known) noexcept
+{
+    *known = true;
+    seL4_CPtr *slot = nullptr;
+    if (aegir::manifest::equals(name, "bureau.menu")) {
+        slot = &g_spawn_bureau_menu;
+    } else if (aegir::manifest::equals(name, "datatypes.main")) {
+        slot = &g_spawn_datatypes;
+    } else {
+        *known = false;
+        return 0;
+    }
+    if (*slot == 0) {
+        seL4_Error error = seL4_NoError;
+        *slot = g_session_mem.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
+                                           account, &error);
+    }
+    return *slot;
+}
+
 /* Append the owner half of each port the service `owns` (specs/session.md). auth
- * makes the endpoint; the owner reads it, unbadged. Only the ports auth makes
- * today are known; another name is one auth cannot compose. */
-bool append_owns(aegir::manifest::View owns, aegir::spawn::PortGrant *ports,
-                 uint32_t capacity, uint32_t *count) noexcept
+ * makes the endpoint (own_endpoint); the owner reads it, unbadged. A name auth
+ * cannot compose is the manifest's error, not a guess. */
+bool append_owns(aegir::manifest::View owns, aegir::mem::Account &account,
+                 aegir::spawn::PortGrant *ports, uint32_t capacity,
+                 uint32_t *count) noexcept
 {
     uint32_t at = 0;
     while (at < owns.length) {
@@ -1229,11 +1272,9 @@ bool append_owns(aegir::manifest::View owns, aegir::spawn::PortGrant *ports,
         }
         if (end > start) {
             aegir::manifest::View const name{owns.data + start, end - start};
-            seL4_CPtr cap = 0;
-            if (aegir::manifest::equals(name, "bureau.menu")) {
-                cap = g_spawn_bureau_menu;
-            }
-            if (cap == 0) {
+            bool known = false;
+            seL4_CPtr const cap = own_endpoint(name, account, &known);
+            if (!known || cap == 0) {
                 write("      auth: session.manifest: auth cannot make own '");
                 write(name.data, name.length);
                 write("'\n");
@@ -1389,7 +1430,7 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
                             untyped, seL4_AllRights, 0, spec.memory_bits};
             ++count;
         }
-        if (!append_owns(spec.owns, ports, 16, &count)) {
+        if (!append_owns(spec.owns, account, ports, 16, &count)) {
             return false;
         }
     }
@@ -1588,21 +1629,22 @@ void start_session(uint32_t user, bool bureau) noexcept
         }
         primary = process.supervision;
     } else {
-        /* The session's own ports (specs/session.md): launch.session and
-         * bureau.menu, made by auth so no client depends on a name a launcher
-         * chose. The bureau is given bureau.menu's owner half to serve, and the
-         * launcher the source it mints each command's caller half from. */
+        /* The session's launch endpoint (specs/session.md): auth makes it, so no
+         * client depends on a name a launcher chose. The session's other own
+         * ports -- bureau.menu, datatypes.main -- are made on demand, when a
+         * service's `owns` names them (own_endpoint), and their sources are
+         * cleared here first so a session that owns none hands the launcher
+         * none. */
         seL4_Error port_error = seL4_NoError;
         seL4_CPtr const launch_port = g_session_mem.alloc_object(
             seL4_EndpointObject, seL4_EndpointBits, session_account, &port_error);
-        seL4_CPtr const menu = g_session_mem.alloc_object(
-            seL4_EndpointObject, seL4_EndpointBits, session_account, &port_error);
-        if (launch_port == 0 || menu == 0) {
-            write("      auth: FAIL no launch or bureau.menu endpoint for the session\n");
+        if (launch_port == 0) {
+            write("      auth: FAIL no launch endpoint for the session\n");
             reclaim_session(badge, mark, scratch_mark, session_account);
             return;
         }
-        g_spawn_bureau_menu = menu;
+        g_spawn_bureau_menu = 0;
+        g_spawn_datatypes = 0;
 
         /* The manifest (specs/session.md): the session's services as data. Read
          * it and resolve its services; an absent or malformed one leaves the

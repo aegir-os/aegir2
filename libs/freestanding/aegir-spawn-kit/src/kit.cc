@@ -105,6 +105,16 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
         (void)put(out, capacity, n++, kFontMainName, kFontMainNameLength, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
+    /* The session's datatypes broker (specs/datatypes.md): a windowed program
+     * asks it to open an image, rather than starting a class itself, so the
+     * broker owns the class list and the identification. Minted with the child's
+     * own badge; the source is the unbadged delegate. Optional -- a session with
+     * no broker hands none, and a client starts its class directly. */
+    if (kit.datatypes != 0) {
+        (void)put(out, capacity, n++, aegir::datatypes::kBrokerPortName,
+                  aegir::datatypes::kBrokerPortNameLength, kit.datatypes,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    }
     /* The session launcher's caller half (specs/launch.md, specs/datatypes.md):
      * a command may ask the launcher to serve-launch a class, so any program can
      * use a resource library, not only a launching program. Copied, not minted:

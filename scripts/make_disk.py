@@ -197,7 +197,20 @@ AEGIR_BFS_TREE = [
          b"maps        = true\n"
          b"memory_kib  = 4096\n"
          b"cspace_bits = 13\n"
-         b"delegate_mib = 4\n"),
+         b"delegate_mib = 4\n"
+         b"\n"
+         b"# The session's datatypes broker (specs/datatypes.md): it owns\n"
+         b"# datatypes.main, so a program asks it to open a file rather than starting\n"
+         b"# a class itself, and it starts the class through the session launcher as\n"
+         b"# the session's user class.\n"
+         b"[datatypes]\n"
+         b"binary     = aegir-datatypes-broker\n"
+         b"authority  = user\n"
+         b"account    = user\n"
+         b"owns       = datatypes.main\n"
+         b"needs      = log.main, vfs.namespace, launch.session\n"
+         b"maps       = true\n"
+         b"memory_kib = 4096\n"),
         # Resource limits, opt-in (specs/limits.md): the shipped file is
         # comments plus the commented-out default example, so out of the box
         # it restricts nothing. An operator edits it without reimaging.

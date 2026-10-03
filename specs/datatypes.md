@@ -196,11 +196,18 @@ viewer at once, and each lives in one process rather than in each caller.
   acceptance pins a pixel in each half, as it does for ILBM -- and the two
   fixtures are different colours, so neither class's proof can stand in for the
   other's. Two class files now sit in `Sys:DataTypes` and both are found by
-  name, so the class list is proved. What is *not* yet built is the choice: the
-  client still picks a class by the file's extension, not by asking each class
-  to `identify` the content first (the protocol method and the
-  `new_object(class_name, path)` forcing form both exist); a `datatypes` broker
-  that walks `DataTypes:` is the next piece.
+  name, so the class list is proved.
+- **Phase 2b -- the broker.** Landed. `aegir-datatypes-broker` is a session
+  service declared in `Sys:S/session.manifest`; it owns `datatypes.main` and
+  starts a class on demand through the session launcher, as the session's user
+  class. A client asks it when the session has one (the port arrives through the
+  launcher's kit, `command_ports`) and falls back to starting the class directly
+  when it does not. The broker still takes the extension as the *hint* and asks
+  the started class to `identify` the file; what is not built is walking
+  `DataTypes:` to try every class and the program-directory half of the search
+  (`specs/libraries.md`). The acceptance proves the broker path, not the
+  fallback: its cues are the broker's, and a session that started classes
+  directly would miss them.
 - **Phase 3 -- JPEG**, libjpeg-turbo.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property
