@@ -35,8 +35,11 @@ format (`libs/freestanding/aegir-manifest`, `specs/services.md`), read by auth.
 - **Location.** The system ships `Sys:S/session.manifest`; the user's is
   `Home:S/session.manifest`. auth reads the user's if it exists, else the
   system's -- the user-first/system-fallback rule `S:Shell-Startup` already uses
-  (`specs/shell.md`). A user copies the system's and edits it to change their
-  session.
+  (`specs/shell.md`). A user *may* copy the system's and edit it, but this is an
+  **expert** file: the ordinary way to change a session is `Home:S/User-Startup`
+  (below), which starts programs without redefining what a session *is*. The
+  manifest is here for power users, and for the system to declare the session's
+  own shape as data.
 - **Format.** `[name]` sections with the boot manifest's keys. The ones that
   matter here: `binary`, `authority`, `account`, `needs`, `owns`, `maps`,
   `memory_kib`. Unknown keys and sections are errors, not skips
