@@ -107,14 +107,18 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     }
     /* The session launcher's caller half (specs/launch.md, specs/datatypes.md):
      * a command may ask the launcher to serve-launch a class, so any program can
-     * use a resource library, not only a launching program. Minted from the
-     * unbadged source with the command's badge. An output view is a command, so
-     * it shares this one grant -- which is why it lives here, not in
-     * output_ports, where a second entry under the same name would shadow it. */
+     * use a resource library, not only a launching program. Copied, not minted:
+     * the launcher's half is already badged, and the kernel refuses to re-badge
+     * an endpoint cap (updateCapData returns null when the badge is nonzero), so
+     * a mint fails to install -- and the launcher ignores the call's badge and
+     * attributes a command from its own range, so a copy loses nothing. An
+     * output view is a command, so it shares this one grant -- which is why it
+     * lives here, not in output_ports, where a second entry under the same name
+     * would shadow it. */
     if (kit.launch != 0) {
         (void)put(out, capacity, n++, aegir::launch::kPortName,
                   aegir::launch::kPortNameLength, kit.launch,
-                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
     }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
