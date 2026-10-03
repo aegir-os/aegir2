@@ -52,11 +52,12 @@ Aegir's. `open_library` acquires a provider port for a name at run time;
   and returns a handle. A provider older than `version` is refused, as the Amiga
   refuses. The version is the port's own (`specs/services.md`: a protocol is
   versioned by method number), read from the provider's first reply, not guessed.
-- **`close_library(handle)`** drops the reference. A provider is **resident once
-  started** (the Amiga default): close decrements a count and the provider keeps
-  running, because a codec that reloads for every file pays the load cost every
-  time. Stopping an idle provider is a policy a manager may take later; the
-  reclaim path already exists (`mem.main`'s per-badge `release`,
+- **`close_library(handle)`** drops the reference. A **system** provider is
+  resident once started (the Amiga default): close decrements a count and it
+  keeps running, because a codec that reloads for every file pays the load cost
+  every time. A **user** provider (below) is a session child and goes with the
+  session. Stopping an idle system provider is a policy a manager may take
+  later; the reclaim path exists (`mem.main`'s per-badge `release`,
   `specs/memory.md`) and is not this arc.
 - **A handle is a capability.** A client never reaches a provider it was not
   handed a port to. The provider's port is minted for the caller
@@ -64,36 +65,50 @@ Aegir's. `open_library` acquires a provider port for a name at run time;
   is calling and a `close_library` that is not that caller's is refused, not
   trusted.
 
-## The manager, and where a provider comes from
+## Whose authority a provider runs with
 
-There is no single global library service in this arc. A resource library
-belongs to a *domain* -- image formats to `datatypes`, fonts to `aegir-font` --
-and the service that knows what should exist is the service that creates it
-(`specs/services.md`: the device manager's rule). That service is the
-**manager**: it resolves `open_library` names on the caller's search path and
-starts the providers it owns under a spawn right.
+A resource library is a service, but *whose* service depends on whose data it
+handles, and that is what decides its authority. Two kinds:
 
-- **The filesystem is the list.** A library is addressed by its *name*, and its
-  name is its filename, so `open_library(name)` resolves `name` through the
-  caller's search path (below) to a binary. There is no registry file: adding a
-  library is dropping the binary in `LIBS:`, with no second file to keep in step
-  with the directory. This is the Amiga's mechanism, and the reason it is the
-  right one here. A registry *is* the right shape where the thing addressed is
-  not a name -- a device's compatible string, a partition type GUID -- which is
-  why `drivers.registry` and `filesystems.registry` exist
-  (`specs/services.md`); a library is not that.
-- **The manager owns the provider.** Its memory is the manager's, charged under
-  the manager's badge, so a session that opened it is not the provider's
-  lifetime -- a resident provider outlives the session that first wanted it.
-  A session *leases* it. This is what makes "resident once started" true across
-  sessions.
-- **A general `libraries` manager** -- one service any program may
-  `open_library` for any name, so a program need not know the domain -- is a
-  later generalization. The first manager is `datatypes`
-  (`specs/datatypes.md`), because an image format is the provider-selected-at-
-  run-time case that forces the mechanism. When a second domain wants the same
-  generic door, the `libraries` service is extracted; until then a manager per
-  domain is one fewer thing to trust.
+- **A system resource library** owns system state and serves anyone -- the font
+  service, or a system codec that decodes any user's file. It is a boot service
+  (`specs/services.md`), runs with system authority, and is **resident once
+  started**: a manager owns its memory and a session *leases* it, so it outlives
+  the session that first wanted it.
+- **A user resource library** handles a caller's data, and its code may be the
+  caller's own -- a class from `Home:DataTypes`. It must run with the
+  **caller's authority**, as a child of the session's launching machinery,
+  reclaimed with the session. It is **never** spawned by a system service, or
+  user-authored code would run as the system. That is not a policy to be careful
+  about; it is the reason this distinction exists.
+
+The rule is one sentence: **a provider runs with the authority of whoever owns
+the data it handles, or less.** A system library is safe to share because it owns
+the resource; a class that decodes *your* picture is yours and runs as you.
+
+### The manager, per kind
+
+- **A system library's manager is a system service.** It holds the
+  name-to-binary mapping (the filesystem: *the list is the directory*, below),
+  resolves names, starts providers under a spawn right it holds, and owns their
+  memory. The device manager and the partition manager are the pattern
+  (`specs/services.md`).
+- **A user library has no system manager.** The session's launcher starts the
+  provider under the caller's badge, the way it starts a command
+  (`specs/launch.md`), and the caller talks to the port the launch produced. The
+  `open_library` idiom is the client library's, over whatever started the
+  provider; a session service that brokers a whole domain is a later
+  generalization. `specs/datatypes.md` is the first user resource library.
+
+### The filesystem is the list
+
+A library is addressed by its *name*, and its name is its filename, so a name
+resolves through the caller's search path (below) to a binary. There is no
+registry file: adding a library is dropping the binary in `LIBS:`, with no second
+file to keep in step with the directory. A registry *is* the right shape where
+the thing addressed is not a name -- a device's compatible string, a partition
+type GUID -- which is why `drivers.registry` and `filesystems.registry` exist
+(`specs/services.md`); a library is not that.
 
 ## `LIBS:` and the search path
 
@@ -125,21 +140,27 @@ visible to its `open_library` and to no other's.
   no shared object. A future arc may add a pager and file-backed mappings
   (`specs/clang-on-aegir.md`); a resource library stays a service through it, so
   this spec does not change. A shared *runtime* stays a separate decision.
-- **An unloadable provider.** Residency is the default; reclaim is available
-  but not a feature here.
+- **A provider that never stops.** A *system* provider is resident once started;
+  a *user* provider lives for the session (`Whose authority`, above). Reclaiming
+  an idle system provider is available but not a feature here.
 - **A plugin loader for untrusted code.** A provider is a service with exactly
-  the authority its manager grants it, not arbitrary code in the caller's
-  process. That is the point of the service shape.
+  the authority whoever starts it grants it -- a system service for a system
+  library, the caller's own badge for a user library -- not arbitrary code in the
+  caller's process. That is the point of the service shape.
 
 ## Open, for review
 
-- **The `libraries` general manager** (above): when a second domain appears, the
-  spawn policy moves out of the domain managers into one service -- or does not,
-  if two domains stay two.
+- **A per-session broker.** The first user resource library is launched by the
+  program that wants it (`specs/datatypes.md`); a per-session service that any of
+  the session's processes may ask to open a class, holding the session's launcher
+  kit, is the generalization -- and it is a session service, so it waits on "what
+  a session is made of" (`specs/auth.md`).
 - **What `version` names.** The first cut is the port's protocol version,
   because a port already has one; a provider that also carries an Amiga-style
   `lib_Version` word can have both, with the protocol version checked first.
-- **How a manager may start a file it has never seen.** `open_library` resolves
-  a name to a binary in the caller's search path; whether any caller may have
-  any such binary started as a service, or a name needs a policy entry first, is
-  the authority question, and it belongs with `specs/ownership.md`.
+- **How a spawner starts a file it has never seen.** `open_library` resolves a
+  name to a binary in the caller's search path; whether a caller may have any
+  such binary started as a service, or a name needs a policy entry first, is the
+  authority question, and it belongs with `specs/ownership.md`. For a user
+  library the spawner is the session's launcher, so the check is the launcher's
+  policy over what a badge may launch (`specs/launch.md`).
