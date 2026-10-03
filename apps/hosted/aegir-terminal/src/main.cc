@@ -168,7 +168,9 @@ int main(int argc, char *argv[])
     }
 
     auto view = std::make_unique<TerminalView>();
-    view->set_font(app.default_font());
+    /* The terminal is a grid: a fixed advance, so the theme's monospace face
+     * (specs/trinket/theming.md), not the proportional default. */
+    view->set_font(app.theme().font_monospace());
     view->set_colors(app.theme().color(ColorRole::TEXT),
                      app.theme().color(ColorRole::WINDOW_BG));
     TerminalView *const terminal = view.get();

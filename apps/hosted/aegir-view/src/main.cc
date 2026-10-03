@@ -112,7 +112,8 @@ int main(int argc, char *argv[])
     }
 
     auto view = std::make_unique<TerminalView>();
-    view->set_font(app.default_font());
+    /* A grid: a fixed advance, so the theme's monospace face. */
+    view->set_font(app.theme().font_monospace());
     view->set_colors(app.theme().color(ColorRole::TEXT),
                      app.theme().color(ColorRole::WINDOW_BG));
     TerminalBuffer& grid = view->buffer();

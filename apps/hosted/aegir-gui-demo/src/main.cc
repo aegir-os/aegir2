@@ -239,7 +239,8 @@ int main(int argc, char *argv[])
     window.set_gadgets(kGadgetClose | kGadgetZoom | kGadgetDepth);
 
     auto terminal = std::make_unique<TerminalView>();
-    terminal->set_font(app.default_font());
+    /* A grid: a fixed advance, so the theme's monospace face. */
+    terminal->set_font(app.theme().font_monospace());
     terminal->set_colors(app.theme().color(ColorRole::TEXT),
                          app.theme().color(ColorRole::WINDOW_BG));
     TerminalBuffer& grid = terminal->buffer();

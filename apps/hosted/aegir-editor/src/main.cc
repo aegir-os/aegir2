@@ -213,7 +213,8 @@ int main(int argc, char *argv[])
         TextEdit *const view = edit.get();
         auto bar = std::make_unique<Scrollbar>(Scrollbar::Orientation::VERTICAL);
         Scrollbar *const scroll = bar.get();
-        view->set_font(app.default_font());
+        /* A text grid: a fixed advance, so the theme's monospace face. */
+        view->set_font(app.theme().font_monospace());
         view->set_colors(app.theme().color(ColorRole::TEXT),
                          app.theme().color(ColorRole::WINDOW_BG));
         if (!text.empty()) {

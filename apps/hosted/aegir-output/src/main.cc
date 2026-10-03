@@ -94,7 +94,8 @@ int main(int argc, char *argv[])
     window.on_close_requested = [&app]() { app.quit(0); };
 
     auto view = std::make_unique<TerminalView>();
-    view->set_font(app.default_font());
+    /* A grid: a fixed advance, so the theme's monospace face. */
+    view->set_font(app.theme().font_monospace());
     view->set_colors(app.theme().color(ColorRole::TEXT),
                      app.theme().color(ColorRole::WINDOW_BG));
     view->set_cursor_visible(false);
