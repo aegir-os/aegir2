@@ -1,109 +1,67 @@
 /*
- * Aegir Datatypes - MIME-based datatype system.
+ * Aegir datatypes -- the image ABI a class and its caller share.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * Inspired by Amiga Datatypes: load/save data by MIME type.
+ * A resource library in Aegir is a service (specs/libraries.md), and datatypes
+ * is the first: `datatypes` brokers a file to a per-format *class* service, and
+ * the class decodes into a frame the caller owns (specs/datatypes.md). This
+ * header is the one thing both sides include -- the class states `Info`, the
+ * caller provides a `Bitmap`, and neither knows what the other is.
+ *
+ * A class decodes to a *canonical chunky* layout. Planar storage (ILBM) is the
+ * class's business, not the caller's, so every format arrives as one of the
+ * `Format` below with the stride the class states. The caller never sees a bit
+ * plane, and a renderer handles at most the four layouts here.
  */
 
 #ifndef AEGIR_DATATYPES_H
 #define AEGIR_DATATYPES_H
 
-#include <aegir/trinket/unicode.h>
+#include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <string_view>
-#include <vector>
 
 namespace aegir::datatypes {
 
-class Stream;
-
-// Base class for datatype loaders
-class Datatype {
-public:
-    virtual ~Datatype() = default;
-
-    // MIME type this datatype handles (e.g., "image/png", "text/plain")
-    virtual std::string mime_type() const = 0;
-
-    // Human-readable name
-    virtual std::string name() const = 0;
-
-    // Load object from stream
-    // Returns true on success, false on failure
-    virtual bool load(Stream& stream, void*& object_out) = 0;
-
-    // Save object to stream
-    virtual bool save(Stream& stream, void* object) = 0;
-
-    // Create new empty object of this type
-    virtual void* create_object() = 0;
-
-    // Destroy object
-    virtual void destroy_object(void* object) = 0;
+/* A pixel layout a class may produce. */
+enum class Format : uint8_t {
+    INDEXED = 0, /* one byte per pixel, an index into the palette */
+    RGB = 1,     /* three bytes per pixel: R, G, B */
+    RGBA = 2,    /* four bytes per pixel: R, G, B, A */
+    GREY = 3,    /* one byte per pixel, luminance */
 };
 
-// Stream abstraction for loading/saving
-class Stream {
-public:
-    virtual ~Stream() = default;
-
-    // Read bytes
-    virtual bool read(void* buffer, size_t size, size_t& bytes_read) = 0;
-
-    // Write bytes
-    virtual bool write(const void* buffer, size_t size, size_t& bytes_written) = 0;
-
-    // Seek
-    virtual bool seek(int64_t offset, int whence) = 0;
-
-    // Tell position
-    virtual int64_t tell() = 0;
-
-    // Get size
-    virtual int64_t size() = 0;
+struct Color {
+    uint8_t r = 0;
+    uint8_t g = 0;
+    uint8_t b = 0;
 };
 
-// File-based stream
-class FileStream : public Stream {
-public:
-    explicit FileStream(std::string_view path, bool write = false);
-    ~FileStream() override;
-
-    bool read(void* buffer, size_t size, size_t& bytes_read) override;
-    bool write(const void* buffer, size_t size, size_t& bytes_written) override;
-    bool seek(int64_t offset, int whence) override;
-    int64_t tell() override;
-    int64_t size() override;
-
-private:
-    int fd_ = -1;
-    bool write_;
+/* What a class states about an image before the caller provides a frame. */
+struct Info {
+    uint32_t width = 0;
+    uint32_t height = 0;
+    Format format = Format::INDEXED;
+    /* Bytes from one row's start to the next. The class states it rather than
+     * the caller guessing, because the frame is the caller's to size and the
+     * class's to fill. */
+    uint32_t stride = 0;
+    /* Palette entries, when INDEXED; zero otherwise. */
+    uint32_t palette_size = 0;
+    /* An index is transparent (ILBM masking by colour). */
+    bool transparent = false;
+    uint16_t transparent_index = 0;
 };
 
-// Memory stream
-class MemoryStream : public Stream {
-public:
-    MemoryStream() = default;
-    explicit MemoryStream(std::vector<uint8_t>&& data);
-    ~MemoryStream() override;
-
-    bool read(void* buffer, size_t size, size_t& bytes_read) override;
-    bool write(const void* buffer, size_t size, size_t& bytes_written) override;
-    bool seek(int64_t offset, int whence) override;
-    int64_t tell() override;
-    int64_t size() override;
-
-    std::vector<uint8_t>& data() { return data_; }
-    const std::vector<uint8_t>& data() const { return data_; }
-
-private:
-    std::vector<uint8_t> data_;
-    size_t pos_ = 0;
+/* The caller's frame, as the class sees it once mapped: the pixels and, for
+ * INDEXED, the palette. The caller owns both and sizes them from `Info`; the
+ * class fills them and never allocates. */
+struct Bitmap {
+    uint8_t *pixels = nullptr;
+    size_t pixels_size = 0;
+    Color *palette = nullptr;
+    size_t palette_size = 0;
 };
 
 } // namespace aegir::datatypes

@@ -39,7 +39,7 @@ DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-pattern check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-pattern check-script check-limits check-allocator check-fonts check-regions check-font-probe check-atlas check-ilbm check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
 
 all: help
 
@@ -108,6 +108,9 @@ check-font-probe: ## run the font service's probe over the vendored faces (host)
 
 check-atlas: ## run the toolkit's glyph atlas against its host conformance cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_atlas.py
+
+check-ilbm: ## run the ILBM decoder against its host conformance cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_ilbm.py
 
 check-layout: ## run the toolkit's sizing contract and group layout against its host cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_layout.py
