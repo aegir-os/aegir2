@@ -931,6 +931,22 @@ void start_session(uint32_t user, bool bureau) noexcept
             return;
         }
     }
+    /* The bureau.menu endpoint (specs/workbench.md, specs/session.md): auth
+     * makes it, the way it makes launch.session, because a session's ports are
+     * the session's -- director no longer composes it. The bureau is given the
+     * owner half to serve, and the launcher the source it mints each command's
+     * caller half from. Reclaimed with the session, like every session port. */
+    if (bureau) {
+        seL4_Error menu_error = seL4_NoError;
+        seL4_CPtr const menu = g_session_mem.alloc_object(
+            seL4_EndpointObject, seL4_EndpointBits, session_account, &menu_error);
+        if (menu == 0) {
+            write("      auth: FAIL no bureau.menu endpoint for the session\n");
+            reclaim_session(badge, mark, scratch_mark, session_account);
+            return;
+        }
+        g_spawn_bureau_menu = menu;
+    }
     /* The bureau's kit: 1 MiB of the pool -- the page tables its slice mapping
      * is retyped from, and the heap the toolkit (its screen bar and font)
      * allocates from, where the raw backdrop it replaced allocated nothing.
@@ -1812,14 +1828,10 @@ int main(int argc, char *argv[])
         g_spawn_login = static_cast<seL4_CPtr>(spawn_login_slot);
         g_gui = aegir::ipc::Consumer(static_cast<seL4_CPtr>(gui_slot));
     }
-    /* The bureau's own port (specs/workbench.md): present only when the
-     * director made the endpoint, which it does because the manifest declares
-     * the port. A boot without it still takes logins; the bureau then runs
-     * with its own menus and serves none. */
-    uint64_t spawn_bureau_menu_slot = 0;
-    if (aegir::bootstrap::capability("spawn:bureau.menu", 17, &spawn_bureau_menu_slot)) {
-        g_spawn_bureau_menu = static_cast<seL4_CPtr>(spawn_bureau_menu_slot);
-    }
+    /* bureau.menu is not adopted from director: a session's ports are the
+     * session's, so auth makes it itself at login (start_session), the way it
+     * makes launch.session. A boot session -- started before any login -- has
+     * none, and its shell registers no menus (specs/session.md). */
     /* The font service (specs/fonts.md): present because the greeter and the
      * session entries need font.main. A boot without it keeps the built-in
      * Terminus, which is what every window drew before the service landed. */

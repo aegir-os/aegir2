@@ -484,7 +484,9 @@ restart   = never
 binary    = aegir-bureau
 authority = user
 account   = user
-owns      = bureau.menu
+# bureau.menu is no longer declared here: it is a session port, so auth makes it
+# at login the way it makes launch.session (specs/session.md). The entry still
+# gives director the session's shape and the `spawns = session.*` match.
 needs     = log.main, vfs.namespace, console.gui, font.main
 restart   = never
 
