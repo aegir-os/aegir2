@@ -50,6 +50,29 @@ signing_fingerprint = "E30674707856409FF1948010BE6C3AAC63AD8E3F"
 # The single top-level directory the tarball extracts, moved to `path`.
 extract_dir = "freetype-2.14.3"
 
+# zlib, the DEFLATE library libpng reads through (specs/datatypes.md's PNG
+# class). Its releases are signed by Mark Adler, the maintainer, and the
+# official tarball plus detached signature are on zlib.net; the key is
+# committed at manifests/zlib-signing-key.asc. zlib is licensed under the Zlib
+# license (THIRD-PARTY.md). It is built static beside musl
+# (scripts/build_zlib.sh) and linked into libpng, because Aegir has no dynamic
+# loader.
+[[source]]
+name = "zlib"
+version = "1.3.2"
+path = "projects/zlib"
+url = "https://zlib.net/zlib-1.3.2.tar.xz"
+sha256 = "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3"
+archive = "zlib-1.3.2.tar.xz"
+signature_url = "https://zlib.net/zlib-1.3.2.tar.xz.asc"
+signature_sha256 = "03ce710347e2f84fa7ed0a6ae6a93467b08031a3022fc296da40220a83b96667"
+signature_archive = "zlib-1.3.2.tar.xz.asc"
+signing_key = "manifests/zlib-signing-key.asc"
+# The key's full fingerprint, as gpg --status-fd reports it (no spaces).
+signing_fingerprint = "5ED46A6721D365587791E2AA783FCD8E58BCAFBA"
+# The single top-level directory the tarball extracts, moved to `path`.
+extract_dir = "zlib-1.3.2"
+
 # libpng, the PNG decoder the png.datatype class serves (specs/datatypes.md).
 # Unlike musl and FreeType, libpng publishes no detached release signature:
 # SourceForge lists only the tarballs, and libpng.org links the same two. The

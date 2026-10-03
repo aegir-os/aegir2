@@ -17,6 +17,7 @@ upstream release manifest (`manifests/upstream-16.0.0.xml`, from
 | `projects/musl/` | [musl](https://musl.libc.org/) | `MIT` | Upstream musl release (signed tarball), the hosted C++ runtime's C library (`specs/cxx.md`) |
 | `projects/freetype/` | [FreeType](https://freetype.org/) | `FTL OR GPL-2.0-only` | OpenType/TrueType face rasterizer the font service owns (signed tarball, `specs/fonts.md`); Aegir takes it under the FTL |
 | `projects/libpng/` | [libpng](http://www.libpng.org/pub/png/libpng.html) | `libpng-2.0` | PNG decoder the `png.datatype` class serves (sha256-only tarball -- libpng publishes no signature -- `specs/datatypes.md`) |
+| `projects/zlib/` | [zlib](https://zlib.net/) | `Zlib` | DEFLATE library libpng reads through (signed tarball, Mark Adler's key; `specs/datatypes.md`) |
 | `projects/sel4runtime/` | [seL4/sel4runtime](https://github.com/seL4/sel4runtime) | `BSD-2-Clause` | C runtime / entry point for userland |
 | `projects/util_libs/` | [seL4/util_libs](https://github.com/seL4/util_libs) | `BSD-2-Clause` | Platform support libraries (`libplatsupport`, …) |
 | `projects/seL4_libs/` | [seL4/seL4_libs](https://github.com/seL4/seL4_libs) | `BSD-2-Clause` | libsel4* convenience libraries (see below) |

@@ -186,19 +186,31 @@ def dearmor(text: str) -> bytes:
 
     gpgv takes a binary keyring and not an armored key, and gpg's own
     --dearmor can be disturbed by a host's keyboxd configuration, so the decode
-    is done here: strip the armor header, base64-decode the body, and drop the
-    CRC line. The signature check is what proves the key, so the armor's own
-    CRC is not re-checked.
+    is done here: strip the armor header (an RFC 4880 armored block may carry
+    header lines such as `Version: GnuPG v1.0.6` before a blank line -- Mark
+    Adler's zlib key does -- and those are not data), base64-decode the body,
+    and drop the CRC line. The signature check is what proves the key, so the
+    armor's own CRC is not re-checked.
     """
     body: list[str] = []
     inside = False
+    in_headers = False
     for line in text.splitlines():
         if line.startswith("-----BEGIN "):
             inside = True
+            in_headers = True
             continue
         if line.startswith("-----END "):
             break
-        if not inside or not line or line.startswith("="):
+        if not inside:
+            continue
+        if in_headers:
+            # The armor headers end at the first blank line; an empty header
+            # block is just that blank line.
+            if line.strip() == "":
+                in_headers = False
+            continue
+        if not line or line.startswith("="):
             continue
         body.append(line.strip())
     if not body:
