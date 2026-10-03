@@ -29,7 +29,7 @@
 default   = { family = "Noto Sans", size = 11 }
 small     = { family = "Noto Sans", size = 9 }
 large     = { family = "Noto Sans", size = 16 }
-monospace = { family = "Noto Sans Mono", size = 11 }
+monospace = { family = "Noto Sans Mono", size = 12 }
 
 # ---- palette ----
 # A named colour per role in the toolkit's ColorRole enum.
