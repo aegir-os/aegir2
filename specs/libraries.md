@@ -36,22 +36,23 @@ loads code.
   No code is loaded at the client.
 - **Eager or on demand is the composition question.** A dependency known at
   build time is a manifest `needs` and a port installed at spawn -- no
-  `OpenLibrary` at all. A provider chosen at *run* time (which image codec for
+  `open_library` at all. A provider chosen at *run* time (which image codec for
   this file?) is the case `specs/direction.md` deferred until "a manager must
-  start a component chosen at runtime"; `OpenLibrary` is that path, and
+  start a component chosen at runtime"; `open_library` is that path, and
   `specs/datatypes.md` is its first caller.
 
-## `OpenLibrary` and `CloseLibrary`
+## `open_library` and `close_library`
 
-The names are the Amiga's; the mechanism is Aegir's. `OpenLibrary` acquires a
-provider port for a name at run time; `CloseLibrary` releases it.
+The interface is the Amiga's `OpenLibrary`/`CloseLibrary`; the mechanism is
+Aegir's. `open_library` acquires a provider port for a name at run time;
+`close_library` releases it.
 
-- **`open(name, version)`** resolves `name` to a provider (below), starts it if
-  it is not running, checks its protocol version against `version`, and returns
-  a handle. A provider older than `version` is refused, as the Amiga refuses.
-  The version is the port's own (`specs/services.md`: a protocol is versioned
-  by method number), read from the provider's first reply, not guessed.
-- **`close(handle)`** drops the reference. A provider is **resident once
+- **`open_library(name, version)`** resolves `name` to a provider (below),
+  starts it if it is not running, checks its protocol version against `version`,
+  and returns a handle. A provider older than `version` is refused, as the Amiga
+  refuses. The version is the port's own (`specs/services.md`: a protocol is
+  versioned by method number), read from the provider's first reply, not guessed.
+- **`close_library(handle)`** drops the reference. A provider is **resident once
   started** (the Amiga default): close decrements a count and the provider keeps
   running, because a codec that reloads for every file pays the load cost every
   time. Stopping an idle provider is a policy a manager may take later; the
@@ -60,7 +61,8 @@ provider port for a name at run time; `CloseLibrary` releases it.
 - **A handle is a capability.** A client never reaches a provider it was not
   handed a port to. The provider's port is minted for the caller
   (`specs/vfs.md`'s resolve mints the caller's badge), so the provider knows who
-  is calling and a `close` that is not that caller's is refused, not trusted.
+  is calling and a `close_library` that is not that caller's is refused, not
+  trusted.
 
 ## The manager, and where a provider comes from
 
@@ -68,21 +70,26 @@ There is no single global library service in this arc. A resource library
 belongs to a *domain* -- image formats to `datatypes`, fonts to `aegir-font` --
 and the service that knows what should exist is the service that creates it
 (`specs/services.md`: the device manager's rule). That service is the
-**manager**: it holds a registry, resolves `open` names, and starts providers it
-owns under a spawn right.
+**manager**: it resolves `open_library` names on the caller's search path and
+starts the providers it owns under a spawn right.
 
-- **The registry is data**, the `drivers.registry`/`filesystems.registry`
-  pattern (`specs/services.md`): a name maps to a provider binary and the
-  protocol it speaks. A manager reads it at startup, so adding a provider is a
-  row and a binary rather than a rebuild.
+- **The filesystem is the list.** A library is addressed by its *name*, and its
+  name is its filename, so `open_library(name)` resolves `name` through the
+  caller's search path (below) to a binary. There is no registry file: adding a
+  library is dropping the binary in `LIBS:`, with no second file to keep in step
+  with the directory. This is the Amiga's mechanism, and the reason it is the
+  right one here. A registry *is* the right shape where the thing addressed is
+  not a name -- a device's compatible string, a partition type GUID -- which is
+  why `drivers.registry` and `filesystems.registry` exist
+  (`specs/services.md`); a library is not that.
 - **The manager owns the provider.** Its memory is the manager's, charged under
   the manager's badge, so a session that opened it is not the provider's
   lifetime -- a resident provider outlives the session that first wanted it.
   A session *leases* it. This is what makes "resident once started" true across
   sessions.
 - **A general `libraries` manager** -- one service any program may
-  `OpenLibrary` for any registered name, so a program need not know the domain
-  -- is a later generalization. The first manager is `datatypes`
+  `open_library` for any name, so a program need not know the domain -- is a
+  later generalization. The first manager is `datatypes`
   (`specs/datatypes.md`), because an image format is the provider-selected-at-
   run-time case that forces the mechanism. When a second domain wants the same
   generic door, the `libraries` service is extracted; until then a manager per
@@ -92,11 +99,11 @@ owns under a spawn right.
 
 `LIBS:` is the Amiga's library assign: an alias bound to `Sys:Libs`, per badge,
 read as a `specs/namespace.md` union so a session may append its own `Home:Libs`
-without touching the system volume. `open` resolves a **bare** name by searching
-the caller's current directory first, then `LIBS:`, in that order -- the Amiga
-order. A path with a colon (`Sys:Libs/png.library`) is used as typed. The search
-runs on the caller's badge, so a session's own `LIBS:` members are visible to its
-`open` and to no other's.
+without touching the system volume. `open_library` resolves a **bare** name by
+searching the caller's current directory first, then `LIBS:`, in that order --
+the Amiga order. A path with a colon (`Sys:Libs/png.library`) is used as typed.
+The search runs on the caller's badge, so a session's own `LIBS:` members are
+visible to its `open_library` and to no other's.
 
 ## What this is not
 
@@ -113,12 +120,12 @@ runs on the caller's badge, so a session's own `LIBS:` members are visible to it
 ## Open, for review
 
 - **The `libraries` general manager** (above): when a second domain appears, the
-  registry and the spawn policy move out of the domain managers into one service
-  -- or do not, if two domains stay two.
+  spawn policy moves out of the domain managers into one service -- or does not,
+  if two domains stay two.
 - **What `version` names.** The first cut is the port's protocol version,
   because a port already has one; a provider that also carries an Amiga-style
   `lib_Version` word can have both, with the protocol version checked first.
-- **How a manager starts a provider from a name it has never seen.** The
-  registry row names the binary, but `LIBS:` can hold one the registry does not;
-  whether `open` trusts the file's basename or demands a registry row is the
+- **How a manager may start a file it has never seen.** `open_library` resolves
+  a name to a binary in the caller's search path; whether any caller may have
+  any such binary started as a service, or a name needs a policy entry first, is
   the authority question, and it belongs with `specs/ownership.md`.

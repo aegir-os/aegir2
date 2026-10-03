@@ -18,10 +18,10 @@ must start a component the caller did not name at build time.
 
 ## The shape
 
-- **`datatypes` is the manager.** It owns the class registry and the class
-  search path and serves one port (`datatypes.main`). It identifies a file's
-  format, starts or finds the class provider, and returns its port. It does not
-  decode anything itself.
+- **`datatypes` is the manager.** It owns the class search path and the class
+  list -- the `DataTypes:` directory, read at run time -- and serves one port
+  (`datatypes.main`). It identifies a file's format, starts or finds the class
+  provider, and returns its port. It does not decode anything itself.
 - **Each class is a service.** Its binary lives in `DataTypes/`
   (`png.datatype`), is spawned by `datatypes` on first use, under the spawn
   right `spawns = DataTypes/*`, and declares the protocol version it speaks. The
@@ -61,13 +61,13 @@ type. The Amiga's calls keep their names, adapted to C++:
     public:
         Info info() const;                 // size and format, before decode
         bool read(Bitmap &into);           // decode into the caller's frames
-        bool dispose();
+        bool dispose_object();
     };
 
     /* The class is chosen from the file's content; the second form forces one
      * by name (the Amiga's NewObject with a class name). */
-    Object open(std::string_view path);
-    Object open(std::string_view class_name, std::string_view path);
+    Object new_object(std::string_view path);
+    Object new_object(std::string_view class_name, std::string_view path);
     }
 
 `info()` first, so the client can allocate exactly the frame the class asked for
@@ -75,7 +75,7 @@ type. The Amiga's calls keep their names, adapted to C++:
 fills that frame. Encode (`write`) is a later method, and method numbers make it
 additive (`specs/services.md`).
 
-## Classes, identification, and the registry
+## Classes, identification, and the class list
 
 - **A class is named for what it reads**, lowercase, one file per format:
   `ilbm.datatype`, `png.datatype`, `jpeg.datatype` (`specs/dos.md`'s naming).
@@ -85,12 +85,16 @@ additive (`specs/services.md`).
   dropped into a session's own directory is found without touching the system
   volume -- the add-on property, and the same property `specs/fonts.md` gives a
   face in `Sys:Fonts`.
-- **`DataTypes/classes.registry` maps a format to a class**: the file extension
-  and a magic prefix, the `drivers.registry` data shape (`specs/services.md`).
-  The manager checks the magic first -- content over name -- and falls back to
-  the extension. A class may still refuse a file it was chosen for; the manager
-  then reports "no class", loudly, rather than showing a wrong picture.
-- **A class declares its protocol version**, so `open`'s version check
+- **The class list is the directory.** The manager lists `DataTypes:` at run
+  time; a class is a file in it, so adding one is dropping it in -- no registry
+  to update and no second list to keep in step, the same reason `LIBS:` is the
+  list (`specs/libraries.md`). Identification is content-first: the manager
+  starts a class (cheaply, and it stays resident) and asks it to `identify` the
+  file, and the class -- not a data file -- is the authority on what it reads. A
+  file extension may choose which class to ask first, but the class decides. A
+  file no class claims is reported "no class", loudly, rather than shown as a
+  wrong picture.
+- **A class declares its protocol version**, so `open_library`'s version check
   (`specs/libraries.md`) can refuse a class older than the caller needs.
 
 ## The object model
@@ -103,7 +107,7 @@ client library. The first cut:
 | `identify` | a path | the format, or nothing |
 | `info` | a path | the `Info` row (size, format, stride) |
 | `read` | a path, the client's frames | success, or the refusal |
-| `dispose` | -- | 1 |
+| `dispose_object` | -- | 1 |
 
 The frames arrive in the `read` call as capabilities (one per pixel page),
 minted for the class; the class maps them read-write through its window, writes,
@@ -148,7 +152,7 @@ viewer at once, and each lives in one process rather than in each caller.
   wrote, so a decode that lands at the wrong stride or depth is caught as a
   smudge rather than passing on the call returning.
 - **Phase 2 -- PNG**, through the vendored libpng; a second class proves the
-  registry, the identification and the resident-provider count.
+  class list, the identification and the resident-provider count.
 - **Phase 3 -- JPEG**, libjpeg-turbo.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property
