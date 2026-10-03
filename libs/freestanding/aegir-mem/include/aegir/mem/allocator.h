@@ -52,9 +52,12 @@ public:
      * A free slot in our CSpace root, or 0 when the range is exhausted.
      *
      * This *reserves* it: the cursor moves, and `slot_failed` gives it back if what
-     * the slot was reserved for does not happen. Nothing here can free a slot that has
-     * been used -- see the deferral in specs/userland.md -- so a slot lost to a failed
-     * allocation is lost for good, which is why the failure paths give theirs back.
+     * the slot was reserved for does not happen. A used slot is not freed one at a
+     * time -- the failure paths give theirs back because a slot lost to a failed
+     * allocation is lost for good. Slots do come back where the kernel empties them:
+     * a whole range after a revoke (`slot_release`), and a revoked piece's caps
+     * (`free_piece`). That is the slot half of the freeing specs/userland.md now
+     * records -- memory frees, a single used slot does not.
      */
     seL4_CPtr alloc_slot() noexcept;
 

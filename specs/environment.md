@@ -36,6 +36,15 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
   given none has none — a relative path is `-ENOENT`, an absolute path is always
   fine. The default is the spawner's, not the runtime's, so the policy lives
   where the process's identity does.
+- **The program directory is where the process's own binary came from, and it is
+  not the current directory.** The spawner reads the program's image through the
+  namespace, so it knows the directory it resolved; it records that directory and
+  gives it to the process, and a program finds its own libraries and data beside
+  itself (`specs/libraries.md`'s search path starts there). It is the process's
+  own, not inherited: a program started from anywhere still has its own
+  directory. It is a VFS path like the current directory, and empty when the
+  spawner resolved no directory -- a boot service loaded from the flat initrd has
+  none.
 - **The persistent environment is layered, as a union.** `ENV:` is a
   `specs/namespace.md` union — a name read as one directory — whose members are
   `Sys:Prefs/Env-Archive` (the base) and `Home:Prefs/Env-Archive` (first, so the
@@ -78,7 +87,11 @@ directory (a string, normally the spawner's own, or empty for none). The
 arguments and the environment ride in the **startup frame** — the `argc`/`argv`/
 `envp` the C ABI already carries, which the runtime reads and the library then
 wraps — and only the current directory is a bootstrap block entry (`CurrentDir`),
-because it is the one piece the frame has no place for.
+because it is the one piece the frame has no place for. The **program directory**
+is not a `Request` field: the caller names a program and the spawner resolves its
+image, so the directory the image came from is the spawner's to know. It rides
+beside the current directory as its own bootstrap entry (`ProgramDir`), and is
+empty when the spawner resolved no directory (an initrd binary).
 
 Inheritance is the default, so a spawner that adds nothing passes its own
 environment through: a shell starts a program, and the program sees the shell's
@@ -103,6 +116,8 @@ One header, no seL4 in a caller's translation unit:
         // The current directory, or an empty string when the process has none.
         std::string_view current_dir() noexcept;
         bool set_current_dir(std::string_view path) noexcept;
+        // The directory the process's own binary was loaded from, or empty.
+        std::string_view program_dir() noexcept;
     }
 
 The strings live in the region the spawner mapped; the library parses it once,

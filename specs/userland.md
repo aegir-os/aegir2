@@ -210,24 +210,31 @@ not to document it again.
    a fresh TCB's zero MCP, no re-badging a badged endpoint, and the measured 256 KiB
    untyped). What it did *not* take is a second spawner -- the same `Spawner` serves the
    root task and a service, which is the point of the delegation model.
-**Deferred, with a trigger, by decision (2026): the allocator does not free.** A used
-untyped piece is never returned and a slot cursor only ever moves forwards -- no `free`, no
-`CNode_Delete`, no revoking of a piece's derived objects. That is the right amount of
-allocator for the root task, where everything allocated lives as long as the system does,
-and the wrong amount for two things that do not exist yet:
+**Freeing landed for memory; a used slot is still allocation-only.** The allocator now
+makes every piece whole and gives it back: `free_piece` revokes a piece's derived objects
+and merges it with its buddy (`libs/freestanding/aegir-mem/src/allocator.cc`),
+`FrameRegion` returns a service's frames to their untyped (`specs/memory.md` Phase 6), and
+`mem.main`'s `release` takes back every chunk a badge holds in one call, which is what a
+session or a command exit uses (`specs/memory.md`, `specs/auth.md`). What is *not* freed is
+a single used **slot**: a capability placed in our CSpace is not deleted one at a time, so
+a slot lost to a failed allocation is lost for good, and the failure paths give theirs back
+(`Allocator::slot_failed`). A *range* the kernel has emptied by a revoke comes back at once
+(`Allocator::slot_release`), which is what whole-life reclaim uses; a scattered used slot
+does not. That is still the right amount for the root task, where everything allocated
+lives as long as the system does, and still the wrong amount for two things that do not
+exist yet:
 
 - **a service that restarts another.** `restart = always` is in the manifest and means
-  nothing until the supervisor can hand a dead service's slots and memory back rather than
-  leaking them one restart at a time.
+  nothing until the supervisor can hand a dead service's *slots* back rather than leaking
+  them one restart at a time -- its memory already comes back through `mem.main`, so the
+  scattered slots are the missing piece.
 - **a service that reacts to something appearing** -- hot-plug through the device manager,
   which is what USB will need and is a long way off.
 
-Until one of those exists, allocation-only is correct and the work is not worth doing
-speculatively. What it will be when it is: `seL4_CNode_Delete` for slots and revoking a
-piece's derived objects for memory, which is what `vka_cnode_delete` and `utspace_free` do
-upstream. What *was* worth doing now is narrower and in place: `alloc_slot` is a
-*reservation*, and the three library paths that can fail after taking one give it back
-(`Allocator::slot_failed`), because a slot lost to a failed allocation is lost for good.
+When one lands, the missing mechanism is narrow: `seL4_CNode_Delete` for a single used
+slot, which is what upstream's `vka_cnode_delete` does. Memory already has its revoke.
+What *was* worth doing now is in place: `alloc_slot` is a *reservation*, and the library
+paths that can fail after taking one give it back (`Allocator::slot_failed`).
 
 5. Frames as a *list* through the spawn path, replacing the inferred range -- which is
    where the current work on handing a service a window of devices stopped.

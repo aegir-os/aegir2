@@ -80,11 +80,14 @@ additive (`specs/services.md`).
 - **A class is named for what it reads**, lowercase, one file per format:
   `ilbm.datatype`, `png.datatype`, `jpeg.datatype` (`specs/dos.md`'s naming).
 - **`DataTypes:` is an alias to `Sys:DataTypes`**, per badge, read as a union
-  with the caller's `Home:DataTypes` appended (`specs/namespace.md`), searched
-  current-directory-first exactly as `LIBS:` is (`specs/libraries.md`). A class
-  dropped into a session's own directory is found without touching the system
-  volume -- the add-on property, and the same property `specs/fonts.md` gives a
-  face in `Sys:Fonts`.
+  with the caller's `Home:DataTypes` appended (`specs/namespace.md`). The class
+  search is the caller's **program directory** first, then `DataTypes:`, the same
+  order and the same reason as `LIBS:` (`specs/libraries.md`): a class shipped
+  beside a program's binary is found whatever the current directory is. A class
+  dropped into a session's own `Home:DataTypes` is found without touching the
+  system volume -- the add-on property, and the same property `specs/fonts.md`
+  gives a face in `Sys:Fonts`. The manager cannot see another process's program
+  directory, so the caller's `new_object` request carries it (`specs/environment.md`).
 - **The class list is the directory.** The manager lists `DataTypes:` at run
   time; a class is a file in it, so adding one is dropping it in -- no registry
   to update and no second list to keep in step, the same reason `LIBS:` is the

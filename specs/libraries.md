@@ -99,9 +99,23 @@ starts the providers it owns under a spawn right.
 
 `LIBS:` is the Amiga's library assign: an alias bound to `Sys:Libs`, per badge,
 read as a `specs/namespace.md` union so a session may append its own `Home:Libs`
-without touching the system volume. `open_library` resolves a **bare** name by
-searching the caller's current directory first, then `LIBS:`, in that order --
-the Amiga order. A path with a colon (`Sys:Libs/png.library`) is used as typed.
+without touching the system volume.
+
+`open_library` resolves a **bare** name by searching, in order:
+
+1. the caller's **program directory** -- the directory the caller's own binary
+   was loaded from, which the spawner records when it reads the image and gives
+   the process beside its current directory (`specs/environment.md`); then
+2. `LIBS:`.
+
+The first step is the program's directory, not the current directory. They are
+usually the same -- a program run from where its binary sits has both -- but they
+are not always, and the one that matters is where the program's **own** libraries
+live: the ones shipped next to its binary. A `cd` must not move a program's
+private library out from under it, which is exactly what a search of the current
+directory would do.
+
+A path with a colon (`Sys:Libs/png.library`) is used as typed, with no search.
 The search runs on the caller's badge, so a session's own `LIBS:` members are
 visible to its `open_library` and to no other's.
 
