@@ -776,7 +776,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"editor: overwrite",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 438, 236, 102, 136, 187),),
+                pixels=(("gpu0", 442, 241, 102, 136, 187),),
                 press="<insert>",
             ),
             # Insert mode again, the block back at the caret. From here the File
@@ -785,7 +785,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"editor: insert",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                pixels=(("gpu0", 438, 228, 102, 136, 187),),
+                pixels=(("gpu0", 442, 234, 102, 136, 187),),
                 # The editor is the active window, so the screen bar's first
                 # title -- "Ed" -- is its menu. The click is at the title's
                 # left, x 10, not the demo's x 30: "Ed" is two cells wide and
@@ -828,11 +828,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 # The requester's titlebar, and its list of Home:'s entries.
-                pixels=(("gpu0", 700, 232, 102, 136, 187),),
+                pixels=(("gpu0", 700, 200, 102, 136, 187),),
                 dark=(("gpu0", 424, 261, 404, 160, 150),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 17278}},
-                    {"type": "abs", "data": {"axis": "y", "value": 20155}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21340}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
@@ -924,11 +924,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 # The requester again, this time over Sys:'s entries.
-                pixels=(("gpu0", 700, 232, 102, 136, 187),),
+                pixels=(("gpu0", 700, 200, 102, 136, 187),),
                 dark=(("gpu0", 424, 261, 404, 160, 150),),
                 events=(
                     {"type": "abs", "data": {"axis": "x", "value": 17278}},
-                    {"type": "abs", "data": {"axis": "y", "value": 20155}},
+                    {"type": "abs", "data": {"axis": "y", "value": 21340}},
                     {"type": "btn", "data": {"button": "left", "down": True}},
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),

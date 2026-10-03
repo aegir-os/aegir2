@@ -15,6 +15,13 @@ namespace aegir::spawn {
 
 namespace {
 
+/* The font service's port, as the clients name it (aegir/font.h): spelled here
+ * so the kit links no protocol it does not otherwise hold. The length is the
+ * name's own, not `bureau.menu`'s -- a wrong one registers the capability under
+ * a name no client finds (aegir-bootstrap's `capability` compares the length). */
+constexpr char kFontMainName[] = "font.main";
+constexpr uint32_t kFontMainNameLength = sizeof(kFontMainName) - 1;
+
 /* Append one grant at `index`, unless the caller's array is already full. The
  * slot is the layout's, from kSlotFirstDeclared; the caller sizes the array
  * from the builders' maxima (a command's 7, a launcher's 12, a shell's 5). */
@@ -94,7 +101,7 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
      * draws a Sys:Fonts face the toolkit cannot parse itself -- an OpenType one.
      * Minted with the child's own badge; the source is the unbadged delegate. */
     if (kit.font_main != 0) {
-        (void)put(out, capacity, n++, "font.main", 11, kit.font_main,
+        (void)put(out, capacity, n++, kFontMainName, kFontMainNameLength, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
     if (kit.clock != 0) {
@@ -165,7 +172,7 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
      * commands a caller half from it, and a windowed child calls the service
      * directly -- the launcher and the session's terminal both stop here. */
     if (kit.font_main != 0) {
-        (void)put(out, capacity, n++, "font.main", 11, kit.font_main,
+        (void)put(out, capacity, n++, kFontMainName, kFontMainNameLength, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, false);
     }
     return n;
