@@ -457,48 +457,17 @@ restart    = never
 # Its needs are a command's own set (specs/launch.md): the toolkit's console,
 # the bureau's menu, the font service, and the session's namespace.
 
-# The first session (specs/auth.md). Nothing starts it at boot -- auth
-# starts one when a login succeeds, with the user's badge and account.
-# These entries are **superseded** by the session manifest (specs/session.md):
-# auth reads `Sys:S/session.manifest` at login and starts the bureau and terminal
-# from it, and makes the session's own ports itself. The entries are inert for
-# the session's composition; they remain only because `[auth] spawns =
-# session.*` must resolve, and removing them shifts auth's bootstrap slot layout
-# and exposes a session-pool/auth-slot overlap (specs/session.md's Phases). They
-# come out when that overlap is fixed.
-[session.smoke]
+# The session's authority (specs/session.md). A session's *services* are the
+# session manifest's (`Sys:S/session.manifest`): which, in what order, with what
+# memory. This entry declares only the *authority* auth needs to compose any of
+# them -- the union of the ports a session service may name in `needs` -- so
+# director hands auth the unbadged sources (`spawn:...`) it delegates. auth does
+# not spawn this entry; `[auth] spawns = session.*` covers it, and it is a
+# declaration, not a service. `launch.session` and `bureau.menu` are absent
+# because auth makes those ports itself.
+[session.authority]
 binary    = aegir-session-smoke
 authority = user
 account   = user
-needs     = log.main, vfs.namespace
-restart   = never
-
-# The bureau (specs/console.md's login arc): the session a login through the
-# greeter starts -- the Amiga screen as a shape of window, always backdrop
-# mode, Workbench grey. It draws and exits; the console owns the slice, so
-# the window persists, and the screen is the session's visible remainder.
-# console.gui is what sets it apart from the smoke: a bureau maps its slice
-# and paints it, which is also why the spawn carries the vspace and untyped
-# grants the smoke never needs.
-[session.bureau]
-binary    = aegir-bureau
-authority = user
-account   = user
-# bureau.menu is no longer declared here: it is a session port, so auth makes it
-# at login the way it makes launch.session (specs/session.md). The entry still
-# gives director the session's shape and the `spawns = session.*` match.
-needs     = log.main, vfs.namespace, console.gui, font.main
-restart   = never
-
-# The session's terminal (specs/terminal.md, specs/shell.md): the CON: handler
-# and the command line, started by auth beside the bureau at login with its
-# own window, the namespace, and its Home current directory. It is the first
-# slice a person can use -- the built-in commands and the implicit directory
-# change -- and the process a shell's external commands will be given a stream
-# by in a later arc.
-[session.terminal]
-binary    = aegir-terminal
-authority = user
-account   = user
-needs     = log.main, vfs.namespace, console.gui, clock.main, timer.main, mem.main, font.main
+needs     = log.main, vfs.namespace, console.gui, font.main, clock.main, timer.main, mem.main
 restart   = never
