@@ -118,7 +118,11 @@ session to elevate from. Each gets easier when the slices above stand.
 
 ## Sessions, v1
 
-A successful login starts a session. The decisions, taken 2026-09:
+A successful login starts a session. **What that session is made of -- its
+composition, the session manifest that declares its services, and how a
+malformed one is recovered -- is `specs/session.md`.** This section is the login
+era's record: the badge space, what auth spawns, and the smoke-to-bureau arc.
+The decisions, taken 2026-09:
 
 - **auth spawns the session itself**, with a delegated spawn kit -- untyped,
   an ASID pool, its VSpace root with an address window, the session binary

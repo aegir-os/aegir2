@@ -40,6 +40,8 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/environment.md` — the process environment: arguments, environment
   variables, and the current directory.
 - `specs/auth.md` — the user database's format and the login port's protocol.
+- `specs/session.md` — what a login builds: the user class, the namespace, the
+  launcher, and the session manifest that declares its services.
 - `specs/console.md` — the display, the pointer, the windows, and the greeter.
 - `specs/trinket/overview.md` — the GUI toolkit: console integration, the look, and the
   greeter rebuilt on it.
