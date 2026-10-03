@@ -210,6 +210,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the class stated -- 64x48, INDEXED (0) and a two-colour palette --
             # so the class, the client and the transfer page all proved out.
             QmpStep(r"demo: image 64x48 format 0 palette 2"),
+            # The second class (specs/datatypes.md): the demo opened
+            # Sys:TestImage.png through png.datatype, which decoded it (through
+            # the vendored libpng) and served it as RGBA -- format 2, no
+            # palette. The two files are different pictures, so the pins below
+            # name colours only the right class produces.
+            QmpStep(r"demo: png 64x48 format 2 palette 0"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up
@@ -1007,11 +1013,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: rects",
                 clicks=(("demo.tabs.tab.5", 0.5, 0.5),),
             ),
-            # The Image tab: the decoded ILBM (specs/datatypes.md). The frame's
-            # left half is palette 0 (red) and its right half palette 1
-            # (green), so the pins read a pixel from each: the class, the
-            # client, the transfer page and the blit, one chain. Then back to
-            # the Lists page the rest of the demo reads.
+            # The Image tab: both decoded frames (specs/datatypes.md). The ILBM
+            # is palette red left / green right, the PNG blue left / white
+            # right; the pins read a pixel in each half of each, so the class,
+            # the client, the transfer page and the blit are one chain -- and
+            # the colours differ, so a rect naming the wrong image or a decode
+            # that mixed the channels shows. Then back to the Lists page.
             QmpStep(
                 r"demo: tab 5",
                 dumps=("gpu0",),
@@ -1019,6 +1026,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pins=(
                     ("gpu0", "demo.image", 0.25, 0.5, 255, 0, 0),
                     ("gpu0", "demo.image", 0.75, 0.5, 0, 255, 0),
+                    ("gpu0", "demo.png", 0.25, 0.5, 0, 0, 255),
+                    ("gpu0", "demo.png", 0.75, 0.5, 255, 255, 255),
                 ),
                 clicks=(("demo.tabs.tab.3", 0.5, 0.5),),
             ),

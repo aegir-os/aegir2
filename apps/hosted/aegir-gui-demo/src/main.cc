@@ -95,11 +95,15 @@ public:
         return {width_, height_};
     }
 
-    /* The frame's own rectangle, which the acceptance pins its pixels in; the
-     * widget's may be wider. */
-    aegir::trinket::Rect image_rect() const
+    /* The frame's rectangle in screen coordinates, which the acceptance pins
+     * its pixels in. Not `screen_rect_of`: that is for a part *within* a
+     * widget, relative to its own rect, and it subtracts the widget's position.
+     * The widget's own rectangle may be wider -- a group stretches a child --
+     * but the picture is drawn width_ x height_ at the widget's origin. */
+    aegir::trinket::Rect image_screen_rect() const
     {
-        return {0, 0, width_, height_};
+        aegir::trinket::Rect const s = screen_rect();
+        return {s.x, s.y, width_, height_};
     }
 
 private:
@@ -107,6 +111,100 @@ private:
     int width_;
     int height_;
 };
+
+/* Decode `path` through its datatype class (specs/datatypes.md), convert the
+ * canonical frame to the canvas's RGBA, and wrap it in a view. `cue` names the
+ * kind in the line the acceptance reads -- `demo: image 64x48 format 0 ...` --
+ * so the class's stated layout, not only the window, is proved. Null when no
+ * class claims the file or the read failed. */
+std::unique_ptr<ImageView> load_image(aegir::trinket::Application &app, char const *path,
+                                      char const *cue)
+{
+    aegir::datatypes::Decoded image;
+    aegir::datatypes::Object object =
+        aegir::datatypes::new_object(app.allocator(), app.scratch(), path);
+    if (!object.valid()) {
+        std::string line("  demo: no class for ");
+        line += path;
+        line += "\n";
+        write(line.c_str());
+        return nullptr;
+    }
+
+    std::unique_ptr<ImageView> view;
+    if (!object.read(image)) {
+        std::string line("  demo: read failed for ");
+        line += path;
+        line += "\n";
+        write(line.c_str());
+        object.dispose_object();
+        return nullptr;
+    }
+
+    int const w = static_cast<int>(image.info.width);
+    int const h = static_cast<int>(image.info.height);
+    std::vector<uint8_t> rgba(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            std::size_t const row = static_cast<std::size_t>(y) * image.info.stride;
+            uint8_t r = 0, g = 0, b = 0, a = 255;
+            switch (image.info.format) {
+            case aegir::datatypes::Format::INDEXED: {
+                uint8_t const index = image.pixels[row + x];
+                if (index < image.palette.size()) {
+                    aegir::datatypes::Color const &c = image.palette[index];
+                    r = c.r;
+                    g = c.g;
+                    b = c.b;
+                }
+                if (image.info.transparent && index == image.info.transparent_index) {
+                    a = 0;
+                }
+                break;
+            }
+            case aegir::datatypes::Format::RGB:
+                r = image.pixels[row + x * 3];
+                g = image.pixels[row + x * 3 + 1];
+                b = image.pixels[row + x * 3 + 2];
+                break;
+            case aegir::datatypes::Format::RGBA:
+                r = image.pixels[row + x * 4];
+                g = image.pixels[row + x * 4 + 1];
+                b = image.pixels[row + x * 4 + 2];
+                a = image.pixels[row + x * 4 + 3];
+                break;
+            case aegir::datatypes::Format::GREY:
+                r = g = b = image.pixels[row + x];
+                break;
+            }
+            std::size_t const p =
+                (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                 static_cast<std::size_t>(x)) *
+                4;
+            rgba[p] = r;
+            rgba[p + 1] = g;
+            rgba[p + 2] = b;
+            rgba[p + 3] = a;
+        }
+    }
+
+    std::string line("  demo: ");
+    line += cue;
+    line += " ";
+    line += std::to_string(w);
+    line += "x";
+    line += std::to_string(h);
+    line += " format ";
+    line += std::to_string(static_cast<int>(image.info.format));
+    line += " palette ";
+    line += std::to_string(image.palette.size());
+    line += "\n";
+    write(line.c_str());
+    view = std::make_unique<ImageView>(std::move(rgba), w, h);
+
+    object.dispose_object();
+    return view;
+}
 
 /* The demo's own place (specs/window-manager.md): set_rect is the client
  * area, and the frame's titlebar sits above it, so the window reads clear of
@@ -222,88 +320,15 @@ int main(int argc, char *argv[])
         write("  demo: no font.main face for the outline label\n");
     }
 
-    /* The datatypes client's first call (specs/datatypes.md): open the fixture
-     * through the ilbm class. The class is started under this program's own
-     * badge by the session launcher -- the demo holds launch.session as a
-     * command (specs/launch.md) -- and serves the frame a page at a time. The
-     * frame is canonical chunky, so it is converted here to the canvas's RGBA
-     * and shown on its own tab; the cue names the size, format and palette the
-     * class stated, so the acceptance reads the class and not only the window. */
-    aegir::datatypes::Decoded image;
-    std::unique_ptr<ImageView> image_view;
-    {
-        aegir::datatypes::Object object = aegir::datatypes::new_object(
-            app.allocator(), app.scratch(), "Sys:TestImage.ilbm");
-        if (!object.valid()) {
-            write("  demo: no ilbm class\n");
-        } else {
-            if (object.read(image)) {
-                int const w = static_cast<int>(image.info.width);
-                int const h = static_cast<int>(image.info.height);
-                std::vector<uint8_t> rgba(
-                    static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
-                for (int y = 0; y < h; ++y) {
-                    for (int x = 0; x < w; ++x) {
-                        std::size_t const row =
-                            static_cast<std::size_t>(y) * image.info.stride;
-                        uint8_t r = 0, g = 0, b = 0, a = 255;
-                        switch (image.info.format) {
-                        case aegir::datatypes::Format::INDEXED: {
-                            uint8_t const index = image.pixels[row + x];
-                            if (index < image.palette.size()) {
-                                aegir::datatypes::Color const &c = image.palette[index];
-                                r = c.r;
-                                g = c.g;
-                                b = c.b;
-                            }
-                            if (image.info.transparent &&
-                                index == image.info.transparent_index) {
-                                a = 0;
-                            }
-                            break;
-                        }
-                        case aegir::datatypes::Format::RGB:
-                            r = image.pixels[row + x * 3];
-                            g = image.pixels[row + x * 3 + 1];
-                            b = image.pixels[row + x * 3 + 2];
-                            break;
-                        case aegir::datatypes::Format::RGBA:
-                            r = image.pixels[row + x * 4];
-                            g = image.pixels[row + x * 4 + 1];
-                            b = image.pixels[row + x * 4 + 2];
-                            a = image.pixels[row + x * 4 + 3];
-                            break;
-                        case aegir::datatypes::Format::GREY:
-                            r = g = b = image.pixels[row + x];
-                            break;
-                        }
-                        std::size_t const p =
-                            (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                             static_cast<std::size_t>(x)) *
-                            4;
-                        rgba[p] = r;
-                        rgba[p + 1] = g;
-                        rgba[p + 2] = b;
-                        rgba[p + 3] = a;
-                    }
-                }
-                std::string line("  demo: image ");
-                line += std::to_string(w);
-                line += "x";
-                line += std::to_string(h);
-                line += " format ";
-                line += std::to_string(static_cast<int>(image.info.format));
-                line += " palette ";
-                line += std::to_string(image.palette.size());
-                line += "\n";
-                write(line.c_str());
-                image_view = std::make_unique<ImageView>(std::move(rgba), w, h);
-            } else {
-                write("  demo: image read failed\n");
-            }
-            object.dispose_object();
-        }
-    }
+    /* The datatypes client's first calls (specs/datatypes.md): open the two
+     * fixtures, one through each class. The class is started under this
+     * program's own badge by the session launcher -- the demo holds
+     * launch.session as a command (specs/launch.md) -- and serves the frame a
+     * page at a time; load_image converts it to the canvas's RGBA and prints
+     * what the class stated. The two files are the same picture, so the two
+     * pins reading the same colours is the cross-check between the classes. */
+    std::unique_ptr<ImageView> image_view = load_image(app, "Sys:TestImage.ilbm", "image");
+    std::unique_ptr<ImageView> png_view = load_image(app, "Sys:TestImage.png", "png");
 
     /* The band the outline line gets: the face's own line height, so the grid
      * keeps the geometry it had before the label and the acceptance's samples
@@ -555,13 +580,18 @@ int main(int argc, char *argv[])
     text_page->set_weight(label_ptr, 0);
     tabs->add_page(U"Text", std::move(text_page));
 
-    /* Image: the decoded ILBM (specs/datatypes.md). Its own page, so the
-     * widgets the acceptance reads at boot keep their geometry; the cue names
-     * the frame and the acceptance pins a pixel in the reported rectangle. */
+    /* Image: the two decoded frames (specs/datatypes.md), the ILBM over the
+     * PNG. Its own page, so the widgets the acceptance reads at boot keep their
+     * geometry; the cues name each frame and the acceptance pins a pixel in
+     * each reported rectangle. */
     auto image_page = std::make_unique<Group>(Group::Orientation::VERTICAL, 8);
     ImageView* const image_ptr = image_view.get();
+    ImageView* const png_ptr = png_view.get();
     if (image_view != nullptr) {
         image_page->add_child(std::move(image_view));
+    }
+    if (png_view != nullptr) {
+        image_page->add_child(std::move(png_view));
     }
     tabs->add_page(U"Image", std::move(image_page));
 
@@ -627,9 +657,12 @@ int main(int argc, char *argv[])
         radios_ptr->report_parts("demo.radios");
         report_rect("demo.check", *check_ptr);
         if (image_ptr != nullptr) {
-            report_rect("demo.image",
-                        screen_rect_of(*image_ptr, image_ptr->image_rect()));
+            report_rect("demo.image", image_ptr->image_screen_rect());
             image_ptr->report_parts("demo.image");
+        }
+        if (png_ptr != nullptr) {
+            report_rect("demo.png", png_ptr->image_screen_rect());
+            png_ptr->report_parts("demo.png");
         }
     };
 

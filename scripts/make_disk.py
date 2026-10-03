@@ -29,6 +29,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import zlib
 from pathlib import Path
 
 from mkfs_bfs import bfs_minimum_bytes, make_bfs
@@ -69,6 +70,35 @@ def make_ilbm() -> bytes:
     payload = (b"ILBM" + chunk(b"BMHD", bmhd) + chunk(b"CMAP", cmap) +
                chunk(b"BODY", body))
     return b"FORM" + struct.pack(">I", len(payload)) + payload
+
+
+def make_png() -> bytes:
+    """A tiny PNG fixture, read through the png class.
+
+    The second datatype acceptance (specs/datatypes.md): the demo opens this
+    through the `png.datatype` class, so the image is built here. 8-bit RGBA,
+    no interlace, one IDAT -- a blue left half and a white right half. The
+    colours differ from make_ilbm's on purpose: the acceptance pins a pixel in
+    each image, so a rect that named the wrong one, or a decode that mixed the
+    channels, shows a colour the other class never produces. zlib's compress is
+    the stdlib's, used only to build the file, not to decode it.
+    """
+    width, height = 64, 48
+    raw = bytearray()
+    for _y in range(height):
+        raw.append(0)  # filter: none
+        for x in range(width):
+            raw += bytes((0, 0, 255, 255) if x < width // 2 else (255, 255, 255, 255))
+
+    def chunk(cid: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + cid + data +
+                struct.pack(">I", zlib.crc32(cid + data) & 0xffffffff))
+
+    # IHDR: width, height, bit depth 8, colour type 6 (RGBA), no interlace.
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
+            chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b""))
+
 
 # The partitions, in disk order. The AEGIR and BFS volumes are built by
 # scripts/mkfs_bfs.py, so their contents live in the trees below and only the
@@ -297,9 +327,10 @@ def aegir_tree(commands, datatypes) -> list:
     same for DataTypes/<name>, the classes a file is decoded by
     (specs/datatypes.md)."""
     tree = list(AEGIR_BFS_TREE)
-    # The datatypes acceptance's image (specs/datatypes.md): the demo opens it
-    # through the ilbm class, on the session's namespace.
+    # The datatypes acceptance's images (specs/datatypes.md): the demo opens
+    # them through the ilbm and png classes, on the session's namespace.
     tree.append(("file", "TestImage.ilbm", make_ilbm()))
+    tree.append(("file", "TestImage.png", make_png()))
     if commands:
         tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
     if datatypes:
