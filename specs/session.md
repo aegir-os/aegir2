@@ -54,13 +54,20 @@ format (`libs/freestanding/aegir-manifest`, `specs/services.md`), read by auth.
   manifest names what a session has, and auth never guesses.
 - **The launcher is not a section.** auth makes it before the manifest's
   services, so the manifest declares what rides *on top of* the session's floor.
-- **The boot manifest's `[session.*]` entries are superseded.** The boot
-  manifest composes system services (`specs/director.md`); a session's services
-  live here. They cannot be removed until auth makes the session's *ports*: the
-  boot entries are what director's port graph composes, `[auth] spawns =
-  session.*` must resolve to something, and `bureau.menu`'s owner copy reaches
-  auth only because `[session.bureau]` owns it
-  (`aegir-director/src/services.cc:228-243`, `:458-472`).
+- **The boot manifest's `[session.*]` entries are superseded but not yet
+  removed.** The boot manifest composes system services (`specs/director.md`);
+  a session's services live here, and auth now makes the session's ports
+  (`launch.session`, `bureau.menu`) itself, so the entries are inert for the
+  composition. They cannot be deleted yet, though: `[auth] spawns = session.*`
+  must resolve to something, and removing them shifts auth's bootstrap slot
+  layout just enough to reach a pre-existing overlap between auth's own slots
+  and the session pool's downward slot allocator (auth's fixed slots --
+  `g_home_slot`, `g_manifest_slot`, `g_session_mem_call`, `g_kit_nmspace_slot`
+  -- sit inside `adopt_slots_down`'s range, which starts at `first_free`). The
+  session pool overwrites them only after a session has spent thousands of
+  slots, so it bites late; the removal waits on the boundary being drawn
+  (`aegir-director/src/services.cc:228-243` is no longer the reason, the slot
+  ranges are).
 
 The shipped default (`Sys:S/session.manifest`) declares the bureau and a
 terminal. The terminal is **convenience while there is no desktop**, not
@@ -99,16 +106,18 @@ user's additions. Recorded here so the manifest and the script are one design;
 
 ## Phases and acceptance
 
-1. **auth makes the session's ports.** Today director composes `bureau.menu` and
-   hands auth its owner half (`spawn:bureau.menu`). auth makes it itself, from
-   the session's own allocator, the way it already makes `launch.session` -- then
-   `session.*` leaves `[auth] spawns` and the boot manifest's `[session.*]`
-   entries follow.
-2. **The manifest reader.** auth reads `Sys:S/session.manifest` and starts the
-   bureau and terminal from it, replacing the hardcoded shape (`aegir-auth`'s
-   `start_session`). The acceptance is the existing login arc: same screens,
-   same cues, with the composition now data. Malformed and absent take their
-   recovery paths.
+1. **auth makes the session's ports.** Landed. auth makes `bureau.menu` itself,
+   from the session's own allocator, the way it already makes `launch.session`;
+   the boot entries are now inert for the composition. Their *removal* is the
+   open piece, blocked on the session-pool/auth-slot overlap above, not on the
+   ports.
+2. **The manifest reader.** Landed. auth reads `Home:S`/`Sys:S/session.manifest`,
+   parses it, and starts the bureau (windowed) and terminal (launcher-shaped)
+   from it, replacing the hardcoded shape (`aegir-auth`'s `start_session`). A
+   malformed file is announced with the parser's line and reason and leaves the
+   built-in terminal; an absent one does the same quietly. `needs` is resolved
+   through a closed vocabulary, `owns` through what auth can make; the launcher
+   is not a section and is still started by auth.
 3. **The datatypes broker.** The first *new* service the manifest declares: owns
    `datatypes.main`, needs `vfs.namespace` and `launch.session`, starts classes
    as the session's user class (`specs/datatypes.md`, `specs/libraries.md`). The

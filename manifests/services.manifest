@@ -459,13 +459,13 @@ restart    = never
 
 # The first session (specs/auth.md). Nothing starts it at boot -- auth
 # starts one when a login succeeds, with the user's badge and account.
-# Input it has none of: the devices are the console's (specs/console.md),
-# and a session's events arrive as windows' events when the bureau lands.
-# The entry is what declares a session's needs, which is what drives the
-# delegatable copies its spawner is given. **This moves to the session manifest
-# (specs/session.md), but not until auth makes the session's ports itself** --
-# director still needs these entries for the boot port graph and the
-# `spawn:bureau.menu` copy, and `[auth] spawns = session.*` must match.
+# These entries are **superseded** by the session manifest (specs/session.md):
+# auth reads `Sys:S/session.manifest` at login and starts the bureau and terminal
+# from it, and makes the session's own ports itself. The entries are inert for
+# the session's composition; they remain only because `[auth] spawns =
+# session.*` must resolve, and removing them shifts auth's bootstrap slot layout
+# and exposes a session-pool/auth-slot overlap (specs/session.md's Phases). They
+# come out when that overlap is fixed.
 [session.smoke]
 binary    = aegir-session-smoke
 authority = user
