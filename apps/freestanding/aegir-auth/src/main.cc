@@ -584,6 +584,18 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
     if (c_bound.error != 0 || c_bound.count != 1 || c_in[0] != 1) {
         write("      auth: FAIL the C: bind was refused\n");
     }
+
+    /* DataTypes: and LIBS: (specs/datatypes.md, specs/libraries.md): the class
+     * and resource-library directories, single-member aliases of Sys:DataTypes
+     * and Sys:Libs for now -- a session's own Home: union arrives with the
+     * add-on slice. Read-only: no create flag, because a user does not write
+     * the system's class directory. */
+    if (!bind_name(badge, "DataTypes", 9, "Sys:DataTypes", 13)) {
+        write("      auth: FAIL the DataTypes: bind was refused\n");
+    }
+    if (!bind_name(badge, "LIBS", 4, "Sys:Libs", 8)) {
+        write("      auth: FAIL the LIBS: bind was refused\n");
+    }
 }
 
 /* The teardown, once the wait says the session is done (specs/auth.md's
@@ -1267,6 +1279,21 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     static char const kCmdSys[] = "Sys:C";
     for (;;) {
         if (bind_name(kBootBadge, "C", 1, kCmdSys, sizeof(kCmdSys) - 1)) {
+            break;
+        }
+        seL4_Yield();
+    }
+    /* The boot session's class and library directories too, so a startup
+     * command and the boot terminal's programs resolve them (specs/datatypes.md,
+     * specs/libraries.md). */
+    for (;;) {
+        if (bind_name(kBootBadge, "DataTypes", 9, "Sys:DataTypes", 13)) {
+            break;
+        }
+        seL4_Yield();
+    }
+    for (;;) {
+        if (bind_name(kBootBadge, "LIBS", 4, "Sys:Libs", 8)) {
             break;
         }
         seL4_Yield();
