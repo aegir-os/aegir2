@@ -57,6 +57,10 @@ of the matrix is data in `scripts/targets.py` and one `make envelope` away
 - `specs/build.md` — build environment, targets, and what our image is made of.
 - `specs/cxx.md` — the hosted C++ runtime: the vendored musl and libc++, the
   freeing heap, and the two build switches that gate them.
+- `specs/libraries.md` — resource libraries as services: no dynamic linker, the
+  `OpenLibrary`/`CloseLibrary` idiom, the manager, and `LIBS:`.
+- `specs/datatypes.md` — image formats as class services: the broker, the
+  per-format class, the client frame, and `DataTypes:`.
 - `specs/third_party.md` — how third-party code is pinned, fetched and patched.
 - `specs/userland.md` — what Aegir's userland is, and what it is not.
 - `specs/clang-on-aegir.md` — the plan for an on-device LLVM/Clang: the POSIX
