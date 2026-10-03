@@ -26,6 +26,7 @@ namespace aegir::trinket {
 void Window::damage(const Rect&) {}
 Application* Application::instance() { return nullptr; }
 Font* Application::default_font() { return nullptr; }
+Font* Application::font_for(std::string_view, int) { return nullptr; }
 }  // namespace aegir::trinket
 
 namespace {

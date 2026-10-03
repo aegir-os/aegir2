@@ -93,12 +93,18 @@ public:
     void set_theme(std::unique_ptr<Theme> theme);
     Theme& theme() const { return *theme_; }
     void set_default_font(std::unique_ptr<Font> font);
-    /* The application's font: the family and size it asks `Sys:Fonts` for,
-     * scanned and loaded the first time a widget wants it. A miss -- or a
+    /* The application's font: the theme's default face (specs/trinket/
+     * theming.md), loaded the first time a widget wants it. A miss -- or a
      * volume with no fonts on it -- keeps the embedded Terminus and says so,
      * because a blank window is the worst way to report a missing font
      * (specs/fonts.md). */
     Font* default_font();
+
+    /* A face the theme asked for by family and size (specs/trinket/theming.md):
+     * read once from `Sys:Fonts`' BDF faces, or opened through the font service
+     * for an OpenType one (specs/fonts.md), and cached. Null when the volume
+     * holds no such face. */
+    Font* font_for(std::string_view family, int size_pts);
 
     // Locale
     void set_locale(const Locale& locale);
@@ -199,11 +205,16 @@ private:
     std::unique_ptr<Theme> theme_;
     std::unique_ptr<Font> default_font_;
     /* The faces `Sys:Fonts` holds, scanned once on the first font request
-     * (specs/fonts.md), and the family and size the default is asked for. */
+     * (specs/fonts.md), and the faces the theme asked for, kept so a second
+     * ask is not a second read. */
     FontCatalog catalog_;
     bool catalog_scanned_ = false;
-    std::string font_family_ = "Terminus";
-    int font_size_ = 12;
+    struct LoadedFace {
+        std::string family;
+        int size = 0;
+        std::unique_ptr<Font> font;
+    };
+    std::vector<LoadedFace> faces_;
     WorkerPool workers_;
     std::vector<Window*> windows_;
     DisplayInfo display_info_;

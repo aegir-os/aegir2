@@ -65,7 +65,16 @@ struct Recipe {
     uint16_t count;
 };
 
+/* A face the theme asks for (specs/trinket/theming.md): a family and a size in
+ * points, loaded through the application -- Sys:Fonts' BDF faces and the font
+ * service's OpenType ones (specs/fonts.md). */
+struct FontSpec {
+    const char* family;
+    int size;
+};
+
 /* Generated from resources/themes/xen.toml -- see scripts/gen_theme.py. */
+extern const FontSpec kFonts[];        // indexed by FontRole
 extern const uint32_t kPalette[];      // indexed by ColorRole
 extern const int kMetrics[];           // indexed by MetricRole, at 96 dpi
 extern const uint8_t kMetricFixed[];   // 1 when a metric is not scaled

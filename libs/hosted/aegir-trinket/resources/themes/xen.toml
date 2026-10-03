@@ -18,6 +18,19 @@
 # The values are XEN's, from MUI's Presets/XEN.prefs and its artwork; the base
 # is 96 dpi (the Amiga's 75 dpi is how a screenshot of it is read).
 
+# ---- fonts ----
+# The faces the theme asks Sys:Fonts for (specs/fonts.md, specs/trinket/
+# theming.md), one per role. A BDF face is read directly; an OpenType one goes
+# through the font service. A miss -- or a volume with no fonts -- keeps the
+# built-in Terminus 12 and says so. The default is the toolkit's `font()`; the
+# others are the roles a widget asks for by name.
+
+[fonts]
+default   = { family = "Terminus", size = 12 }
+small     = { family = "Terminus", size = 12 }
+large     = { family = "Terminus", size = 12 }
+monospace = { family = "Terminus", size = 12 }
+
 # ---- palette ----
 # A named colour per role in the toolkit's ColorRole enum.
 

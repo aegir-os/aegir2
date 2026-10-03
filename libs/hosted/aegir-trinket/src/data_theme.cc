@@ -34,12 +34,10 @@ public:
         return kMetricFixed[index] ? kMetrics[index] : kMetrics[index] * base;
     }
 
-    Font* font() const override {
-        return Application::instance()->default_font();
-    }
-    Font* font_small() const override { return font(); }
-    Font* font_large() const override { return font(); }
-    Font* font_monospace() const override { return font(); }
+    Font* font() const override { return face(FontRole::DEFAULT); }
+    Font* font_small() const override { return face(FontRole::SMALL); }
+    Font* font_large() const override { return face(FontRole::LARGE); }
+    Font* font_monospace() const override { return face(FontRole::MONOSPACE); }
 
     /* The grey 3-D edge (specs/trinket/theme-xen.md): 1px, square, hard-edged,
      * a light top-left and a dark bottom-right for a raised gadget and the
@@ -418,6 +416,18 @@ public:
     }
 
 private:
+    /* The face a role names, loaded through the application -- Sys:Fonts' BDF
+     * faces and the font service's OpenType ones (specs/fonts.md). The host
+     * render has no application, and so no font. */
+    Font* face(FontRole role) const {
+        Application* const app = Application::instance();
+        if (app == nullptr) {
+            return nullptr;
+        }
+        FontSpec const& spec = kFonts[static_cast<int>(role)];
+        return app->font_for(spec.family, spec.size);
+    }
+
     /* Run a gadget's recipe (specs/trinket/theming.md): each step draws one
      * primitive into the gadget's rectangle, set in by its inset and narrowed to
      * its `at` sub-rectangle (specs/trinket/chrome.md). */

@@ -194,6 +194,7 @@ def main() -> int:
     metrics = theme["metrics"]
     fixed = set(metrics.get("fixed", []))
     g = theme["gadgets"]
+    fonts = theme["fonts"]
 
     sprite_names = collect_sprites(g)
     # The sprites come from the generated preset (scripts/convert_prefs.py); the
@@ -214,6 +215,15 @@ def main() -> int:
         "namespace aegir::trinket {",
         "",
     ]
+
+    # The faces the theme asks for, one per FontRole, in the enum's order
+    # (specs/trinket/theming.md).
+    parts.append("const FontSpec kFonts[] = {")
+    for role in enum_names(header, "FontRole"):
+        spec = fonts[role.lower()]
+        parts.append(f'    {{"{spec["family"]}", {int(spec["size"])}}},  // {role}')
+    parts.append("};")
+    parts.append("")
 
     parts.append("const uint32_t kPalette[] = {")
     for role in enum_names(header, "ColorRole"):

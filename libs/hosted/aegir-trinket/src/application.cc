@@ -329,19 +329,39 @@ void Application::set_default_font(std::unique_ptr<Font> font) {
 }
 
 Font* Application::default_font() {
-    if (!default_font_) {
-        default_font_ = load_font(font_family_, font_size_);
-        if (!default_font_) {
-            /* A usable fallback and a line saying so: a blank window is the
-             * worst way to report a missing font (specs/fonts.md). */
-            std::string line("  trinket: no font ");
-            line.append(font_family_);
-            line += " in Sys:Fonts, using the built-in\n";
-            aegir::debug_write(line.c_str());
-            default_font_ = load_builtin_font("Terminus", 12);
+    /* The theme carries the default face (specs/trinket/theming.md). A theme
+     * that cannot load one -- or a volume with no fonts -- keeps the embedded
+     * Terminus and says so, because a blank window is the worst way to report a
+     * missing font (specs/fonts.md). */
+    if (theme_ != nullptr) {
+        if (Font* const face = theme_->font()) {
+            return face;
         }
     }
+    if (!default_font_) {
+        aegir::debug_write("  trinket: no default font in Sys:Fonts, using the built-in\n");
+        default_font_ = load_builtin_font("Terminus", 12);
+    }
     return default_font_.get();
+}
+
+Font* Application::font_for(std::string_view family, int size_pts) {
+    for (LoadedFace const& face : faces_) {
+        if (face.family == family && face.size == size_pts) {
+            return face.font.get();
+        }
+    }
+    /* A BDF face is read directly; an OpenType one opens through the font
+     * service (specs/fonts.md). Neither, and the caller falls back. */
+    std::unique_ptr<Font> font = load_font(family, size_pts);
+    if (!font) {
+        font = load_service_font(family, size_pts, false, false);
+    }
+    if (!font) {
+        return nullptr;
+    }
+    faces_.push_back(LoadedFace{std::string(family), size_pts, std::move(font)});
+    return faces_.back().font.get();
 }
 
 void Application::set_locale(const Locale& locale) {

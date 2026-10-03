@@ -114,6 +114,11 @@ enum class MetricRole {
     TEXT_LINE_HEIGHT_MULTIPLIER
 };
 
+/* The faces a theme asks for by name (specs/trinket/theming.md), one family and
+ * size each: the default a widget gets, a smaller and a larger face, and a
+ * monospace for a terminal or an editor. */
+enum class FontRole { DEFAULT, SMALL, LARGE, MONOSPACE };
+
 class Theme {
 public:
     virtual ~Theme() = default;

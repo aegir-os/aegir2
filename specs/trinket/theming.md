@@ -85,6 +85,12 @@ against.
   palette, patterns and fonts stay ours.
 - The scrollbar is re-done through the mechanism once C lands; B is what lets it
   be a value in the file rather than a shape in code.
+- **Phase E (landed).** The file carries the **fonts** too: a family and size per
+  `FontRole` (`[fonts]`), which `Application::font_for` loads once -- a BDF face
+  read directly, an OpenType one through the font service (specs/fonts.md) -- so
+  `font()`, `font_small()`, `font_large()` and `font_monospace()` are the file's,
+  and changing the default is a file edit. The window chrome, the screen bar and
+  the menus followed (`specs/trinket/chrome.md`).
 
 ## Acceptance
 
