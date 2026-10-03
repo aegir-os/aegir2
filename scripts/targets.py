@@ -51,6 +51,12 @@ class QmpStep:
     # background, so a region with none is a grid that drew nothing -- which the
     # solid-background `pixels` samples cannot tell.
     dark: tuple[tuple[str, int, int, int, int, int], ...] = ()
+    # A pixel pinned to a named rectangle rather than to a screen coordinate:
+    # (device, rect name, fraction x, fraction y, r, g, b). The rectangle is
+    # the guest's own (`rect <name> ...`, RECT_CUE), so a layout change moves
+    # the pixel with the widget and the acceptance does not pin a coordinate
+    # the layout no longer holds -- the same idea as `clicks`, for a pixel.
+    pins: tuple[tuple[str, str, float, float, int, int, int], ...] = ()
     events: tuple[dict, ...] = ()
     # Clicks at a named screen rectangle the guest reports, rather than at a
     # pinned pixel: each is `(name, rx, ry)`, the fraction of the rectangle's
@@ -194,7 +200,16 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # a Noto Sans face through the service, and prints the box of the
             # first glyph it got back -- proof a glyph crossed the client's own
             # transfer page and into the client's atlas, not only the service's.
+            # The demo is a command now (specs/window-manager.md), started by
+            # the session's Shell-Startup, so this cue comes after the login,
+            # not before it.
             QmpStep(r"demo: outline A \d+x\d+ advance \d+"),
+            # The datatypes client's first call (specs/datatypes.md): the demo
+            # opened Sys:TestImage.ilbm through the ilbm class, which decoded
+            # the file and served the frame a page at a time. The cue names what
+            # the class stated -- 64x48, INDEXED (0) and a two-colour palette --
+            # so the class, the client and the transfer page all proved out.
+            QmpStep(r"demo: image 64x48 format 0 palette 2"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up
@@ -403,25 +418,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 10, 10, 0, 85, 170),
                 ),
             ),
-            # The pre-bureau drag (specs/workbench.md): the demo is on the
-            # screen before login, and the bureau is a session that does not
-            # exist until the login starts it. A drag focuses the demo; if it
-            # called menu_register then, the ownerless port would block it and
-            # it would never move. The drag takes it down 150 px, and the dump
-            # after the login reads it there. It comes after the boot marker
-            # because the test bed's click is placed for the pointer starting
-            # at the screen's centre, and the demo is left where it lands --
-            # the later demo clicks are placed for (900,450).
-            QmpStep(
-                r"AEGIR_BOOT_OK",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 25600}},
-                    {"type": "abs", "data": {"axis": "y", "value": 11796}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "abs", "data": {"axis": "y", "value": 17938}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
-            ),
+            # The demo is no longer on the screen before login: it is a
+            # command the session's Shell-Startup starts (specs/window-
+            # manager.md), so there is nothing to drag here. It starts at the
+            # place the drag used to leave it (aegir-gui-demo's kWindowY), and
+            # the demo's own `demo: rects` cue is where its gestures begin.
             # The boot marker ends the test bed's part, not the script's:
             # the runner holds until every step has played, and the login is
             # what remains. The click focuses the greeter's window; it lands
@@ -438,15 +439,16 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
-            # The demo moved before the bureau: its titlebar reads #6688bb at
-            # (1050,438) -- clear of the cursor left at (1000,438) -- and the
-            # console's backdrop stands where the titlebar was.
+            # No demo stands west of the greeter any more -- it is a session
+            # command now (specs/window-manager.md) -- so the backdrop reads
+            # where its titlebar used to sit, and the console's backdrop
+            # stands where the drag left the cursor.
             QmpStep(
                 r"greeter: the window has the focus",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 1050, 438, 102, 136, 187),
+                    ("gpu0", 1050, 438, 0, 85, 170),
                     ("gpu0", 1000, 288, 0, 85, 170),
                 ),
             ),
@@ -994,19 +996,34 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1279, 799, 170, 170, 170),
                     ("gpu0", 860, 240, 170, 170, 170),
                     ("gpu0", 640, 700, 170, 170, 170),
-                    ("gpu0", 1050, 438, 102, 136, 187),
                 ),
             ),
-            # The window manager's demo client (specs/window-manager.md), last
-            # so its clicks do not race the login: its decorated window was
-            # dragged to (900,450) before the login, clear of the samples
-            # above. The runner clicks its zoom gadget (the right-hand pair,
-            # specs/amiga-fidelity.md); the window fills the screen with its
-            # #6688bb bars; clicks zoom again and it is back; then clicks
-            # close, at the titlebar's far left, and the backdrop stands where
-            # it was.
+            # The window manager's demo client (specs/window-manager.md): a
+            # session command now, started by Shell-Startup at login, so its
+            # rectangles exist only after `demo: rects`. The runner clicks its
+            # Image tab first -- the datatypes acceptance (specs/datatypes.md)
+            # -- then returns to the Lists page the rest of the demo reads.
             QmpStep(
-                r"bureau: the screen is yours",
+                r"demo: rects",
+                clicks=(("demo.tabs.tab.5", 0.5, 0.5),),
+            ),
+            # The Image tab: the decoded ILBM (specs/datatypes.md). The frame's
+            # left half is palette 0 (red) and its right half palette 1
+            # (green), so the pins read a pixel from each: the class, the
+            # client, the transfer page and the blit, one chain. Then back to
+            # the Lists page the rest of the demo reads.
+            QmpStep(
+                r"demo: tab 5",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pins=(
+                    ("gpu0", "demo.image", 0.25, 0.5, 255, 0, 0),
+                    ("gpu0", "demo.image", 0.75, 0.5, 0, 255, 0),
+                ),
+                clicks=(("demo.tabs.tab.3", 0.5, 0.5),),
+            ),
+            QmpStep(
+                r"demo: tab 3",
                 clicks=(("demo.zoom", 0.5, 0.5),),
             ),
             QmpStep(

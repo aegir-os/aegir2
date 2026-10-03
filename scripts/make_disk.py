@@ -25,6 +25,7 @@ Delete it to make a fresh one.
 
 import argparse
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -44,6 +45,31 @@ AEGIR_SYSTEM_GUID = "5cd58811-9bf5-4af3-8682-9b76edce3535"
 # is BFS, and the filesystem registry turns that into the service that serves
 # it.
 BEFS_GUID = "42465331-3ba3-10f1-802a-4861696b7521"
+
+def make_ilbm() -> bytes:
+    """A tiny uncompressed ILBM fixture, read through the ilbm class.
+
+    The demo's datatypes acceptance (specs/datatypes.md) opens this through
+    the `ilbm.datatype` class, so the image is built here rather than vendored:
+    what is pinned is the client and the class, not a byte blob. One bit plane,
+    two CMAP entries (a red left half, a green right half), no mask and no
+    ByteRun1 -- the decoder's plainest path.
+    """
+    width, height = 64, 48
+    # One plane, rows whole 16-bit words: 8 bytes a row, x 0..7 in byte 0 and
+    # x 32..39 in byte 4, so the low x's are zero and the high x's are set.
+    body = b"\x00\x00\x00\x00\xff\xff\xff\xff" * height
+    bmhd = struct.pack(">HHhhBBBBHBBhh", width, height, 0, 0, 1, 0, 0, 0, 0,
+                       1, 1, width, height)
+    cmap = bytes([255, 0, 0, 0, 255, 0])
+
+    def chunk(cid: bytes, data: bytes) -> bytes:
+        return cid + struct.pack(">I", len(data)) + data + (b"\x00" if len(data) & 1 else b"")
+
+    payload = (b"ILBM" + chunk(b"BMHD", bmhd) + chunk(b"CMAP", cmap) +
+               chunk(b"BODY", body))
+    return b"FORM" + struct.pack(">I", len(payload)) + payload
+
 # The partitions, in disk order. The AEGIR and BFS volumes are built by
 # scripts/mkfs_bfs.py, so their contents live in the trees below and only the
 # FAT partitions carry a known file. The first starts at the conventional LBA
@@ -105,8 +131,13 @@ AEGIR_BFS_TREE = [
     # scripts never show in the user's listing.
     ("dir", "S", [
         # Every interactive shell runs this when the user's Home:S/Shell-Startup
-        # is absent (specs/shell.md).
-        ("file", "Shell-Startup", b"alias l list\n"),
+        # is absent (specs/shell.md). `Run` starts the window manager's demo
+        # client in the session (specs/window-manager.md): it is a command now,
+        # not a boot service, so it holds the launch.session caller half and can
+        # serve-launch a datatype class (specs/datatypes.md). The demo waits for
+        # the bureau before registering its menus, so starting it here -- beside
+        # the terminal, synchronously with the interactive loop -- is safe.
+        ("file", "Shell-Startup", b"alias l list\nRun gui-demo\n"),
         # Resource limits, opt-in (specs/limits.md): the shipped file is
         # comments plus the commented-out default example, so out of the box
         # it restricts nothing. An operator edits it without reimaging.
@@ -266,6 +297,9 @@ def aegir_tree(commands, datatypes) -> list:
     same for DataTypes/<name>, the classes a file is decoded by
     (specs/datatypes.md)."""
     tree = list(AEGIR_BFS_TREE)
+    # The datatypes acceptance's image (specs/datatypes.md): the demo opens it
+    # through the ilbm class, on the session's namespace.
+    tree.append(("file", "TestImage.ilbm", make_ilbm()))
     if commands:
         tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
     if datatypes:

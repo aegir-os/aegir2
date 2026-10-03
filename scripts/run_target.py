@@ -623,6 +623,39 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                                 flush=True,
                             )
                             failed = True
+                    for pin in step.pins:
+                        named, rect_name, rx, ry, pr, pg, pb = pin
+                        if named != device:
+                            continue
+                        anchor = anchors.get(rect_name)
+                        if anchor is None:
+                            print(
+                                f"    runner: FAIL {device} has no rect cue for "
+                                f"{rect_name!r} to pin a pixel in",
+                                flush=True,
+                            )
+                            failed = True
+                            continue
+                        ax, ay, aw, ah = anchor
+                        px = ax + int(rx * aw)
+                        py = ay + int(ry * ah)
+                        if not (0 <= px < width and 0 <= py < height):
+                            print(
+                                f"    runner: FAIL the pin in {rect_name!r} lands "
+                                f"({px},{py}), off {device}",
+                                flush=True,
+                            )
+                            failed = True
+                            continue
+                        at = (py * width + px) * 3
+                        shown = (pixels[at], pixels[at + 1], pixels[at + 2])
+                        if shown != (pr, pg, pb):
+                            print(
+                                f"    runner: FAIL {device} {rect_name!r} at "
+                                f"({px},{py}) shows {shown}, expected ({pr},{pg},{pb})",
+                                flush=True,
+                            )
+                            failed = True
                     if failed:
                         continue
                     print(f"    runner: {device} shows {width}x{height}, true to its checks", flush=True)

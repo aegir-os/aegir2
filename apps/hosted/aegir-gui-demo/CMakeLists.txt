@@ -17,7 +17,7 @@ if(AEGIR_TOOLKIT)
 
   target_link_libraries(
     aegir-gui-demo PRIVATE aegir-cxx-policy-hosted aegir-trinket aegir-bureau-protocol
-                           aegir-runtime aegir-bootstrap aegir-ipc aegir-log
+                           aegir-datatypes aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                            aegir-console-protocol aegir-mem sel4 sel4runtime
   )
 else()

@@ -1376,6 +1376,16 @@ int main(int argc, char *argv[])
                 gui.reply(0);
             } else {
                 slice->listening = true;
+                /* A client that starts after the bureau's backdrop is already
+                 * up missed announce_screen_owner (which runs only as the
+                 * backdrop appears), so it would never learn the screen has an
+                 * owner and would never register its menus. The console is the
+                 * one service always there: tell it the current state now, so a
+                 * session command started at login -- the demo -- finds the
+                 * bureau (specs/workbench.md). */
+                if (find_backdrop() != nullptr) {
+                    deliver_to(slice, aegir::console::kEventScreenOwner, 0, 1, 0);
+                }
                 gui.reply_cap(nullptr, 0, mint_slot);
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, mint_slot,
                                   aegir::bootstrap::cnode_bits());

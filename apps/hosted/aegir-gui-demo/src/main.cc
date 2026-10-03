@@ -6,24 +6,33 @@
  *
  * A decorated trinket window with all three titlebar gadgets -- close, zoom
  * and depth -- so the window manager's arc can be exercised end to end
- * (specs/window-manager.md). It is a boot service, spawned by director, that
- * creates its window and then waits: the runner clicks the gadgets, and each
- * act prints a cue. It asks for no focus; a click on a gadget focuses it, and
- * it does not want the boot's keyboard.
+ * (specs/window-manager.md). It is a command now, started in the session by
+ * `Run gui-demo` in Sys:S/Shell-Startup, that creates its window and then
+ * waits: the runner clicks the gadgets, and each act prints a cue. It asks for
+ * no focus; a click on a gadget focuses it, and it does not want the shell's
+ * keyboard.
  *
  * It is also the toolkit's widget test-bed (specs/trinket/layout.md): its
  * content is a framed Group -- a free terminal over a fixed label band -- and
  * the widgets land here as they arrive, so the runner sees them on the target
  * and not only in a host check.
+ *
+ * And it is the datatypes client's first caller (specs/datatypes.md): started
+ * in the session, it holds the launch.session caller half, so it opens
+ * Sys:TestImage.ilbm through the ilbm class and shows the frame the class
+ * served on an Image tab. Running as a command is what gives it the caller's
+ * authority; a boot service would have had the system's.
  */
 
 #include <aegir/bootstrap.h>
 #include <aegir/bureau/menu.h>
 #include <aegir/console.h>
+#include <aegir/datatypes_client.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
 #include <aegir/trinket/application.h>
+#include <aegir/trinket/canvas.h>
 #include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/file_requester.h>
 #include <aegir/trinket/font.h>
@@ -59,10 +68,53 @@ void write(char const *text)
     aegir::debug_write(text);
 }
 
-/* Clear of the greeter's window and of the test bed's, so its pixels and
- * theirs never share a sample. */
+/* The datatypes acceptance's view (specs/datatypes.md): the frame the ilbm
+ * class served, converted to the RGBA the canvas blits. It is a Widget so the
+ * layout places it and it reports the rectangle the acceptance can pin a pixel
+ * in -- the cue the demo prints names its size, and the picture is the class's
+ * output, not the toolkit's. */
+class ImageView : public aegir::trinket::Widget {
+public:
+    ImageView(std::vector<uint8_t> rgba, int width, int height)
+        : rgba_(std::move(rgba)), width_(width), height_(height) {}
+
+    void on_paint(aegir::trinket::Canvas &canvas,
+                  aegir::trinket::PaintEvent const &) override
+    {
+        /* Draw at the frame's own size, not the widget's: a group may hand a
+         * child more room than it asked for, and the canvas's blit walks the
+         * destination -- past the source if the two disagree. The extra room
+         * stays the page's background. */
+        aegir::trinket::Rect const r = rect();
+        aegir::trinket::Rect const at{r.x, r.y, width_, height_};
+        canvas.draw_bitmap(at, rgba_.data(), width_, height_, width_ * 4, true);
+    }
+
+    aegir::trinket::Size preferred_size() const override
+    {
+        return {width_, height_};
+    }
+
+    /* The frame's own rectangle, which the acceptance pins its pixels in; the
+     * widget's may be wider. */
+    aegir::trinket::Rect image_rect() const
+    {
+        return {0, 0, width_, height_};
+    }
+
+private:
+    std::vector<uint8_t> rgba_;
+    int width_;
+    int height_;
+};
+
+/* The demo's own place (specs/window-manager.md): set_rect is the client
+ * area, and the frame's titlebar sits above it, so the window reads clear of
+ * the test bed's red one and of the bureau's backdrop samples. It was dragged
+ * here before login when it was a boot service; now it starts here, launched
+ * by the session's Shell-Startup. */
 constexpr int kWindowX = 900;
-constexpr int kWindowY = 300;
+constexpr int kWindowY = 450;
 constexpr int kWindowWidth = 260;
 constexpr int kWindowHeight = 200;
 
@@ -168,6 +220,89 @@ int main(int argc, char *argv[])
         write(line.c_str());
     } else {
         write("  demo: no font.main face for the outline label\n");
+    }
+
+    /* The datatypes client's first call (specs/datatypes.md): open the fixture
+     * through the ilbm class. The class is started under this program's own
+     * badge by the session launcher -- the demo holds launch.session as a
+     * command (specs/launch.md) -- and serves the frame a page at a time. The
+     * frame is canonical chunky, so it is converted here to the canvas's RGBA
+     * and shown on its own tab; the cue names the size, format and palette the
+     * class stated, so the acceptance reads the class and not only the window. */
+    aegir::datatypes::Decoded image;
+    std::unique_ptr<ImageView> image_view;
+    {
+        aegir::datatypes::Object object = aegir::datatypes::new_object(
+            app.allocator(), app.scratch(), "Sys:TestImage.ilbm");
+        if (!object.valid()) {
+            write("  demo: no ilbm class\n");
+        } else {
+            if (object.read(image)) {
+                int const w = static_cast<int>(image.info.width);
+                int const h = static_cast<int>(image.info.height);
+                std::vector<uint8_t> rgba(
+                    static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4, 0);
+                for (int y = 0; y < h; ++y) {
+                    for (int x = 0; x < w; ++x) {
+                        std::size_t const row =
+                            static_cast<std::size_t>(y) * image.info.stride;
+                        uint8_t r = 0, g = 0, b = 0, a = 255;
+                        switch (image.info.format) {
+                        case aegir::datatypes::Format::INDEXED: {
+                            uint8_t const index = image.pixels[row + x];
+                            if (index < image.palette.size()) {
+                                aegir::datatypes::Color const &c = image.palette[index];
+                                r = c.r;
+                                g = c.g;
+                                b = c.b;
+                            }
+                            if (image.info.transparent &&
+                                index == image.info.transparent_index) {
+                                a = 0;
+                            }
+                            break;
+                        }
+                        case aegir::datatypes::Format::RGB:
+                            r = image.pixels[row + x * 3];
+                            g = image.pixels[row + x * 3 + 1];
+                            b = image.pixels[row + x * 3 + 2];
+                            break;
+                        case aegir::datatypes::Format::RGBA:
+                            r = image.pixels[row + x * 4];
+                            g = image.pixels[row + x * 4 + 1];
+                            b = image.pixels[row + x * 4 + 2];
+                            a = image.pixels[row + x * 4 + 3];
+                            break;
+                        case aegir::datatypes::Format::GREY:
+                            r = g = b = image.pixels[row + x];
+                            break;
+                        }
+                        std::size_t const p =
+                            (static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                             static_cast<std::size_t>(x)) *
+                            4;
+                        rgba[p] = r;
+                        rgba[p + 1] = g;
+                        rgba[p + 2] = b;
+                        rgba[p + 3] = a;
+                    }
+                }
+                std::string line("  demo: image ");
+                line += std::to_string(w);
+                line += "x";
+                line += std::to_string(h);
+                line += " format ";
+                line += std::to_string(static_cast<int>(image.info.format));
+                line += " palette ";
+                line += std::to_string(image.palette.size());
+                line += "\n";
+                write(line.c_str());
+                image_view = std::make_unique<ImageView>(std::move(rgba), w, h);
+            } else {
+                write("  demo: image read failed\n");
+            }
+            object.dispose_object();
+        }
     }
 
     /* The band the outline line gets: the face's own line height, so the grid
@@ -420,6 +555,16 @@ int main(int argc, char *argv[])
     text_page->set_weight(label_ptr, 0);
     tabs->add_page(U"Text", std::move(text_page));
 
+    /* Image: the decoded ILBM (specs/datatypes.md). Its own page, so the
+     * widgets the acceptance reads at boot keep their geometry; the cue names
+     * the frame and the acceptance pins a pixel in the reported rectangle. */
+    auto image_page = std::make_unique<Group>(Group::Orientation::VERTICAL, 8);
+    ImageView* const image_ptr = image_view.get();
+    if (image_view != nullptr) {
+        image_page->add_child(std::move(image_view));
+    }
+    tabs->add_page(U"Image", std::move(image_page));
+
     tabs->set_active(2); /* Lists */
     auto content = std::make_unique<Group>(Group::Orientation::VERTICAL, 0);
     content->set_frame(Group::Frame::RAISED);
@@ -481,6 +626,11 @@ int main(int argc, char *argv[])
         report_rect("demo.popup_button", *popup_ptr);
         radios_ptr->report_parts("demo.radios");
         report_rect("demo.check", *check_ptr);
+        if (image_ptr != nullptr) {
+            report_rect("demo.image",
+                        screen_rect_of(*image_ptr, image_ptr->image_rect()));
+            image_ptr->report_parts("demo.image");
+        }
     };
 
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
@@ -614,6 +764,7 @@ int main(int argc, char *argv[])
 
     /* The bureau rings the doorbell for an action; fetch it and print the cue
      * the runner reads. Nothing to fetch until the tree is registered. */
+    bool reported_rects = false;
     app.on_poll = [&]() {
         /* The rect cues (specs/testing.md): report where the widgets stand, so
          * the acceptance clicks them by name and a font or metric change moves
@@ -623,6 +774,14 @@ int main(int argc, char *argv[])
          * hidden page keeps the rectangle it had when last shown (the layouts
          * skip what is not visible), so a cue is never a collapsed rectangle. */
         report_demo();
+        if (!reported_rects) {
+            /* The demo is a session command now, so it may be up only after
+             * login and the acceptance cannot rely on an earlier poll having
+             * reported its rectangles. This cue comes after the report, and
+             * the first demo gesture triggers on it (scripts/targets.py). */
+            reported_rects = true;
+            write("  demo: rects\n");
+        }
         if (file_requester->visible()) {
             file_requester->report_parts("demo.requester");
         }

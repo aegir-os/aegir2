@@ -64,7 +64,8 @@ private:
 };
 
 /* Open a file with a named class: the program `DataTypes:<class>` is started
- * under the caller's badge, serving the port this makes. */
+ * under the caller's badge, serving the port this makes. `class_name` is the
+ * class's file name (`ilbm.datatype`), found on the DataTypes: assign. */
 Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
                   std::string_view class_name, std::string_view path);
 

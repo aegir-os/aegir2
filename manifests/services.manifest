@@ -449,23 +449,13 @@ maps       = true
 memory_kib = 2048
 restart    = never
 
-# The window manager's demonstration client (specs/window-manager.md): a
-# decorated window with all three titlebar gadgets, so the runner can click
-# them. It maps its own arena slice, like the test bed, and its memory is
-# what the toolkit's heap and page tables come from. font.main is what its
-# label draws a Noto Sans face through: the toolkit's ServerFont is a client
-# of the service, and the demo is its first caller (specs/fonts.md). Its
-# Open... item is the toolkit's first VFS client, so the demo holds the
-# namespace and the requester lists the drawer it is given
-# (specs/trinket/file_requester.md).
-[demo]
-binary    = aegir-gui-demo
-authority = system
-account   = boot
-needs     = log.main, console.gui, bureau.menu, font.main, vfs.namespace
-maps      = true
-memory_kib = 4096
-restart   = never
+# The window manager's demonstration client (specs/window-manager.md) is no
+# longer a boot service: it is a command on Sys:C, started in the session by
+# `Run gui-demo` in Sys:S/Shell-Startup. It has to run as the caller to hold
+# the launch.session caller half and serve-launch a datatype class
+# (specs/datatypes.md), and a boot service runs with the system's authority.
+# Its needs are a command's own set (specs/launch.md): the toolkit's console,
+# the bureau's menu, the font service, and the session's namespace.
 
 # The first session (specs/auth.md). Nothing starts it at boot -- auth
 # starts one when a login succeeds, with the user's badge and account.
