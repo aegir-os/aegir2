@@ -50,6 +50,24 @@ signing_fingerprint = "E30674707856409FF1948010BE6C3AAC63AD8E3F"
 # The single top-level directory the tarball extracts, moved to `path`.
 extract_dir = "freetype-2.14.3"
 
+# libpng, the PNG decoder the png.datatype class serves (specs/datatypes.md).
+# Unlike musl and FreeType, libpng publishes no detached release signature:
+# SourceForge lists only the tarballs, and libpng.org links the same two. The
+# sha256 is therefore the whole pin for it -- an exception to the signed-tarball
+# rule, recorded in specs/third_party.md. The tarball is the canonical artifact
+# and download.sourceforge.net is the project's own release directory (it
+# redirects to a mirror). libpng is licensed under libpng-2.0, its own
+# permissive BSD-like license; Aegir takes it under that (THIRD-PARTY.md).
+[[source]]
+name = "libpng"
+version = "1.6.59"
+path = "projects/libpng"
+url = "https://download.sourceforge.net/libpng/libpng-1.6.59.tar.xz"
+sha256 = "d80dd2a38a37f803cb9b6ac7b14bd6e74ddc3b654780a8380bdf93523fdb4389"
+archive = "libpng-1.6.59.tar.xz"
+# The single top-level directory the tarball extracts, moved to `path`.
+extract_dir = "libpng-1.6.59"
+
 # The Unicode Character Database (UCD), fetched as individually pinned files
 # rather than a tarball. The table files generate the toolkit's UAX #9 tables
 # and its character widths at build time (scripts/gen_bidi_tables.py,

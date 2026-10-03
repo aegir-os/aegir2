@@ -132,26 +132,29 @@ def check_sources(failures: list[str]) -> None:
             failures.append(path)
             continue
         archive = pins.DOWNLOAD / source["archive"]
-        signature = pins.DOWNLOAD / source["signature_archive"]
         if not archive.is_file() or pins.sha256_file(archive) != source["sha256"]:
             pins.report(False, f"{source['name']} tarball is missing or changed", "run: make deps")
             failures.append(path)
             continue
-        if not signature.is_file() or pins.sha256_file(signature) != source["signature_sha256"]:
-            pins.report(False, f"{source['name']} signature is missing or changed", "run: make deps")
-            failures.append(path)
-            continue
-        try:
-            pins.verify_signature(
-                archive,
-                signature,
-                pins.ROOT / source["signing_key"],
-                source["signing_fingerprint"],
-            )
-        except pins.PinError as exc:
-            pins.report(False, f"{source['name']} signature does not verify", str(exc))
-            failures.append(path)
-            continue
+        # A source that publishes no release signature (libpng) is pinned by
+        # its sha256 alone; the exception is in specs/third_party.md.
+        if "signature_url" in source:
+            signature = pins.DOWNLOAD / source["signature_archive"]
+            if not signature.is_file() or pins.sha256_file(signature) != source["signature_sha256"]:
+                pins.report(False, f"{source['name']} signature is missing or changed", "run: make deps")
+                failures.append(path)
+                continue
+            try:
+                pins.verify_signature(
+                    archive,
+                    signature,
+                    pins.ROOT / source["signing_key"],
+                    source["signing_fingerprint"],
+                )
+            except pins.PinError as exc:
+                pins.report(False, f"{source['name']} signature does not verify", str(exc))
+                failures.append(path)
+                continue
         license_files = pins.license_files(target)
         pins.report(
             True,

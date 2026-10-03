@@ -31,12 +31,24 @@ def is_file_source(source: dict[str, Any]) -> bool:
     return "files" in source
 
 
+def has_signature(source: dict[str, Any]) -> bool:
+    """Whether a tarball source pins a detached release signature.
+
+    Most do (musl, FreeType). libpng publishes none -- its releases carry only
+    a checksum -- so the sha256 is the whole pin there, and the exception is
+    recorded in specs/third_party.md.
+    """
+    return "files" not in source and "signature_url" in source
+
+
 def verify_cached(source: dict[str, Any]) -> None:
-    """Verify the cached tarball and signature against their pins, offline."""
+    """Verify the cached tarball (and signature) against their pins, offline."""
     archive = pins.DOWNLOAD / source["archive"]
-    signature = pins.DOWNLOAD / source["signature_archive"]
     if not archive.is_file() or pins.sha256_file(archive) != source["sha256"]:
         raise pins.PinError(f"{source['name']} tarball is missing or changed; run: make deps")
+    if not has_signature(source):
+        return
+    signature = pins.DOWNLOAD / source["signature_archive"]
     if not signature.is_file() or pins.sha256_file(signature) != source["signature_sha256"]:
         raise pins.PinError(f"{source['name']} signature is missing or changed; run: make deps")
     pins.verify_signature(
@@ -72,12 +84,13 @@ def up_to_date(source: dict[str, Any]) -> bool:
 
 def fetch_tarball(source: dict[str, Any]) -> None:
     archive = pins.fetch(source["url"], source["sha256"], source["archive"])
-    signature = pins.fetch(
-        source["signature_url"], source["signature_sha256"], source["signature_archive"]
-    )
-    pins.verify_signature(
-        archive, signature, pins.ROOT / source["signing_key"], source["signing_fingerprint"]
-    )
+    if has_signature(source):
+        signature = pins.fetch(
+            source["signature_url"], source["signature_sha256"], source["signature_archive"]
+        )
+        pins.verify_signature(
+            archive, signature, pins.ROOT / source["signing_key"], source["signing_fingerprint"]
+        )
     if up_to_date(source):
         pins.report(True, f"{source['name']} source is up to date", source["path"])
         return

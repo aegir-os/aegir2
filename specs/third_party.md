@@ -53,6 +53,15 @@ and never reads the host's keyring, trust database or keyboxd (`gpg`'s
 `--keyring` is silently ignored when a host runs keyboxd, which is why `gpg` is
 not used). `gpgv` is therefore the host prerequisite (see `specs/build.md`).
 
+**One source publishes no signature.** libpng's releases carry only a checksum:
+SourceForge lists the two tarballs and nothing else, and libpng.org links the
+same. It is pinned by sha256 alone (`manifests/sources.toml`), the same strength
+as the UCD and CLDR file sources, and `scripts/fetch_sources.py` and
+`scripts/check_pins.py` treat a tarball with no `signature_url` accordingly. The
+sha256 is the weaker pin the project leaves us — it proves the bytes are the
+ones we first fetched and reviewed, not who signed them — so an upgrade is a
+deliberate re-pin, not a bump.
+
 ### Sources of truth
 
 | File | Role |
