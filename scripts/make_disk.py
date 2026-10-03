@@ -391,8 +391,19 @@ def aegir_tree(commands, datatypes) -> list:
             c_files.append(("file", "png.datatype", png_class))
         tree.append(("dir", "C", c_files))
     if datatypes:
-        tree.append(("dir", "DataTypes",
-                     [("file", name, data) for name, data in datatypes]))
+        dt_files = [("file", name, data) for name, data in datatypes]
+        # The system's `aaa.datatype` (specs/datatypes.md's same-name override):
+        # the user's `Home:DataTypes/aaa.datatype` is the png class and this is
+        # the ilbm class, so the name is shared and the user's must shadow the
+        # system's. The broker resolves `DataTypes:aaa.datatype` to the user's
+        # (png), which claims a PNG; a system-first union would reach this ilbm
+        # class instead, which declines one, and the cue would name `png.datatype`
+        # -- so the acceptance's `open DataTypes:aaa.datatype` step fails if the
+        # override does not hold.
+        ilbm_class = next((data for name, data in datatypes if name == "ilbm.datatype"), None)
+        if ilbm_class is not None:
+            dt_files.append(("file", "aaa.datatype", ilbm_class))
+        tree.append(("dir", "DataTypes", dt_files))
     tree.append(("dir", "Fonts", font_tree()))
     # The user's home (specs/auth.md's Homes, specs/session.md's User-Startup):
     # the row's `Sys:Homes/rroland`, made and owned at login. `S/User-Startup`

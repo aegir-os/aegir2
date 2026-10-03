@@ -223,8 +223,12 @@ viewer at once, and each lives in one process rather than in each caller.
   before the system's and a name the two share is the user's. The acceptance
   drops a class into `Home:DataTypes` and proves the union reaches it: the
   broker's walk finds the user's class and it claims a PNG under a name no
-  extension hints at. A same-name override -- a user class that **shadows** a
-  system one -- is the next arc's to prove destructively.
+  extension hints at. The acceptance also proves the same-name **override**:
+  `aaa.datatype` is a shared name -- the system ships it as the ilbm class, the
+  user's `Home:DataTypes` ships it as the png class -- and the union resolves the
+  name to the user's member, so the user's class claims a PNG the system's would
+  decline. A system-first union would reach the ilbm class and the cue would name
+  a different file, so the proof is load-bearing.
 - **Phase 2e -- the program-directory search.** Landed. The spawner records the
   directory a child's own binary was resolved from (`ProgramDir`, a bootstrap
   block entry, `specs/environment.md`) and `aegir::environment::program_dir()`

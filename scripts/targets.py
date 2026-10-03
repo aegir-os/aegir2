@@ -217,15 +217,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # before `DataTypes:`. The cue names that path -- proof the program
             # directory was searched first.
             QmpStep(r"datatypes: open C:png\.datatype"),
-            # The content-first walk (specs/datatypes.md): the demo opens a PNG
-            # named `.ilbm`, so the extension's hint is ilbm.datatype -- which
-            # declines -- and the broker walks the candidates until a class
-            # claims it by content. The decline cue proves the hint did not win;
-            # the class that claims is the user's, from Home:DataTypes (shipped
-            # as `aaa.datatype`, the png class under a name the sort reaches
-            # first), so the union's user member is proved too -- a session that
-            # searched only Sys:DataTypes would claim with png.datatype instead.
-            # The RGBA the class states proves the class, not the name, decided.
+            # The content-first walk and the same-name override
+            # (specs/datatypes.md): the demo opens a PNG named `.ilbm`, so the
+            # extension's hint is ilbm.datatype -- which declines -- and the
+            # broker walks the candidates until a class claims it by content.
+            # `aaa.datatype` is a **shared name**: the system ships it as the
+            # ilbm class and the user's `Home:DataTypes` ships it as the png
+            # class, so the union resolves the name to the user's member and the
+            # user's class claims the PNG. A system-first union would reach the
+            # ilbm class, which declines a PNG, and the cue would name
+            # `png.datatype` instead -- so this step is the override's proof. The
+            # RGBA the class states proves the class, not the name, decided.
             QmpStep(r"datatypes: DataTypes:ilbm\.datatype declines"),
             QmpStep(r"datatypes: open DataTypes:aaa\.datatype"),
             QmpStep(r"demo: mystery 64x48 format 2 palette 0"),
