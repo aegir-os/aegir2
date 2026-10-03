@@ -400,6 +400,42 @@ bool bind_name(uint64_t badge, char const *name, uint32_t name_length, char cons
     return bound.error == 0 && bound.count == 1 && in[0] == 1;
 }
 
+/* An alias that is a union of the user's directory and the system's
+ * (specs/libraries.md, specs/datatypes.md): the user's member **first**, so it
+ * overrides -- a class or library dropped into `Home:DataTypes`/`Home:Libs` is
+ * found before the system's, and a name it shares with the system's is the
+ * user's. The user's member is the create target, so a write through the alias
+ * lands in the user's own tree, where it belongs; the system's is appended and
+ * never a create target, because a user does not write the system's directory. */
+bool bind_union(uint64_t badge, char const *name, uint32_t name_length,
+                char const *home_path, uint32_t home_length, char const *sys_path,
+                uint32_t sys_length) noexcept
+{
+    uint64_t out[2 + aegir::nmspace::kNameMax / 8 + 1 + aegir::nmspace::kPathMax / 8 + 1];
+    uint64_t in[1];
+    out[0] = badge;
+    out[1] = aegir::nmspace::kBindCreate;
+    uint32_t words = 2;
+    words += aegir::nmspace::pack_string(out + words, name, name_length,
+                                         aegir::nmspace::kNameMax);
+    words += aegir::nmspace::pack_string(out + words, home_path, home_length,
+                                         aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const first =
+        g_nmspace.call_words(aegir::nmspace::kMethodBind, out, words, in, 1);
+    if (first.error != 0 || first.count != 1 || in[0] != 1) {
+        return false;
+    }
+    out[1] = aegir::nmspace::kBindAppend;
+    words = 2;
+    words += aegir::nmspace::pack_string(out + words, name, name_length,
+                                         aegir::nmspace::kNameMax);
+    words += aegir::nmspace::pack_string(out + words, sys_path, sys_length,
+                                         aegir::nmspace::kPathMax);
+    aegir::ipc::WordsReply const second =
+        g_nmspace.call_words(aegir::nmspace::kMethodBind, out, words, in, 1);
+    return second.error == 0 && second.count == 1 && in[0] == 1;
+}
+
 /* The home arc (specs/auth.md's Homes), run after the answer and before
  * the spawn: the row's home path is ensured -- one mkdir, the mmd shape --
  * and the session's badge is bound to Home:. The order is the point: the
@@ -456,6 +492,21 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
                 !make_owned_home_subdir(volume, rest, rest_length, "/S",
                                         sizeof("/S") - 1, user)) {
                 write("      auth: FAIL the script directory would not be made\n");
+            }
+            /* The home's class and resource-library directories
+             * (specs/datatypes.md, specs/libraries.md): the user's members of
+             * the `DataTypes:` and `LIBS:` unions, where a class or library the
+             * user drops in is found before the system's. The same ownership,
+             * so only the user may write them. */
+            if (made &&
+                !make_owned_home_subdir(volume, rest, rest_length, "/DataTypes",
+                                        sizeof("/DataTypes") - 1, user)) {
+                write("      auth: FAIL the class directory would not be made\n");
+            }
+            if (made &&
+                !make_owned_home_subdir(volume, rest, rest_length, "/Libs",
+                                        sizeof("/Libs") - 1, user)) {
+                write("      auth: FAIL the library directory would not be made\n");
             }
             seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_home_slot,
                               aegir::bootstrap::cnode_bits());
@@ -596,15 +647,15 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
     }
 
     /* DataTypes: and LIBS: (specs/datatypes.md, specs/libraries.md): the class
-     * and resource-library directories, single-member aliases of Sys:DataTypes
-     * and Sys:Libs for now -- a session's own Home: union arrives with the
-     * add-on slice. Read-only: no create flag, because a user does not write
-     * the system's class directory. */
-    if (!bind_name(badge, "DataTypes", 9, "Sys:DataTypes", 13)) {
-        write("      auth: FAIL the DataTypes: bind was refused\n");
+     * and resource-library unions. The user's `Home:DataTypes`/`Home:Libs` is
+     * first, so a class or library dropped in is found before the system's and
+     * a shared name is the user's -- the add-on property, and an override, the
+     * same shape `ENV:` has. The directories are made and owned above. */
+    if (!bind_union(badge, "DataTypes", 9, "Home:DataTypes", 14, "Sys:DataTypes", 13)) {
+        write("      auth: FAIL the DataTypes: union was refused\n");
     }
-    if (!bind_name(badge, "LIBS", 4, "Sys:Libs", 8)) {
-        write("      auth: FAIL the LIBS: bind was refused\n");
+    if (!bind_union(badge, "LIBS", 4, "Home:Libs", 9, "Sys:Libs", 8)) {
+        write("      auth: FAIL the LIBS: union was refused\n");
     }
 }
 

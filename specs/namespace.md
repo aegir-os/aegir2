@@ -23,7 +23,11 @@ member's entries and neither reconstructs the merge.
   `Name:rest` returns every member's entries for `rest`, merged, with a name an
   earlier member has winning — so a name in two members appears once. This is
   what makes `directory_iterator("ENV:")` list the whole union; the merge is
-  the VFS's, not a caller's.
+  the VFS's, not a caller's. A member that is itself a **view** (`Home:`, a base
+  path within its source) forwards the view's base composed with `rest`, exactly
+  as a single-member resolve does: the member stores its rest relative to the
+  view, and the VFS puts the base back before the member call. Without that a
+  `Home:` member would read and list the source volume's path, not the view's.
 - **A create goes to the designated member.** One member is the **create
   target** (Plan 9's `-c`, the Amiga's first-writable): `create`, `mkdir` and a
   write that makes a new name land there, and a create the target refuses is
@@ -34,9 +38,9 @@ member's entries and neither reconstructs the merge.
   rule a read uses; the member's own authority decides whether it may.
 - **Precedence is a binding choice.** Appending puts a member after the current
   list, prepending puts it before, and the default replaces the binding. So one
-  mechanism serves a search path (`LIBS:`, append), an override (`ENV:`, the
-  user's archive before the system's), and an overlay of a read-only volume
-  with a writable scratch.
+  mechanism serves an override (`ENV:`, `LIBS:`, `DataTypes:` -- the user's
+  member before the system's, so the user's wins), a search path (append), and
+  an overlay of a read-only volume with a writable scratch.
 - **The union is the VFS's to serve.** The members are volumes the namespace
   resolved; the VFS holds their capabilities and presents the merged directory.
   A client resolves the name once and gets the union's volume capability; the

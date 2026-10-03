@@ -277,19 +277,6 @@ AEGIR_BFS_TREE = [
         ("file", "Nested-Startup",
          b"; the newshell FROM startup (specs/launch.md).\naegir-echo 77\n"),
     ]),
-    # The user's home (specs/auth.md's Homes, specs/session.md's User-Startup):
-    # the row's `Sys:Homes/rroland`, made and owned at login, and this ships the
-    # session's additions so the hook has something to run. The session's own
-    # shell runs it once, before Shell-Startup; a nested shell does not.
-    ("dir", "Homes", [
-        ("dir", "rroland", [
-            ("dir", "S", [
-                ("file", "User-Startup",
-                 b"; the session's additions, run once (specs/session.md).\n"
-                 b"Echo UserStartup-OK\n"),
-            ]),
-        ]),
-    ]),
 ]
 
 # The BFS volume's tree: a known file and a directory with a nested file, so
@@ -398,6 +385,27 @@ def aegir_tree(commands, datatypes) -> list:
         tree.append(("dir", "DataTypes",
                      [("file", name, data) for name, data in datatypes]))
     tree.append(("dir", "Fonts", font_tree()))
+    # The user's home (specs/auth.md's Homes, specs/session.md's User-Startup):
+    # the row's `Sys:Homes/rroland`, made and owned at login. `S/User-Startup`
+    # is what the session's own shell runs once, before Shell-Startup. And
+    # `DataTypes/aaa.datatype` is the add-on proof (specs/datatypes.md): a class
+    # a user drops into `Home:DataTypes` is found through the union, so the
+    # broker's walk finds it and it claims -- a PNG under a name no extension
+    # hints at, caught by the user's class before the system's (this one is the
+    # png class under a name that sorts first, so the union's user member is the
+    # one the broker reaches).
+    png_class = next((data for name, data in datatypes if name == "png.datatype"), None)
+    home_children = [
+        ("dir", "S", [
+            ("file", "User-Startup",
+             b"; the session's additions, run once (specs/session.md).\n"
+             b"Echo UserStartup-OK\n"),
+        ]),
+    ]
+    if png_class is not None:
+        home_children.append(
+            ("dir", "DataTypes", [("file", "aaa.datatype", png_class)]))
+    tree.append(("dir", "Homes", [("dir", "rroland", home_children)]))
     return tree
 
 

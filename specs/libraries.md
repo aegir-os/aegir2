@@ -117,9 +117,12 @@ type GUID -- which is why `drivers.registry` and `filesystems.registry` exist
 
 ## `LIBS:` and the search path
 
-`LIBS:` is the Amiga's library assign: an alias bound to `Sys:Libs`, per badge,
-read as a `specs/namespace.md` union so a session may append its own `Home:Libs`
-without touching the system volume.
+`LIBS:` is the Amiga's library assign: a `specs/namespace.md` union whose first
+member is the user's `Home:Libs` and whose second is `Sys:Libs`. It is an
+**override**, the same shape `ENV:` has: a library a user drops into `Home:Libs`
+is found before the system's and a name the two share is the user's, so a
+session replaces a system library without touching the system volume. The
+user's member is the union's create target; the system's is read-only.
 
 `open_library` resolves a **bare** name by searching, in order:
 

@@ -1232,6 +1232,7 @@ uint32_t member_path_call(Member const *member, uint64_t badge, uint32_t method,
                           uint32_t out_capacity) noexcept
 {
     static char member_path[aegir::nmspace::kPathMax];
+    static char composed[aegir::nmspace::kPathMax];
     static uint64_t payload[aegir::ipc::kMaxWords];
 
     uint32_t member_path_length = 0;
@@ -1239,8 +1240,20 @@ uint32_t member_path_call(Member const *member, uint64_t badge, uint32_t method,
                       &member_path_length)) {
         return 0;
     }
+    /* The member's own view base (specs/ownership.md): a member that pins a view
+     * stored its rest relative to the view -- answer_bind stripped the base the
+     * resolve composed -- and the member's port is the view's *source*, so the
+     * base has to be put back before the call, the same compose_view a
+     * single-member resolve does. Without it a union member that is a `Home:`
+     * view lists the source volume's path, not the view's: `DataTypes:` would
+     * never see the user's own `Home:DataTypes`. */
+    uint32_t composed_length = 0;
+    if (!compose_view(member->volume, member_path, member_path_length, composed,
+                      static_cast<uint32_t>(sizeof(composed)), &composed_length)) {
+        return 0;
+    }
     uint32_t const member_words = aegir::nmspace::pack_string(
-        payload, member_path, member_path_length, aegir::nmspace::kPathMax);
+        payload, composed, composed_length, aegir::nmspace::kPathMax);
     if (member_words == 0 || member_words + extra_count > aegir::ipc::kMaxWords) {
         return 0;
     }

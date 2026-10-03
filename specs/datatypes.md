@@ -106,8 +106,10 @@ and method numbers make it additive (`specs/services.md`).
 
 - **A class is named for what it reads**, lowercase, one file per format:
   `ilbm.datatype`, `png.datatype`, `jpeg.datatype` (`specs/dos.md`'s naming).
-- **`DataTypes:` is an alias to `Sys:DataTypes`**, per badge, read as a union
-  with the caller's `Home:DataTypes` appended (`specs/namespace.md`). The class
+- **`DataTypes:` is a union** (`specs/namespace.md`), the caller's
+  `Home:DataTypes` **first** and `Sys:DataTypes` under it, so a class a user
+  drops in overrides the system's and a name the two share is the user's -- an
+  override, the same shape `ENV:` and `LIBS:` have. The class
   search is the caller's **program directory** first, then `DataTypes:`, the same
   order and the same reason as `LIBS:` (`specs/libraries.md`): a class shipped
   beside a program's binary is found whatever the current directory is. A class
@@ -214,10 +216,16 @@ viewer at once, and each lives in one process rather than in each caller.
   claimed the file serves the caller's port; that one lives for the session. A
   file no class claims is answered `no class` and logged. The acceptance proves
   it with a PNG named `.ilbm`: `ilbm.datatype` declines, `png.datatype` claims it
-  by content, and the RGBA the png class states is what the demo shows. What is
-  still not built is the program-directory half of the search
-  (`specs/libraries.md`) and the `Home:DataTypes` union with `DataTypes:`
-  (`specs/namespace.md`, waiting on `specs/ownership.md`).
+  by content, and the RGBA the png class states is what the demo shows.
+- **Phase 2d -- the `Home:DataTypes` union.** Landed. `DataTypes:` is now the
+  user's `Home:DataTypes` first and `Sys:DataTypes` under it (`LIBS:` likewise),
+  made and owned at login, so a class a user drops into `Home:DataTypes` is found
+  before the system's and a name the two share is the user's. The acceptance
+  drops a class into `Home:DataTypes` and proves the union reaches it: the
+  broker's walk finds the user's class and it claims a PNG under a name no
+  extension hints at. What is still not built is the program-directory half of
+  the search (`specs/libraries.md`), and a same-name override -- a user class
+  that **shadows** a system one -- which the next arc can prove destructively.
 - **Phase 3 -- JPEG**, libjpeg-turbo.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property
