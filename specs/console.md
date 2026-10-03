@@ -104,7 +104,9 @@ method console does not know is answered by saying nothing.
   draws over it (`specs/workbench.md`).
 - `screen_layer`. In: four words, a rectangle. The backdrop's pixels inside it
   composite above every window, so an open menu that drops below the bar is
-  never covered by a window. An all-zero rectangle clears it. The client
+  never covered by a window. It takes the pointer too: the hit-test inside the
+  rectangle answers the layer's owner, so a click into the menu is the menu's,
+  not a window that overlaps it. An all-zero rectangle clears it. The client
   damages the region itself: a repaint inside the call would flush from the
   same thread that drains the input queues, and a burst of typing behind it is
   dropped.
@@ -164,7 +166,8 @@ The vocabulary is console's (`libs/aegir-console`), the kinds are:
 
 Console owns the pointer: it tracks the position (the tablet's absolute
 events are the natural feed; the mouse's relative ones integrate to the
-same point), hit-tests the topmost window, and draws the cursor itself,
+same point), hit-tests the topmost window -- and the screen layer above them
+all, when a menu is open (above) -- and draws the cursor itself,
 composited over the output — software for v1; virtio-gpu's hardware cursor
 commands are noted, not taken. The cursor is a 16×16 arrow: white, with a
 black border one pixel around it, so a white pointer stays visible on a
