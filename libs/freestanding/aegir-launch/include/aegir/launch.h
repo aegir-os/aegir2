@@ -41,6 +41,11 @@ constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
  *  runs: the program decides, by attaching. */
 constexpr uint64_t kKindCommand = 1;   /* shares the launcher's console stream */
 constexpr uint64_t kKindLaunching = 3; /* also launches programs */
+/** A class (specs/datatypes.md): the request's one capability is a serve port
+ *  the caller made, installed under `datatypes.class`; the program serves it
+ *  rather than writing a stream. It runs under the caller's badge, like a
+ *  command, so a user-supplied class has only the caller's authority. */
+constexpr uint64_t kKindServe = 4;
 
 /** Flags a spawn request carries. Bit 0 starts the command without waiting,
  *  the shell's `Run`: the caller draws its next prompt while it runs, and the

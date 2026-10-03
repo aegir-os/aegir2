@@ -14,6 +14,6 @@ add_library(aegir-ilbm STATIC src/ilbm.cc)
 target_include_directories(aegir-ilbm PUBLIC include)
 
 target_link_libraries(aegir-ilbm PUBLIC
-    aegir-datatypes
     aegir-cxx-policy-hosted
+    aegir-datatypes
 )

@@ -101,6 +101,14 @@ struct Child {
  *  rather than being classified before it runs (specs/launch.md). */
 uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
 
+/** A class (specs/datatypes.md): the caller's serve port under
+ *  `datatypes.class`, its runtime, the session's namespace by copy, its own
+ *  memory copy, and the clock and timer when the launcher has them. The class
+ *  reads the file through the namespace and serves its frame on the port; it is
+ *  given no window and no console stream, so its fd 1/2 stay the debug serial.
+ *  `kit.stream` is the caller's serve cap and `child.stream_copy` must be true. */
+uint32_t serve_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity);
+
 /** An output view (specs/launch.md): the launcher's command grant, with the
  *  con.stream cap as a *copy* -- the view owns and serves the endpoint a
  *  stream-less caller's command writes to, so it is the receiver, not a caller

@@ -136,11 +136,17 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
     bool stream_copy = false;
     if (cap_arrived) {
         if (!service.hold_received_stream()) {
-            write("FAIL the caller's stream would not move");
+            write("FAIL the caller's capability would not move");
             return;
         }
         stream = service.received_stream();
         stream_copy = true;
+    } else if (kind == aegir::launch::kKindServe) {
+        /* A class serves the port its opener made; with none there is nothing
+         * to serve on, and the launcher will not invent one
+         * (specs/datatypes.md). */
+        write("FAIL a class request carried no port");
+        return;
     } else {
         aegir::spawn::ServiceKit::Started view{};
         if (!service.start_output_view(&view)) {
@@ -148,6 +154,28 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
             return;
         }
         stream = service.output_stream();
+    }
+
+    if (kind == aegir::launch::kKindServe) {
+        /* A class (specs/datatypes.md): the request's capability is installed as
+         * `datatypes.class`, and the program serves it under the caller's
+         * badge, like a command. */
+        aegir::spawn::ServiceKit::Command command;
+        command.words = &argv_words;
+        command.cwd = &cwd;
+        command.environment = &environment;
+        command.path = &path;
+        command.serve = true;
+        command.stream = stream;
+        command.stream_copy = stream_copy;
+        aegir::spawn::ServiceKit::Started started{};
+        if (!service.start_command(command, &started)) {
+            return;
+        }
+        reply[0] = 1;
+        reply[1] = started.badge;
+        *reply_count = 2;
+        return;
     }
 
     if (kind == aegir::launch::kKindLaunching) {

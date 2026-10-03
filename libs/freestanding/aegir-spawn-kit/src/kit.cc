@@ -10,6 +10,7 @@
 
 #include <aegir/spawn/kit.h>
 #include <aegir/bootstrap.h>
+#include <aegir/datatypes.h>
 
 namespace aegir::spawn {
 
@@ -104,6 +105,40 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
         (void)put(out, capacity, n++, kFontMainName, kFontMainNameLength, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
+    if (kit.clock != 0) {
+        (void)put(out, capacity, n++, aegir::clock::kPortName,
+                  aegir::clock::kPortNameLength, kit.clock, seL4_CapRights_new(1, 0, 0, 1),
+                  0, 0, false, false);
+    }
+    if (kit.timer != 0) {
+        (void)put(out, capacity, n++, aegir::timer::kPortName,
+                  aegir::timer::kPortNameLength, kit.timer, seL4_CapRights_new(1, 0, 0, 1),
+                  0, 0, false, false);
+    }
+    return n;
+}
+
+uint32_t serve_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
+{
+    uint32_t n = 0;
+    /* The caller's class port, under its own name: the class serves it, so it
+     * is the receiver, and the caller keeps the other half. It is not the
+     * con.stream, so the class's fd 1/2 stay the debug serial. */
+    (void)put(out, capacity, n++, aegir::datatypes::kClassPortName,
+              aegir::datatypes::kClassPortNameLength, kit.stream,
+              seL4_CapRights_new(1, 1, 0, 1), child.stream_badge, 0, false,
+              child.stream_copy);
+    (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
+              child.runtime_bits, false, false);
+    /* The session's namespace, by copy: the class reads the caller's file
+     * through it, on the caller's badge (specs/datatypes.md). */
+    (void)put(out, capacity, n++, aegir::nmspace::kPortName,
+              aegir::nmspace::kPortNameLength, kit.nmspace,
+              seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
+    /* Its own badged memory copy, by copy: the badge is already on it. */
+    (void)put(out, capacity, n++, aegir::memory::kPortName,
+              aegir::memory::kPortNameLength, child.mem, seL4_CapRights_new(1, 1, 0, 1),
+              0, 0, false, true);
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
                   aegir::clock::kPortNameLength, kit.clock, seL4_CapRights_new(1, 0, 0, 1),

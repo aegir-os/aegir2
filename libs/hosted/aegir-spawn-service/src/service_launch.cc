@@ -327,9 +327,14 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     seL4_CPtr const saved_stream = kit_.stream;
     kit_.stream = command.stream;
     aegir::spawn::PortGrant ports[10];
-    uint32_t const port_count = command.output_view
-                                    ? aegir::spawn::output_ports(kit_, child, ports, 10)
-                                    : aegir::spawn::command_ports(kit_, child, ports, 10);
+    uint32_t port_count = 0;
+    if (command.output_view) {
+        port_count = aegir::spawn::output_ports(kit_, child, ports, 10);
+    } else if (command.serve) {
+        port_count = aegir::spawn::serve_ports(kit_, child, ports, 10);
+    } else {
+        port_count = aegir::spawn::command_ports(kit_, child, ports, 10);
+    }
     kit_.stream = saved_stream;
 
     aegir::spawn::Request request{};

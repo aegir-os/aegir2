@@ -26,12 +26,15 @@ must start a component the caller did not name at build time.
   caller's search path.
 - **A class is started under the caller's badge, not the system's.** The
   session's launcher (`specs/launch.md`) starts it and the caller talks to the
-  port the launch produced. Identification -- which class reads this file --
-  runs candidate classes, so it too happens under the caller's authority; there
-  is no system `datatypes` service that reads the user's file on the user's
-  behalf. The first cut is the calling program (a launching program such as the
-  Bureau or the demo) starting the class through the launcher it already holds;
-  a per-session broker any of the session's processes may ask is the
+  port the launch produced. The mechanism is the launch's **serve kind**: the
+  caller makes the class endpoint, keeps its caller half and hands the owner
+  half as the request's one capability, so the class runs as the caller and only
+  the caller reaches it. Identification -- which class reads this file -- runs
+  candidate classes, so it too happens under the caller's authority; there is no
+  system `datatypes` service that reads the user's file on the user's behalf.
+  The first cut is the calling program (a launching program such as the Bureau or
+  the demo) starting the class through the launcher it already holds; a
+  per-session broker any of the session's processes may ask is the
   generalization.
 - **The class decodes once and serves the frame a page at a time.** A message
   carries one capability (`specs/launch.md`, `specs/signal.md`), so an image

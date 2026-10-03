@@ -93,6 +93,13 @@ exactly what the launcher should not do.
   kit: an untyped, an ASID pool, and the unbadged ports it will hand its own
   children. A Terminal and a Workbench are this kind. A launching child is a
   peer of its launcher, not a command.
+- **A class** (kind 4, `kKindServe`) is a program that *serves* a port instead
+  of writing a stream (`specs/datatypes.md`). The request's one capability is a
+  port the caller made; it is installed under `datatypes.class`, the caller keeps
+  the other half and calls it, and the program runs under the caller's badge
+  exactly as a command does. This is the primitive a *user* resource library
+  needs: the class runs as whoever asked, and only the asker can reach its port
+  (`specs/libraries.md`).
 
 A launching child does not inherit the console stream: it has its own window
 and its own stream. A launching child's `mem.main` is the session's, so its own

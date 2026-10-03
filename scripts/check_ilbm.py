@@ -26,6 +26,7 @@ import pins
 
 ILBM = pins.ROOT / "libs" / "hosted" / "aegir-ilbm"
 DATATYPES = pins.ROOT / "libs" / "hosted" / "aegir-datatypes"
+PROTO = pins.ROOT / "libs" / "freestanding" / "aegir-datatypes"
 DRIVER = pins.ROOT / "scripts" / "ilbm_conformance.cc"
 
 
@@ -44,6 +45,8 @@ def main() -> int:
             "-Wall",
             "-Wextra",
             "-Werror",
+            "-I",
+            str(PROTO / "include"),
             "-I",
             str(DATATYPES / "include"),
             "-I",

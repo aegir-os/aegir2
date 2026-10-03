@@ -176,6 +176,11 @@ public:
          * endpoint as an owner copy, plus the launcher's `launch.session` half
          * so it can release the commands whose exits it reports. */
         bool output_view = false;
+        /* Start a class (specs/datatypes.md): the request's `stream` is a serve
+         * port the caller made, installed as `datatypes.class`, and the child
+         * serves it instead of writing a stream. It runs under the caller's
+         * badge, like a command. */
+        bool serve = false;
     };
 
     /* One pipeline stage on the wire: its command line and its own
