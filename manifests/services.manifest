@@ -462,7 +462,10 @@ restart    = never
 # Input it has none of: the devices are the console's (specs/console.md),
 # and a session's events arrive as windows' events when the bureau lands.
 # The entry is what declares a session's needs, which is what drives the
-# delegatable copies its spawner is given.
+# delegatable copies its spawner is given. **This moves to the session manifest
+# (specs/session.md), but not until auth makes the session's ports itself** --
+# director still needs these entries for the boot port graph and the
+# `spawn:bureau.menu` copy, and `[auth] spawns = session.*` must match.
 [session.smoke]
 binary    = aegir-session-smoke
 authority = user

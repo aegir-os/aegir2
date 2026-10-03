@@ -168,6 +168,36 @@ AEGIR_BFS_TREE = [
         # the bureau before registering its menus, so starting it here -- beside
         # the terminal, synchronously with the interactive loop -- is safe.
         ("file", "Shell-Startup", b"alias l list\nRun gui-demo\n"),
+        # The session's services, as data (specs/session.md): auth reads the
+        # user's Home:S/session.manifest first, then this. `authority` is always
+        # user -- a session service runs as the session's user class, never the
+        # system's, and a `system` authority here is a parse error. The bureau
+        # and a terminal are what a session is today; the terminal is
+        # convenience while there is no desktop, and this file is where that
+        # stops being code in auth.
+        ("file", "session.manifest",
+         b"# Aegir's session manifest. See specs/session.md for the format and\n"
+         b"# the rules auth validates against. authority is always `user`.\n"
+         b"format = 1\n"
+         b"\n"
+         b"[bureau]\n"
+         b"binary     = aegir-bureau\n"
+         b"authority  = user\n"
+         b"account    = user\n"
+         b"owns       = bureau.menu\n"
+         b"needs      = log.main, vfs.namespace, console.gui, font.main, launch.session\n"
+         b"maps       = true\n"
+         b"memory_kib = 1024\n"
+         b"\n"
+         b"[terminal]\n"
+         b"binary      = aegir-terminal\n"
+         b"authority   = user\n"
+         b"account     = user\n"
+         b"needs       = log.main, vfs.namespace, console.gui, clock.main, timer.main, mem.main, font.main, launch.session\n"
+         b"maps        = true\n"
+         b"memory_kib  = 4096\n"
+         b"cspace_bits = 13\n"
+         b"delegate_mib = 4\n"),
         # Resource limits, opt-in (specs/limits.md): the shipped file is
         # comments plus the commented-out default example, so out of the box
         # it restricts nothing. An operator edits it without reimaging.
