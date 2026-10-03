@@ -176,12 +176,15 @@ viewer at once, and each lives in one process rather than in each caller.
 
 ## Phases and acceptance
 
-- **Phase 1 -- one class, the client, and the launch.** `ilbm.datatype` and the
-  `aegir-datatypes` client, the class started under the caller's badge through
-  the launcher the calling program holds, proved by the GUI demo opening an IFF
-  ILBM from `Sys:` and showing the decoded frame. The pixel checks read the
-  frame the client assembled, so a decode at the wrong stride or depth is a
-  smudge rather than a passing call.
+- **Phase 1 -- one class, the client, and the launch.** Landed. `ilbm.datatype`
+  (a class service) and the `aegir-datatypes` client, the class started under the
+  caller's badge through the `launch.session` caller half a command holds
+  (`spawn_serve`, the `kKindServe` kind). Proved by the GUI demo (now a session
+  command, started by `Run gui-demo` in `Sys:S/Shell-Startup`) opening
+  `Sys:TestImage.ilbm` through the class and showing the decoded frame on its
+  Image tab. The acceptance pins a pixel in each half of the frame -- red left,
+  green right -- so a decode at the wrong stride or depth is a smudge rather than
+  a passing call.
 - **Phase 2 -- PNG**, through the vendored libpng; a second class proves the
   class list and the identification.
 - **Phase 3 -- JPEG**, libjpeg-turbo.
