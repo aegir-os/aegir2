@@ -227,17 +227,29 @@ add_custom_target(aegir-sys-c ALL DEPENDS ${aegir_command_images})
 if(AEGIR_HOSTED_CXX)
   set(aegir_datatypes_dir "${CMAKE_BINARY_DIR}/sys-datatypes")
   set(aegir_datatype_images)
-  set(datatype_image "${aegir_datatypes_dir}/ilbm.datatype")
-  add_custom_command(
-    OUTPUT "${datatype_image}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${aegir_datatypes_dir}"
-    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:aegir-ilbm-datatype>"
-            "${datatype_image}"
-    COMMAND "${CMAKE_STRIP}" "${datatype_image}"
-    DEPENDS aegir-ilbm-datatype
-    VERBATIM
+  # The classes on Sys:DataTypes, `target:name` like aegir_commands above: the
+  # target builds it, the name is the class the search resolves -- the file name
+  # `ilbm.datatype`, `png.datatype` (specs/datatypes.md).
+  set(aegir_datatype_classes
+    aegir-ilbm-datatype:ilbm.datatype
+    aegir-png-datatype:png.datatype
   )
-  list(APPEND aegir_datatype_images "${datatype_image}")
+  foreach(pair IN LISTS aegir_datatype_classes)
+    string(REPLACE ":" ";" parts "${pair}")
+    list(GET parts 0 class_target)
+    list(GET parts 1 class_name)
+    set(datatype_image "${aegir_datatypes_dir}/${class_name}")
+    add_custom_command(
+      OUTPUT "${datatype_image}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${aegir_datatypes_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:${class_target}>"
+              "${datatype_image}"
+      COMMAND "${CMAKE_STRIP}" "${datatype_image}"
+      DEPENDS ${class_target}
+      VERBATIM
+    )
+    list(APPEND aegir_datatype_images "${datatype_image}")
+  endforeach()
   add_custom_target(aegir-sys-datatypes ALL DEPENDS ${aegir_datatype_images})
 endif()
 

@@ -40,6 +40,9 @@ std::string class_from_extension(std::string_view path)
     if (ext == "ilbm" || ext == "iff" || ext == "lbm") {
         return "ilbm.datatype";
     }
+    if (ext == "png") {
+        return "png.datatype";
+    }
     return {};
 }
 
