@@ -262,6 +262,10 @@ int main(int argc, char *argv[])
     };
 
     desktop->on_menu_opened = [&](int menu) {
+        /* The open menu's items first, so the runner has them in hand before
+         * the cue line that clicks one (specs/testing.md; a step's input is
+         * sent the moment its trigger arrives). */
+        desktop_ptr->report_parts("bureau");
         Client* const active = registry.active();
         if (active == nullptr) {
             write("  bureau: menu\n");
@@ -408,6 +412,11 @@ int main(int argc, char *argv[])
 
     window.set_content(std::move(desktop));
     window.show();
+
+    /* The screen bar's titles (and an open menu's items) as rect cues, so the
+     * acceptance clicks them by name (specs/testing.md). The bar's titles are
+     * measured from the font, so their width moves with it. */
+    app.on_poll = [desktop_ptr]() { desktop_ptr->report_parts("bureau"); };
 
     app.on_started = [&]() {
         /* Reserve the screen title bar (specs/workbench.md): the console

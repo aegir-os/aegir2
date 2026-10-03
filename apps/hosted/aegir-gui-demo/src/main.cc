@@ -461,6 +461,28 @@ int main(int argc, char *argv[])
     };
     sync_list();
 
+    /* The demo's rect cues, in one place, because more than one path prints a
+     * cue the next step answers: `on_moved_resized` prints "demo: zoomed" and
+     * "demo: restored" from inside the geometry change, before `on_poll` would
+     * report the new layout, so the report must come first or the runner clicks
+     * the old rectangle (specs/testing.md: what a cue opens must already be
+     * reported). The window lays its content out in `paint()` before it calls
+     * `on_moved_resized`, so the content rectangles are current here. */
+    auto report_demo = [&]() {
+        window.report_rects("demo");
+        tabs_ptr->report_parts("demo.tabs");
+        report_rect("demo.list", *list_ptr);
+        list_ptr->report_parts("demo.list");
+        list_scrollbar_ptr->report_parts("demo.list_scrollbar");
+        hbar_ptr->report_parts("demo.hbar");
+        scrollbar_ptr->report_parts("demo.scrollbar");
+        slider_ptr->report_parts("demo.slider");
+        cycle_ptr->report_parts("demo.cycle");
+        report_rect("demo.popup_button", *popup_ptr);
+        radios_ptr->report_parts("demo.radios");
+        report_rect("demo.check", *check_ptr);
+    };
+
     /* Each act prints its cue: the geometry a zoom or resize leaves, and the
      * close. The runner paces its dumps on them (scripts/targets.py). */
     /* Only the two landmarks print: a debug write is a syscall a character,
@@ -472,10 +494,13 @@ int main(int argc, char *argv[])
      * before the bureau exists (specs/workbench.md). */
     int last_width = kWindowWidth;
     int last_height = window_height;
-    window.on_moved_resized = [app_ptr, &last_width, &last_height, window_height](Rect r) {
+    window.on_moved_resized = [&](Rect r) {
         if (r.width == last_width && r.height == last_height) return;
         last_width = r.width;
         last_height = r.height;
+        /* The cue the runner answers is this one, so the rectangles it clicks
+         * come first (report_demo). */
+        report_demo();
         int const screen_width = static_cast<int>(app_ptr->display_info().width_px);
         if (screen_width > 0 && r.width >= screen_width) {
             write("  demo: zoomed\n");
@@ -559,7 +584,11 @@ int main(int argc, char *argv[])
      * paces a dump on each, so the pattern's filter and the Volumes list are
      * read back from a screendump. The pattern cue carries the wildcard and the
      * rows it kept. */
-    file_requester->on_filter = [](std::u32string const& pattern, int count) {
+    file_requester->on_filter = [&file_requester](std::u32string const& pattern, int count) {
+        /* The requester's rectangles first: this cue is printed from inside a
+         * dispatch, before on_poll would report them, and the step it opens
+         * clicks the Volumes button (specs/testing.md). */
+        file_requester->report_parts("demo.requester");
         std::string line("  demo: filtered ");
         line += utf32_to_utf8(pattern);
         line += " ";
@@ -568,6 +597,7 @@ int main(int argc, char *argv[])
         write(line.c_str());
     };
     file_requester->on_action = [&file_requester](FileRequester::Action action) {
+        file_requester->report_parts("demo.requester");
         if (action == FileRequester::OK) {
             write("  demo: opened ");
             write(utf32_to_utf8(file_requester->chosen()).c_str());
@@ -592,18 +622,10 @@ int main(int argc, char *argv[])
          * rectangle must be in hand before the cue that clicks it. A widget on a
          * hidden page keeps the rectangle it had when last shown (the layouts
          * skip what is not visible), so a cue is never a collapsed rectangle. */
-        window.report_rects("demo");
-        tabs_ptr->report_parts("demo.tabs");
-        report_rect("demo.list", *list_ptr);
-        list_ptr->report_parts("demo.list");
-        list_scrollbar_ptr->report_parts("demo.list_scrollbar");
-        hbar_ptr->report_parts("demo.hbar");
-        scrollbar_ptr->report_parts("demo.scrollbar");
-        slider_ptr->report_parts("demo.slider");
-        cycle_ptr->report_parts("demo.cycle");
-        report_rect("demo.popup_button", *popup_ptr);
-        radios_ptr->report_parts("demo.radios");
-        report_rect("demo.check", *check_ptr);
+        report_demo();
+        if (file_requester->visible()) {
+            file_requester->report_parts("demo.requester");
+        }
         if (scrolled) {
             scrolled = false;
             write("  demo: scrolled\n");
@@ -694,6 +716,10 @@ int main(int argc, char *argv[])
              * is written after the show so the dump sees the window rather than
              * the frame before it. */
             file_requester->show();
+            /* Its rectangles before the cue: the next step types into the
+             * Pattern box, and the step after that clicks a button
+             * (specs/testing.md). */
+            file_requester->report_parts("demo.requester");
             write("  demo: requester up\n");
         }
     };

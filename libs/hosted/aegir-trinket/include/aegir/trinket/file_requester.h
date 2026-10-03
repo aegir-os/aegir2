@@ -74,6 +74,13 @@ public:
     Window& window() { return requester_.window(); }
     Application& application() { return app_; }
 
+    /** Report the requester's widgets as rect cues under `prefix`
+     *  (specs/testing.md): each bottom button (`<prefix>.button.<id>`) and the
+     *  body's boxes, toggle and list, so the acceptance clicks them by name
+     *  rather than at a coordinate the text-measured layout decides. A null
+     *  widget is skipped. */
+    void report_parts(char const *prefix) const;
+
 private:
     /** One listed entry: the name and what the volume's `list` answered. */
     struct Entry {

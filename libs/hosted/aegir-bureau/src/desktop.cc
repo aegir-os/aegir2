@@ -6,6 +6,7 @@
 
 #include <aegir/trinket/application.h>
 #include <aegir/trinket/canvas.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/font.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/unicode.h>
@@ -161,6 +162,21 @@ std::vector<Desktop::Slot> Desktop::item_slots(int menu) const {
         y += height;
     }
     return slots;
+}
+
+void Desktop::report_parts(char const *prefix) const
+{
+    std::vector<Slot> const titles = title_slots();
+    for (size_t i = 0; i < titles.size(); ++i) {
+        report_rect_indexed(prefix, "title", static_cast<int>(i) + 1,
+                            screen_rect_of(*this, titles[i].rect));
+    }
+    if (open_menu_ < 0) return;
+    std::vector<Slot> const items = item_slots(open_menu_);
+    for (size_t i = 0; i < items.size(); ++i) {
+        report_rect_indexed(prefix, "item", static_cast<int>(i) + 1,
+                            screen_rect_of(*this, items[i].rect));
+    }
 }
 
 void Desktop::draw_bar(Canvas& canvas) {

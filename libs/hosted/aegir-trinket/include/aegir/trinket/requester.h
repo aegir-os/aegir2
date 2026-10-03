@@ -82,6 +82,11 @@ public:
      *  before the window hides, so the caller can still read the content. */
     std::function<void(uint32_t id)> on_action;
 
+    /** Report each bottom button's screen rectangle as a rect cue,
+     *  `<prefix>.button.<id>` (specs/testing.md), so the acceptance clicks a
+     *  button by id wherever the layout put it. */
+    void report_parts(char const *prefix) const;
+
 private:
     void build(std::u32string title);
     void activate(uint32_t id);

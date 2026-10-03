@@ -16,29 +16,14 @@ namespace aegir::trinket {
 /* Report a rectangle as a rect cue: `  rect <name> <x> <y> <width> <height>`,
  * in screen pixels. The acceptance matches the line and clicks the named
  * rectangle instead of a pinned pixel (specs/testing.md's rect cues), so a
- * font or metric change moves the click with the widget. The line is composed
- * from several writes, which is safe because the runtime buffers a line until
- * its newline (aegir-runtime's console_put). The name holds no whitespace;
- * a dotted name namespaces one app's cues from another's. */
-inline void report_rect_prefix(char const *prefix, char const *field,
-                               Rect const &r)
-{
-    aegir::debug_write("  rect ");
-    if (prefix != nullptr && *prefix != '\0') {
-        aegir::debug_write(prefix);
-        aegir::debug_write(".");
-    }
-    aegir::debug_write(field);
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.x));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.y));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.width));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.height));
-    aegir::debug_write("\n");
-}
+ * font or metric change moves the click with the widget. The name holds no
+ * whitespace; a dotted name namespaces one app's cues from another's.
+ *
+ * A cue is written only when it differs from the last one under that name: a
+ * report runs on every poll, and a widget that did not move must not rewrite
+ * its line each time -- each write is a synchronous logger call, and forty of
+ * them a poll made the guest crawl (diagnostics.cc's registry). */
+void report_rect_prefix(char const *prefix, char const *field, Rect const &r);
 
 /* A rectangle with a whole name. */
 inline void report_rect(char const *name, Rect const &r)
@@ -66,26 +51,9 @@ inline Rect screen_rect_of(Widget const &widget, Rect const &part)
 
 /* A numbered part of a widget: `  rect <prefix>.<part>.<index> <x> <y> <w> <h>`.
  * A tab strip and a radio group report one cue per member this way
- * (specs/testing.md's rect cues). */
-inline void report_rect_indexed(char const *prefix, char const *part,
-                                int index, Rect const &r)
-{
-    aegir::debug_write("  rect ");
-    aegir::debug_write(prefix);
-    aegir::debug_write(".");
-    aegir::debug_write(part);
-    aegir::debug_write(".");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(index));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.x));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.y));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.width));
-    aegir::debug_write(" ");
-    aegir::debug_write_unsigned(static_cast<uint64_t>(r.height));
-    aegir::debug_write("\n");
-}
+ * (specs/testing.md's rect cues). Deduplicated like report_rect_prefix. */
+void report_rect_indexed(char const *prefix, char const *part, int index,
+                         Rect const &r);
 
 }  // namespace aegir::trinket
 

@@ -999,12 +999,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # it was.
             QmpStep(
                 r"bureau: the screen is yours",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 28773}},
-                    {"type": "abs", "data": {"axis": "y", "value": 17938}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.zoom", 0.5, 0.5),),
             ),
             QmpStep(
                 r"demo: zoomed",
@@ -1015,12 +1010,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1000, 400, 191, 191, 191),
                     ("gpu0", 1000, 795, 102, 136, 187),
                 ),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 31845}},
-                    {"type": "abs", "data": {"axis": "y", "value": 327}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.zoom", 0.5, 0.5),),
             ),
             QmpStep(
                 r"demo: restored",
@@ -1035,17 +1025,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1000, 600, 191, 191, 191),
                 ),
                 dark=(("gpu0", 906, 507, 60, 100, 120),),
-                events=(
+                clicks=(
                     # The list's third row (specs/trinket/listview.md) and the
                     # horizontal bar's increment: each is a later step's trigger.
-                    {"type": "abs", "data": {"axis": "x", "value": 24319}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21053}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 29311}},
-                    {"type": "abs", "data": {"axis": "y", "value": 30064}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    ("demo.list.row.3", 0.5, 0.5),
+                    ("demo.hbar.increment", 0.5, 0.5),
                 ),
             ),
             # The list's click took: its third row is chosen and the first is
@@ -1059,14 +1043,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 950, 514, 102, 136, 187),
                     ("gpu0", 950, 482, 191, 191, 191),
                 ),
-                events=(
+                clicks=(
                     # Then its scrollbar's foot arrow (specs/trinket/scrollbar.md):
                     # a scroll moves the rows up one, and the cue that prints is a
                     # later step's trigger.
-                    {"type": "abs", "data": {"axis": "x", "value": 29311}},
-                    {"type": "abs", "data": {"axis": "y", "value": 28753}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    ("demo.list_scrollbar.increment", 0.5, 0.5),
                 ),
             ),
             # The horizontal bar's increment took: its left and right arrows are
@@ -1091,12 +1072,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 950, 498, 102, 136, 187),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 23858}},
-                    {"type": "abs", "data": {"axis": "y", "value": 18923}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.tabs.tab.1", 0.5, 0.5),),
             ),
             # The Toggles tab is up: the checkbox and the radio group
             # (specs/trinket/checkbox.md, radio_group.md). The group's first
@@ -1109,13 +1085,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1008, 618, 61, 101, 162),
                     ("gpu0", 1079, 618, 174, 174, 174),
                 ),
-                events=(
+                clicks=(
                     # The radio group's second member (specs/trinket/radio_group.md):
                     # it clears the first.
-                    {"type": "abs", "data": {"axis": "x", "value": 27622}},
-                    {"type": "abs", "data": {"axis": "y", "value": 25313}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    ("demo.radios.radio.2", 0.5, 0.5),
                 ),
             ),
             # The radio's click took: the second member is checked and the first
@@ -1128,12 +1101,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1075, 618, 61, 101, 162),
                     ("gpu0", 1008, 618, 174, 174, 174),
                 ),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 28108}},
-                    {"type": "abs", "data": {"axis": "y", "value": 18923}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.tabs.tab.4", 0.5, 0.5),),
             ),
             # The Text tab is up: the terminal (specs/terminal.md) over the
             # outline label, with the terminal's scrollbar. The grid has text on
@@ -1150,13 +1118,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 906, 723, 220, 20, 20),
                     ("gpu0", 1138, 676, 16, 46, 8),
                 ),
-                events=(
+                clicks=(
                     # The scrollbar's decrement (up) button: a click scrolls the
                     # terminal up a line (specs/trinket/scrollbar.md).
-                    {"type": "abs", "data": {"axis": "x", "value": 29311}},
-                    {"type": "abs", "data": {"axis": "y", "value": 28098}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    ("demo.scrollbar.decrement", 0.5, 0.5),
                 ),
             ),
             # The scrollbar's click scrolled the terminal, and the cue says so
@@ -1164,12 +1129,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the cue, so the page's own widgets are read on it.
             QmpStep(
                 r"demo: scrolled",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 25420}},
-                    {"type": "abs", "data": {"axis": "y", "value": 18923}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.tabs.tab.2", 0.5, 0.5),),
             ),
             # The Values tab is up: the cycle and popup button over the slider
             # (specs/trinket/cycle.md, popup_button.md, slider.md). The cycle
@@ -1182,19 +1142,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(("gpu0", 1035, 519, 170, 170, 170),),
                 dark=(("gpu0", 924, 478, 178, 14, 60),),
-                events=(
+                clicks=(
                     # The slider's trough, right of its knob (specs/trinket/slider.md):
                     # a trough click steps the value one step toward the click
                     # (50 -> 60). Then the cycle's button cell: a click there
                     # advances to the next entry (specs/trinket/cycle.md).
-                    {"type": "abs", "data": {"axis": "x", "value": 27519}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21258}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 23295}},
-                    {"type": "abs", "data": {"axis": "y", "value": 19947}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                    ("demo.slider.trough", 0.7, 0.5),
+                    ("demo.cycle.cell", 0.5, 0.5),
                 ),
             ),
             # The slider's trough click took: the value stepped to 60 and the
@@ -1217,12 +1171,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 924, 478, 178, 14, 100),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 25906}},
-                    {"type": "abs", "data": {"axis": "y", "value": 19906}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.cycle.text", 0.5, 0.5),),
             ),
             # The menu the text opened: a framed list under the cycle, its rows
             # sixteen pixels at 498, 514 and 530. The active entry -- the long one
@@ -1237,12 +1186,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 950, 521, 102, 136, 187),
                     ("gpu0", 950, 505, 191, 191, 191),
                 ),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 26214}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21995}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.popup.row.3", 0.5, 0.5),),
             ),
             # The pick closed the cycle's menu. The popup button's own object is
             # in the demo but unasserted: its step comes once the cycle's menu
@@ -1258,12 +1202,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 924, 478, 178, 14, 60),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 29337}},
-                    {"type": "abs", "data": {"axis": "y", "value": 19906}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.popup_button", 0.5, 0.5),),
             ),
             # The popup button's click took, and opened its object: a list
             # anchored under the button, with the magnifier's own colour still at
@@ -1285,12 +1224,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 1050, 500, 100, 46, 120),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 28154}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21340}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.popup.row.2", 0.5, 0.5),),
             ),
             QmpStep(r"demo: object 0"),
             # The object was picked at its second row, Save
@@ -1300,12 +1234,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # no demo popup left for it to be mistaken for. mistaken for.
             QmpStep(
                 r"demo: picked 2",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("bureau.title.1", 0.5, 0.5),),
             ),
             # The bureau.menu server (specs/workbench.md), while the demo is
             # still up: it registered its tree when it gained the focus, so the
@@ -1321,27 +1250,16 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 2, 10, 102, 136, 187),
                     ("gpu0", 100, 33, 240, 240, 240),
                 ),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 1352}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("bureau.item.1", 0.5, 0.5),),
             ),
             QmpStep(
                 r"demo: about",
                 # The About pick closed the demo's menu; reopen it from the
                 # bar's first title and click Open... -- the third item, the
                 # menu's rows 22 pixels at y 33, 55 and 77.
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 3154}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                clicks=(
+                    ("bureau.title.1", 0.5, 0.5),
+                    ("bureau.item.3", 0.5, 0.5),
                 ),
             ),
             # The file requester (specs/trinket/file_requester.md): a window
@@ -1377,12 +1295,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dark=(("gpu0", 424, 276, 400, 15, 8),),
                 # Volumes: the browsable volumes replace the list. The button is
                 # the second of the four.
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 16998}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21708}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.requester.button.2", 0.5, 0.5),),
             ),
             # The volumes list: the namespace's volumes less NIL: and PIPE:,
             # which carry kFlagNoDir -- seven rows, each with its backing device
@@ -1398,12 +1311,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                       ("gpu0", 640, 276, 190, 64, 30)),
                 # Type a name into the File box and press Return: the default OK
                 # takes it, and the demo reports the name it chose.
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17278}},
-                    {"type": "abs", "data": {"axis": "y", "value": 20155}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.requester.file_box", 0.5, 0.5),),
                 press="AEGIR.TXT\n",
                 press_delay=0.2,
             ),
@@ -1411,12 +1319,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # window is clear again, so close it from its titlebar.
             QmpStep(
                 r"demo: opened AEGIR.TXT",
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 23448}},
-                    {"type": "abs", "data": {"axis": "y", "value": 17938}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("demo.close", 0.5, 0.5),),
             ),
             # The demo closed, so the bureau's own menus stand again: the runner
             # clicks the bar's first title, the bureau drops its menu, and reads
@@ -1426,12 +1329,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 1000, 400, 170, 170, 170),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("bureau.title.1", 0.5, 0.5),),
             ),
             QmpStep(
                 r"bureau: menu",
@@ -1445,12 +1343,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # row's right half, past the label. A named key that drew
                 # nothing (a bare space) leaves this zone blank and fails.
                 dark=(("gpu0", 95, 66, 75, 22, 8),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 768}},
-                    {"type": "abs", "data": {"axis": "y", "value": 1352}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                clicks=(("bureau.item.1", 0.5, 0.5),),
             ),
             QmpStep(r"bureau: Aegir, the Workbench"),
             # The Bureau's Execute (specs/launch.md): the Bureau has no console
@@ -1463,6 +1356,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # (the "info" -> "nfo" flake). Then it reads the command start and
             # the view's own start; the view cues when the command's exit has
             # been seen, and the screendump there proves the text landed.
+            # The Bureau's Execute: the open menu overlaps the view window, and
+            # the console routes a pointer to the window under the point rather
+            # than to the screen layer the menu is composited in -- so a click
+            # into the item row hits the view, and the row is clicked where the
+            # view is not (the pinned x). The rect cues would stand here too once
+            # the menu takes the pointer (specs/workbench.md).
             QmpStep(
                 r"view: ready",
                 events=(

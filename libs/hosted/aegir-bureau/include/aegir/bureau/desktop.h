@@ -64,6 +64,12 @@ public:
     // when a menu item took the key.
     bool shortcut(aegir::trinket::KeyEvent const &key);
 
+    // Report the bar's titles and, when one is open, its items as rect cues
+    // under `prefix` (specs/testing.md): `<prefix>.title.<n>` and
+    // `<prefix>.item.<n>`, both one-based, so the acceptance clicks a title or
+    // an item by name wherever the titles' measured widths put it.
+    void report_parts(char const *prefix) const;
+
 protected:
     void on_paint(aegir::trinket::Canvas& canvas,
                   const aegir::trinket::PaintEvent& event) override;

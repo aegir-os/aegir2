@@ -8,6 +8,7 @@
 #include <aegir/trinket/file_requester.h>
 
 #include <aegir/trinket/button.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/file_path.h>
 #include <aegir/trinket/group.h>
 #include <aegir/trinket/icon.h>
@@ -60,6 +61,29 @@ FileRequester::FileRequester(Application& app, aegir::vfs::Namespace& vfs,
 }
 
 FileRequester::~FileRequester() = default;
+
+void FileRequester::report_parts(char const *prefix) const
+{
+    requester_.report_parts(prefix);
+    if (pattern_box_ != nullptr) {
+        report_rect_prefix(prefix, "pattern_box", pattern_box_->screen_rect());
+    }
+    if (drawer_box_ != nullptr) {
+        report_rect_prefix(prefix, "drawer_box", drawer_box_->screen_rect());
+    }
+    if (file_box_ != nullptr) {
+        report_rect_prefix(prefix, "file_box", file_box_->screen_rect());
+    }
+    if (drawer_toggle_ != nullptr) {
+        report_rect_prefix(prefix, "drawer_toggle", drawer_toggle_->screen_rect());
+    }
+    if (list_ != nullptr) {
+        report_rect_prefix(prefix, "list", list_->screen_rect());
+    }
+    if (scrollbar_ != nullptr) {
+        report_rect_prefix(prefix, "scrollbar", scrollbar_->screen_rect());
+    }
+}
 
 void FileRequester::build_body()
 {

@@ -8,6 +8,7 @@
 #include <aegir/trinket/requester.h>
 
 #include <aegir/trinket/button.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/panel.h>
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/unicode.h>
@@ -202,6 +203,15 @@ void Requester::layout()
         Size const size = button->preferred_size();
         button->set_rect({bx, by, size.width, button_height});
         bx += size.width + kButtonGap;
+    }
+}
+
+void Requester::report_parts(char const *prefix) const
+{
+    for (size_t i = 0; i < buttons_.size(); ++i) {
+        uint32_t const id = i < actions_.size() ? actions_[i].id : 0;
+        report_rect_indexed(prefix, "button", static_cast<int>(id),
+                            buttons_[i]->screen_rect());
     }
 }
 
