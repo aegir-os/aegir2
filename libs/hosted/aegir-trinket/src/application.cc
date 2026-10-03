@@ -472,7 +472,20 @@ std::unique_ptr<Font> Application::load_service_font(std::string_view family, in
     if (!service.valid()) {
         return nullptr;
     }
-    return ServerFont::open(service, g_objects, g_scratch, family, size_pts, bold, italic);
+    std::unique_ptr<Font> font =
+        ServerFont::open(service, g_objects, g_scratch, family, size_pts, bold, italic);
+    if (font) {
+        /* The served face, as `load_font` reports a BDF one: the toolkit's
+         * default face is not always a bitmap it can read itself, and the
+         * acceptance reads the family and where it came from (specs/fonts.md). */
+        std::string line("  trinket: font ");
+        line.append(family);
+        line.push_back(' ');
+        line += std::to_string(size_pts);
+        line += " from font.main\n";
+        aegir::debug_write(line.c_str());
+    }
+    return font;
 }
 
 std::string Application::resource_path(std::string_view relative) const {

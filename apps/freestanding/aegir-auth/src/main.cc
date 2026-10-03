@@ -77,6 +77,9 @@ seL4_CPtr g_spawn_login = 0;
  * a session is not director's to spawn, so the owner copy the director made
  * reaches the bureau through auth, as the caller copies do. */
 seL4_CPtr g_spawn_bureau_menu = 0;
+/* The font service's caller half (specs/fonts.md): the session's windows draw a
+ * Sys:Fonts face through it, an OpenType one the toolkit cannot parse itself. */
+seL4_CPtr g_spawn_font = 0;
 aegir::ipc::Consumer g_gui;
 constexpr uint64_t kGreeterBadge = 768;
 bool g_greeter_up = false;
@@ -773,6 +776,14 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
                         seL4_AllRights, 0, 0};
         ++count;
     }
+    /* The unbadged font.main source (specs/fonts.md): the launcher mints each of
+     * its commands a caller half from it, the same shape as the menu above. */
+    if (g_spawn_font != 0) {
+        ports[count] = {"font.main", 9,
+                        aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_font,
+                        seL4_AllRights, 0, 0};
+        ++count;
+    }
     aegir::spawn::Request request{};
     request.name = spec.name;
     request.name_length = text_length(spec.name);
@@ -927,7 +938,7 @@ void start_session(uint32_t user, bool bureau) noexcept
             return;
         }
     }
-    aegir::spawn::PortGrant ports[6] = {
+    aegir::spawn::PortGrant ports[7] = {
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, g_spawn_log, seL4_CapRights_new(1, 0, 0, 1),
          badge, 0},
@@ -957,6 +968,12 @@ void start_session(uint32_t user, bool bureau) noexcept
          * the count below keeps that entry out when there is none. */
         {"bureau.menu", 11, aegir::bootstrap::kSlotFirstDeclared + 5,
          g_spawn_bureau_menu, seL4_CanRead, 0, 0},
+        /* The font service (specs/fonts.md): the bureau draws a Sys:Fonts face
+         * through it -- an OpenType one the toolkit cannot parse itself. A
+         * caller half, badged, because the bureau is its own client. Absent
+         * when the director made no such port, and the count keeps it out. */
+        {"font.main", 9, aegir::bootstrap::kSlotFirstDeclared + 6,
+         g_spawn_font, seL4_CapRights_new(1, 1, 0, 1), badge, 0},
     };
     static char const kSessionName[] = "session.smoke";
     static char const kSessionBinary[] = "aegir-session-smoke";
@@ -987,7 +1004,16 @@ void start_session(uint32_t user, bool bureau) noexcept
     request.cwd_length = sizeof(kHomeCwd) - 1;
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
-    request.port_count = bureau ? (5 + (g_spawn_bureau_menu != 0 ? 1 : 0)) : 2;
+    /* The optional ports are a prefix -- bureau.menu, then font.main -- so a
+     * boot whose director made the menu but not the font service passes six. */
+    uint32_t session_ports = 5;
+    if (bureau && g_spawn_bureau_menu != 0) {
+        session_ports = 6;
+        if (g_spawn_font != 0) {
+            session_ports = 7;
+        }
+    }
+    request.port_count = bureau ? session_ports : 2;
     request.fault_endpoint = fault;
     request.badge = badge;
 
@@ -1075,6 +1101,7 @@ void start_session(uint32_t user, bool bureau) noexcept
         terminal_kit.clock = g_spawn_clock;
         terminal_kit.timer = g_spawn_timer;
         terminal_kit.nmspace = g_kit_nmspace_slot;
+        terminal_kit.font_main = g_spawn_font;
         aegir::spawn::Child terminal_child{};
         terminal_child.badge = terminal_badge;
         terminal_child.runtime = terminal_untyped;
@@ -1268,6 +1295,7 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     boot_kit.asid_pool = g_asid_pool;
     boot_kit.clock = g_spawn_clock;
     boot_kit.timer = g_spawn_timer;
+    boot_kit.font_main = g_spawn_font;
 
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);
@@ -1433,6 +1461,11 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
          seL4_CapRights_new(1, 0, 0, 1), kGreeterBadge, 0},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 2, untyped,
          seL4_AllRights, 0, kGreeterUntypedBits},
+        /* The font service (specs/fonts.md): the greeter draws its form in a
+         * Sys:Fonts face. Absent when the director made no such port, and the
+         * count keeps it out. */
+        {"font.main", 9, aegir::bootstrap::kSlotFirstDeclared + 3, g_spawn_font,
+         seL4_CapRights_new(1, 1, 0, 1), kGreeterBadge, 0},
     };
     static char const kGreeterName[] = "greeter";
     static char const kGreeterBinary[] = "aegir-greeter";
@@ -1452,7 +1485,7 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
      * priority costs the boot nothing. */
     request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
-    request.port_count = 3;
+    request.port_count = g_spawn_font != 0 ? 4 : 3;
     request.fault_endpoint = fault;
     request.badge = kGreeterBadge;
     request.give_vspace = true;
@@ -1759,6 +1792,13 @@ int main(int argc, char *argv[])
     uint64_t spawn_bureau_menu_slot = 0;
     if (aegir::bootstrap::capability("spawn:bureau.menu", 17, &spawn_bureau_menu_slot)) {
         g_spawn_bureau_menu = static_cast<seL4_CPtr>(spawn_bureau_menu_slot);
+    }
+    /* The font service (specs/fonts.md): present because the greeter and the
+     * session entries need font.main. A boot without it keeps the built-in
+     * Terminus, which is what every window drew before the service landed. */
+    uint64_t spawn_font_slot = 0;
+    if (aegir::bootstrap::capability("spawn:font.main", 15, &spawn_font_slot)) {
+        g_spawn_font = static_cast<seL4_CPtr>(spawn_font_slot);
     }
     /* The memory service, for the terminals to hand their commands
      * (specs/memory.md Phase 3). Director grants it because the terminal

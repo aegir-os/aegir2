@@ -214,6 +214,15 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
         bureau_menu_holder = static_cast<seL4_CPtr>(bureau_menu_slot);
     }
 
+    /* The unbadged font.main source (specs/fonts.md): the launcher mints each
+     * command a caller half from it, so a launched program draws a Sys:Fonts
+     * face the toolkit cannot parse itself. Optional. */
+    uint64_t font_main_slot = 0;
+    seL4_CPtr font_main_holder = 0;
+    if (aegir::bootstrap::capability("font.main", 9, &font_main_slot)) {
+        font_main_holder = static_cast<seL4_CPtr>(font_main_slot);
+    }
+
     /* The launch caller half (specs/launch.md): the launcher's own copy, the
      * `spawn:launch.session` auth granted it, so it can hand a nested terminal
      * the same caller half a shell gets; a terminal that owns no launcher reads
@@ -239,6 +248,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     kit_.log = log_port_;
     kit_.console_gui = spawn_console_gui;
     kit_.bureau_menu = bureau_menu_holder;
+    kit_.font_main = font_main_holder;
     kit_.mem_main = mem_port_;
     kit_.asid_pool = asid_pool_;
     kit_.clock = command_clock_port_;

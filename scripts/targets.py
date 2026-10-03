@@ -174,11 +174,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # is what proves the launch, since a line that could not start a
             # program fails the sequence and leaves the failure view instead.
             QmpStep(r"launcher: command started filenote"),
-            # The toolkit's font comes off the system volume (specs/fonts.md):
-            # `Sys:Fonts` is scanned and the face it names is read from it, not
-            # the byte array compiled into the library. The path in the cue is
-            # the proof it crossed the namespace.
-            QmpStep(r"trinket: font Terminus 12 from Sys:Fonts/Terminus/ter-u12n.bdf"),
+            # The toolkit's font comes off the system volume (specs/fonts.md): a
+            # BDF face is scanned and read directly, and an OpenType one -- the
+            # theme's default Noto Sans -- is served by font.main, which read it
+            # from the same volume. Either cue proves the toolkit did not fall
+            # back to the byte array compiled into the library.
+            QmpStep(r"trinket: font (Terminus 12 from Sys:Fonts/Terminus/ter-u12n\.bdf"
+                    r"|Noto Sans 11 from font\.main)"),
             # The font service (specs/fonts.md): it read each face's own name
             # from the volume and proved its own loading by opening Noto Sans
             # from it, checking the metrics it got back and rasterizing a glyph.
@@ -212,17 +214,21 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 0, 85, 170),
-                    ("gpu0", 410, 205, 102, 136, 187),
-                    ("gpu0", 408, 206, 0, 0, 0),
+                    ("gpu0", 405, 205, 102, 136, 187),
                     ("gpu0", 842, 206, 255, 255, 255),
                     ("gpu0", 862, 203, 170, 170, 170),
                     ("gpu0", 865, 207, 255, 255, 255),
                     ("gpu0", 410, 230, 170, 170, 170),
                     ("gpu0", 500, 290, 191, 191, 191),
+                    ("gpu0", 424, 276, 0, 0, 0),
                     ("gpu0", 424, 288, 0, 0, 0),
-                    ("gpu0", 424, 265, 0, 0, 0),
                     ("gpu0", 434, 398, 191, 191, 191),
                 ),
+                # The title's ink as a region, not an exact black pixel: an
+                # antialiased face has no full-black stem at this size, so a
+                # pinned pixel would move and change with the face
+                # (specs/fonts.md's AA; the region counts ink instead).
+                dark=(("gpu0", 406, 200, 30, 18, 20),),
             ),
             # The console owns the input devices (specs/console.md), so the
             # checks are paced through its channel: a click focuses the test
@@ -1040,7 +1046,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 950, 514, 102, 136, 187),
+                    ("gpu0", 950, 525, 102, 136, 187),
                     ("gpu0", 950, 482, 191, 191, 191),
                 ),
                 clicks=(
@@ -1082,8 +1088,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 1008, 618, 61, 101, 162),
-                    ("gpu0", 1079, 618, 174, 174, 174),
+                    ("gpu0", 1003, 620, 61, 101, 162),
+                    ("gpu0", 1078, 620, 174, 174, 174),
                 ),
                 clicks=(
                     # The radio group's second member (specs/trinket/radio_group.md):
@@ -1098,8 +1104,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(
-                    ("gpu0", 1075, 618, 61, 101, 162),
-                    ("gpu0", 1008, 618, 174, 174, 174),
+                    ("gpu0", 1078, 620, 61, 101, 162),
+                    ("gpu0", 1003, 620, 174, 174, 174),
                 ),
                 clicks=(("demo.tabs.tab.4", 0.5, 0.5),),
             ),
@@ -1263,19 +1269,18 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 ),
             ),
             # The file requester (specs/trinket/file_requester.md): a window
-            # centered on the screen, its content (408,246,464,308), the list
-            # (420,258,416,168), and the three control rows -- the shared label
-            # column ends at x 481, so every box is (487,*,343,19): Pattern at
-            # y 440, Drawer at 464 with its toggle at (420,465,22,18), File at
-            # 488 -- and the four buttons at y 518, OK first. The list's titles
-            # row and the entries under it are ink.
+            # centered on the screen -- its geometry is measured from the text,
+            # so the font decides it and the rect cues are what the clicks
+            # follow -- with a titles row and the entries under it, three
+            # labelled control rows (Pattern, Drawer with its toggle, File) and
+            # a row of four buttons, OK first. The list's text is ink.
             QmpStep(
                 r"demo: requester up",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 # The requester's titlebar, so the check fails if the cue fired
                 # before the window was up.
-                pixels=(("gpu0", 700, 232, 102, 136, 187),),
+                pixels=(("gpu0", 700, 200, 102, 136, 187),),
                 dark=(
                     ("gpu0", 424, 261, 404, 160, 150),
                 ),
@@ -1292,7 +1297,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: filtered AEGIR\#\? 1",
                 dumps=("gpu0",),
                 expect=((1280, 800),),
-                dark=(("gpu0", 424, 276, 400, 15, 8),),
+                dark=(("gpu0", 424, 253, 400, 12, 8),),
                 # Volumes: the browsable volumes replace the list. The button is
                 # the second of the four.
                 clicks=(("demo.requester.button.2", 0.5, 0.5),),

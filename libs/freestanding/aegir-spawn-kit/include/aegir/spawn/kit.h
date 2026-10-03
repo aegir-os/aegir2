@@ -52,6 +52,11 @@ struct Kit {
      * until now the only client. Optional: a launcher with none hands its
      * commands none, and they run without menus. */
     seL4_CPtr bureau_menu = 0;
+    /* The caller half of font.main, the font service (specs/fonts.md), so a
+     * launched program can draw a face from Sys:Fonts that the toolkit cannot
+     * parse itself -- a TrueType or OpenType one. Optional: a launcher with none
+     * hands its commands none, and they keep the built-in Terminus. */
+    seL4_CPtr font_main = 0;
     seL4_CPtr mem_main = 0;
     seL4_CPtr asid_pool = 0;
     seL4_CPtr clock = 0; /* optional */

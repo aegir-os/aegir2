@@ -90,6 +90,13 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
         (void)put(out, capacity, n++, "bureau.menu", 11, kit.bureau_menu,
                   seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
+    /* The caller's font.main (specs/fonts.md): the font service, so a program
+     * draws a Sys:Fonts face the toolkit cannot parse itself -- an OpenType one.
+     * Minted with the child's own badge; the source is the unbadged delegate. */
+    if (kit.font_main != 0) {
+        (void)put(out, capacity, n++, "font.main", 11, kit.font_main,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
                   aegir::clock::kPortNameLength, kit.clock, seL4_CapRights_new(1, 0, 0, 1),
@@ -152,6 +159,13 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
      * not launch -- stops above. */
     if (child.launcher) {
         (void)put(out, capacity, n++, "spawn:console.gui", 17, kit.console_gui,
+                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, false);
+    }
+    /* The unbadged font.main (specs/fonts.md): a launching child mints its own
+     * commands a caller half from it, and a windowed child calls the service
+     * directly -- the launcher and the session's terminal both stop here. */
+    if (kit.font_main != 0) {
+        (void)put(out, capacity, n++, "font.main", 11, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, false);
     }
     return n;

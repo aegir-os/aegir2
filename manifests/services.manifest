@@ -369,7 +369,10 @@ restart   = always
 binary    = aegir-greeter
 authority = system
 account   = system
-needs     = console.gui, auth.login
+# font.main is the font service (specs/fonts.md): the greeter's form is drawn in
+# a Sys:Fonts face, and this need is also what makes auth's spawn kit carry the
+# delegatable copy its windows are handed.
+needs     = console.gui, auth.login, font.main
 restart   = never
 
 # The boot session (specs/boot.md): the system's Startup-Sequence, run once
@@ -489,7 +492,7 @@ binary    = aegir-bureau
 authority = user
 account   = user
 owns      = bureau.menu
-needs     = log.main, vfs.namespace, console.gui
+needs     = log.main, vfs.namespace, console.gui, font.main
 restart   = never
 
 # The session's terminal (specs/terminal.md, specs/shell.md): the CON: handler
@@ -502,5 +505,5 @@ restart   = never
 binary    = aegir-terminal
 authority = user
 account   = user
-needs     = log.main, vfs.namespace, console.gui, clock.main, timer.main, mem.main
+needs     = log.main, vfs.namespace, console.gui, clock.main, timer.main, mem.main, font.main
 restart   = never

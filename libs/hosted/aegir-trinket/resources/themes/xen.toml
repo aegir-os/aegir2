@@ -26,10 +26,10 @@
 # others are the roles a widget asks for by name.
 
 [fonts]
-default   = { family = "Terminus", size = 12 }
-small     = { family = "Terminus", size = 12 }
-large     = { family = "Terminus", size = 12 }
-monospace = { family = "Terminus", size = 12 }
+default   = { family = "Noto Sans", size = 11 }
+small     = { family = "Noto Sans", size = 9 }
+large     = { family = "Noto Sans", size = 16 }
+monospace = { family = "Noto Sans Mono", size = 11 }
 
 # ---- palette ----
 # A named colour per role in the toolkit's ColorRole enum.
