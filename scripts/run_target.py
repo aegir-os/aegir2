@@ -41,6 +41,10 @@ TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) t
 # failed is a failed run however the marker arrived. A smoke that reports its
 # own failure the same way ("NAME_SMOKE_FAIL") counts too.
 GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED|_SMOKE_FAIL")
+# The guest's own rectangles, so a click can follow the layout rather than a
+# pinned pixel: a line `rect <name> <x> <y> <w> <h>`, screen pixels. A step's
+# `clicks` names one and the runner lands on it wherever the widget is.
+RECT_CUE = re.compile(r"\brect (\S+) (\d+) (\d+) (\d+) (\d+)")
 
 
 def preflight(target: Target) -> list[str]:
@@ -331,6 +335,39 @@ def input_send_event(socket_path: Path, events: tuple[dict, ...]) -> str | None:
     return None
 
 
+def axis_value(pixel: int, span: int) -> int:
+    """A screen pixel as the tablet's 0..32767 axis -- the console maps it back
+    with the inverse (apps/.../aegir-console/src/main.cc)."""
+    if span <= 0:
+        return 0
+    value = int(pixel * 32767 / span)
+    return 0 if value < 0 else (32767 if value > 32767 else value)
+
+
+def input_send_clicks(socket_path: Path, clicks: tuple, anchors: dict,
+                      screen: tuple[int, int]) -> str | None:
+    """Click each named rectangle at the fraction `(rx, ry)` of it. The guest
+    reported the rectangle (a `rect <name> ...` line, RECT_CUE), so the click
+    follows the layout -- a font or metric change moves it with the widget --
+    instead of a pinned coordinate. Returns QMP's error text when a click is
+    refused, or a message when a name was never reported."""
+    for name, rx, ry in clicks:
+        box = anchors.get(name)
+        if box is None:
+            return f"no rect cue for {name!r}"
+        x = box[0] + int(box[2] * rx)
+        y = box[1] + int(box[3] * ry)
+        problem = input_send_event(socket_path, (
+            {"type": "abs", "data": {"axis": "x", "value": axis_value(x, screen[0])}},
+            {"type": "abs", "data": {"axis": "y", "value": axis_value(y, screen[1])}},
+            {"type": "btn", "data": {"button": "left", "down": True}},
+            {"type": "btn", "data": {"button": "left", "down": False}},
+        ))
+        if problem is not None:
+            return problem
+    return None
+
+
 def screen_dump(socket_path: Path, device: str, filename: str) -> str | None:
     """One console's screen, as a PPM QEMU writes: the acceptance check's eyes.
     None when the dump happened, QMP's error text when it did not."""
@@ -468,6 +505,11 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # session gets an answer per session).
     step_matches = [0] * len(target.qmp_steps)
     step_dims: list[tuple[int, int]] = []
+    # The guest's rectangles by name (RECT_CUE), and the screen in pixels from
+    # the last screendump -- the size the pixel-to-axis map needs. A click that
+    # names a rectangle follows the layout (specs/testing.md's rect cues).
+    anchors: dict[str, tuple[int, int, int, int]] = {}
+    screen = (1280, 800)
     summary = ""
     try:
         stream = process.stdout
@@ -503,6 +545,10 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             stripped = line.rstrip("\n")
             if stripped:
                 print(f"    {stripped}", flush=True)
+            cue = RECT_CUE.search(stripped)
+            if cue:
+                anchors[cue.group(1)] = (int(cue.group(2)), int(cue.group(3)),
+                                         int(cue.group(4)), int(cue.group(5)))
             match = TEST_SUMMARY.search(stripped)
             if match:
                 summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
@@ -531,6 +577,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         print(f"    runner: FAIL the dump of {device}: {reading}", flush=True)
                         failed = True
                         continue
+                    screen = (width, height)
                     if device in step.bands and not bands_at_posts(width, height, pixels):
                         print(
                             f"    runner: FAIL {device} shows {width}x{height} "
@@ -605,6 +652,14 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                             f"    runner: FAIL input-send-event: {problem}",
                             flush=True,
                         )
+                        failed = True
+                if step.clicks:
+                    # A click at a rectangle the guest reported (RECT_CUE): the
+                    # layout decides where it lands, so a font or metric change
+                    # moves the widget and the click follows it.
+                    problem = input_send_clicks(socket_path, step.clicks, anchors, screen)
+                    if problem is not None:
+                        print(f"    runner: FAIL input-send-clicks: {problem}", flush=True)
                         failed = True
                 if step.press is not None:
                     # The guest said it is waiting: type the keys. Events

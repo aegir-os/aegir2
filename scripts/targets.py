@@ -52,6 +52,14 @@ class QmpStep:
     # solid-background `pixels` samples cannot tell.
     dark: tuple[tuple[str, int, int, int, int, int], ...] = ()
     events: tuple[dict, ...] = ()
+    # Clicks at a named screen rectangle the guest reports, rather than at a
+    # pinned pixel: each is `(name, rx, ry)`, the fraction of the rectangle's
+    # width and height to click, and the name is set by a console line
+    # `rect <name> <x> <y> <w> <h>` (screen pixels). The rectangle is the
+    # widget's own, so a font or metric change moves the click with it and the
+    # acceptance does not pin a coordinate the layout no longer holds
+    # (the runner's `input_send_clicks`).
+    clicks: tuple[tuple[str, float, float], ...] = ()
 
 
 # The terminal window's own click (its content, in the tablet's coordinates):
