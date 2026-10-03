@@ -4,13 +4,20 @@ Status: decided (2026-09). Phase 1 (fonts on disk) lands with this spec;
 FreeType and the service are phases 2 and 3. `specs/trinket/overview.md` owns the
 toolkit's `Font` interface; this is where the fonts it draws come from.
 
-The toolkit has exactly one font: Terminus 12, compiled into
+The toolkit drew exactly one font before this arc: Terminus 12, compiled into
 `libaegir-trinket` as a byte array, with `Application::load_builtin_font(
 "Terminus", 12)` its only source and the theme's four roles (`font()`,
 `font_small()`, `font_large()`, `font_monospace()`) all returning it. Nothing
-reads a font from the system, and no TrueType or OpenType face can be drawn.
+read a font from the system, and no TrueType or OpenType face could be drawn.
 This arc gives the system fonts: a tree, a service that owns them, and a
 toolkit that asks for one.
+
+The arc has landed, and the theme's `[fonts]` table names the roles' families
+and sizes -- Noto Sans 11 for the UI, Noto Sans Mono 11 for a grid -- each
+loaded once through the service (`Application::font_for`, a BDF directly and an
+OpenType face through `font.main`) and cached. Terminus is the embedded
+fallback a boot with no face keeps, no longer the default
+(specs/trinket/theming.md).
 
 ## The decisions
 
@@ -232,12 +239,14 @@ scaling is the scale arc's).
 
 ## Acceptance
 
-Phase 1: the toolkit logs the face it loaded and the runner cues on it; a host
-conformance asserts the header probe and the selection (exact family/size and
-style, the nearest size, the miss); the existing look is unchanged, because
-the Terminus the disk carries is the byte-for-byte face the embedded array
-held. A site that unpacks a face into `Sys:Fonts` gets it drawn without a
-rebuild -- that is the property the phase exists for.
+Phase 1: the toolkit logs the face it loaded and the runner cues on it -- a BDF
+read directly, or the served face (`trinket: font <family> <size> from
+font.main`); a host conformance asserts the header probe and the selection
+(exact family/size and style, the nearest size, the miss). The theme's default
+is Noto Sans 11 now, so the acceptance's ink checks were re-baselined to the
+face's metrics; the clicks did not move, because they follow the rect cues the
+widgets report (specs/testing.md). A site that unpacks a face into `Sys:Fonts`
+gets it drawn without a rebuild -- that is the property the phase exists for.
 
 Phase 2: the service's own cues are its scan count, its metrics check on Noto
 Sans 16 and the box of a rasterized glyph; the client's is the demo's
