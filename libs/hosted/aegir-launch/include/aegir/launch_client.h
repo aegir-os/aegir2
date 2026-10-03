@@ -75,6 +75,15 @@ bool pipeline(Stage const *stages, uint32_t count);
 bool spawn(char const *argv, uint32_t argv_length, uint64_t kind, char const *window,
            uint32_t window_length);
 
+/** Start a class (specs/datatypes.md): a program that *serves* the port the
+ *  caller made instead of writing a stream. `argv` is the program words,
+ *  program first; `endpoint` is the serve endpoint the caller made, whose other
+ *  half the class is handed. The class runs under the caller's own badge, so it
+ *  has only the caller's authority (`specs/libraries.md`). `badge_out`, when
+ *  given, receives the class's badge for reaping. True when it started. */
+bool spawn_serve(char const *argv, uint32_t argv_length, seL4_CPtr endpoint,
+                 uint64_t *badge_out);
+
 extern "C" {
 
 /** The C runtime's primitive: send a launch request -- `method` and the packed

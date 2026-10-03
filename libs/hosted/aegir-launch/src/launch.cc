@@ -138,6 +138,38 @@ bool spawn(char const *argv, uint32_t argv_length, uint64_t kind, char const *wi
     return aegir_launch_request(kMethodSpawn, out, words) == 1;
 }
 
+bool spawn_serve(char const *argv, uint32_t argv_length, seL4_CPtr endpoint,
+                 uint64_t *badge_out)
+{
+    aegir::ipc::Consumer const port = launcher();
+    if (!port.valid() || endpoint == 0) {
+        return false;
+    }
+    Context const context = caller_context();
+    uint64_t out[aegir::ipc::kMaxWords];
+    uint32_t words = 0;
+    out[words++] = kKindServe;
+    out[words++] = 0;
+    if (!put_string(out, words, argv, argv_length) ||
+        !put_context(out, words, context) ||
+        !put_string(out, words, "", 0) || /* std_in: none, a class reads a file */
+        !put_string(out, words, "", 0) || /* std_out: none */
+        !put_string(out, words, "", 0) || /* window: a class has none */
+        !put_stack(out, words, context)) {
+        return false;
+    }
+    uint64_t answer[2] = {};
+    aegir::ipc::WordsReply const reply = port.call_transfer(
+        kMethodSpawn, out, words, endpoint, answer, 2, nullptr);
+    if (reply.error != 0 || reply.count < 1 || answer[0] != 1) {
+        return false;
+    }
+    if (badge_out != nullptr) {
+        *badge_out = reply.count >= 2 ? answer[1] : 0;
+    }
+    return true;
+}
+
 bool command(char const *argv, uint32_t argv_length, char const *std_in,
              uint32_t std_in_length, char const *std_out, uint32_t std_out_length,
              bool background)
