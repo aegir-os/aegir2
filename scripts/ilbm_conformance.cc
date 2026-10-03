@@ -9,10 +9,12 @@
  * as IFF bytes -- BMHD, CMAP and BODY -- so the tests are pure: no filesystem,
  * no service, no vendored tree. What they pin is the arithmetic that goes
  * wrong quietly -- the big-endian fields, the per-plane word-aligned row, the
- * ByteRun1 runs, and the palette.
+ * ByteRun1 runs, the palette -- and the frame stream the class serves a page
+ * at a time.
  */
 
 #include <aegir/datatypes.h>
+#include <aegir/datatype/decoded.h>
 #include <aegir/ilbm.h>
 
 #include <cstdint>
@@ -21,8 +23,8 @@
 
 namespace {
 
-using aegir::datatypes::Bitmap;
 using aegir::datatypes::Color;
+using aegir::datatypes::Decoded;
 using aegir::datatypes::Format;
 using aegir::datatypes::Info;
 
@@ -154,11 +156,6 @@ Bytes ilbm(uint16_t w, uint16_t h, uint8_t planes, uint8_t masking,
     return make_form(chunks);
 }
 
-bool pixels_are(std::vector<uint8_t> const &got, std::vector<uint8_t> const &want)
-{
-    return got == want;
-}
-
 void check_identify()
 {
     Bytes const good = ilbm(1, 1, 1, 0, 0, 0, cmap_of({{0, 0, 0}, {255, 255, 255}}),
@@ -185,14 +182,41 @@ void check_uncompressed()
                info.stride == 4 && info.palette_size == 4,
            "probe states size, layout, stride and palette");
 
-    std::vector<uint8_t> px(info.stride * info.height, 0xEE);
-    std::vector<Color> cpal(info.palette_size);
-    Bitmap bm{px.data(), px.size(), cpal.data(), cpal.size()};
-    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), bm),
-           "decode 4x2");
-    expect(pixels_are(px, idx), "decode lands the pixels");
-    expect(cpal[1].r == 1 && cpal[1].g == 2 && cpal[1].b == 3,
+    Decoded d;
+    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), d), "decode 4x2");
+    expect(d.pixels == idx, "decode lands the pixels");
+    expect(d.palette[1].r == 1 && d.palette[1].g == 2 && d.palette[1].b == 3,
            "decode copies the palette");
+
+    /* The stream is the pixels then the palette, and the class serves it by
+     * offset -- three bytes at a time here, as a caller would a page at a
+     * time. */
+    std::size_t const total = d.stream_size();
+    expect(total == idx.size() + pal.size() * 3, "the stream is pixels then palette");
+    Bytes whole(total, 0);
+    expect(d.read(0, whole.data(), whole.size()) == total, "read the whole frame");
+    bool stream_ok = true;
+    for (std::size_t i = 0; i < idx.size(); ++i) {
+        if (whole[i] != idx[i]) stream_ok = false;
+    }
+    for (std::size_t i = 0; i < pal.size(); ++i) {
+        if (whole[idx.size() + i * 3] != pal[i].r ||
+            whole[idx.size() + i * 3 + 1] != pal[i].g ||
+            whole[idx.size() + i * 3 + 2] != pal[i].b) {
+            stream_ok = false;
+        }
+    }
+    expect(stream_ok, "the stream's bytes are the pixels then the palette");
+
+    Bytes paged(total, 0);
+    std::size_t at = 0;
+    while (at < total) {
+        const std::size_t n = d.read(at, paged.data() + at, 3);
+        if (n == 0) break;
+        at += n;
+    }
+    expect(at == total && paged == whole, "a three-byte-at-a-time read assembles it");
+    expect(d.read(total, paged.data(), 3) == 0, "a read past the end is empty");
 }
 
 void check_compressed()
@@ -204,12 +228,10 @@ void check_compressed()
     Bytes const raw = planes_of(w, h, 2, idx);
     Bytes const file = ilbm(w, h, 2, 0, 1, 0, cmap_of(pal), pack_literal(raw));
 
-    std::vector<uint8_t> px(w * h, 0);
-    std::vector<Color> cpal(pal.size());
-    Bitmap bm{px.data(), px.size(), cpal.data(), cpal.size()};
-    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), bm),
+    Decoded d;
+    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), d),
            "decode 4x2 ByteRun1 literals");
-    expect(pixels_are(px, idx), "ByteRun1 literals land the same pixels");
+    expect(d.pixels == idx, "ByteRun1 literals land the same pixels");
 }
 
 void check_repeat_run()
@@ -219,13 +241,10 @@ void check_repeat_run()
     Bytes const body = {0xFF, 0x00};
     Bytes const file = ilbm(8, 1, 1, 0, 1, 0, cmap_of({{0, 0, 0}, {255, 255, 255}}),
                             body);
-    std::vector<uint8_t> px(8, 0xAA);
-    std::vector<Color> cpal(2);
-    Bitmap bm{px.data(), px.size(), cpal.data(), cpal.size()};
-    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), bm),
+    Decoded d;
+    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), d),
            "decode a ByteRun1 repeat");
-    bool const zeros = px == std::vector<uint8_t>(8, 0);
-    expect(zeros, "a repeat run lands its bytes");
+    expect(d.pixels == std::vector<uint8_t>(8, 0), "a repeat run lands its bytes");
 }
 
 void check_width_not_word()
@@ -241,12 +260,10 @@ void check_width_not_word()
     expect(aegir::datatypes::ilbm::probe(file.data(), file.size(), info),
            "probe width 5");
     expect(info.stride == 5, "width 5 strides 5, not the padded row");
-    std::vector<uint8_t> px(info.stride, 0xEE);
-    std::vector<Color> cpal(info.palette_size);
-    Bitmap bm{px.data(), px.size(), cpal.data(), cpal.size()};
-    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), bm),
+    Decoded d;
+    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), d),
            "decode width 5");
-    expect(pixels_are(px, idx), "width 5 lands across the first byte");
+    expect(d.pixels == idx, "width 5 lands across the first byte");
 }
 
 void check_transparent()
@@ -267,12 +284,10 @@ void check_no_cmap()
     expect(aegir::datatypes::ilbm::probe(file.data(), file.size(), info),
            "probe without a CMAP");
     expect(info.palette_size == 8, "no CMAP yields 2^planes palette entries");
-    std::vector<uint8_t> px(info.stride * info.height, 0);
-    std::vector<Color> cpal(info.palette_size);
-    Bitmap bm{px.data(), px.size(), cpal.data(), cpal.size()};
-    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), bm),
+    Decoded d;
+    expect(aegir::datatypes::ilbm::decode(file.data(), file.size(), d),
            "decode without a CMAP");
-    expect(cpal[7].r == 255 && cpal[7].g == 255 && cpal[7].b == 255,
+    expect(d.palette[7].r == 255 && d.palette[7].g == 255 && d.palette[7].b == 255,
            "the default palette is a ramp to white");
 }
 
@@ -283,19 +298,20 @@ void check_malformed()
     Info info{};
     expect(!aegir::datatypes::ilbm::probe(good.data(), good.size() - 1, info),
            "a file one byte short does not probe");
-    std::vector<uint8_t> px(2, 0);
-    std::vector<Color> cpal(2);
-    Bitmap bm{px.data(), px.size(), cpal.data(), cpal.size()};
-    expect(!aegir::datatypes::ilbm::decode(good.data(), good.size() - 1, bm),
+    Decoded d;
+    expect(!aegir::datatypes::ilbm::decode(good.data(), good.size() - 1, d),
            "a file one byte short does not decode");
 
-    /* The frame is the caller's; one too small is refused, not overrun. */
-    Bytes const full = ilbm(4, 1, 1, 0, 0, 0, cmap_of({{0, 0, 0}, {255, 0, 0}}),
-                            planes_of(4, 1, 1, {0, 1, 0, 1}));
-    std::vector<uint8_t> small(2, 0);
-    Bitmap tiny{small.data(), small.size(), cpal.data(), cpal.size()};
-    expect(!aegir::datatypes::ilbm::decode(full.data(), full.size(), tiny),
-           "a frame that is too small is refused");
+    /* A BODY that does not hold the rows BMHD promised is refused. */
+    Bytes const chunks_short = [] {
+        Bytes chunks;
+        put_chunk(chunks, "BMHD", bmhd(4, 4, 1, 0, 0, 0));
+        put_chunk(chunks, "BODY", Bytes{0x00, 0x00});
+        return make_form(chunks);
+    }();
+    Decoded e;
+    expect(!aegir::datatypes::ilbm::decode(chunks_short.data(), chunks_short.size(), e),
+           "a BODY too short for BMHD is refused");
 }
 
 } // namespace

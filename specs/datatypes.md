@@ -28,16 +28,20 @@ must start a component the caller did not name at build time.
   manager supervisises it (it holds the fault endpoint it made) and owns its
   memory, so a class outlives the session that first opened it
   (`specs/libraries.md`, "the manager owns the provider").
-- **The decoded bitmap lands in a client frame.** The client owns the pixel
-  memory and hands the class the frames; the class maps them through its window
-  and writes the pixels, and unmaps when done. No pixel data crosses IPC as
-  words. This is the console's slice and the gpu window's frames
-  (`specs/console.md`), and the font service's glyph rasterized "into the
-  caller's own page" is the same idea (`specs/fonts.md`).
+- **The class decodes once and serves the frame a page at a time.** A message
+  carries one capability (`specs/launch.md`, `specs/signal.md`), so an image
+  larger than a page cannot cross in one call. The class decodes into its own
+  memory -- the object -- and each `read` carries one page the caller owns: the
+  class maps it, copies that slice of the frame into it and unmaps before
+  answering. The frame is the pixels then the palette, and `Info` says how long
+  each is, so the caller knows when the image is out. No pixel data crosses IPC
+  as words. This is the font service's transfer page (`specs/fonts.md`),
+  repeated until the image is out.
 - **The class reads the file itself, through `vfs.namespace`,** as `aegir-font`
   reads a face directly from the volume (`specs/fonts.md`). The caller names a
-  path; the file's bytes do not pass through the caller's address space to reach
-  the decoder.
+  path and hands the class its own namespace capability at `open`, so the path
+  resolves on the caller's badge; the file's bytes do not pass through the
+  caller's address space to reach the decoder.
 
 ## The client API
 
@@ -47,20 +51,31 @@ type. The Amiga's calls keep their names, adapted to C++:
 
     namespace aegir::datatypes {
 
-    enum class Format { INDEXED, RGB, RGBA, GREY, ... };
+    enum class Format : uint8_t { INDEXED, RGB, RGBA, GREY };
+
+    struct Color { uint8_t r, g, b; };
 
     struct Info {
-        unsigned width, height, depth;
+        unsigned width, height;
         Format format;
-        /* palette words when INDEXED; alpha flag; the row stride the class
-         * will use, so the client sizes its frame to the class's layout and
-         * not a guess. */
+        unsigned stride;          /* bytes per row the class writes */
+        unsigned palette_size;    /* entries when INDEXED */
+        bool transparent;
+        unsigned transparent_index;
+    };
+
+    /* The decoded image: the class's source and the caller's target, so both
+     * sides name one shape (aegir/datatype/decoded.h). */
+    struct Decoded {
+        Info info;
+        std::vector<uint8_t> pixels;
+        std::vector<Color> palette;
     };
 
     class Object {
     public:
-        Info info() const;                 // size and format, before decode
-        bool read(Bitmap &into);           // decode into the caller's frames
+        Info info() const;                /* size, layout and palette */
+        bool read(Decoded &into);         /* pull the frame, a page at a time */
         bool dispose_object();
     };
 
@@ -70,10 +85,10 @@ type. The Amiga's calls keep their names, adapted to C++:
     Object new_object(std::string_view class_name, std::string_view path);
     }
 
-`info()` first, so the client can allocate exactly the frame the class asked for
--- the class states the layout, the client provides it. `read` is one call that
-fills that frame. Encode (`write`) is a later method, and method numbers make it
-additive (`specs/services.md`).
+`info()` first, so the caller knows the size and layout; `read` loops the
+frame's pages into `into`. A class's `Decoded` is its buffer and the caller's is
+its own -- the bytes cross a page at a time. Encode (`write`) is a later method,
+and method numbers make it additive (`specs/services.md`).
 
 ## Classes, identification, and the class list
 
@@ -105,16 +120,18 @@ additive (`specs/services.md`).
 The Amiga's `DoMethod(obj, DTM_*)` becomes the port's methods, hidden by the
 client library. The first cut:
 
-| method | words | reply |
+| method | fields | reply |
 | --- | --- | --- |
-| `identify` | a path | the format, or nothing |
-| `info` | a path | the `Info` row (size, format, stride) |
-| `read` | a path, the client's frames | success, or the refusal |
+| `identify` | a path | 1 when this class reads the file, else 0 |
+| `info` | a path | 1 and the `Info` words |
+| `read` | a path, an offset, one page capability | the bytes of the frame filled |
 | `dispose_object` | -- | 1 |
 
-The frames arrive in the `read` call as capabilities (one per pixel page),
-minted for the class; the class maps them read-write through its window, writes,
-unmaps and discards them. A refusal leaves the client's frame untouched.
+The class holds the decoded object between calls, scoped to the caller's badge,
+so a picture larger than a page is several `read` calls -- each carrying one
+page the caller owns, which the class maps a copy of, writes and unmaps before
+answering (`specs/fonts.md`'s transfer page). A refusal leaves the caller's page
+untouched, and the count of bytes filled says where the frame ends.
 
 ## The first classes
 
@@ -163,10 +180,11 @@ viewer at once, and each lives in one process rather than in each caller.
 
 ## Open, for review
 
-- **Whether the class decodes from a path or from bytes the caller already
-  holds.** The first cut is a path and `vfs.namespace`, matching `aegir-font`.
-  A caller with bytes in memory (a network stream, an archive member) wants the
-  other, and it is a second method, not a different model.
-- **The `Info` stride and format vocabulary** -- how indexed palettes, alpha and
-  planar Amiga bitmaps are named, since ILBM is planar and PNG is chunky, and
-  the client must be able to render both.
+- **The class reads a path and the caller's namespace** (decided above). A
+  caller with bytes already in memory -- a network stream, an archive member --
+  wants the other, and it is a second method, not a different model.
+- **The `Info` vocabulary's edges.** The first cut is `INDEXED`, `RGB`, `RGBA`
+  and `GREY` with a stated stride; planar storage stops at the class, so a
+  client never sees a bit plane. What is still open is how alpha beyond ILBM's
+  one transparent colour is named, and how a multi-frame image (an animation)
+  exposes its frames.

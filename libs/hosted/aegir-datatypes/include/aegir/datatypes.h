@@ -6,9 +6,10 @@
  *
  * A resource library in Aegir is a service (specs/libraries.md), and datatypes
  * is the first: `datatypes` brokers a file to a per-format *class* service, and
- * the class decodes into a frame the caller owns (specs/datatypes.md). This
- * header is the one thing both sides include -- the class states `Info`, the
- * caller provides a `Bitmap`, and neither knows what the other is.
+ * the class decodes into its own memory and serves the frame a page at a time
+ * (specs/datatypes.md). This header is the one thing both sides include: the
+ * class states `Info`, the frame stream is pixels then palette, and neither
+ * knows what the other is.
  *
  * A class decodes to a *canonical chunky* layout. Planar storage (ILBM) is the
  * class's business, not the caller's, so every format arrives as one of the
@@ -54,15 +55,44 @@ struct Info {
     uint16_t transparent_index = 0;
 };
 
-/* The caller's frame, as the class sees it once mapped: the pixels and, for
- * INDEXED, the palette. The caller owns both and sizes them from `Info`; the
- * class fills them and never allocates. */
-struct Bitmap {
-    uint8_t *pixels = nullptr;
-    size_t pixels_size = 0;
-    Color *palette = nullptr;
-    size_t palette_size = 0;
-};
+/* ---- the port protocol (specs/datatypes.md) ----
+ *
+ * The broker owns `datatypes.main`; a class owns a port the broker made for it.
+ * Strings travel in the namespace protocol's shape (aegir/nmspace.h), as the
+ * font and launch protocols' do. A method a service does not know is refused
+ * with a zero first word, the versioning rule every port keeps.
+ */
+
+/* The broker's port, in the class.instance shape every port is named in. */
+constexpr char kBrokerPortName[] = "datatypes.main";
+constexpr uint32_t kBrokerPortNameLength = sizeof(kBrokerPortName) - 1;
+
+/* `open`: the class name (empty to identify from the file), the file's path and
+ * the caller's program directory, as strings; and one capability, the caller's
+ * `vfs.namespace`. Answer: 1 and the class port, or 0 for no class. */
+constexpr uint32_t kMethodOpen = 1;
+
+/* `close`: no fields. The manager drops the reference (specs/libraries.md). */
+constexpr uint32_t kMethodClose = 2;
+
+/* A class port's methods. */
+/* `identify`: a path. Answer 1 when this class reads the file, else 0. */
+constexpr uint32_t kMethodIdentify = 1;
+/* `info`: a path. Answer 1 and `kInfoWords` words, else 0. */
+constexpr uint32_t kMethodInfo = 2;
+/* `read`: a path, an offset, and one capability -- a page the caller owns.
+ * Answer: how many bytes of the frame stream were filled, in the pixels-then-
+ * palette order (`stride*height` bytes, then `palette_size` colours of three).
+ * The class decodes once and serves by offset, so a picture larger than a page
+ * is several calls (specs/datatypes.md). */
+constexpr uint32_t kMethodRead = 3;
+/* `dispose`: no fields. The class drops the decoded object. Answer 1. */
+constexpr uint32_t kMethodDispose = 4;
+
+/* The `info` words after its success word: width, height, format, stride,
+ * palette size, and a flags word (bit 0 transparent, bits 1..15 the transparent
+ * index). */
+constexpr uint32_t kInfoWords = 6;
 
 } // namespace aegir::datatypes
 

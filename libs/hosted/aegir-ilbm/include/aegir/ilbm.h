@@ -20,6 +20,7 @@
 #define AEGIR_ILBM_H
 
 #include <aegir/datatypes.h>
+#include <aegir/datatype/decoded.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -34,10 +35,11 @@ bool identify(const uint8_t *data, size_t size) noexcept;
  * width, height, format, stride, palette size and transparency. */
 bool probe(const uint8_t *data, size_t size, Info &out) noexcept;
 
-/* Decode into `bitmap`, which the caller sized from `probe`'s `Info`: at least
- * `stride * height` pixel bytes and `palette_size` colors. Returns false, and
- * leaves the frame untouched, on a malformed file. */
-bool decode(const uint8_t *data, size_t size, Bitmap &bitmap) noexcept;
+/* Decode the whole image into `out`: its `Info`, its pixels (`stride * height`
+ * bytes) and its palette. The class owns the result and serves it a page at a
+ * time through `Decoded::read` (specs/datatypes.md). False, and `out`
+ * untouched, on a malformed file. */
+bool decode(const uint8_t *data, size_t size, Decoded &out);
 
 } // namespace aegir::datatypes::ilbm
 

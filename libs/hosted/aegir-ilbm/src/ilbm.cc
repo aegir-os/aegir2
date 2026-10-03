@@ -14,10 +14,10 @@
 #include <aegir/ilbm.h>
 
 #include <aegir/datatypes.h>
+#include <aegir/datatype/decoded.h>
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
 namespace aegir::datatypes::ilbm {
@@ -158,7 +158,7 @@ bool probe(const uint8_t *data, size_t size, Info &out) noexcept
     return true;
 }
 
-bool decode(const uint8_t *data, size_t size, Bitmap &bitmap) noexcept
+bool decode(const uint8_t *data, size_t size, Decoded &out)
 {
     Chunks c;
     Header h;
@@ -168,11 +168,6 @@ bool decode(const uint8_t *data, size_t size, Bitmap &bitmap) noexcept
     const size_t planes = static_cast<size_t>(h.planes) + (h.masking == 1 ? 1 : 0);
     const size_t need = row_bytes * planes * h.height;
     const size_t stride = h.width;
-    if (bitmap.pixels == nullptr || bitmap.pixels_size < stride * h.height) return false;
-    if (h.palette_size != 0 &&
-        (bitmap.palette == nullptr || bitmap.palette_size < h.palette_size)) {
-        return false;
-    }
 
     const uint8_t *rows = c.body;
     std::vector<uint8_t> unpacked;
@@ -183,27 +178,36 @@ bool decode(const uint8_t *data, size_t size, Bitmap &bitmap) noexcept
         return false;
     }
 
-    std::memset(bitmap.pixels, 0, stride * h.height);
+    out.info.width = h.width;
+    out.info.height = h.height;
+    out.info.format = Format::INDEXED;
+    out.info.stride = h.width;
+    out.info.palette_size = h.palette_size;
+    out.info.transparent = h.masking == 2;
+    out.info.transparent_index = h.masking == 2 ? h.transparent : 0;
+
+    out.pixels.assign(stride * h.height, 0);
     for (uint32_t y = 0; y < h.height; ++y) {
         for (uint8_t p = 0; p < h.planes; ++p) {
             const uint8_t *const plane =
                 rows + (static_cast<size_t>(y) * planes + p) * row_bytes;
             for (uint32_t x = 0; x < h.width; ++x) {
                 const uint8_t bit = (plane[x >> 3] >> (7 - (x & 7))) & 1u;
-                bitmap.pixels[static_cast<size_t>(y) * stride + x] |=
+                out.pixels[static_cast<size_t>(y) * stride + x] |=
                     static_cast<uint8_t>(bit << p);
             }
         }
     }
 
+    out.palette.assign(h.palette_size, Color{});
     for (uint32_t i = 0; i < h.palette_size; ++i) {
         if (c.cmap != nullptr) {
-            bitmap.palette[i] = Color{c.cmap[i * 3], c.cmap[i * 3 + 1], c.cmap[i * 3 + 2]};
+            out.palette[i] = Color{c.cmap[i * 3], c.cmap[i * 3 + 1], c.cmap[i * 3 + 2]};
         } else {
             const uint8_t v = h.palette_size <= 2
                                   ? static_cast<uint8_t>(i * 255)
                                   : static_cast<uint8_t>((i * 255) / (h.palette_size - 1));
-            bitmap.palette[i] = Color{v, v, v};
+            out.palette[i] = Color{v, v, v};
         }
     }
     return true;
