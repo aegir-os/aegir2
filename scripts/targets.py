@@ -211,6 +211,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # serve-launch would miss it.
             QmpStep(r"datatypes: open ilbm\.datatype"),
             QmpStep(r"datatypes: open png\.datatype"),
+            # The content-first walk (specs/datatypes.md): the demo opens a PNG
+            # named `.ilbm`, so the extension's hint is ilbm.datatype -- which
+            # declines -- and the broker walks `DataTypes:` until png.datatype
+            # claims it by content. The decline cue proves the hint did not win,
+            # and the RGBA the png class states proves the class, not the name,
+            # decided.
+            QmpStep(r"datatypes: ilbm\.datatype declines"),
+            QmpStep(r"demo: mystery 64x48 format 2 palette 0"),
             # The datatypes client's first call (specs/datatypes.md): the demo
             # opened Sys:TestImage.ilbm through the ilbm class, which decoded
             # the file and served the frame a page at a time. The cue names what

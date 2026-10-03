@@ -120,11 +120,13 @@ and method numbers make it additive (`specs/services.md`).
   time; a class is a file in it, so adding one is dropping it in -- no registry
   to update and no second list to keep in step, the same reason `LIBS:` is the
   list (`specs/libraries.md`). Identification is content-first: the broker
-  starts a class -- as the caller's user class, and it lives for the session -- and
-  asks it to `identify` the file, and the class, not a data file, is the
-  authority on what it reads. A file extension may choose which class to ask
-  first, but the class decides. A file no class claims is reported "no class",
-  loudly, rather than shown as a wrong picture.
+  starts a class -- as the caller's user class -- and asks it to `identify` the
+  file, and the class, not a data file, is the authority on what it reads. A
+  file extension may choose which class to ask first, but the class decides. The
+  class that claims the file lives for the session and serves the caller's port;
+  one that declines is **released** at once, so it is not left holding a port it
+  will not answer on. A file no class claims is reported "no class", loudly,
+  rather than shown as a wrong picture.
 - **A class declares its protocol version**, so `open_library`'s version check
   (`specs/libraries.md`) can refuse a class older than the caller needs.
 
@@ -202,12 +204,20 @@ viewer at once, and each lives in one process rather than in each caller.
   starts a class on demand through the session launcher, as the session's user
   class. A client asks it when the session has one (the port arrives through the
   launcher's kit, `command_ports`) and falls back to starting the class directly
-  when it does not. The broker still takes the extension as the *hint* and asks
-  the started class to `identify` the file; what is not built is walking
-  `DataTypes:` to try every class and the program-directory half of the search
-  (`specs/libraries.md`). The acceptance proves the broker path, not the
-  fallback: its cues are the broker's, and a session that started classes
-  directly would miss them.
+  when it does not. The acceptance proves the broker path, not the fallback: its
+  cues are the broker's, and a session that started classes directly would miss
+  them.
+- **Phase 2c -- content-first.** Landed. The broker lists `DataTypes:` at run
+  time and asks each class in turn to `identify` the file, the extension's hint
+  first; the class, not the name, decides. A class that declines is *released*
+  (the launcher reaps it, `launch.session`'s release), so only the class that
+  claimed the file serves the caller's port; that one lives for the session. A
+  file no class claims is answered `no class` and logged. The acceptance proves
+  it with a PNG named `.ilbm`: `ilbm.datatype` declines, `png.datatype` claims it
+  by content, and the RGBA the png class states is what the demo shows. What is
+  still not built is the program-directory half of the search
+  (`specs/libraries.md`) and the `Home:DataTypes` union with `DataTypes:`
+  (`specs/namespace.md`, waiting on `specs/ownership.md`).
 - **Phase 3 -- JPEG**, libjpeg-turbo.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property

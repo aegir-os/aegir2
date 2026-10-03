@@ -329,6 +329,12 @@ int main(int argc, char *argv[])
      * pins reading the same colours is the cross-check between the classes. */
     std::unique_ptr<ImageView> image_view = load_image(app, "Sys:TestImage.ilbm", "image");
     std::unique_ptr<ImageView> png_view = load_image(app, "Sys:TestImage.png", "png");
+    /* Content-first (specs/datatypes.md): a PNG named `.ilbm`, so the broker
+     * must let the class, not the name, decide -- ilbm.datatype declines it and
+     * png.datatype claims it by content. Decoded only to prove the walk (the
+     * Image tab keeps its two); the cue is the RGBA the png class states, which
+     * the ILBM class never produces. */
+    static_cast<void>(load_image(app, "Sys:Mystery.ilbm", "mystery"));
 
     /* The band the outline line gets: the face's own line height, so the grid
      * keeps the geometry it had before the label and the acceptance's samples

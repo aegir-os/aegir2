@@ -387,6 +387,11 @@ def aegir_tree(commands, datatypes) -> list:
     # them through the ilbm and png classes, on the session's namespace.
     tree.append(("file", "TestImage.ilbm", make_ilbm()))
     tree.append(("file", "TestImage.png", make_png()))
+    # A PNG named `.ilbm` (specs/datatypes.md's content-first walk): the name
+    # hints ilbm.datatype, which declines, and the broker walks `DataTypes:`
+    # until png.datatype claims it by content. The demo opens it to prove the
+    # class, not the name, decides.
+    tree.append(("file", "Mystery.ilbm", make_png()))
     if commands:
         tree.append(("dir", "C", [("file", name, data) for name, data in commands]))
     if datatypes:

@@ -15,8 +15,12 @@
 /* The C++ standard headers first: libsel4's riscv syscalls.h declares strcpy
  * with C++ linkage, so it must follow the C library's C-linkage declaration
  * (the terminal's include order is the same, for the same reason). */
+#include <algorithm>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <vector>
 
 #include <aegir/bootstrap.h>
 #include <aegir/datatypes.h>
@@ -41,8 +45,8 @@ alignas(64) unsigned char g_nodes[64 * 1024];
  * deleted when the open is answered. */
 seL4_CPtr g_class_slot = 0;
 
-/* The class from a file's extension -- the first cut's hint (the client's own
- * mapping, and a content-sniffing broker is the generalization). */
+/* The class a file's extension hints at: which class to ask *first*, not which
+ * one answers (specs/datatypes.md). The class, not the name, decides. */
 std::string class_from_extension(std::string_view path)
 {
     std::size_t const dot = path.rfind('.');
@@ -77,23 +81,63 @@ bool read_string(uint64_t const *words, uint32_t count, uint32_t &at, std::strin
     return true;
 }
 
+/* The candidates to ask, in order: the hint first (the extension may choose
+ * which class to ask first), then every class file `DataTypes:` holds, sorted,
+ * minus the hint. The list is the directory (specs/datatypes.md): a class is a
+ * file, so dropping one in teaches the session a format with no registry to
+ * update. An empty hint (a name that names no class) is the content-first case
+ * -- every class is asked and one claims by content. */
+std::vector<std::string> class_candidates(std::string const &hint)
+{
+    std::vector<std::string> names;
+    if (!hint.empty()) {
+        names.push_back(hint);
+    }
+    std::error_code error;
+    std::filesystem::directory_iterator it("DataTypes:", error);
+    if (error) {
+        return names;
+    }
+    std::vector<std::string> found;
+    std::filesystem::directory_iterator const end;
+    for (; it != end; it.increment(error)) {
+        if (error) {
+            break;
+        }
+        std::error_code kind_error;
+        if (it->is_directory(kind_error)) {
+            continue;
+        }
+        std::string const name = it->path().filename().string();
+        if (!name.empty()) {
+            found.push_back(name);
+        }
+    }
+    std::sort(found.begin(), found.end());
+    for (std::string const &name : found) {
+        if (std::find(names.begin(), names.end(), name) == names.end()) {
+            names.push_back(name);
+        }
+    }
+    return names;
+}
+
 /* Start `class_name` under the caller's badge, serving the class port the
- * caller made (`class_cap`), and ask it to identify `path`. True when it claims
- * the file. The class is left running: it lives for the session, and the caller
- * talks to the port it made. */
-bool start_and_identify(std::string const &class_name, std::string const &path,
-                        seL4_CPtr class_cap)
+ * caller made (`class_cap`). `badge_out` is the class's, for a release if it
+ * then declines the file. */
+bool start_class(std::string const &class_name, seL4_CPtr class_cap,
+                 uint64_t *badge_out)
 {
     std::string program("DataTypes:");
     program.append(class_name);
-    uint64_t badge = 0;
-    if (!aegir::launch::spawn_serve(program.c_str(),
-                                    static_cast<uint32_t>(program.size()), class_cap,
-                                    &badge)) {
-        return false;
-    }
-    static_cast<void>(badge);
+    return aegir::launch::spawn_serve(program.c_str(),
+                                      static_cast<uint32_t>(program.size()), class_cap,
+                                      badge_out);
+}
 
+/* Ask a started class to identify `path`: true when it claims the file. */
+bool identify_class(seL4_CPtr class_cap, std::string const &path) noexcept
+{
     aegir::ipc::Consumer const cls(class_cap);
     uint64_t request[aegir::ipc::kMaxWords] = {};
     uint32_t const words = aegir::nmspace::pack_string(
@@ -105,6 +149,20 @@ bool start_and_identify(std::string const &class_name, std::string const &path,
     aegir::ipc::WordsReply const reply =
         cls.call_words(aegir::datatypes::kMethodIdentify, request, words, answer, 1);
     return reply.error == 0 && reply.count >= 1 && answer[0] == 1;
+}
+
+/* Stop a class that declined the file: the launcher reaps it, so its capability
+ * on the caller's port is gone and the next candidate can be started on the
+ * same port without two classes serving it (specs/datatypes.md). A class that
+ * claimed the file lives for the session. */
+void release_class(uint64_t badge) noexcept
+{
+    aegir::ipc::Consumer const launcher = aegir::launch::launcher();
+    if (!launcher.valid() || badge == 0) {
+        return;
+    }
+    uint64_t answer[1] = {};
+    (void)launcher.call_words(aegir::launch::kMethodRelease, &badge, 1, answer, 1);
 }
 
 void handle_open(uint64_t const *words, uint32_t count, bool cap_arrived, uint64_t *reply,
@@ -135,11 +193,31 @@ void handle_open(uint64_t const *words, uint32_t count, bool cap_arrived, uint64
     if (class_name.empty()) {
         class_name = class_from_extension(path);
     }
-    if (!class_name.empty()) {
-        aegir::debug_write("  datatypes: open ");
-        aegir::debug_write(class_name.c_str());
+    /* Content-first (specs/datatypes.md): ask the hint first, then walk
+     * `DataTypes:`; the class, not the name, decides. A class that declines the
+     * file is released, so the next candidate is the only one serving the
+     * caller's port. */
+    for (std::string const &candidate : class_candidates(class_name)) {
+        uint64_t badge = 0;
+        if (!start_class(candidate, g_class_slot, &badge)) {
+            continue;
+        }
+        if (identify_class(g_class_slot, path)) {
+            aegir::debug_write("  datatypes: open ");
+            aegir::debug_write(candidate.c_str());
+            aegir::debug_write("\n");
+            reply[0] = 1;
+            break;
+        }
+        aegir::debug_write("  datatypes: ");
+        aegir::debug_write(candidate.c_str());
+        aegir::debug_write(" declines\n");
+        release_class(badge);
+    }
+    if (reply[0] != 1) {
+        aegir::debug_write("  datatypes: no class for ");
+        aegir::debug_write(path.c_str());
         aegir::debug_write("\n");
-        reply[0] = start_and_identify(class_name, path, g_class_slot) ? 1 : 0;
     }
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_class_slot,
                       aegir::bootstrap::cnode_bits());
