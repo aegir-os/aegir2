@@ -53,8 +53,11 @@ format (`libs/freestanding/aegir-manifest`, `specs/services.md`), read by auth.
   services, so the manifest declares what rides *on top of* the session's floor.
 - **The boot manifest's `[session.*]` entries are superseded.** The boot
   manifest composes system services (`specs/director.md`); a session's services
-  live here. `manifests/services.manifest`'s `[session.*]` sections are removed
-  as the reader lands.
+  live here. They cannot be removed until auth makes the session's *ports*: the
+  boot entries are what director's port graph composes, `[auth] spawns =
+  session.*` must resolve to something, and `bureau.menu`'s owner copy reaches
+  auth only because `[session.bureau]` owns it
+  (`aegir-director/src/services.cc:228-243`, `:458-472`).
 
 The shipped default (`Sys:S/session.manifest`) declares the bureau and a
 terminal. The terminal is **convenience while there is no desktop**, not
@@ -93,14 +96,19 @@ user's additions. Recorded here so the manifest and the script are one design;
 
 ## Phases and acceptance
 
-1. **The manifest reader.** auth reads `Sys:S/session.manifest` and starts the
+1. **auth makes the session's ports.** Today director composes `bureau.menu` and
+   hands auth its owner half (`spawn:bureau.menu`). auth makes it itself, from
+   the session's own allocator, the way it already makes `launch.session` -- then
+   `session.*` leaves `[auth] spawns` and the boot manifest's `[session.*]`
+   entries follow.
+2. **The manifest reader.** auth reads `Sys:S/session.manifest` and starts the
    bureau and terminal from it, replacing the hardcoded shape (`aegir-auth`'s
    `start_session`). The acceptance is the existing login arc: same screens,
    same cues, with the composition now data. Malformed and absent take their
    recovery paths.
-2. **The datatypes broker.** The first *new* service the manifest declares: owns
+3. **The datatypes broker.** The first *new* service the manifest declares: owns
    `datatypes.main`, needs `vfs.namespace` and `launch.session`, starts classes
    as the session's user class (`specs/datatypes.md`, `specs/libraries.md`). The
    client asks it when present and falls back to the direct serve-launch when
    not.
-3. **User-Startup.** Run once at session start, after the services are up.
+4. **User-Startup.** Run once at session start, after the services are up.
