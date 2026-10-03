@@ -105,6 +105,17 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
         (void)put(out, capacity, n++, kFontMainName, kFontMainNameLength, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
+    /* The session launcher's caller half (specs/launch.md, specs/datatypes.md):
+     * a command may ask the launcher to serve-launch a class, so any program can
+     * use a resource library, not only a launching program. Minted from the
+     * unbadged source with the command's badge. An output view is a command, so
+     * it shares this one grant -- which is why it lives here, not in
+     * output_ports, where a second entry under the same name would shadow it. */
+    if (kit.launch != 0) {
+        (void)put(out, capacity, n++, aegir::launch::kPortName,
+                  aegir::launch::kPortNameLength, kit.launch,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
                   aegir::clock::kPortNameLength, kit.clock, seL4_CapRights_new(1, 0, 0, 1),
@@ -154,16 +165,11 @@ uint32_t serve_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_
 
 uint32_t output_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
 {
-    uint32_t n = command_ports(kit, child, out, capacity);
-    /* The view releases each command whose exit it reports, so it holds the
-     * launcher's `launch.session` caller half (specs/launch.md). Copied, not
-     * minted: it is already badged, and a badged cap cannot be minted again. */
-    if (kit.launch != 0) {
-        (void)put(out, capacity, n++, aegir::launch::kPortName,
-                  aegir::launch::kPortNameLength, kit.launch,
-                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
-    }
-    return n;
+    /* A view is a command that serves con.stream instead of writing it, so it
+     * inherits the command's `launch.session` caller half -- which is what it
+     * releases each command through (kMethodRelease). Nothing is added here, so
+     * the grant is not duplicated under one name. */
+    return command_ports(kit, child, out, capacity);
 }
 
 uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_t capacity)
