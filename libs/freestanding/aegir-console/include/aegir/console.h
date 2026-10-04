@@ -90,7 +90,9 @@ constexpr uint32_t kMethodInfo = 8;
 /** Move: in the window's id and its new x and y on the screen. The
  *  rectangle is clip-checked the way create_window's is; a move that
  *  would fall off the screen is refused. The old and new rectangles are
- *  composited (specs/window-manager.md). The answer is empty. */
+ *  composited (specs/window-manager.md). The answer is one word: 1 when the
+ *  move was taken, 0 when refused, so a client knows whether to move its own
+ *  rectangle with it. */
 constexpr uint32_t kMethodMove = 9;
 
 /** Raise: in the window's id. The window goes to the top of the z-order.
@@ -102,7 +104,8 @@ constexpr uint32_t kMethodRaise = 10;
 /** Resize: in the window's id and its new width and height. The rectangle
  *  is clip-checked the way create_window's is -- off the screen, or past
  *  the client's own slice, is refused. The old and new rectangles are
- *  composited (specs/window-manager.md). The answer is empty. */
+ *  composited (specs/window-manager.md). The answer is one word: 1 when the
+ *  resize was taken, 0 when refused (as `move`). */
 constexpr uint32_t kMethodResize = 11;
 
 /** Lower: in the window's id. The window goes to the bottom of the z-order
@@ -286,14 +289,17 @@ inline bool destroy_window(aegir::ipc::Consumer const &gui, uint64_t window) noe
     return answer.error == 0;
 }
 
-/** Move a window to (x, y) on the screen. False when refused. */
+/** Move a window to (x, y) on the screen. False when refused -- the answer
+ *  word is 1 for a move that was taken and 0 for one that was not, so a drag
+ *  that runs off the screen leaves the window (and the client's rectangle)
+ *  where it was. */
 inline bool move(aegir::ipc::Consumer const &gui, uint64_t window, uint64_t x,
                  uint64_t y) noexcept
 {
     uint64_t out[3] = {window, x, y};
     uint64_t in[1];
     aegir::ipc::WordsReply const answer = gui.call_words(kMethodMove, out, 3, in, 1);
-    return answer.error == 0;
+    return answer.error == 0 && answer.count >= 1 && in[0] != 0;
 }
 
 /** Raise a window to the top of the z-order. False when refused. */
@@ -303,14 +309,15 @@ inline bool raise(aegir::ipc::Consumer const &gui, uint64_t window) noexcept
     return answer.error == 0;
 }
 
-/** Resize a window to width x height. False when refused. */
+/** Resize a window to width x height. False when refused -- as `move`, the
+ *  answer word is 1 for a resize that was taken and 0 for one that was not. */
 inline bool resize(aegir::ipc::Consumer const &gui, uint64_t window,
                    uint64_t width, uint64_t height) noexcept
 {
     uint64_t out[3] = {window, width, height};
     uint64_t in[1];
     aegir::ipc::WordsReply const answer = gui.call_words(kMethodResize, out, 3, in, 1);
-    return answer.error == 0;
+    return answer.error == 0 && answer.count >= 1 && in[0] != 0;
 }
 
 /** Lower a window to the bottom of the z-order (above the backdrops). False

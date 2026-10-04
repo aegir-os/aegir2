@@ -173,6 +173,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # through the __funcs_on_exit bridge and prints the second marker.
             QmpStep(r"CXX_SMOKE_OK"),
             QmpStep(r"CXX_ATEXIT_OK"),
+            # `hello` faults on purpose -- the one boot service whose job is to
+            # fail, so the supervision path is walked every run (specs/
+            # director.md). This is its last line before the fault, and the run
+            # requires it; the boot must report exactly that one fault, and any
+            # *other* service faulting after the boot marker is a failure.
+            QmpStep(r"AEGIR_CLIENT_FAULTING_ON_PURPOSE"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

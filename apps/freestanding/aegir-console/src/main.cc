@@ -1509,7 +1509,11 @@ int main(int argc, char *argv[])
             window->x = x;
             window->y = y;
             repaint_move(window, old_x, old_y);
-            gui.reply(0);
+            /* One word, so the client can tell a refusal (0) from a move it
+             * may adopt (1): a drag that runs off the screen leaves the
+             * window where it was, and the client must not move its own
+             * rectangle with it. */
+            gui.reply(1);
         } else if (method == aegir::console::kMethodRaise && length == 2) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
             Window **link = &g_windows;
@@ -1562,7 +1566,8 @@ int main(int argc, char *argv[])
             uint64_t const widest = old_width > width ? old_width : width;
             uint64_t const tallest = old_height > height ? old_height : height;
             repaint(window->x, window->y, widest, tallest);
-            gui.reply(0);
+            /* As in a move: one word, 1 taken, 0 refused. */
+            gui.reply(1);
         } else if (method == aegir::console::kMethodLower && length == 2) {
             uint64_t const id = static_cast<uint64_t>(seL4_GetMR(1));
             Window **link = &g_windows;

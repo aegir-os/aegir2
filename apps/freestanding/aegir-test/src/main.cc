@@ -2985,10 +2985,14 @@ int main(int argc, char *argv[])
              * first were wrongly taken the origin would be huge, and the
              * second would drive repaint_move's overlap negative and reach
              * below the framebuffer, which is the fault this guards. The
-             * answer does not say (the console replies the same word either
-             * way); the screen does, so the runner reads it. */
-            (void)aegir::console::move(gui, second_window, 64, static_cast<uint64_t>(-1));
-            (void)aegir::console::move(gui, second_window, 64, static_cast<uint64_t>(-100));
+             * answer says it -- 0 refused, 1 taken -- and the screen confirms
+             * it: the red one stays where the resize left it, which the
+             * runner's dump reads. */
+            bool const first_refused =
+                !aegir::console::move(gui, second_window, 64, static_cast<uint64_t>(-1));
+            bool const second_refused =
+                !aegir::console::move(gui, second_window, 64, static_cast<uint64_t>(-100));
+            ok = first_refused && second_refused;
             write("  test: wrapped moves off the screen were refused -- the screen, please\n");
         }
         if (!ok) {
