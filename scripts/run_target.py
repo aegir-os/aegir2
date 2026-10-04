@@ -39,8 +39,11 @@ TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) t
 # summary counts them ("N checks FAILED"). The marker is the boot's last line,
 # not the verdict -- a failing test still reaches it -- so a run whose checks
 # failed is a failed run however the marker arrived. A smoke that reports its
-# own failure the same way ("NAME_SMOKE_FAIL") counts too.
-GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED|_SMOKE_FAIL")
+# own failure the same way ("NAME_SMOKE_FAIL") counts too. A boot service's
+# own refusal counts as well: `auth: FAIL ...` is a session that came up
+# wrong, and `vfs: no room ...` is a table that filled -- the two that let a
+# session whose namespace would not bind pass unnoticed.
+GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED|_SMOKE_FAIL|auth: FAIL|vfs: no room")
 # The guest's own rectangles, so a click can follow the layout rather than a
 # pinned pixel: a line `rect <name> <x> <y> <w> <h>`, screen pixels. A step's
 # `clicks` names one and the runner lands on it wherever the widget is.
