@@ -156,12 +156,12 @@ def build_runtimes(target: Target, timeout: int) -> None:
     """Build the hosted runtime's vendored pieces for this target.
 
     Full musl, libc++/libcxxabi/libunwind, FreeType (the font service's
-    rasterizer), and zlib+libpng (the PNG class's decoder). Run before configure
-    because cmake imports them (libs/aegir-musl, libs/aegir-libcxx,
-    libs/aegir-freetype, libs/aegir-libpng) and refuses to configure without
-    them. Each script is idempotent: an existing install is left alone, so this
-    is cheap after the first build of a target (and `make clean` is what forces
-    a rebuild).
+    rasterizer), and zlib+libpng and libjpeg-turbo (the PNG and JPEG classes'
+    decoders). Run before configure because cmake imports them (libs/aegir-musl,
+    libs/aegir-libcxx, libs/aegir-freetype, libs/aegir-libpng,
+    libs/aegir-libjpeg) and refuses to configure without them. Each script is
+    idempotent: an existing install is left alone, so this is cheap after the
+    first build of a target (and `make clean` is what forces a rebuild).
     """
     root = ENV_SCRIPT.parent.parent
     bash(f"bash scripts/build_musl.sh {target.name}", root, timeout)
@@ -169,6 +169,7 @@ def build_runtimes(target: Target, timeout: int) -> None:
     bash(f"bash scripts/build_freetype.sh {target.name}", root, timeout)
     bash(f"bash scripts/build_zlib.sh {target.name}", root, timeout)
     bash(f"bash scripts/build_libpng.sh {target.name}", root, timeout)
+    bash(f"bash scripts/build_libjpeg.sh {target.name}", root, timeout)
 
 
 def configured_flags(build_dir: Path) -> str:
