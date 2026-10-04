@@ -187,13 +187,16 @@ connection; it does not silently cap the machine.
 
 ## Configuration and introspection
 
-Status: **shape decided, detailed when it lands.** This is the last step: the
-interface must be readable and writable, at boot from a file and live from the
-filesystem. The parameter list and the manifest's TOML schema are that phase's
-own.
+Status: **shape decided.** An interface starts **down**: nothing brings it up
+but a configuration. That is why boot bring-up -- the control port, `NetConfig`,
+`Sys:S/network.manifest` and its `Startup-Sequence` line -- lands *with the
+stack* (phase 3), and only the `Net:` filesystem view, the live half, is the
+last step. The parameter list is the last phase's own; the manifest's TOML
+schema lands with `NetConfig` (phase 3).
 
-There are two paths to the same parameters, and they must agree, because they
-are the same state seen at two times rather than two configurations.
+There are two paths to the same parameters -- boot and live -- and they must
+agree, because they are the same state seen at two times rather than two
+configurations. Both reach the stack's control port.
 
 ### At boot: `Sys:S/network.manifest`
 
@@ -219,13 +222,15 @@ path a live write to `Net:` takes. Two things fall out of that:
 
 A malformed manifest is announced **loudly**, with the parser's line and reason
 -- the loud-failure rule `specs/session.md` sets -- and the command leaves the
-interface on its bring-up default rather than applying half a file.
+interface **down** rather than applying half a file. Down is the safe default:
+nothing reaches the network until something asks it to.
 
-While the stack is being built its bring-up default is DHCP, so it is useful and
-testable with no config at all (phase 3's acceptance). The final phase moves
-that default into the shipped `Sys:S/network.manifest` and starts the interface
-down until the command configures it, so a static setup makes no transient DHCP
-attempt.
+**The interface is down until configured, and only a configuration moves it.**
+`aegir-net` starts every interface down and does not configure itself; there is
+no bring-up default and no transient -- a static setup is set down, configured,
+then brought up, and a DHCP setup is brought up with `dhcp` set. This is why the
+bring-up half lands with the stack rather than at the end: without it the stack
+is unusable, so it is the stack's own interface, not an extra.
 
 ### Live: the `Net:` volume
 
@@ -264,6 +269,10 @@ one client and the boot-manifest reader is another. Keeping it apart from
 protocols, the way the block driver's `caps` is not its `read`
 (`specs/services.md`).
 
+The control port is the stack's own interface -- an interface that starts down
+is useless without it -- so it lands with the stack (phase 3); the `Net:` volume
+in front of it is the last step.
+
 ## Acceptance
 
 The runner grows `-device virtio-net-device,netdev=net0 -netdev user,id=net0`
@@ -271,7 +280,8 @@ and the test is deliberately **offline and deterministic**:
 
 1. **the link** -- the driver reports id 1, the device's MAC, and link up; a
    small landing, the shape of the block driver's first sector read.
-2. **the stack** -- DHCP completes, and the address, netmask and gateway are
+2. **the stack** -- `NetConfig` brings the interface up from
+   `Sys:S/network.manifest` (DHCP), and the address, netmask and gateway are
    printed as cues: the numbers are the network's, obtained not embedded. Then
    ARP, then an **ICMP echo to the DHCP-supplied gateway**, which slirp answers.
 3. DNS is left to interactive use, not the gate: it forwards to the host
@@ -287,15 +297,16 @@ offline, and it exercises the client socket path end to end.
 1. **`aegir-virtio-net`** and `aegir/ethernet.h`; the registry row; acceptance
    is the handshake, the MAC and link state.
 2. **`timer.main`'s periodic subscription**, on `aegir::signal`.
-3. **`aegir-lwip` and `aegir-net`** -- `sys_arch`, the tcpip thread, the netif,
-   DHCP/ARP/ICMP, held replies; acceptance is the address and the echo.
+3. **`aegir-lwip`, `aegir-net`, and bring-up** -- `sys_arch`, the tcpip thread,
+   the netif, held replies, plus the control port, `NetConfig`,
+   `Sys:S/network.manifest` and its `Startup-Sequence` line. An interface starts
+   down and the command brings it up; acceptance is DHCP, ARP and the echo
+   through that path.
 4. **`aegir/net.h` and the socket shim** -- a `ping` client first, then the
    musl BSD-socket rerouting, then TCP and DNS.
-5. **Configuration and introspection** -- the control port, the `Net:` volume
-   and its service, `Sys:S/network.manifest`, and the `NetConfig` command in
-   `Sys:S/Startup-Sequence`, so the interface is read and set at boot and live.
-   The shipped manifest carries the DHCP default the stack had at bring-up, and
-   the interface starts down until the command configures it.
+5. **`Net:`, the filesystem view** -- the live half: the volume and its service,
+   `Net:<adapter>/<parameter>`, so the running state can be read and set the way
+   the boot manifest set it.
 
 ## What this is not
 
