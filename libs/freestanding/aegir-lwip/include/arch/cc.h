@@ -27,9 +27,26 @@
  * interrupt state of the calling core. Delivered by the port's sys_arch. */
 typedef uint32_t sys_prot_t;
 
+/* The port's hooks. Declared `extern "C"` because lwIP's C sources include
+ * this header and the bodies are C++. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void aegir_lwip_diag(const char *format, ...);
 void aegir_lwip_assert(const char *message, const char *file, int line);
 uint32_t aegir_lwip_rand(void);
+
+/* lwIP's heap: MEM_CUSTOM_ALLOCATOR routes mem_malloc/mem_free/mem_calloc
+ * here, and this is the header lwIP's C sources include (lwip/arch.h).
+ * Implementations are the port's mem.cc, over the region the service gave. */
+void *aegir_lwip_malloc(size_t bytes);
+void aegir_lwip_free(void *pointer);
+void *aegir_lwip_calloc(size_t count, size_t bytes);
+
+#ifdef __cplusplus
+}
+#endif
 
 /* lwIP calls LWIP_PLATFORM_DIAG(("format", args)) -- the argument is a
  * parenthesised printf argument list, so the macro expands to a call. */

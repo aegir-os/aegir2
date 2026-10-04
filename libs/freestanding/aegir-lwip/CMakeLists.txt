@@ -44,9 +44,11 @@ set(AEGIR_LWIP_SOURCES
     # The tcpip thread (NO_SYS=0) and the generic Ethernet framing.
     ${AEGIR_LWIP_DIR}/src/api/tcpip.c
     ${AEGIR_LWIP_DIR}/src/netif/ethernet.c
-    # The port's own code: the diag/assert/rand hooks arch/cc.h declares (C++,
-    # because a diagnostic reaches aegir-runtime's line writer).
+    # The port's own code: the diag/assert/rand hooks arch/cc.h declares, and
+    # the heap lwIP's mem_malloc is routed to (both C++, because a diagnostic
+    # reaches aegir-runtime's line writer).
     ${CMAKE_CURRENT_SOURCE_DIR}/src/port.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mem.cc
 )
 
 add_library(lwip STATIC ${AEGIR_LWIP_SOURCES})

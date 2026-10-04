@@ -52,11 +52,16 @@
 #define LWIP_IGMP                   0
 #define LWIP_AUTOIP                 0
 
-/* Memory comes from the service's region, not from fixed arrays (specs/net.md,
- * the project's no-hardcoded-capacity rule): MEM_LIBC_MALLOC routes lwIP's heap
- * and MEMP_MEM_MALLOC routes the pbuf/pcb pools through it, so the port's
- * malloc/free over the manifest region is the only bound. */
-#define MEM_LIBC_MALLOC             1
+/* Memory comes from the service's region, not from a fixed heap (specs/net.md):
+ * MEM_CUSTOM_ALLOCATOR routes lwIP's mem_malloc/mem_free/mem_calloc to the
+ * port's allocator (mem.cc) over the region the service holds, and
+ * MEMP_MEM_MALLOC routes the pbuf/pcb pools through it too -- so there is no
+ * MEM_SIZE anywhere, and the heap is as big as what the service was given. */
+#define MEM_LIBC_MALLOC             0
+#define MEM_CUSTOM_ALLOCATOR        1
+#define MEM_CUSTOM_MALLOC           aegir_lwip_malloc
+#define MEM_CUSTOM_FREE             aegir_lwip_free
+#define MEM_CUSTOM_CALLOC           aegir_lwip_calloc
 #define MEMP_MEM_MALLOC             1
 #define MEM_ALIGNMENT               4
 
