@@ -1,8 +1,9 @@
 # The network stack
 
 Status: decided (2026-10). This is the "TCP/IP and a socket layer" of
-`specs/direction.md`, and it takes the fourth item there -- composition chosen
-at runtime -- one step, because a stack is loaded per interface.
+`specs/direction.md`. It supersedes that file's "a network stack loaded per
+interface": **one stack owns every interface** (a netif each), because a host's
+routing is a property of the stack, not of one NIC.
 
 ## What we are building
 
@@ -13,9 +14,13 @@ Three pieces and two protocols:
 
 - **`aegir-virtio-net`** owns the network device and serves raw Ethernet
   frames. It is a driver like any other: a registry row, spawned by the
-  device manager (`specs/services.md`).
-- **`aegir-net`** runs lwIP over one link, and serves a socket port. It knows
-  nothing about virtio, so on a board only the link driver changes.
+  device manager (`specs/services.md`). **One driver per device** -- a machine
+  with two NICs runs two of them and neither multiplexes.
+- **`aegir-net`** runs lwIP over **every** link, a netif per interface, and
+  serves a socket port. One stack means one routing table and one socket
+  namespace: a packet's route is a decision across all the interfaces,
+  not a decision two unaware stacks would each take alone. It knows nothing
+  about virtio, so on a board only the link drivers change.
 - **`aegir/ethernet.h`** and **`aegir/net.h`** are the two protocol headers,
   the `aegir/block.h` shape: the owner includes one to serve, the client to
   call, and there is no code in either.
@@ -68,11 +73,14 @@ window, the status handshake, and two queues on the shared `Queue` object.
   (`specs/services.md`); a driver without a pair polls.
 - registry row: `compatible=virtio,mmio id=1 prefix=eth bus=virtio
   binary=aegir-virtio-net memory=<n> window=<the frame window>`.
-- **one device, one process.** Two Ethernet interfaces are two link drivers --
-  two bindings of the row, two instances -- and two stacks, the instance model
-  the two gpu heads already proved (`specs/services.md`). A driver never
-  multiplexes two ports; the two jacks on a board with two NICs are
-  `eth.virtio0` and `eth.virtio1`, not one driver with two.
+- **one device, one driver, one stack.** Two Ethernet interfaces are two link
+  drivers -- two bindings of the row, two instances (`eth.virtio0`,
+  `eth.virtio1`), the instance model the two gpu heads already proved
+  (`specs/services.md`); a driver never multiplexes two ports. But it is **one
+  stack** that opens both and adds a netif to each: routing and the socket
+  namespace belong to the stack, and a host with two NICs must not have two of
+  each. (ARP is per-netif, but within the one stack, so the routes and the
+  caches still see every interface together.)
 
 ## Vendoring lwIP
 
