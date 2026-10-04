@@ -429,16 +429,13 @@ int main(int argc, char *argv[])
             uint32_t done = 0;
             if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
                 uint64_t const caller_window = window_for(badge, window_physical);
-                for (uint32_t i = 0; i < sectors; ++i) {
-                    aegir::virtio::ReadResult const result = aegir::virtio::read_sector(
-                        registers, queue, first + i,
-                        caller_window +
-                            static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes,
-                        nullptr);
-                    if (!result.completed || result.status != 0) {
-                        break;
-                    }
-                    ++done;
+                /* One request for the whole range: the device writes every
+                 * sector to the caller's window in a single transfer, so its
+                 * latency is paid once, not once per 512 bytes. */
+                aegir::virtio::ReadResult const result = aegir::virtio::read_sectors(
+                    registers, queue, first, caller_window, nullptr, sectors);
+                if (result.completed && result.status == 0) {
+                    done = sectors;
                 }
             }
             port.reply(done);
@@ -450,15 +447,10 @@ int main(int argc, char *argv[])
             uint32_t done = 0;
             if (clamp_allows(badge, first, sectors, capacity, identify.window_sectors)) {
                 uint64_t const caller_window = window_for(badge, window_physical);
-                for (uint32_t i = 0; i < sectors; ++i) {
-                    aegir::virtio::ReadResult const result = aegir::virtio::write_sector(
-                        registers, queue, first + i,
-                        caller_window +
-                            static_cast<uint64_t>(i) * aegir::virtio::kSectorBytes);
-                    if (!result.completed || result.status != 0) {
-                        break;
-                    }
-                    ++done;
+                aegir::virtio::ReadResult const result = aegir::virtio::write_sectors(
+                    registers, queue, first, caller_window, sectors);
+                if (result.completed && result.status == 0) {
+                    done = sectors;
                 }
             }
             port.reply(done);

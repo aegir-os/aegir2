@@ -32,15 +32,19 @@ void put_word(volatile uint32_t *words, uint32_t index, uint32_t value) noexcept
  * wait, the status byte -- is the same machine. The chain always starts at
  * descriptor 0: the port serializes callers, so one transfer is outstanding
  * at a time. */
-ReadResult transfer_sector(Registers const &registers, Queue &queue, uint64_t sector,
-                           uint64_t data_physical, uint8_t *data_out, uint32_t type) noexcept
+ReadResult transfer_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                            uint64_t data_physical, uint8_t *data_out, uint32_t sectors,
+                            uint32_t type) noexcept
 {
     ReadResult result{false, 0, 0, 0, 0, 0, 0};
     volatile uint8_t *page = queue.page();
     uint64_t const physical = queue.physical();
+    uint32_t const bytes = sectors * kSectorBytes;
 
-    /* The request header: a read or a write, of one sector at `sector`. Written *before* it
-     * is published, because the device may look as soon as it is told there is something to
+    /* The request header: a read or a write, of `sectors` sectors at `sector`.
+     * The data descriptor names the whole range, so the device answers it with
+     * one request rather than one per sector. Written *before* it is published,
+     * because the device may look as soon as it is told there is something to
      * do. */
     put_word(word_at(page, kRequestOffset + 0), 0, type);
     put_word(word_at(page, kRequestOffset + 0), 1, 0);
@@ -52,7 +56,7 @@ ReadResult transfer_sector(Registers const &registers, Queue &queue, uint64_t se
 
     ChainBuf const chain[] = {
         {physical + kRequestOffset, sizeof(BlkRequest), false},
-        {data_physical, kSectorBytes, type == kBlkTypeIn},
+        {data_physical, bytes, type == kBlkTypeIn},
         {physical + kStatusOffset, 1, true},
     };
     queue.publish(registers, 0, chain, 3);
@@ -71,7 +75,7 @@ ReadResult transfer_sector(Registers const &registers, Queue &queue, uint64_t se
 
     if (data_out != nullptr) {
         volatile uint8_t *src = byte_at(page, kDataOffset);
-        for (uint32_t i = 0; i < kSectorBytes; ++i) {
+        for (uint32_t i = 0; i < bytes; ++i) {
             data_out[i] = src[i];
         }
     }
@@ -80,16 +84,19 @@ ReadResult transfer_sector(Registers const &registers, Queue &queue, uint64_t se
 
 }  // namespace
 
-ReadResult read_sector(Registers const &registers, Queue &queue, uint64_t sector,
-                       uint64_t data_physical, uint8_t *data_out) noexcept
+ReadResult read_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                        uint64_t data_physical, uint8_t *data_out,
+                        uint32_t sectors) noexcept
 {
-    return transfer_sector(registers, queue, sector, data_physical, data_out, kBlkTypeIn);
+    return transfer_sectors(registers, queue, sector, data_physical, data_out, sectors,
+                            kBlkTypeIn);
 }
 
-ReadResult write_sector(Registers const &registers, Queue &queue, uint64_t sector,
-                        uint64_t data_physical) noexcept
+ReadResult write_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                         uint64_t data_physical, uint32_t sectors) noexcept
 {
-    return transfer_sector(registers, queue, sector, data_physical, nullptr, kBlkTypeOut);
+    return transfer_sectors(registers, queue, sector, data_physical, nullptr, sectors,
+                            kBlkTypeOut);
 }
 
 ReadResult discard_sectors(Registers const &registers, Queue &queue, uint64_t sector,

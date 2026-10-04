@@ -37,12 +37,10 @@ bool name_equals(char const *a, uint32_t a_length, char const *b,
 bool Volume::read_block_now(uint64_t block, uint8_t *out) const noexcept
 {
     uint32_t const sectors = block_size() / kSectorBytes;
-    for (uint32_t i = 0; i < sectors; ++i) {
-        if (!read_(context_, block * sectors + i, out + i * kSectorBytes)) {
-            return false;
-        }
-    }
-    return true;
+    /* One call for the whole block: the transport carries a run of sectors in
+     * one device request, so reading a block does not pay the device's latency
+     * once per sector. */
+    return read_(context_, block * sectors, out, sectors);
 }
 
 uint64_t Volume::run_bytes(Run const &run) const noexcept
@@ -61,7 +59,7 @@ bool Volume::discard_run(Run const &run) const noexcept
                     static_cast<uint64_t>(run.length) * sectors_per_block);
 }
 
-bool Volume::open(ReadSector read, void *context, WriteSector write) noexcept
+bool Volume::open(ReadSectors read, void *context, WriteSectors write) noexcept
 {
     read_ = read;
     write_ = write;
@@ -70,7 +68,7 @@ bool Volume::open(ReadSector read, void *context, WriteSector write) noexcept
 
     /* The superblock is the 512 bytes at offset 512: sector 1, whatever the
      * block size turns out to be. */
-    if (!read_(context_, 1, array_)) {
+    if (!read_(context_, 1, array_, 1)) {
         return false;
     }
     uint8_t const *sb = array_;
@@ -163,14 +161,32 @@ bool Volume::set_log_end(uint64_t position) noexcept
 
 bool Volume::read_block(uint64_t block, uint8_t *out) const noexcept
 {
+    /* The journal's buffered image is newer than the disk and is never
+     * cached: an abort discards it and a commit writes it, so a cached copy
+     * would then shadow what the disk holds (specs/bfs.md's journal). Only the
+     * disk's own block goes in the cache. */
     if (journal_ != nullptr && journal_->peek(block, out)) {
         return true;
     }
-    return read_block_now(block, out);
+    uint32_t const line = static_cast<uint32_t>(block % kCacheLines);
+    if (cache_valid_[line] && cache_block_[line] == block) {
+        __builtin_memcpy(out, cache_[line], block_size());
+        return true;
+    }
+    if (!read_block_now(block, cache_[line])) {
+        return false;
+    }
+    cache_block_[line] = block;
+    cache_valid_[line] = true;
+    __builtin_memcpy(out, cache_[line], block_size());
+    return true;
 }
 
 bool Volume::write_block(uint64_t block, uint8_t const *in) const noexcept
 {
+    /* A cached block is now stale -- and a journalled write is newer than the
+     * disk, so read_block's peek would be shadowed by the cache. */
+    __builtin_memset(cache_valid_, 0, sizeof(cache_valid_));
     if (journal_ != nullptr && journal_->active()) {
         return journal_->log(block, in);
     }
@@ -179,16 +195,12 @@ bool Volume::write_block(uint64_t block, uint8_t const *in) const noexcept
 
 bool Volume::write_block_now(uint64_t block, uint8_t const *in) const noexcept
 {
+    __builtin_memset(cache_valid_, 0, sizeof(cache_valid_));
     if (write_ == nullptr) {
         return false;
     }
     uint32_t const sectors = block_size() / kSectorBytes;
-    for (uint32_t i = 0; i < sectors; ++i) {
-        if (!write_(context_, block * sectors + i, in + i * kSectorBytes)) {
-            return false;
-        }
-    }
-    return true;
+    return write_(context_, block * sectors, in, sectors);
 }
 
 bool Volume::set_used_blocks(uint64_t used) noexcept
@@ -220,7 +232,7 @@ bool Volume::write_superblock_now() const noexcept
     if (write_ == nullptr) {
         return false;
     }
-    return write_(context_, 1, superblock_);
+    return write_(context_, 1, superblock_, 1);
 }
 
 void Volume::save_superblock(uint8_t *out) const noexcept

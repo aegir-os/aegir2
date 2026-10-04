@@ -24,15 +24,19 @@
 
 namespace aegir::bfs {
 
-/** Read the volume-relative 512-byte sector `sector` into `out`. False when
- *  the device refuses. The callback is the service's: sectors arrive through
- *  its window and its partition range. A sector, not a block, because the
- *  block size lives in the superblock the first sectors carry. */
-using ReadSector = bool (*)(void *context, uint64_t sector, uint8_t *out);
+/** Read `sectors` volume-relative 512-byte sectors starting at `sector` into
+ *  `out`. False when the device refuses. The callback is the service's:
+ *  sectors arrive through its window and its partition range. A run of
+ *  sectors, not one, so that reading a block is one device request rather than
+ *  one per 512 bytes -- the device's latency is the cost that dominates a
+ *  program load. */
+using ReadSectors = bool (*)(void *context, uint64_t sector, uint8_t *out,
+                             uint32_t sectors);
 
-/** Write the 512 bytes of `in` to the volume-relative sector `sector`. The
+/** Write `sectors` sectors of `in` from the volume-relative `sector`. The
  *  write half of the same transport; null on a volume opened read-only. */
-using WriteSector = bool (*)(void *context, uint64_t sector, uint8_t const *in);
+using WriteSectors = bool (*)(void *context, uint64_t sector, uint8_t const *in,
+                              uint32_t sectors);
 
 /** Tell the device that `sectors` sectors from `sector` hold nothing worth
  *  keeping: a discard, a hint the device may ignore, so its answer is
@@ -68,8 +72,8 @@ public:
     /** Read and validate the superblock. False, with the volume invalid, when
      *  the bytes are not a BFS a little-endian reader speaks. `write` is the
      *  write half of the transport; without one the volume is read-only. */
-    bool open(ReadSector read, void *context,
-              WriteSector write = nullptr) noexcept;
+    bool open(ReadSectors read, void *context,
+              WriteSectors write = nullptr) noexcept;
 
     bool valid() const noexcept { return valid_; }
     bool writable() const noexcept { return write_ != nullptr; }
@@ -247,8 +251,8 @@ private:
     bool node_key(uint8_t const *node, uint16_t count, uint16_t index, char *out,
                   uint32_t *length) const noexcept;
 
-    ReadSector read_ = nullptr;
-    WriteSector write_ = nullptr;
+    ReadSectors read_ = nullptr;
+    WriteSectors write_ = nullptr;
     DiscardSectors discard_ = nullptr;
     void *context_ = nullptr;
     uint32_t block_shift_ = 0;
@@ -271,6 +275,17 @@ private:
     mutable uint8_t array_[kMaxBlockSize];
     mutable uint8_t array2_[kMaxBlockSize];
     mutable uint8_t tree_[kMaxBlockSize];
+    /* A few blocks kept, so a stream read does not go back to the disk for
+     * every piece. A file read in pieces smaller than a block is the case the
+     * launcher makes (load_image reads 512 bytes at a time), but read_stream
+     * also re-reads the indirect array's block on every call to find the run
+     * covering the offset -- so a single line thrashes between the array block
+     * and the data block. A direct-mapped set holds both. Invalidated by any
+     * write. */
+    static constexpr uint32_t kCacheLines = 8;
+    mutable uint8_t cache_[kCacheLines][kMaxBlockSize];
+    mutable uint64_t cache_block_[kCacheLines] = {};
+    mutable bool cache_valid_[kCacheLines] = {};
 };
 
 /** A path component matched as BFS matches names: bytewise, exactly. */

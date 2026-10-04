@@ -88,40 +88,45 @@ int64_t inode_time() noexcept
     return static_cast<int64_t>(now_seconds()) << 16;
 }
 
-/* Reading for the volume: a volume-relative 512-byte sector, through the
- * block port and into the window this service was given, copied out before
- * the next call clobbers it (aegir/block.h). */
-bool read_sector(void *context, uint64_t sector, uint8_t *out) noexcept
+/* Reading for the volume: a run of volume-relative 512-byte sectors, through
+ * the block port and into the window this service was given, copied out before
+ * the next call clobbers it (aegir/block.h). One call for the run, not one per
+ * sector: the block device answers a run with a single request, and its
+ * latency is what a program load pays for. */
+bool read_sectors(void *context, uint64_t sector, uint8_t *out, uint32_t sectors) noexcept
 {
     static_cast<void>(context);
-    if (g_window == nullptr) {
+    if (g_window == nullptr || sectors == 0) {
         return false;
     }
-    aegir::ipc::Reply const reply =
-        g_blk.call(aegir::block::kMethodRead, aegir::block::pack_read(g_first + sector, 1));
-    if (reply.error != 0 || reply.word != 1) {
+    aegir::ipc::Reply const reply = g_blk.call(
+        aegir::block::kMethodRead, aegir::block::pack_read(g_first + sector, sectors));
+    if (reply.error != 0 || reply.word != sectors) {
         return false;
     }
-    for (uint32_t i = 0; i < kSectorBytes; ++i) {
+    uint32_t const bytes = sectors * kSectorBytes;
+    for (uint32_t i = 0; i < bytes; ++i) {
         out[i] = g_window[i];
     }
     return true;
 }
 
-/* The write's half: the sector goes into the window, then out through the
- * same block port, clamped by this service's badge exactly as a read is. */
-bool write_sector(void *context, uint64_t sector, uint8_t const *in) noexcept
+/* The write's half: the sectors go into the window, then out through the same
+ * block port, clamped by this service's badge exactly as a read is. */
+bool write_sectors(void *context, uint64_t sector, uint8_t const *in,
+                   uint32_t sectors) noexcept
 {
     static_cast<void>(context);
-    if (g_window == nullptr) {
+    if (g_window == nullptr || sectors == 0) {
         return false;
     }
-    for (uint32_t i = 0; i < kSectorBytes; ++i) {
+    uint32_t const bytes = sectors * kSectorBytes;
+    for (uint32_t i = 0; i < bytes; ++i) {
         g_window[i] = in[i];
     }
-    aegir::ipc::Reply const reply =
-        g_blk.call(aegir::block::kMethodWrite, aegir::block::pack_read(g_first + sector, 1));
-    return reply.error == 0 && reply.word == 1;
+    aegir::ipc::Reply const reply = g_blk.call(
+        aegir::block::kMethodWrite, aegir::block::pack_read(g_first + sector, sectors));
+    return reply.error == 0 && reply.word == sectors;
 }
 
 /* The trim: the allocator tells the device about a run it has freed, and the
@@ -1776,7 +1781,7 @@ int main(int argc, char *argv[])
         aegir::debug_write(" of the device\n");
     }
 
-    if (!g_volume.open(read_sector, nullptr, g_writable ? write_sector : nullptr)) {
+    if (!g_volume.open(read_sectors, nullptr, g_writable ? write_sectors : nullptr)) {
         aegir::debug_write("      FAIL fs.bfs: not a Be File System this reader speaks\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();

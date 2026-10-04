@@ -71,27 +71,32 @@ struct ReadResult {
     uint32_t interrupt_status;
 };
 
-/** Publish a read of `sector` and wait for the device to say it is done. The device writes
- *  the sector to `data_physical` -- which does not have to be the queue page's own data
- *  area: the shared window a block port serves through is a physical address the driver
- *  knows, and a read that lands there needs no copy (aegir/block.h). `data_out`, when
- *  given, is filled from the queue page's own data area -- so it is for reads whose
- *  `data_physical` *is* that area, and nullptr for reads that landed somewhere else. */
-ReadResult read_sector(Registers const &registers, Queue &queue, uint64_t sector,
-                       uint64_t data_physical, uint8_t *data_out) noexcept;
+/** Publish a read of `sectors` sectors from `sector` and wait for the device
+ *  to say it is done. One request carries the whole range: the device DMAs
+ *  `sectors` *512 bytes to `data_physical` -- which does not have to be the
+ *  queue page's own data area: the shared window a block port serves through
+ *  is a physically contiguous address the driver knows, and a read that lands
+ *  there needs no copy (aegir/block.h). `data_out`, when given, is filled from
+ *  the queue page's own data area -- so it is for a single-sector read whose
+ *  `data_physical` *is* that area, and nullptr for reads that landed
+ *  elsewhere. One request per range, not per sector, is what keeps a block
+ *  device's latency from being paid once for every 512 bytes. */
+ReadResult read_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                        uint64_t data_physical, uint8_t *data_out,
+                        uint32_t sectors) noexcept;
 
-/** The write half: the device reads the sector *from* `data_physical` -- the
- *  shared window again, so what a client left there crosses no message. The
- *  result is read_sector's: the same publish, the same wait, the same status
- *  byte. */
-ReadResult write_sector(Registers const &registers, Queue &queue, uint64_t sector,
-                        uint64_t data_physical) noexcept;
+/** The write half: the device reads `sectors` sectors *from* `data_physical`
+ *  -- the shared window again, so what a client left there crosses no message.
+ *  The result is read_sectors': the same publish, the same wait, the same
+ *  status byte. */
+ReadResult write_sectors(Registers const &registers, Queue &queue, uint64_t sector,
+                         uint64_t data_physical, uint32_t sectors) noexcept;
 
 /** Discard `sectors` sectors from `sector`: one discard request whose range
  *  travels in a segment the driver writes into the queue page, since a discard
  *  carries no data. `max_sectors` is the device's own bound (the config's
  *  max_discard_sectors); a request larger than it is the caller's to split.
- *  The result is read_sector's. */
+ *  The result is read_sectors'. */
 ReadResult discard_sectors(Registers const &registers, Queue &queue, uint64_t sector,
                            uint32_t sectors) noexcept;
 
