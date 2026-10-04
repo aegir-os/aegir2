@@ -1727,6 +1727,45 @@ void union_read_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t 
     port.reply_words(answer, reply_count);
 }
 
+/* write-frame, forwarded (specs/vfs.md's scaling path): read-frame's mirror.
+ * The union handle names the member, whose own handle the union substitutes,
+ * and the caller's filled frame capability rides through to the member the way
+ * a read-frame's does -- so writing into a union destination (`Home:`) is one
+ * call a page, not the several an inline write needs. Words: handle, count,
+ * frame offset. */
+void union_write_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                       uint64_t const *words, uint32_t count, bool cap_arrived) noexcept
+{
+    if (count < 3 || !cap_arrived) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    UnionHandle const *row = union_handle_find(words[0]);
+    Member const *member = row != nullptr ? member_at(binding, row->member) : nullptr;
+    if (member == nullptr || !aegir::ipc::take_received_cap(g_carry_slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_carry_slot,
+                          aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const payload[3] = {row->member_handle, words[1], words[2]};
+    uint64_t answer[aegir::ipc::kMaxWords];
+    uint32_t const reply_count =
+        member_transfer_call(member, badge, aegir::volume::kMethodWriteFrame, payload, 3,
+                             g_carry_slot, answer, aegir::ipc::kMaxWords);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_carry_slot,
+                      aegir::bootstrap::kCNodeBits);
+    if (reply_count == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, reply_count);
+}
+
 /* write, forwarded: the union handle names the member, whose own handle the
  * union substitutes before the call; the client's count and bytes are
  * unchanged. */
@@ -1877,6 +1916,9 @@ void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
         break;
     case aegir::volume::kMethodWrite:
         union_write(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodWriteFrame:
+        union_write_frame(port, binding, caller, words, count, cap_arrived);
         break;
     case aegir::volume::kMethodClose:
         union_close(port, binding, caller, words, count);
