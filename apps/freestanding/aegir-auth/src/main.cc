@@ -668,7 +668,8 @@ void ensure_home(uint32_t user, uint64_t badge) noexcept
  * paths too: the Home: bind has already happened by then, and a (badge,
  * name) pair binds once (specs/vfs.md) -- left bound, the next login's
  * bind of the same serial would be refused. */
-void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
+void reclaim_session(uint64_t badge, uint32_t direct_badges, seL4_CPtr mark,
+                     uintptr_t scratch_mark,
                      aegir::mem::Account const &session_account) noexcept
 {
     uint64_t reaped = 0;
@@ -730,21 +731,23 @@ void reclaim_session(uint64_t badge, seL4_CPtr mark, uintptr_t scratch_mark,
         (unbound_reply.error == 0 && unbound_reply.count == 1) ? uin[0] : 0;
 
     /* The memory's way back is the memory service's: one release per badge the
-     * session used revokes every chunk that badge owns -- the session's
-     * objects, its spawn's staging, the bureau's and terminal's runtime
-     * untypeds, all retyped from those chunks -- and with them go the minted
-     * port copies in their CSpaces (specs/authority.md's retained-copy path,
-     * specs/memory.md). The terminal's own badge is released too, so a nested
-     * terminal's memory, charged there, comes back. The kernel unmaps a mapped
-     * frame when the cap goes (finaliseCap), so the staging's scratch-window
-     * pages are already unmapped; the window's cursor just needs to be told.
-     * The slots past the mark are empty, so the cursor returns to it. */
+     * session minted directly revokes every chunk that badge owns -- the
+     * session's objects, its spawn's staging, and each service's and the
+     * launcher's runtime untypeds, all retyped from those chunks -- and with
+     * them go the minted port copies in their CSpaces (specs/authority.md's
+     * retained-copy path, specs/memory.md). Every directly-minted badge is
+     * released, not only the session's and the terminal's: a three-service
+     * session mints the bureau, the terminal, the datatypes broker and the
+     * launcher, and each owns its runtime. The kernel unmaps a mapped frame
+     * when the cap goes (finaliseCap), so the staging's scratch-window pages
+     * are already unmapped; the window's cursor just needs to be told. The
+     * slots past the mark are empty, so the cursor returns to it. */
     aegir::ipc::Consumer const mem(g_spawn_mem);
     uint64_t released = 0;
-    uint64_t const session_owner = badge;
-    (void)mem.call_words(aegir::memory::kMethodRelease, &session_owner, 1, &released, 1);
-    uint64_t const terminal_owner = badge + 1;
-    (void)mem.call_words(aegir::memory::kMethodRelease, &terminal_owner, 1, &released, 1);
+    for (uint32_t i = 0; i < direct_badges; ++i) {
+        uint64_t const owner = badge + i;
+        (void)mem.call_words(aegir::memory::kMethodRelease, &owner, 1, &released, 1);
+    }
     g_scratch.rewind(scratch_mark);
     g_objects.slot_release(mark);
     write("      auth: session reclaimed: ");
@@ -1171,7 +1174,8 @@ bool describe_service(aegir::manifest::Entry const &entry, SessionService *out) 
  * already holds, the rights it is installed with, and the badge it carries.
  * False when the name is outside the vocabulary auth can satisfy today. */
 bool need_grant(aegir::manifest::View need, seL4_CPtr launch_port, uint64_t badge,
-                seL4_CPtr *cap, seL4_CapRights_t *rights, uint64_t *cap_badge) noexcept
+                uint64_t namespace_badge, seL4_CPtr *cap, seL4_CapRights_t *rights,
+                uint64_t *cap_badge) noexcept
 {
     if (aegir::manifest::equals(need, "log.main")) {
         *cap = g_spawn_log;
@@ -1180,9 +1184,14 @@ bool need_grant(aegir::manifest::View need, seL4_CPtr launch_port, uint64_t badg
         return g_spawn_log != 0;
     }
     if (aegir::manifest::equals(need, "vfs.namespace")) {
+        /* The session's namespace, not the service's own (specs/session.md): a
+         * session binds one namespace for its badge and every program resolves
+         * through it, so a service's file reads are the session's and one alias
+         * set serves them all. The launcher already does this; the services do
+         * too, now. */
         *cap = g_spawn_nmspace;
         *rights = seL4_CapRights_new(1, 1, 0, 1);
-        *cap_badge = badge;
+        *cap_badge = namespace_badge;
         return g_spawn_nmspace != 0;
     }
     if (aegir::manifest::equals(need, "console.gui")) {
@@ -1233,8 +1242,8 @@ bool need_grant(aegir::manifest::View need, seL4_CPtr launch_port, uint64_t badg
 /* Append one grant per `needs` name. Answer false, having written the reason, on
  * a name outside the vocabulary or one auth holds no cap for. */
 bool append_needs(aegir::manifest::View needs, seL4_CPtr launch_port, uint64_t badge,
-                  aegir::spawn::PortGrant *ports, uint32_t capacity,
-                  uint32_t *count) noexcept
+                  uint64_t namespace_badge, aegir::spawn::PortGrant *ports,
+                  uint32_t capacity, uint32_t *count) noexcept
 {
     uint32_t at = 0;
     while (at < needs.length) {
@@ -1254,7 +1263,8 @@ bool append_needs(aegir::manifest::View needs, seL4_CPtr launch_port, uint64_t b
             seL4_CPtr cap = 0;
             seL4_CapRights_t rights = seL4_CapRights_new(0, 0, 0, 0);
             uint64_t cap_badge = 0;
-            if (!need_grant(name, launch_port, badge, &cap, &rights, &cap_badge)) {
+            if (!need_grant(name, launch_port, badge, namespace_badge, &cap, &rights,
+                            &cap_badge)) {
                 write("      auth: session.manifest: auth cannot satisfy need '");
                 write(name.data, name.length);
                 write("'\n");
@@ -1406,8 +1416,9 @@ SessionService *resolve_services(aegir::mem::Arena &arena, aegir::mem::Account &
  * first long-lived child's supervision comes back so the caller can wait on it.
  * False, having written the reason, when it will not start. */
 bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_base,
-                   uint64_t badge, seL4_CPtr launch_port, aegir::spawn::Spawner &spawner,
-                   aegir::mem::Account &account, seL4_CPtr *supervision) noexcept
+                   uint64_t badge, uint64_t namespace_badge, seL4_CPtr launch_port,
+                   aegir::spawn::Spawner &spawner, aegir::mem::Account &account,
+                   seL4_CPtr *supervision) noexcept
 {
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_session_mem.alloc_object(
@@ -1434,7 +1445,7 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
     aegir::spawn::PortGrant ports[16];
     uint32_t count = 0;
     if (spec.launcher) {
-        if (!mint_session_nmspace(g_kit_nmspace_slot, badge)) {
+        if (!mint_session_nmspace(g_kit_nmspace_slot, namespace_badge)) {
             write("      auth: FAIL no namespace copy for session.");
             write(spec.name);
             write("\n");
@@ -1473,7 +1484,8 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
                         seL4_CapRights_new(1, 1, 0, 1), badge, 0};
         ++count;
     } else {
-        if (!append_needs(spec.needs, launch_port, badge, ports, 16, &count)) {
+        if (!append_needs(spec.needs, launch_port, badge, namespace_badge, ports, 16,
+                          &count)) {
             return false;
         }
         if (spec.maps) {
@@ -1580,10 +1592,17 @@ void start_session(uint32_t user, bool bureau) noexcept
 {
     uint32_t const serial = g_serials[user];
     uint64_t const badge = aegir::ipc::make_user_badge(user, serial);
+    /* The badges auth mints directly for the session -- the session's own (the
+     * first service shares it), each further service, and the launcher -- are
+     * contiguous from `badge`, so reclaim releases that many. It grows as the
+     * manifest's services and the launcher are minted; until then only the
+     * session's own badge exists. */
+    uint32_t direct_badges = 1;
     /* The home first: ensured and bound before the spawn, so the session
-     * never sees a Home: that does not resolve (specs/auth.md's Homes). Each
-     * service carries its own badged namespace, so its home is ensured too,
-     * below, before that service starts. */
+     * never sees a Home: that does not resolve (specs/auth.md's Homes). One
+     * namespace exists for the session -- the services resolve through its
+     * badged copy, not their own (specs/session.md) -- so this binds the one
+     * set of aliases every program of the session shares. */
     ensure_home(user, badge);
 
     seL4_CPtr const mark = g_objects.slot_mark();
@@ -1596,7 +1615,7 @@ void start_session(uint32_t user, bool bureau) noexcept
     aegir::mem::Account session_account{"session", 0, 0, 0};
     if (g_spawn_mem == 0) {
         write("      auth: FAIL no mem.main to build the session from\n");
-        reclaim_session(badge, mark, scratch_mark, session_account);
+        reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
         return;
     }
     /* The session's mem.main copy: minted fresh with this login's badge, so
@@ -1609,7 +1628,7 @@ void start_session(uint32_t user, bool bureau) noexcept
                         g_spawn_mem, aegir::bootstrap::cnode_bits(),
                         seL4_CapRights_new(1, 1, 0, 1), badge) != seL4_NoError) {
         write("      auth: FAIL the session's mem.main copy would not mint\n");
-        reclaim_session(badge, mark, scratch_mark, session_account);
+        reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
         return;
     }
     g_session_mem.adopt_nodes(g_session_nodes, sizeof(g_session_nodes));
@@ -1646,7 +1665,7 @@ void start_session(uint32_t user, bool bureau) noexcept
             seL4_EndpointObject, seL4_EndpointBits, session_account, &fault_error);
         if (fault == 0) {
             write("      auth: FAIL no fault endpoint for the session\n");
-            reclaim_session(badge, mark, scratch_mark, session_account);
+            reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
             return;
         }
         aegir::spawn::PortGrant ports[2] = {
@@ -1686,7 +1705,7 @@ void start_session(uint32_t user, bool bureau) noexcept
                 write(")");
             }
             write("\n");
-            reclaim_session(badge, mark, scratch_mark, session_account);
+            reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
             return;
         }
         primary = process.supervision;
@@ -1702,7 +1721,7 @@ void start_session(uint32_t user, bool bureau) noexcept
             seL4_EndpointObject, seL4_EndpointBits, session_account, &port_error);
         if (launch_port == 0) {
             write("      auth: FAIL no launch endpoint for the session\n");
-            reclaim_session(badge, mark, scratch_mark, session_account);
+            reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
             return;
         }
         g_spawn_bureau_menu = 0;
@@ -1730,9 +1749,14 @@ void start_session(uint32_t user, bool bureau) noexcept
         }
         if (services == nullptr) {
             write("      auth: FAIL no memory for the session's services\n");
-            reclaim_session(badge, mark, scratch_mark, session_account);
+            reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
             return;
         }
+        /* The services run at `badge + i` and the launcher at
+         * `badge + service_count`, all contiguous from the session's badge;
+         * reclaim releases that many. A service that shares the session's badge
+         * (i = 0) is already counted by the `1` when there are no services. */
+        direct_badges = service_count + 1;
 
         /* The launcher's badge and the range it hands its children
          * (specs/launch.md): the serials past the session's own children, so no
@@ -1743,12 +1767,12 @@ void start_session(uint32_t user, bool bureau) noexcept
 
         for (uint32_t i = 0; i < service_count; ++i) {
             uint64_t const service_badge = aegir::ipc::make_user_badge(user, serial + i);
-            if (service_badge != badge) {
-                ensure_home(user, service_badge);
-            }
             seL4_CPtr supervision = 0;
-            if (spawn_service(services[i], user, range_base, service_badge, launch_port,
-                              spawner, session_account, &supervision)) {
+            /* The namespace is the session's (`badge`), not the service's own:
+             * every program of the session resolves through one badged copy
+             * (specs/session.md), so only the session's aliases exist. */
+            if (spawn_service(services[i], user, range_base, service_badge, badge,
+                              launch_port, spawner, session_account, &supervision)) {
                 write("      auth: session.");
                 write(services[i].name);
                 write(" is up\n");
@@ -1815,7 +1839,7 @@ void start_session(uint32_t user, bool bureau) noexcept
         seL4_Wait(primary, nullptr);
         write("      auth: session ready\n");
     }
-    reclaim_session(badge, mark, scratch_mark, session_account);
+    reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
 }
 
 /* The boot session (specs/boot.md): the system's Startup-Sequence, run once

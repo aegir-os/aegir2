@@ -238,18 +238,23 @@ reclaim is exercised. The decisions:
   are one signal while sessions are short-lived. The split -- ready early,
   exit late -- lands with the supervisor-that-serves shape, when sessions
   are not.
-- **A session's memory is the memory service's, charged to its badge.** A
-  session's objects and its spawn's staging are retyped from chunks `mem.main`
-  hands out on demand, owned by the session's badge -- there is no pool to size
-  and nothing to guess (specs/memory.md). Reclaim is one `release` of that
-  badge, which revokes every chunk it owns (and with the chunks the objects
-  retyped from them, the minted port copies included); the terminal's own
-  badge is released too, so a nested terminal's memory, charged there, comes
-  back.
+- **A session's memory is the memory service's, charged to its badges.** A
+  session's objects, its spawn's staging and each service's and the launcher's
+  runtime are retyped from chunks `mem.main` hands out on demand, owned by the
+  badge each was given -- there is no pool to size and nothing to guess
+  (specs/memory.md). Reclaim is one `release` per badge auth minted directly for
+  the session -- the session's own, each further service, and the launcher --
+  which revokes every chunk that badge owns (and with the chunks the objects
+  retyped from them, the minted port copies included). Not only the session's
+  and the terminal's: a three-service session mints four badges (bureau,
+  terminal, datatypes broker, launcher) and every one is released, or the ones
+  past the second keep their runtime.
 - **Teardown order: reap, unbind, release.** The badge's handles go first --
   one `reap` per volume the namespace names, walked through
   `count`/`describe`/`resolve`, because a handle is a filesystem's row and
-  not a kernel object -- then the badge's aliases with `unbind`, then the
+  not a kernel object -- then the session's alias set with `unbind` (one set
+  per session: its services and launcher each carry their own process badge but
+  resolve through the session's namespace, specs/session.md), then the
   release. The mechanisms were landed and tested ahead of their caller
   (specs/vfs.md); this is the caller they were waiting for. The console
   arc's `reap` joins the same order where windows must go: the greeter's

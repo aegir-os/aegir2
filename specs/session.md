@@ -78,9 +78,13 @@ goes and nothing in auth changes -- that is the point of declaring it.
 ## Starting it
 
 auth parses the manifest before spawning anything, then starts the launcher and
-each declared service in order, as the session's user class. A service lives for
-the session; reclaim takes it with the session (`specs/auth.md`). Reclaiming an
-idle service is a later feature, not a rule here.
+each declared service in order, as the session's user class. Each runs under its
+own process badge, but receives a namespace badged for the **session** -- the one
+set of aliases every program of the session resolves through -- so a service's
+file reads are the session's and one alias set serves them all, rather than one
+per service. A service lives for the session; reclaim takes it with the session
+(`specs/auth.md`). Reclaiming an idle service is a later feature, not a rule
+here.
 
 ## When the manifest is wrong
 
