@@ -77,6 +77,17 @@ struct Member {
     char rest[aegir::nmspace::kPathMax];
     uint32_t rest_length;
     uint64_t flags;
+    /* The volume's cap badged for this member's calls (specs/namespace.md: the
+     * member sees the binder). That badge is the binding's own and does not vary
+     * between calls, so the cap is minted once and reused: a forwarded read
+     * envelope is then one IPC and no kernel cap operation. `badged` is zero
+     * until the first call and again after a free; `badged_slot` is the slot it
+     * lives in and outlives the row, so a reused row re-mints into the same slot
+     * rather than taking a new one (mutable because a forwarded call is a const
+     * walk of the member list, and the serve loop is one thread). */
+    mutable seL4_CPtr badged;
+    mutable uint64_t badged_badge;
+    mutable seL4_CPtr badged_slot;
     Member *next;
 };
 
@@ -130,11 +141,24 @@ Member *member_take() noexcept
         g_member_free = member->next;
         return member;
     }
-    return static_cast<Member *>(arena_take(sizeof(Member)));
+    member = static_cast<Member *>(arena_take(sizeof(Member)));
+    if (member != nullptr) {
+        member->badged = 0;
+        member->badged_badge = 0;
+        /* Zero until a call needs it: the slot is taken from the stored-cap
+         * region on first use, and a reused row keeps the one it already has. */
+        member->badged_slot = 0;
+    }
+    return member;
 }
 
 void member_free(Member *member) noexcept
 {
+    if (member->badged != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, member->badged,
+                          aegir::bootstrap::kCNodeBits);
+        member->badged = 0;
+    }
     member->next = g_member_free;
     g_member_free = member;
 }
@@ -1135,25 +1159,34 @@ Binding const *find_union(uint32_t id) noexcept
     return nullptr;
 }
 
-/* Mint a member volume's stored cap with the caller's badge into the scratch
- * slot, so the member sees the true caller and not the VFS
- * (specs/namespace.md). Zero when the kernel refuses; the slot answers one
- * nested call and is dropped after. */
-seL4_CPtr mint_member(Volume const *volume, uint64_t badge) noexcept
+/* The member's volume cap badged with `badge`, so the member sees the binder
+ * and not the VFS (specs/namespace.md). The badge is the binding's own and is
+ * constant between calls, so the cap is minted once and kept in the member's
+ * own slot: a forwarded read envelope costs one IPC and no kernel cap
+ * operation, where minting and dropping it around every envelope cost two.
+ * Zero when the kernel refuses a mint. */
+seL4_CPtr badged_member(Member const *member, uint64_t badge) noexcept
 {
-    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
+    if (member->badged != 0 && member->badged_badge == badge) {
+        return member->badged;
+    }
+    if (member->badged != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, member->badged,
+                          aegir::bootstrap::kCNodeBits);
+        member->badged = 0;
+    }
+    if (member->badged_slot == 0) {
+        member->badged_slot = g_next_slot++;
+    }
+    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, member->badged_slot,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
-                        volume->port, aegir::bootstrap::kCNodeBits,
+                        member->volume->port, aegir::bootstrap::kCNodeBits,
                         seL4_CapRights_new(1, 0, 0, 1), badge) != seL4_NoError) {
         return 0;
     }
-    return g_mint_slot;
-}
-
-void drop_member() noexcept
-{
-    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
-                      aegir::bootstrap::kCNodeBits);
+    member->badged = member->badged_slot;
+    member->badged_badge = badge;
+    return member->badged;
 }
 
 /* The badge a union's member calls carry (specs/namespace.md): the binding's
@@ -1206,20 +1239,19 @@ Member const *member_at(Binding const *binding, uint32_t index) noexcept
 }
 
 /* One nested call on a member's volume, with the words the union forwards.
- * The member's cap is minted with `badge` for the one call and dropped after;
- * the return is the answer's word count, zero when the call failed. */
+ * The member's cap is the one `badged_member` keeps for the badge; the return
+ * is the answer's word count, zero when the call failed. */
 uint32_t member_words_call(Member const *member, uint64_t badge, uint32_t method,
                            uint64_t const *payload, uint32_t count, uint64_t *out,
                            uint32_t out_capacity) noexcept
 {
-    seL4_CPtr const cap = mint_member(member->volume, badge);
+    seL4_CPtr const cap = badged_member(member, badge);
     if (cap == 0) {
         return 0;
     }
     aegir::ipc::Consumer const consumer(cap);
     aegir::ipc::WordsReply const reply =
         consumer.call_words(method, payload, count, out, out_capacity);
-    drop_member();
     return reply.error == 0 ? reply.count : 0;
 }
 
