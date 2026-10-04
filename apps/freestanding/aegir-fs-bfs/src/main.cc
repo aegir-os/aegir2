@@ -21,6 +21,8 @@
 #include <aegir/descriptor.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/partman.h>
@@ -65,6 +67,22 @@ uint64_t g_live_slot_base = aegir::bootstrap::kSlotFirstDeclared;
 uint64_t g_live_mint_slot = 0; /* the scratch slot a reply's cap is minted into */
 uint64_t g_object_untyped = 0; /* the untyped live endpoints are retyped from */
 uint32_t g_live_count = 0;     /* live queries now open */
+
+/* The read-frame window (specs/vfs.md's scaling path): the maps grant gives
+ * this service its own VSpace root and a window of free addresses, and the page
+ * tables over it are retyped from the untyped the partition manager also
+ * grants. A read-frame call maps the caller's frame there, reads the file's
+ * bytes into it, and unmaps it before answering -- one call per 4 KiB page
+ * against the several the inline read needs. */
+aegir::mem::Allocator g_tables(nullptr);
+aegir::mem::Scratch g_map_window(nullptr);
+uintptr_t g_map_base = 0;
+bool g_map_ready = false;
+seL4_CPtr g_frame_slot = 0;
+
+/* The CSpace slots the window keeps, taken from the top so the live-query scan
+ * (which walks up from the block's own capabilities) never hands one out. */
+constexpr uint32_t kWindowSlots = 24;
 
 aegir::ipc::Consumer g_clock;
 bool g_have_clock = false;
@@ -522,7 +540,10 @@ bool live_slot_used(uint64_t slot) noexcept
  * held. */
 bool live_slot_alloc(uint64_t *out) noexcept
 {
-    uint64_t const limit = 1ULL << aegir::bootstrap::kCNodeBits;
+    /* Stop below the slots the read-frame window holds for its page tables
+     * (kWindowSlots, taken from the top): the scan cannot tell a window slot
+     * from a free one, so it must not reach them. */
+    uint64_t const limit = (1ULL << aegir::bootstrap::kCNodeBits) - kWindowSlots;
     for (uint64_t slot = g_live_slot_base + 1; slot < limit; ++slot) {
         if (!live_slot_used(slot)) {
             *out = slot;
@@ -894,6 +915,69 @@ void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words, uint32_t
     answer[1] = offset + got >= static_cast<uint64_t>(inode.size) ? 1 : 0;
     port.reply_words(answer,
                      aegir::volume::kReadHeaderWords + static_cast<uint32_t>((got + 7) / 8));
+}
+
+/* read-frame, the bulk read (specs/vfs.md's scaling path): a handle, an offset,
+ * a count and a frame offset, plus one capability -- the caller's own 4 KiB
+ * frame. The frame is mapped into our window, the file's bytes are read
+ * straight into it at that offset, and it is unmapped again before we answer.
+ * The answer is read's header alone; the bytes never cross a message. */
+void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                       uint64_t badge, bool cap_arrived) noexcept
+{
+    if (count < 4 || !cap_arrived || !g_map_ready) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    uint64_t const frame_offset = words[3];
+    if (handle == nullptr || (handle->kind != kHandleRead && handle->kind != kHandleFile) ||
+        frame_offset >= aegir::volume::kFrameBytes) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::bfs::Inode inode;
+    if (!g_volume.read_inode(handle->inode_block, &inode) || is_directory(inode) ||
+        !permits(badge, inode, kPermRead) || offset > static_cast<uint64_t>(inode.size)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const room = aegir::volume::kFrameBytes - frame_offset;
+    if (wanted > room) {
+        wanted = room;
+    }
+    uint64_t const available = static_cast<uint64_t>(inode.size) - offset;
+    uint32_t const got = static_cast<uint32_t>(wanted < available ? wanted : available);
+    if (!aegir::ipc::take_received_cap(g_frame_slot) ||
+        !g_map_window.map_at(g_map_base, g_frame_slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
+                          aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    bool const read_ok =
+        got == 0 || g_volume.read_stream(inode, offset,
+                                         reinterpret_cast<uint8_t *>(g_map_base) +
+                                             frame_offset,
+                                         got);
+    g_map_window.unmap(g_frame_slot);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
+                      aegir::bootstrap::kCNodeBits);
+    if (!read_ok) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const answer[aegir::volume::kReadHeaderWords] = {
+        got, offset + got >= static_cast<uint64_t>(inode.size) ? 1ULL : 0ULL};
+    port.reply_words(answer, aegir::volume::kReadHeaderWords);
 }
 
 /* Whether a directory entry's name is the "." or ".." the filesystem keeps but
@@ -1933,13 +2017,53 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* The read-frame window (specs/vfs.md's scaling path). The maps grant gives
+     * us a VSpace root and a window of free addresses; the page tables over it
+     * are retyped from the untyped the partition manager also grants, and the
+     * first read-frame builds them -- the same FailedLookup idiom a spawner's
+     * window uses. One page at the window's base is reserved for the caller's
+     * frame, so the allocator's own node frames (which map at the cursor) never
+     * land on it. A grant that is absent or short leaves bulk reads off; inline
+     * reads are unchanged. */
+    uint64_t vspace_slot = 0;
+    uint64_t map_window_base = 0;
+    uint32_t map_window_bytes = 0;
+    uint64_t untyped_slot = 0;
+    uint32_t untyped_bits = 0;
+    if (aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+        aegir::bootstrap::window(&map_window_base, &map_window_bytes) &&
+        aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
+        aegir::bootstrap::capability_size_bits("untyped", 7, &untyped_bits)) {
+        uint64_t const slot_top = 1ULL << aegir::bootstrap::kCNodeBits;
+        g_frame_slot = static_cast<seL4_CPtr>(slot_top - kWindowSlots);
+        g_tables.adopt_slots(static_cast<seL4_CPtr>(slot_top - kWindowSlots + 1),
+                             kWindowSlots - 1, 0, aegir::bootstrap::kCNodeBits);
+        static_cast<void>(g_tables.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
+                                                 untyped_bits));
+        g_map_base = static_cast<uintptr_t>(map_window_base);
+        if (g_map_window.adopt(static_cast<seL4_CPtr>(vspace_slot), g_map_base,
+                               g_map_base + map_window_bytes, &g_tables)) {
+            uintptr_t const reserved = g_map_window.reserve(1);
+            if (reserved != 0) {
+                g_map_base = reserved;
+                g_map_ready = true;
+            }
+        }
+    }
+    if (!g_map_ready) {
+        aegir::debug_write("      ");
+        aegir::debug_write(instance, instance_length);
+        aegir::debug_write(": no window for bulk reads; serving inline reads\n");
+    }
+
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
         seL4_Word badge = 0;
+        bool cap_arrived = false;
         uint32_t const method =
-            vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+            vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge, &cap_arrived);
         /* The methods that can add, remove or change an inode: a live query
          * hears about all of them, even when the operation turns out to be a
          * no-op, because the signal carries no detail and the client
@@ -1959,6 +2083,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodReadHandle:
             answer_read_handle(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodReadFrame:
+            answer_read_frame(vol, words, count, badge, cap_arrived);
             break;
         case aegir::volume::kMethodList:
             answer_list(vol, words, count, badge);
@@ -2031,6 +2158,14 @@ int main(int argc, char *argv[])
              * answered wrongly. */
             answer_refuse(vol);
             break;
+        }
+        /* A capability that arrived on a method that does not take one would
+         * otherwise sit in the receive slot and refuse the next transfer;
+         * read-frame consumed or dropped its own. */
+        if (cap_arrived && method != aegir::volume::kMethodReadFrame) {
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                              aegir::bootstrap::kSlotReceiveCap,
+                              aegir::bootstrap::kCNodeBits);
         }
         if (mutating) {
             note_change();

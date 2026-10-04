@@ -273,12 +273,30 @@ bool ChildVSpace::populate_frames(uintptr_t address, unsigned pages, uint64_t fi
             frames_out[page] = frame;
         }
 
-        /* The frame is filled by the source itself, which maps it and writes
-         * the segment's bytes at `skip` -- no window of ours is used, and the
-         * bytes the source does not write stay zero (a retyped frame is zero;
-         * see the header). */
         uint64_t const room = kPage - skip;
         uint64_t const chunk = remaining < room ? remaining : room;
+        /* A page the source fills whole needs nothing more. A boundary page --
+         * the first, only partly covered because a segment need not start on a
+         * page boundary, or the last -- has bytes the segment does not reach,
+         * and those must be zero. A retyped frame cannot be relied on to be
+         * zero (the BFS zeroes its own handle page for exactly this reason,
+         * aegir-fs-bfs/src/main.cc), so the gap is zeroed through our own
+         * window first, the same map-write-unmap rhythm populate keeps. The
+         * source then writes the segment's bytes at `skip`. */
+        if (skip != 0 || chunk < room) {
+            void *window = scratch_.map(frame);
+            if (window == nullptr) {
+                if (why != nullptr) {
+                    *why = "the window the frame is zeroed through is full";
+                }
+                return false;
+            }
+            auto *zeroed = static_cast<unsigned char *>(window);
+            for (uint64_t i = 0; i < kPage; ++i) {
+                zeroed[i] = 0;
+            }
+            scratch_.unmap(frame);
+        }
         if (chunk != 0 && !fill(fill_context, read_at, chunk, skip, frame)) {
             if (why != nullptr) {
                 *why = "a segment's bytes could not be read";

@@ -289,8 +289,11 @@ unless the capability the *sender* invokes carries Grant. So the resolve mints
 that give a client its volume or union capability, the union's member mints, and
 the owner half of `vol.initrd`, all carry Grant; a filesystem that does not
 serve read-frame simply never has a capability transferred to it, and the
-caller's inline `read` is unchanged. The first filesystem to serve it is the
-initrd; BFS and the others follow, each with the same grant.
+caller's inline `read` is unchanged. Both filesystems the boot set uses serve
+it -- the initrd from director's grant and BFS from the partition manager's,
+each given the same `maps` grant, a window and a page-table untyped. On the
+demo's program-load path (its class binaries live on `Sys:DataTypes`, a BFS
+volume) it cut the launch from about 1.58 s to about 1.17 s.
 
 A filesystem reads through a window of its own -- the block layer gives each
 client its own frames, so no other client's DMA can overwrite what it is

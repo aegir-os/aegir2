@@ -99,20 +99,13 @@ public:
     /**
      * `populate_fetched`, but the source writes the frame *itself*: it fills
      * `frame` -- a page capability of ours -- with `length` bytes read at
-     * `offset`, starting `frame_offset` bytes in, and the spawner never maps
-     * the frame at all. This is the bulk path (specs/vfs.md's read-frame): a
-     * filesystem that maps a caller's frame puts the segment's bytes straight
-     * into the frame the child will hold, one call per page instead of the
-     * several an inline read needs.
-     *
-     * The bytes the source does not write stay as the kernel handed them --
-     * and that is zero: seL4 zeroes an untyped's whole region when it is reset
-     * at the first retype after its children are gone
-     * (kernel/manual/parts/objects.tex:437-440,
-     * kernel/src/object/untyped.c:234-269), and a retype carves the region the
-     * kernel already zeroed, so a freshly retyped frame is zero everywhere the
-     * source did not write. That is what fills the gap before `leading` and the
-     * tail past the segment.
+     * `offset`, starting `frame_offset` bytes in. This is the bulk path
+     * (specs/vfs.md's read-frame): a filesystem that maps a caller's frame puts
+     * the segment's bytes straight into the frame the child will hold, one call
+     * per page instead of the several an inline read needs, and the bytes never
+     * cross a message. A page the source fills whole is not touched here; a
+     * boundary page's gap is zeroed through our own window before the fill (a
+     * retyped frame is not relied on to be zero).
      */
     bool populate_frames(uintptr_t address, unsigned pages, uint64_t file_offset,
                          uint64_t bytes, uint64_t leading, bool writable, Account &account,

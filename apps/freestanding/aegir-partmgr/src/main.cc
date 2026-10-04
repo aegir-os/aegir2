@@ -322,6 +322,17 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     seL4_CPtr const object_untyped =
         g_objects.carve_untyped(kFsObjectBits, child_account, &object_error,
                                 &object_physical);
+    /* The untyped the window's page tables are retyped from (specs/vfs.md's
+     * read-frame): the filesystem is trusted with its own VSpace root and a
+     * window of free addresses, and builds the tables over that window itself,
+     * exactly as a spawner's maps grant lets it. A few pages is a window's
+     * worth of tables. */
+    constexpr uint32_t kFsWindowBits = 14; /* 16 KiB */
+    seL4_Error window_error = seL4_NoError;
+    uint64_t window_untyped_physical = 0;
+    seL4_CPtr const window_untyped =
+        g_objects.carve_untyped(kFsWindowBits, child_account, &window_error,
+                                &window_untyped_physical);
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
                                                    child_account, &fault_error);
@@ -330,21 +341,25 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
                                                     seL4_EndpointBits, child_account,
                                                     &volume_error);
     seL4_CPtr const volume_caller = g_objects.alloc_slot();
+    /* Grant on the caller half, because it is where the client's resolved copy
+     * begins: a client hands its read-frame buffer capability to the volume,
+     * and a mint keeps only what its source holds (specs/vfs.md's scaling
+     * path). */
     bool const caller_minted =
         volume != 0 && volume_caller != 0 &&
         seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, volume_caller,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
                         volume, aegir::bootstrap::kCNodeBits,
-                        seL4_CapRights_new(1, 0, 0, 1), 0) == seL4_NoError;
+                        seL4_CapRights_new(1, 1, 0, 1), 0) == seL4_NoError;
     if (window == 0 || fault == 0 || volume == 0 || !caller_minted ||
-        memory_frame == 0 || object_untyped == 0) {
+        memory_frame == 0 || object_untyped == 0 || window_untyped == 0) {
         aegir::debug_write("      FAIL starting ");
         aegir::debug_write(name, name_length);
         aegir::debug_write(": no window set, fault endpoint, volume port, or memory\n");
         return;
     }
 
-    aegir::spawn::PortGrant ports[6] = {
+    aegir::spawn::PortGrant ports[7] = {
         {aegir::log::kPortName, aegir::log::kPortNameLength,
          aegir::bootstrap::kSlotFirstDeclared, spawn_log, seL4_CapRights_new(1, 0, 0, 1),
          badge, 0},
@@ -370,14 +385,18 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
         {aegir::partman::kCapabilityObjects, aegir::partman::kCapabilityObjectsLength,
          aegir::bootstrap::kSlotFirstDeclared + 4, object_untyped, seL4_AllRights, 0,
          kFsObjectBits},
+        /* The untyped the read-frame window's page tables are retyped from
+         * (specs/vfs.md's scaling path). */
+        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 5, window_untyped,
+         seL4_AllRights, 0, kFsWindowBits},
     };
-    uint32_t port_count = 5;
+    uint32_t port_count = 6;
     if (spawn_clock != 0) {
         /* The clock, when the manifest declared one: the filesystem asks it
          * for the time it stamps entries with (specs/fat.md). A machine with
          * no clock simply has no timestamps. */
         ports[port_count] = {aegir::clock::kPortName, aegir::clock::kPortNameLength,
-                             aegir::bootstrap::kSlotFirstDeclared + 5, spawn_clock,
+                             aegir::bootstrap::kSlotFirstDeclared + 6, spawn_clock,
                              seL4_CapRights_new(1, 0, 0, 1), 0, 0};
         ++port_count;
     }
@@ -402,6 +421,10 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     request.window_frame = window;
     request.window_bytes = window_pages * 4096u;
     request.window_physical = child_window_physical;
+    /* The filesystem maps a caller's frame for read-frame (specs/vfs.md's
+     * scaling path), so it is trusted with its own VSpace root and a window of
+     * free addresses past the block window the spawner already placed. */
+    request.give_vspace = true;
     /* The handle-table page: where it lands and how big it is travel in the
      * block's untyped entry, the way a driver's memory does (the child
      * serves no DMA, so the physical base is information, not plumbing). */
