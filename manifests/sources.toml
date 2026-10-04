@@ -91,6 +91,31 @@ archive = "libpng-1.6.59.tar.xz"
 # The single top-level directory the tarball extracts, moved to `path`.
 extract_dir = "libpng-1.6.59"
 
+# libjpeg-turbo, the JPEG decoder the jpeg.datatype class serves
+# (specs/datatypes.md). It is the reference IJG libjpeg with SIMD, and the
+# project signs every source tarball with a detached signature; the tarball,
+# that signature and the project's own key are on the release page, and the key
+# is committed at manifests/libjpeg-turbo-signing-key.asc. Upstream covers the
+# libjpeg API under the IJG License and the rest under 3-clause BSD; Aegir
+# builds only the libjpeg API library (no TurboJPEG), so the IJG License is the
+# one it takes (THIRD-PARTY.md). Built static beside musl
+# (scripts/build_libjpeg.sh).
+[[source]]
+name = "libjpeg-turbo"
+version = "3.2.0"
+path = "projects/libjpeg-turbo"
+url = "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz"
+sha256 = "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e"
+archive = "libjpeg-turbo-3.2.0.tar.gz"
+signature_url = "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz.sig"
+signature_sha256 = "434aa81b514a0c7b94eb1b3e7784afe4d521b1a96a71de4a2d3476be3c595555"
+signature_archive = "libjpeg-turbo-3.2.0.tar.gz.sig"
+signing_key = "manifests/libjpeg-turbo-signing-key.asc"
+# The key's full fingerprint, as gpg --status-fd reports it (no spaces).
+signing_fingerprint = "0338C8D8D9FDA62CF9C421BD7EC2DBB6F4DBF434"
+# The single top-level directory the tarball extracts, moved to `path`.
+extract_dir = "libjpeg-turbo-3.2.0"
+
 # The Unicode Character Database (UCD), fetched as individually pinned files
 # rather than a tarball. The table files generate the toolkit's UAX #9 tables
 # and its character widths at build time (scripts/gen_bidi_tables.py,
