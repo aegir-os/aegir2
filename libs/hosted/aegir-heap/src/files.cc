@@ -32,6 +32,7 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/metadata.h>
 #include <aegir/vfs.h>
 #include <aegir/volume.h>
@@ -92,6 +93,37 @@ constexpr uint8_t kDirentRegular = 8;   /* DT_REG */
 constexpr uint32_t kDirentHeader = 8 + 8 + 2 + 1;
 
 aegir::mem::Allocator *g_allocator = nullptr;
+aegir::mem::Scratch *g_scratch = nullptr;
+
+/* The frame a bulk write (write-frame) passes: one 4 KiB page of the runtime's
+ * own, mapped so the bytes go in, with its capability kept. Claimed lazily and
+ * kept for the process's life -- the heap's own mappings use map_at at the top
+ * of the window, so a page at the cursor never collides with them. */
+seL4_CPtr g_write_frame = 0;
+uint8_t *g_write_frame_map = nullptr;
+
+bool ensure_write_frame() noexcept
+{
+    if (g_write_frame != 0) {
+        return true;
+    }
+    if (g_allocator == nullptr || g_scratch == nullptr) {
+        return false;
+    }
+    aegir::mem::Account account{"io", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const frame = g_allocator->alloc_page(account, &error);
+    if (frame == 0) {
+        return false;
+    }
+    void *const mapped = g_scratch->map(frame);
+    if (mapped == nullptr) {
+        return false;
+    }
+    g_write_frame = frame;
+    g_write_frame_map = static_cast<uint8_t *>(mapped);
+    return true;
+}
 
 /* The current directory: a plain buffer the runtime owns, so chdir, getcwd,
  * std::filesystem::current_path and aegir::environment all read one string
@@ -455,9 +487,10 @@ bool stat_entry(Entry const &entry, Kstat *out) noexcept
 
 }  // namespace
 
-void adopt(aegir::mem::Allocator &allocator) noexcept
+void adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexcept
 {
     g_allocator = &allocator;
+    g_scratch = &scratch;
 }
 
 long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept
@@ -715,6 +748,31 @@ long write(int fd, void const *buffer, size_t count) noexcept
         return -EBADF;
     }
     auto const *bytes_in = static_cast<char const *>(buffer);
+    /* A write larger than one envelope goes a page at a time through a frame of
+     * the runtime's own (write-frame), where an inline write sends one
+     * 936-byte envelope each: the bytes are copied into the frame and the
+     * filesystem writes it whole. A volume that does not serve write-frame --
+     * a pipe or NIL, say -- refuses the first call and the inline path below
+     * takes over, so nothing regresses. */
+    if (count > aegir::volume::kWriteMax && ensure_write_frame()) {
+        size_t total = 0;
+        while (total < count) {
+            uint32_t const chunk = static_cast<uint32_t>(
+                count - total < aegir::volume::kFrameBytes ? count - total
+                                                           : aegir::volume::kFrameBytes);
+            __builtin_memcpy(g_write_frame_map, bytes_in + total, chunk);
+            uint64_t written = 0;
+            if (!aegir::vfs::Volume(entry->volume)
+                     .write_frame(entry->handle, chunk, 0, g_write_frame, written) ||
+                written == 0) {
+                break;
+            }
+            total += written;
+        }
+        if (total > 0) {
+            return static_cast<long>(total);
+        }
+    }
     size_t total = 0;
     while (total < count) {
         uint32_t const chunk = static_cast<uint32_t>(

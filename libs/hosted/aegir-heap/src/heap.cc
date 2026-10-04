@@ -381,7 +381,7 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     allocator.set_untyped_source(runtime_untyped_source, &allocator);
 
     /* The file layer's capability slots come from the same allocator. */
-    files::adopt(allocator);
+    files::adopt(allocator, scratch);
 
     /* The top of the window, page-aligned so brk arithmetic stays on page
      * boundaries, and below nothing the window already holds. */

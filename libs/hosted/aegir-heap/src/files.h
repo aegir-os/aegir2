@@ -25,13 +25,15 @@
 
 namespace aegir::mem {
 class Allocator;
+class Scratch;
 }
 
 namespace aegir::heap::files {
 
-/** Hand the file layer the allocator its capability slots come from. Called
- *  from heap::init; before it, every file syscall is refused. */
-void adopt(aegir::mem::Allocator &allocator) noexcept;
+/** Hand the file layer the allocator its capability slots come from and the
+ *  window it maps a bulk write's frame through. Called from heap::init; before
+ *  it, every file syscall is refused. */
+void adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexcept;
 
 /* One function per syscall the filesystem reaches, with the arguments musl
  * passes the kernel. Each answers a value or a negative errno the way a
