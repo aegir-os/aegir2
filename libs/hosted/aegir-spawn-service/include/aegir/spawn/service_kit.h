@@ -38,6 +38,16 @@
 
 namespace aegir::spawn {
 
+/** The depth at which a capability in this process's own CSpace is named when
+ *  it is not a plain slot of the root: a two-level process addresses an L2 slot
+ *  at l1 + l2, a single-level one at its CNode's radix (specs/memory.md). The
+ *  root cap itself is always the guard-zero own-CNode at kSlotOwnCNode, so a
+ *  cap op from it to a plain L2 slot uses the same depth. */
+inline seL4_Word endpoint_depth() noexcept
+{
+    return static_cast<seL4_Word>(bootstrap::endpoint_depth());
+}
+
 class ServiceKit {
 public:
     /* The untyped a command's own runtime is given at spawn: its heap and page
@@ -308,6 +318,23 @@ private:
      * one returns only its slots (specs/memory.md Phase 5). */
     aegir::mem::SlotPool slot_pool_;
     std::vector<uint32_t> slot_owners_;
+    /* When this process's CSpace is two-level (specs/memory.md), the root CNode
+     * has `cnode_l1_` bits over L2 CNodes of `cnode_l2_` bits, and each live
+     * command gets an L2 CNode of its own instead of a slice of the shared pool
+     * above. `cnode_l1_` zero is a single-level CSpace, which is every other
+     * process, and the pool above is what it uses. */
+    uint32_t cnode_l1_ = 0;
+    uint32_t cnode_l2_ = 0;
+    /* One live command's own L2 CNode: the root slot whose capability is the L2
+     * CNode, and the untyped piece to give back when the command is reaped. */
+    struct OwnerCnode {
+        uint32_t owner;
+        seL4_Word slot;
+        void *cookie;
+    };
+    std::vector<OwnerCnode> owner_cnodes_;
+    std::vector<seL4_Word> free_l1_slots_;
+    seL4_Word next_l1_slot_ = 0;
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
     /* The output view's endpoint, once one is up (specs/launch.md): the view

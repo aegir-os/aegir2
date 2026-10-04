@@ -194,6 +194,17 @@ public:
                          seL4_Word size_bits = seL4_PageBits) noexcept;
 
     /**
+     * A CNode capability retyped *directly into root slot* `l1_slot`: the
+     * second-level CNode that a two-level CSpace grows with (specs/memory.md).
+     * The root slot *is* the object's address, so a spawning child adds an L2
+     * CNode without spending a slot of its own CSpace to hold the cap first.
+     * `l2_bits` is the new CNode's radix; `cookie` is the piece to free with
+     * `free_object` (which deletes the cap at `l1_slot`).
+     */
+    seL4_CPtr alloc_cnode_at_l1(seL4_Word l2_bits, seL4_Word l1_slot, Account &account,
+                                seL4_Error *error, void **cookie = nullptr) noexcept;
+
+    /**
      * Adopt a run of slots this process may put capabilities in, the depth that
      * addresses them, and the radix of the CNode they live in. A service's CSpace
      * is its own -- the slots the block did not name are nobody else's -- and its
@@ -228,6 +239,23 @@ public:
      */
     void adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth,
                           seL4_Word radix) noexcept;
+
+    /**
+     * Adopt a run of slots that live one CNode down: the root CNode holds L2
+     * CNode capabilities, and this allocator's slots are offsets in the L2
+     * CNode at root slot `cnode_index`. A slot is then the address
+     * `(cnode_index << l2) | offset`, which is what the child names in its own
+     * CSpace (specs/memory.md's two-level shape).
+     *
+     * `l1` is the root CNode's radix and `l2` the L2 CNode's; both have guard
+     * zero, so a cap op addresses an L2 slot at depth `l1 + l2` and a retype
+     * into it names the L2 CNode cap (`node_index = cnode_index`,
+     * `node_depth = l1`, `node_offset = offset`). `first`/`count` are offsets
+     * within that L2 CNode, and the cursor commits slots in `(cnode_index, *)`
+     * only -- adding a CNode is the caller's (specs/memory.md).
+     */
+    void adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Word l1,
+                               seL4_Word l2, seL4_Word cnode_index) noexcept;
 
     /**
      * Draw this allocator's slots from a shared pool instead of its own
@@ -436,6 +464,26 @@ private:
      *  where a freed slot is lost for good (specs/userland.md). */
     void free_slot(seL4_CPtr slot) noexcept;
 
+    /** The offset within its CNode for a slot this allocator handed out: the
+     *  slot itself in a single-level CSpace, and the low `level_two_bits_` in a
+     *  two-level one (a retype names the L2 CNode's offset, not the address). */
+    seL4_Word slot_offset(seL4_CPtr slot) const noexcept
+    {
+        return level_two_bits_ != 0
+                   ? static_cast<seL4_Word>(slot &
+                                            ((static_cast<seL4_CPtr>(1) << level_two_bits_) - 1))
+                   : static_cast<seL4_Word>(slot);
+    }
+
+    /** The `node_index` a retype names: the root cap itself at full depth in a
+     *  single-level CSpace, and the L2 CNode cap's root slot in a two-level one
+     *  (adopt_slots_level_two explains). */
+    seL4_CPtr retype_node_index() const noexcept
+    {
+        return level_two_bits_ != 0 ? cnode_index_
+                                    : static_cast<seL4_CPtr>(seL4_CapInitThreadCNode);
+    }
+
     seL4_BootInfo *bootinfo_;
     /* The node pool: regions the caller provided, linked as one free list. A
      * full pool asks `node_source_` for another region rather than failing --
@@ -470,6 +518,12 @@ private:
     /* The depth that addresses our slots: the whole word for the kernel's root CNode,
      * and zero for a service that addresses its own CSpace (adopt_slots explains). */
     seL4_Word cnode_depth_ = seL4_WordBits;
+    /* The L2 CNode radix when this allocator's slots live one CNode down, and
+     * the root slot of the CNode they live in; zero means a single-level CSpace
+     * (adopt_slots_level_two explains). `level_two_bits_` doubles as the flag:
+     * it is zero in every single-level process. */
+    seL4_Word level_two_bits_ = 0;
+    seL4_Word cnode_index_ = 0;
     seL4_CPtr slots_first_;
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;

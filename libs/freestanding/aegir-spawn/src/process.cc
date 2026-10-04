@@ -88,8 +88,8 @@ bool Spawner::fail(char const *what) noexcept
     return false;
 }
 
-bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
-                      seL4_CapRights_t rights, uint64_t badge) noexcept
+bool Spawner::install(uint64_t slot, seL4_CPtr source, seL4_CapRights_t rights,
+                      uint64_t badge) noexcept
 {
     /* The destination is a single-level CNode with no guard, so a slot is
      * addressed by index at the node's own depth; the source is a slot in our
@@ -106,7 +106,7 @@ bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
      * a child is identified to whoever it talks to, and it has to come from the
      * cap it uses rather than from anything it says about itself. */
     seL4_Error const mint_error =
-        seL4_CNode_Mint(into_cspace, slot, cnode_bits_, source_root_, source,
+        seL4_CNode_Mint(dest_cspace_, slot, dest_depth_, source_root_, source,
                         source_depth_, rights, badge);
     if (mint_error != seL4_NoError) {
         detail_ = "installing a capability into the child's CSpace";
@@ -116,7 +116,7 @@ bool Spawner::install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
     return true;
 }
 
-bool Spawner::install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept
+bool Spawner::install_moved(uint64_t slot, seL4_CPtr source) noexcept
 {
     /* Move takes the capability as it stands -- no derive, so the caps a copy
      *  reduces to nothing (IRQControl: kernel/src/object/objecttype.c:75-78)
@@ -124,7 +124,7 @@ bool Spawner::install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr sour
      *  is install()'s: a plain slot in the destination's own-depth CNode, the
      *  caller's root and depth on the source side. */
     seL4_Error const move_error =
-        seL4_CNode_Move(into_cspace, slot, cnode_bits_, source_root_, source,
+        seL4_CNode_Move(dest_cspace_, slot, dest_depth_, source_root_, source,
                         source_depth_);
     if (move_error != seL4_NoError) {
         detail_ = "moving a capability into the child's CSpace";
@@ -134,7 +134,7 @@ bool Spawner::install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr sour
     return true;
 }
 
-bool Spawner::install_copied(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept
+bool Spawner::install_copied(uint64_t slot, seL4_CPtr source) noexcept
 {
     /* Copy, not mint: the capability crosses as it stands, its badge preserved.
      * A badged endpoint cap cannot be minted again -- updateCapData refuses a
@@ -144,7 +144,7 @@ bool Spawner::install_copied(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr sou
      * install()'s. maskCapRights leaves an endpoint cap unchanged, so the
      * rights argument does not narrow what the source held. */
     seL4_Error const copy_error =
-        seL4_CNode_Copy(into_cspace, slot, cnode_bits_, source_root_, source,
+        seL4_CNode_Copy(dest_cspace_, slot, dest_depth_, source_root_, source,
                         source_depth_, seL4_AllRights);
     if (copy_error != seL4_NoError) {
         detail_ = "copying a capability into the child's CSpace";
@@ -293,10 +293,39 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * (kernel/src/object/objecttype.c:45-46) and creates the CNode with exactly
      * the number passed (":557-563"). Passing the sum asks for 32x the memory
      * and gets "Insufficient memory" for a CSpace that would have fit. */
-    process.cspace = allocator_.alloc_object(seL4_CapTableObject, cnode_bits_, account,
+    /* A two-level child's root CNode is its `l1` radix, and its plain slots (the
+     * fixed ones, its own objects) live in the L2 CNode at root slot 0. Nothing
+     * is retyped from a two-level root but the L2 CNodes; a slot is a plain
+     * number that resolves through the guard to `(0, slot)` (specs/memory.md). */
+    uint32_t const l1_bits = request.cspace_l1_bits;
+    uint32_t const root_bits = l1_bits != 0 ? l1_bits : cnode_bits_;
+    process.cspace = allocator_.alloc_object(seL4_CapTableObject, root_bits, account,
                                              &error);
     if (process.cspace == 0) {
         return fail("no memory for the child's CSpace");
+    }
+    dest_cspace_ = process.cspace;
+    dest_depth_ = cnode_bits_;
+    if (l1_bits != 0) {
+        seL4_CPtr const l2_node =
+            allocator_.alloc_object(seL4_CapTableObject, cnode_bits_, account, &error);
+        if (l2_node == 0) {
+            return fail("no memory for the child's second CSpace level");
+        }
+        /* Mint the L2 CNode into the child's root slot 0: the child's own-CNode
+         * cap addresses it at depth cnode_bits_. All the child's installs go
+         * here, at that depth, so the fixed slots land where a plain number
+         * resolves to them. */
+        seL4_Error const minted =
+            seL4_CNode_Mint(process.cspace, 0, l1_bits, source_root_, l2_node,
+                            source_depth_, seL4_AllRights, 0);
+        if (minted != seL4_NoError) {
+            detail_ = "installing the child's second CSpace level";
+            error_ = minted;
+            return false;
+        }
+        dest_cspace_ = l2_node;
+        dest_depth_ = cnode_bits_;
     }
 
     mem::ChildVSpace vspace(allocator_, scratch_);
@@ -560,6 +589,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         shared_window_address, request.window_bytes, request.window_physical,
         request.badge,
         cnode_bits_,
+        l1_bits,
     };
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");
@@ -646,21 +676,21 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     /* Slots 1 and 2 are seL4's: a child that does not have its TCB at slot 1 and
      * its CNode at slot 2 is stopped by the kernel as soon as it names itself
      * (aegir/bootstrap.h explains). */
-    if (!install(process.cspace, bootstrap::kSlotOwnTcb, process.tcb, seL4_AllRights, 0)) {
+    if (!install(bootstrap::kSlotOwnTcb, process.tcb, seL4_AllRights, 0)) {
         return fail("the child's own TCB could not be given to it");
     }
-    if (!install(process.cspace, bootstrap::kSlotOwnCNode, process.cspace, seL4_AllRights, 0)) {
+    if (!install(bootstrap::kSlotOwnCNode, process.cspace, seL4_AllRights, 0)) {
         return fail("the child's own CSpace could not be given to it");
     }
     /* The fault endpoint needs Write and Grant-or-GrantReply, which is the
      * kernel's own requirement of a capability it delivers faults to
      * (out/aegir/libsel4/include/interfaces/sel4_client.h:1202) -- the same rule
      * a caller's port capability satisfies. */
-    if (!install(process.cspace, bootstrap::kSlotFaultEndpoint, process.fault_endpoint,
+    if (!install(bootstrap::kSlotFaultEndpoint, process.fault_endpoint,
                  seL4_AllRights, request.badge)) {
         return fail("the child's fault endpoint could not be installed");
     }
-    if (!install(process.cspace, bootstrap::kSlotSupervision, process.supervision, seL4_CanWrite,
+    if (!install(bootstrap::kSlotSupervision, process.supervision, seL4_CanWrite,
                  request.badge)) {
         return fail("the supervision notification could not be installed");
     }
@@ -676,10 +706,10 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     for (uint32_t i = 0; i < request.port_count; ++i) {
         PortGrant const &grant = request.ports[i];
         if (grant.capability == 0 ||
-            (grant.move ? !install_moved(process.cspace, grant.slot, grant.capability)
+            (grant.move ? !install_moved(grant.slot, grant.capability)
              : grant.copy
-                 ? !install_copied(process.cspace, grant.slot, grant.capability)
-                 : !install(process.cspace, grant.slot, grant.capability, grant.rights,
+                 ? !install_copied(grant.slot, grant.capability)
+                 : !install(grant.slot, grant.capability, grant.rights,
                             grant.badge))) {
             return fail("a port could not be installed into the child");
         }
@@ -688,13 +718,13 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * the slots were chosen before the block was written, and an install uses the
      * slot it announced. */
     if (request.give_vspace &&
-        !install(process.cspace, vspace_slot, vspace.root(), seL4_AllRights, 0)) {
+        !install(vspace_slot, vspace.root(), seL4_AllRights, 0)) {
         return fail("the child's own address space could not be given to it");
     }
     for (uint32_t i = 0; i < request.device_grant_count; ++i) {
         DeviceGrant const &grant = request.device_grants[i];
         if (grant.frame == 0 ||
-            !install(process.cspace, device_slot_base + i, grant.frame, seL4_AllRights, 0)) {
+            !install(device_slot_base + i, grant.frame, seL4_AllRights, 0)) {
             return fail("a device frame could not be given to the child");
         }
     }
@@ -712,8 +742,10 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * runs out of address before it runs out of depth fails. The runtime then
      * tries to name itself with a capability the kernel cannot resolve, and is
      * stopped with "cap is not a TCB" before main ever runs. */
+    seL4_Word const guard_bits =
+        l1_bits != 0 ? seL4_WordBits - l1_bits - cnode_bits_ : seL4_WordBits - cnode_bits_;
     seL4_Word const cspace_guard =
-        seL4_CNode_CapData_new(0, seL4_WordBits - cnode_bits_).words[0];
+        seL4_CNode_CapData_new(0, guard_bits).words[0];
     error = seL4_TCB_Configure(process.tcb, bootstrap::kSlotFaultEndpoint, process.cspace,
                                cspace_guard, vspace.root(), 0, ipc_at, ipc_frame);
     if (error != seL4_NoError) {

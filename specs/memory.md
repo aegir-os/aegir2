@@ -277,38 +277,43 @@ default, the machine).
 ## Growing the CSpace on demand
 
 A CSpace is a tree of CNodes, and a CNode is a fixed-size kernel object: growth
-means another CNode, addressed one level deeper, not a bigger one. Aegir today
-is single-level -- every process's own-CNode cap (slot `kSlotOwnCNode`) is a
-mint with **guard 0 and radix `kCNodeBits`**, so a slot *is* a plain number:
-`alloc_object` names the destination CNode itself (`node_depth = 0`,
-`kernel/src/object/untyped.c:113`) and a delete or revoke addresses a slot at
+means another CNode, addressed one level deeper, not a bigger one. Aegir has two
+shapes. A plain process is single-level: its own-CNode cap (slot `kSlotOwnCNode`)
+is a mint with **guard 0 and radix `kCNodeBits`**, so a slot *is* a plain
+number, `alloc_object` names the destination CNode itself (`node_depth = 0`,
+`kernel/src/object/untyped.c:113`), and a delete or revoke addresses a slot at
 depth `kCNodeBits` (`kernel/src/kernel/cspace.c`'s `resolveAddressBits`). The
 spawner's TCB guard (`seL4_WordBits - kCNodeBits`) is what lets a plain CPtr
 reach that mint.
 
-The launcher is where that runs out: it holds every live command's staging
-caps, and a session's set -- the demo, the shell, a nested terminal, and, until
-they were released on close, the datatype classes -- can press on one CNode.
+A process that holds many live capabilities -- the launcher, whose command pool
+is the session's set of shells, demos, nested terminals and datatype classes --
+gets a **two-level** CSpace instead (`Request.cspace_l1_bits != 0`):
 
-The two-level shape to adopt:
+- The root CNode has radix `l1` and guard `seL4_WordBits - l1 - l2`; the fixed
+  slots and the process's own objects live in the guard-0, radix-`l2` L2 CNode
+  at root slot 0, so a *plain* slot number still resolves to `(0, slot)`.
+- A slot in L2 `i` is the address `(i << l2) | j`; a cap op on it names the
+  guard-zero own-CNode cap, that address, and depth `l1 + l2`, and a retype
+  *into* it names the L2 CNode cap (`node_index = i`, `node_depth = l1`,
+  `node_offset = j`).
+- `aegir-mem` carries this as `Allocator::adopt_slots_level_two` (and
+  `alloc_cnode_at_l1` to retype an L2 CNode cap straight into a root slot);
+  `bootstrap::cnode_l1_bits`/`cnode_bits`/`endpoint_depth` tell a process its
+  shape, and every cap op in its own CSpace goes through `endpoint_depth()`
+  rather than a hard-coded `cnode_bits()`.
+- The launcher's `ServiceKit` gives each live command its own L2 CNode (root
+  slots 1 upward), so the command pool grows with the number of live commands
+  rather than running out at one CNode. The launcher's own caps stay in L2 CNode
+  0, so the two never meet.
 
-- The root (the guard-0 own-CNode cap) holds **L2 CNode caps** in its high
-  slots; each L2 CNode is retyped on demand, and is itself guard 0 with radix
-  `l2`. A slot in L2 `i` is the address `(i << l2) | j`.
-- A cap op on that slot names the root, that address, and depth `l1 + l2`; a
-  retype *into* it names the L2 CNode cap (`node_index = i`, `node_depth = l1`,
-  `node_offset = j`). Guards are 0, so a level's bits are just its radix.
-- `aegir-mem` gains a CNode path -- `SlotPool` hands out `(l1, l2)` and an L2
-  allocator owns the L2 CNodes; `alloc_object`'s retype and the delete/revoke
-  paths carry the level depths. The launcher's `ServiceKit` places its own
-  objects and the L2 caps in disjoint root ranges, so the two cursors still
-  cannot meet.
+The block carries `l1` in the CNodeBits entry's `length` field, which that entry
+had never used, so a reader that knows only `cnode_bits` is undisturbed.
 
-Until it lands, `kCNodeBits` is the size that holds: the launcher is given 14
-(16384 slots), and a class is released when its open closes, so a viewer's
-classes give their slots back (`specs/datatypes.md`'s phase 2f). This is the
-deferral `aegir-bootstrap`'s `kCNodeBits` comment has carried since the buddy
-allocator landed.
+`kCNodeBits` (12) is both the single-level size and the L2 radix; the old
+`kLauncherCNodeBits` bump is gone -- the session launcher is `l1 = 8` over
+`l2 = 12`. A class is released when its open closes, so a viewer's classes give
+their slots back (`specs/datatypes.md`'s phase 2f).
 
 ## What this is not
 

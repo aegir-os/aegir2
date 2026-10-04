@@ -379,10 +379,21 @@ int main(int argc, char *argv[])
      * a slot cannot be handed out twice while anything is left and no boundary
      * between them has to be guessed at. The pool is owner-tagged, so a
      * command's capabilities can be revoked and its slots returned whole
-     * (specs/memory.md Phase 5). */
-    uint64_t const total_slots = 1ull << aegir::bootstrap::cnode_bits();
-    g_objects.adopt_slots(first_free, total_slots - first_free, 0,
-                          aegir::bootstrap::cnode_bits());
+     * (specs/memory.md Phase 5).
+     *
+     * With a two-level CSpace (specs/memory.md) the same shape sits one level
+     * up: our own caps live in the L2 CNode at root slot 0, a plain slot
+     * resolves to `(0, slot)`, and the command pool gives each command its own
+     * L2 CNode (ServiceKit) rather than sharing this one. */
+    uint32_t const cnode_l1 = aegir::bootstrap::cnode_l1_bits();
+    uint32_t const cnode_l2 = aegir::bootstrap::cnode_bits();
+    uint64_t const total_slots = 1ull << cnode_l2;
+    if (cnode_l1 != 0) {
+        g_objects.adopt_slots_level_two(first_free, total_slots - first_free, cnode_l1,
+                                        cnode_l2, 0);
+    } else {
+        g_objects.adopt_slots(first_free, total_slots - first_free, 0, cnode_l2);
+    }
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {

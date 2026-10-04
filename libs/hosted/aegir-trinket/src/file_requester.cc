@@ -294,7 +294,7 @@ void FileRequester::list_drawer()
         /* The minted capability is ours to drop: a slot is handed out once, and
          * emptying it lets the next resolve mint into it again. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, resolve_slot_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         /* Directories first, then alphabetically. The collation is the
          * filesystem's: BFS names are case-sensitive, FAT folds ASCII case
          * (specs/vfs.md). The volume does not yet say which it is, so the sort
@@ -357,7 +357,7 @@ void FileRequester::list_volumes()
                     e.free = space.free;
                 }
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, resolve_slot_,
-                                  aegir::bootstrap::cnode_bits());
+                                  aegir::bootstrap::endpoint_depth());
             }
             entries_.push_back(std::move(e));
         }

@@ -276,7 +276,7 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
          * transfer is refused an occupied slot. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         return 0;
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]

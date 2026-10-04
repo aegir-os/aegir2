@@ -190,7 +190,7 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     /* The child's own CSpace size (specs/authority.md): a number, so a spawning
      * child given a larger CSpace addresses its own slots at the right depth.
      * Zero means the default, which is what an older writer's block means. */
-    block->entries[15] = Entry{EntryKind::CNodeBits, 0,
+    block->entries[15] = Entry{EntryKind::CNodeBits, contents.cnode_l1_bits,
                                contents.cnode_bits != 0 ? contents.cnode_bits : kCNodeBits,
                                0, 0};
     /* The directory the child's own binary came from (specs/environment.md): a
@@ -523,6 +523,31 @@ uint32_t cnode_bits() noexcept
         return bits != 0 && bits <= seL4_WordBits ? static_cast<uint32_t>(bits) : kCNodeBits;
     }
     return kCNodeBits;
+}
+
+uint32_t cnode_l1_bits() noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        if (block->entries[i].kind != EntryKind::CNodeBits) {
+            continue;
+        }
+        /* The root radix rides in the CNodeBits entry's `length`, which the
+         * entry has never used (bootstrap.h). */
+        uint64_t const bits = block->entries[i].length;
+        return bits != 0 && bits < seL4_WordBits ? static_cast<uint32_t>(bits) : 0;
+    }
+    return 0;
+}
+
+uint32_t endpoint_depth() noexcept
+{
+    uint32_t const l1 = cnode_l1_bits();
+    uint32_t const bits = cnode_bits();
+    return l1 != 0 ? l1 + bits : bits;
 }
 
 char const *current_dir(uint32_t *length) noexcept

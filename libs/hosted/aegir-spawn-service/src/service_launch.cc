@@ -258,7 +258,7 @@ seL4_CPtr ServiceKit::alloc_child_mem(uint32_t bits)
     if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
-                          aegir::bootstrap::cnode_bits());
+                          endpoint_depth());
         return 0;
     }
     return slot;
@@ -613,9 +613,11 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     request.fault_endpoint = fault_endpoint_;
     request.badge = child_badge;
     request.give_vspace = true;
-    /* A peer is a launcher too, so it gets the larger CSpace
-     * (specs/authority.md): nesting works at any depth. */
-    request.cnode_bits = 13;
+    /* A peer is a launcher too, so it gets a two-level CSpace
+     * (specs/memory.md): nesting works at any depth, with the l1/l2 this
+     * process uses when it is two-level, or the same shape otherwise. */
+    request.cnode_bits = cnode_l2_ != 0 ? static_cast<uint32_t>(cnode_l2_) : 12;
+    request.cspace_l1_bits = cnode_l1_ != 0 ? static_cast<uint32_t>(cnode_l1_) : 8;
     request.untyped_physical = 0;
     request.untyped_bits = kChildUntypedBits;
     aegir::mem::Account account{"terminal", 0, 0, 0};

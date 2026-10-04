@@ -19,13 +19,13 @@ constexpr seL4_Word kReplyMr = 0;
 
 /* Where a transferred capability lands: one scratch slot, addressed the way
  * this process addresses its own CSpace everywhere -- the own-CNode cap with
- * a plain slot number at kCNodeBits (aegir/bootstrap.h). Setting the path is
- * an IPC-buffer store, not a syscall, so it is done on every call and
- * receive rather than kept as state to get stale. */
+ * a plain slot number at `bootstrap::endpoint_depth()` (aegir/bootstrap.h).
+ * Setting the path is an IPC-buffer store, not a syscall, so it is done on
+ * every call and receive rather than kept as state to get stale. */
 void set_receive_path() noexcept
 {
     seL4_SetCapReceivePath(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
-                           bootstrap::cnode_bits());
+                           bootstrap::endpoint_depth());
 }
 }  // namespace
 
@@ -196,9 +196,9 @@ void Owner::reply_cap(uint64_t const *words, uint32_t count, seL4_CPtr cap) noex
 
 bool take_received_cap(seL4_CPtr target) noexcept
 {
-    return seL4_CNode_Move(bootstrap::kSlotOwnCNode, target, bootstrap::cnode_bits(),
+    return seL4_CNode_Move(bootstrap::kSlotOwnCNode, target, bootstrap::endpoint_depth(),
                            bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
-                           bootstrap::cnode_bits()) == seL4_NoError;
+                           bootstrap::endpoint_depth()) == seL4_NoError;
 }
 
 }  // namespace aegir::ipc

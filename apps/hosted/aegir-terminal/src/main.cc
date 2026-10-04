@@ -372,7 +372,7 @@ int main(int argc, char *argv[])
                 seL4_CPtr const slot = app.alloc_slot();
                 if (slot != 0 && aegir::ipc::take_received_cap(slot)) {
                     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
-                                      aegir::bootstrap::cnode_bits());
+                                      aegir::bootstrap::endpoint_depth());
                 }
             }
             return answer;
@@ -415,7 +415,7 @@ int main(int argc, char *argv[])
             }
             HeldRead held;
             held.reply = aegir::signal::Reply_holder(aegir::bootstrap::kSlotOwnCNode,
-                                                     aegir::bootstrap::cnode_bits(),
+                                                     aegir::bootstrap::endpoint_depth(),
                                                      slot);
             held.bound = bound;
             held.method = method;

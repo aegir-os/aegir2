@@ -296,7 +296,7 @@ void empty_slot(seL4_CPtr slot) noexcept
 {
     if (slot != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
     }
 }
 

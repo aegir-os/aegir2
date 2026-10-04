@@ -93,8 +93,16 @@ bool adopt_memory() {
               g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
                                       untyped_bits, untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, reserved_slot_base() - first_free, 0,
-                          aegir::bootstrap::cnode_bits());
+        uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
+        uint32_t const l2 = aegir::bootstrap::cnode_bits();
+        if (l1 != 0) {
+            /* A two-level CSpace (specs/memory.md): the toolkit's slots live in
+             * the L2 CNode at root slot 0, and a plain slot is `(0, slot)`. */
+            g_objects.adopt_slots_level_two(first_free, reserved_slot_base() - first_free,
+                                            l1, l2, 0);
+        } else {
+            g_objects.adopt_slots(first_free, reserved_slot_base() - first_free, 0, l2);
+        }
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),
                              static_cast<uintptr_t>(window_base + window_bytes),
@@ -244,7 +252,7 @@ int Application::exec() {
              * it as state to get stale). */
             seL4_SetCapReceivePath(aegir::bootstrap::kSlotOwnCNode,
                                    aegir::bootstrap::kSlotReceiveCap,
-                                   aegir::bootstrap::cnode_bits());
+                                   aegir::bootstrap::endpoint_depth());
             seL4_MessageInfo_t const info = seL4_Recv(port, &badge);
             if (seL4_MessageInfo_get_length(info) != 0) {
                 dispatch_call(info, badge);
@@ -285,9 +293,9 @@ seL4_CPtr Application::alloc_slot() {
 bool Application::mint_event_notification(seL4_CPtr target) {
     if (events_ == 0 || target == 0) return false;
     return seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, target,
-                           aegir::bootstrap::cnode_bits(),
+                           aegir::bootstrap::endpoint_depth(),
                            aegir::bootstrap::kSlotOwnCNode, events_,
-                           aegir::bootstrap::cnode_bits(),
+                           aegir::bootstrap::endpoint_depth(),
                            seL4_CapRights_new(0, 0, 0, 1), 0) == seL4_NoError;
 }
 

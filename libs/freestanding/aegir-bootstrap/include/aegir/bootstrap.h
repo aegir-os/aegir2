@@ -75,8 +75,10 @@ constexpr uint64_t kSlotFirstDeclared = 8;
  * capabilities (the two equal halves), where the old geometric split took one,
  * so a spawning service's CSpace filled about twice as fast -- the device
  * manager hit 1001 of its 1014 free slots spawning the second GPU. Growing the
- * CSpace on demand (a two-level CSpace) is still the deferral it always was;
- * this is the size that holds until then. */
+ * CSpace on demand is now a two-level CSpace (specs/memory.md): a process whose
+ * CSpace must grow is given `cspace_l1_bits`, an L2 radix in `cnode_bits`, and
+ * adds L2 CNodes rather than being sized to fit. This constant is then the
+ * single-level size *and* the L2 CNode radix. */
 constexpr uint32_t kCNodeBits = 12;
 
 /* --- the block ------------------------------------------------------------- */
@@ -287,6 +289,11 @@ struct Contents {
     /* The child's own CSpace size in slots-bits (specs/authority.md): the radix
      * its own-CNode cap is built with. Zero means kCNodeBits. */
     uint32_t cnode_bits;
+    /* The child's root CNode radix when its CSpace is two-level, zero when it is
+     * single-level (specs/memory.md): the child grows by adding L2 CNodes, and
+     * reads this to address them. It rides in the CNodeBits entry's `length`,
+     * which that entry has never used. */
+    uint32_t cnode_l1_bits;
 };
 
 /** Build a block in memory we can write: `storage` is a page that will be
@@ -308,6 +315,17 @@ char const *name(uint32_t *length) noexcept;
  *  radix its own-CNode cap was built with. `kCNodeBits` when the block did not
  *  say -- the root task, or a block from before the field. */
 uint32_t cnode_bits() noexcept;
+
+/** The root CNode's radix when this process's CSpace is two-level, and zero
+ *  when it is single-level (specs/memory.md). A spawning process reads it to
+ *  address the L2 CNodes beneath the root. */
+uint32_t cnode_l1_bits() noexcept;
+
+/** The depth at which a capability in this process's own CSpace is addressed:
+ *  `l1 + l2` when the CSpace is two-level, and the own-CNode's radix when it is
+ *  single-level (specs/memory.md). The root cap is the guard-zero own-CNode, so
+ *  a plain root slot and a plain L2 slot share this depth. */
+uint32_t endpoint_depth() noexcept;
 
 /** The child's current directory, or nullptr when it was given none
  *  (specs/environment.md). The pointer is into the block, valid as long as the

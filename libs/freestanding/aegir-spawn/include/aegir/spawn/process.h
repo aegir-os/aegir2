@@ -217,6 +217,13 @@ struct Request {
      *  near-megabyte image and mapping a multi-megabyte heap compete for the
      *  same slots. The child learns its size from the block (bootstrap::cnode_bits). */
     uint32_t cnode_bits = 0;
+    /** The child may be given a *two-level* CSpace (specs/memory.md): nonzero is
+     *  the root CNode's radix `l1`, and `cnode_bits` is then the L2 CNode radix
+     *  `l2`. The child's fixed slots live in the L2 CNode at root slot 0, so a
+     *  plain slot number still resolves through the guard, and the child grows
+     *  by adding L2 CNodes below it. Zero is the single-level CSpace of
+     *  `cnode_bits` slots every other child gets. */
+    uint32_t cspace_l1_bits = 0;
     /** How many 4 KiB pages of stack the child is given. Zero takes the floor
      *  (kDefaultStackPages, 8 KiB); a process that runs the C++ standard
      *  library asks for more, because its container code is stack-hungry and an
@@ -282,12 +289,12 @@ public:
 
 private:
     bool fail(char const *what) noexcept;
-    bool install(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source,
-                 seL4_CapRights_t rights, uint64_t badge) noexcept;
+    bool install(uint64_t slot, seL4_CPtr source, seL4_CapRights_t rights,
+                 uint64_t badge) noexcept;
     /** Move rather than mint: for the caps a copy cannot carry (PortGrant.move). */
-    bool install_moved(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept;
+    bool install_moved(uint64_t slot, seL4_CPtr source) noexcept;
     /** Copy rather than mint, preserving the source's badge (PortGrant.copy). */
-    bool install_copied(seL4_CPtr into_cspace, uint64_t slot, seL4_CPtr source) noexcept;
+    bool install_copied(uint64_t slot, seL4_CPtr source) noexcept;
     /** Lay out argc/argv/envp/auxv on the child's stack. Returns the stack
      *  pointer, or 0 when it does not fit. */
     uintptr_t build_start_frame(uint8_t *stack, uint64_t stack_size, uintptr_t stack_top,
@@ -305,6 +312,13 @@ private:
      * (specs/authority.md); installs into the child address its slots at this
      * depth. */
     uint32_t cnode_bits_ = bootstrap::kCNodeBits;
+    /* Where an install puts a capability: the child's own CNode in a
+     * single-level CSpace, and the child's one L2 CNode in a two-level one, at
+     * the depth a slot is addressed (`cnode_bits_`, or the L2 radix). The fixed
+     * slots (1, 2, the block's) land in the L2 CNode, so a plain slot number
+     * still resolves through the guard (specs/memory.md). */
+    seL4_CPtr dest_cspace_ = 0;
+    seL4_Word dest_depth_ = 0;
     /* The one read-only copy of a `binaries` blob, shared by every child that
      * is given it: the frames are made on the first spawn that asks and
      * *mapped* -- not copied -- into each later one, because a copy per

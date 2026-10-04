@@ -59,8 +59,8 @@ std::unique_ptr<ServerFont> ServerFont::open(aegir::ipc::Consumer service,
     font->send_ = allocator.alloc_slot();
     if (font->send_ == 0 ||
         seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, font->send_,
-                        aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
-                        font->frame_, aegir::bootstrap::cnode_bits(),
+                        aegir::bootstrap::endpoint_depth(), aegir::bootstrap::kSlotOwnCNode,
+                        font->frame_, aegir::bootstrap::endpoint_depth(),
                         seL4_AllRights) != seL4_NoError) {
         return nullptr;
     }
@@ -116,11 +116,11 @@ ServerFont::~ServerFont() {
      * for, so its bookkeeping is not ours to move. */
     if (send_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, send_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
     }
     if (frame_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
     }
 }
 

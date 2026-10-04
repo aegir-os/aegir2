@@ -74,7 +74,7 @@ seL4_CPtr command_untyped_source(void *context, seL4_Word *size_bits,
          * transfer is refused an occupied slot. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
-                          aegir::bootstrap::cnode_bits());
+                          endpoint_depth());
         return 0;
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
@@ -182,17 +182,29 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     }
     g_command_mem.adopt_nodes(g_command_nodes, sizeof(g_command_nodes));
 
-    /* The command-slot pool: the reserved spawn range, one owner per live
-     * command (specs/memory.md Phase 5). The allocator's node pool is reset per
-     * command, but this pool is not: the slots a live command still holds stay
-     * marked. */
-    slot_owners_.assign(slot_count_, 0);
-    slot_pool_.adopt(slot_base_, slot_count_, slot_owners_.data(), slot_descend_);
-    /* A service addresses its own slots at depth zero (the node itself), and
-     * the allocator has to be told (adopt_slots explains); there is no cursor
-     * because the pool is the slot source. */
-    g_command_mem.adopt_slots(0, 0, 0, aegir::bootstrap::cnode_bits());
-    g_command_mem.adopt_slot_pool(&slot_pool_, 0);
+    /* A two-level CSpace gives each command its own L2 CNode; a single-level one
+     * shares the reserved pool among commands (specs/memory.md). */
+    cnode_l1_ = aegir::bootstrap::cnode_l1_bits();
+    cnode_l2_ = aegir::bootstrap::cnode_bits();
+    if (cnode_l1_ != 0) {
+        /* Root slot 0 holds the L2 CNode with our own caps; the pool's CNodes
+         * start at 1. No shared slot table: a command's whole CNode comes and
+         * goes with it. */
+        next_l1_slot_ = 1;
+        g_command_mem.adopt_slot_pool(nullptr, 0);
+    } else {
+        /* The command-slot pool: the reserved spawn range, one owner per live
+         * command (specs/memory.md Phase 5). The allocator's node pool is reset
+         * per command, but this pool is not: the slots a live command still
+         * holds stay marked. */
+        slot_owners_.assign(slot_count_, 0);
+        slot_pool_.adopt(slot_base_, slot_count_, slot_owners_.data(), slot_descend_);
+        /* A service addresses its own slots at depth zero (the node itself),
+         * and the allocator has to be told (adopt_slots explains); there is no
+         * cursor because the pool is the slot source. */
+        g_command_mem.adopt_slots(0, 0, 0, aegir::bootstrap::cnode_bits());
+        g_command_mem.adopt_slot_pool(&slot_pool_, 0);
+    }
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
 
     /* The launcher kit (specs/launch.md): the unbadged console.gui a nested
@@ -298,7 +310,7 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
     aegir::spawn::Initrd const initrd(nullptr, 0);
     aegir::spawn::Spawner spawner(*allocator_, *scratch_, arena, initrd, asid_pool_,
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-                                  aegir::bootstrap::cnode_bits());
+                                  endpoint_depth());
     aegir::spawn::Child child{};
     child.badge = badge;
     child.runtime = shell_pool_;
@@ -369,10 +381,43 @@ bool ServiceKit::begin(uint32_t owner)
         return false;
     }
     /* The allocator is reset per command: a command's chunks are its own, and
-     * its objects are all retyped before staging ends. The slot pool is not
-     * reset, so live commands' slots stay marked and are handed to nobody. */
+     * its objects are all retyped before staging ends. The slot source is not
+     * reset the same way: a two-level process gives the command its own L2
+     * CNode, and a single-level one keeps live commands' slots marked in the
+     * shared pool. */
     g_command_mem.reset();
-    g_command_mem.adopt_slot_pool(&slot_pool_, owner);
+    if (cnode_l1_ != 0) {
+        seL4_Word slot = 0;
+        for (OwnerCnode const &entry : owner_cnodes_) {
+            if (entry.owner == owner) {
+                slot = entry.slot;
+                break;
+            }
+        }
+        if (slot == 0) {
+            if (!free_l1_slots_.empty()) {
+                slot = free_l1_slots_.back();
+                free_l1_slots_.pop_back();
+            } else if (next_l1_slot_ < (static_cast<seL4_Word>(1) << cnode_l1_)) {
+                slot = next_l1_slot_++;
+            } else {
+                return false;
+            }
+            seL4_Error error = seL4_NoError;
+            void *cookie = nullptr;
+            seL4_CPtr const created = allocator_->alloc_cnode_at_l1(
+                cnode_l2_, slot, account_, &error, &cookie);
+            if (created == 0) {
+                free_l1_slots_.push_back(slot);
+                return false;
+            }
+            owner_cnodes_.push_back(OwnerCnode{owner, slot, cookie});
+        }
+        g_command_mem.adopt_slots_level_two(0, static_cast<seL4_Word>(1) << cnode_l2_,
+                                            cnode_l1_, cnode_l2_, slot);
+    } else {
+        g_command_mem.adopt_slot_pool(&slot_pool_, owner);
+    }
     g_command_mem.set_untyped_source(command_untyped_source, &g_command_mem);
     g_command_mem_call = 0;
     /* The staging mark is the window position before the *first* still-live
@@ -382,11 +427,15 @@ bool ServiceKit::begin(uint32_t owner)
         scratch_mark_ = scratch_->next();
         staged_since_rewind_ = true;
     }
+    /* The install source is a slot in this process's own CSpace: a plain number
+     * in a single-level one, and an L2 address in a two-level one (a level's
+     * bits are just its radix, guards zero). */
+    seL4_Word const source_depth =
+        cnode_l1_ != 0 ? cnode_l1_ + cnode_l2_ : aegir::bootstrap::cnode_bits();
     arena_ = std::make_unique<aegir::mem::Arena>(g_command_mem, *scratch_, account_);
     spawner_ = std::make_unique<aegir::spawn::Spawner>(
         g_command_mem, *scratch_, *arena_, *initrd_, asid_pool_,
-        static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
-        aegir::bootstrap::cnode_bits());
+        static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode), source_depth);
     return true;
 }
 
@@ -409,12 +458,12 @@ bool ServiceKit::begin_command(uint64_t badge)
     }
     if (command_mem_live_) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, command_mem_,
-                          aegir::bootstrap::cnode_bits());
+                          endpoint_depth());
         command_mem_live_ = false;
     }
     seL4_Error const minted = seL4_CNode_Mint(
-        aegir::bootstrap::kSlotOwnCNode, command_mem_, aegir::bootstrap::cnode_bits(),
-        aegir::bootstrap::kSlotOwnCNode, mem_port_, aegir::bootstrap::cnode_bits(),
+        aegir::bootstrap::kSlotOwnCNode, command_mem_, endpoint_depth(),
+        aegir::bootstrap::kSlotOwnCNode, mem_port_, endpoint_depth(),
         seL4_CapRights_new(1, 1, 0, 1), badge);
     if (minted != seL4_NoError) {
         return false;
@@ -435,7 +484,7 @@ void ServiceKit::end_staging()
      * returns the window once they are gone. */
     if (command_mem_live_) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, command_mem_,
-                          aegir::bootstrap::cnode_bits());
+                          endpoint_depth());
         command_mem_live_ = false;
     }
 }
@@ -473,7 +522,27 @@ void ServiceKit::reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner)
         uint64_t released = 0;
         (void)service.call_words(aegir::memory::kMethodRelease, &word, 1, &released, 1);
     }
-    slot_pool_.free_owner(owner);
+    if (cnode_l1_ != 0) {
+        for (std::size_t i = 0; i < owner_cnodes_.size(); ++i) {
+            if (owner_cnodes_[i].owner != owner) {
+                continue;
+            }
+            /* Give the L2 CNode back: freeing the piece revokes the CNode cap
+             * at its root slot and returns the memory, so the slot is ready for
+             * the next command (specs/memory.md). */
+            if (owner_cnodes_[i].cookie != nullptr) {
+                (void)allocator_->free_object(
+                    owner_cnodes_[i].cookie,
+                    static_cast<seL4_Word>(aegir::mem::Allocator::object_bits(
+                        seL4_CapTableObject, cnode_l2_)));
+            }
+            free_l1_slots_.push_back(owner_cnodes_[i].slot);
+            owner_cnodes_.erase(owner_cnodes_.begin() + static_cast<std::ptrdiff_t>(i));
+            break;
+        }
+    } else {
+        slot_pool_.free_owner(owner);
+    }
 }
 
 bool ServiceKit::hold_received_stream()
@@ -490,7 +559,7 @@ bool ServiceKit::hold_received_stream()
     }
     if (stream_live_) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, stream_slot_,
-                          aegir::bootstrap::cnode_bits());
+                          endpoint_depth());
         stream_live_ = false;
     }
     if (!aegir::ipc::take_received_cap(stream_slot_)) {
