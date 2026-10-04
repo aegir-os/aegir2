@@ -64,6 +64,11 @@ window, the status handshake, and two queues on the shared `Queue` object.
   (`specs/services.md`); a driver without a pair polls.
 - registry row: `compatible=virtio,mmio id=1 prefix=eth bus=virtio
   binary=aegir-virtio-net memory=<n> window=<the frame window>`.
+- **one device, one process.** Two Ethernet interfaces are two link drivers --
+  two bindings of the row, two instances -- and two stacks, the instance model
+  the two gpu heads already proved (`specs/services.md`). A driver never
+  multiplexes two ports; the two jacks on a board with two NICs are
+  `eth.virtio0` and `eth.virtio1`, not one driver with two.
 
 ## Vendoring lwIP
 
@@ -211,11 +216,13 @@ line and reason, and the stack falls back to DHCP; the loud-failure rule is
 
 `Net:<adapter>/<parameter>` is a synthetic, read/write filesystem:
 
-- one directory per adapter, so `Net:virtio-net0/ipv4_address` names a
-  parameter of one interface. The adapter's name is the one open decision here:
-  the house convention is the link driver's instance (`eth.virtio0`), but the
-  example above (`virtio-net0`) reads a friendlier interface name, and that is a
-  choice to make, not a guess.
+- one directory per adapter, and **the adapter names itself the way a block
+  device does**: a short prefix and the unit from its link's instance, so
+  `eth.virtio0` is `NE0` and the parameter is `Net:NE0/ipv4_address`. Two
+  Ethernet interfaces are `NE0` and `NE1` -- the same rule that makes
+  `blk.virtio0` `BD0` (`specs/services.md`), and the volume lists one directory
+  per bound link. (`NE` is network-ethernet; the prefix is a convention, not a
+  mechanism.)
 - files per parameter: `ipv4_address`, `ipv4_netmask`, `ipv4_gateway`,
   `ipv4_dns`, `mac`, `mtu`, `link`, `dhcp`, `state`, and `stats` -- the
   read-only ones answer the stack, the writable ones reprogram it.
@@ -228,6 +235,10 @@ line and reason, and the stack falls back to DHCP; the loud-failure rule is
   itself hold the namespace, and **every adapter appears in one volume**. The
   registration table grows on demand and a volume is registered, not compiled
   in, so a second interface is a second directory and nothing else.
+- **reads are open; writes are owner/system.** Reprogramming a system interface
+  is authority, not convenience -- the `specs/ownership.md` rule extended to a
+  synthetic volume. A program lists and reads `Net:` freely; changing an
+  address or turning DHCP off is a privileged write.
 
 ### The control port
 
@@ -240,10 +251,6 @@ protocols, the way the block driver's `caps` is not its `read`
 
 ### Open
 
-- **the adapter name**, `eth.virtio0` or `virtio-net0` (above);
-- **who may write.** Reprogramming a system interface is an authority question,
-  not a convenience: `Net:` is likely owner/system-only, the `specs/ownership.md`
-  rule extended to a synthetic volume. Reads are open; writes are not.
 - **whether the boot manifest is the `Sys:` file or a build-packed copy.** The
   `Sys:` file is the editable source of truth the requirement names; if the
   ordering wait ever proves awkward, the `services.manifest` mechanism (packed
