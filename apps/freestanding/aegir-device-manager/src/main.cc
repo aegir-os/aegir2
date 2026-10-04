@@ -1388,6 +1388,94 @@ int main(int argc, char *argv[])
                 }
             }
 
+            /* The network stack, started once the links answer: it opens every
+             * bound eth.* row through the registry and adds a netif to each, so
+             * a machine with two NICs has two links and one stack
+             * (specs/net.md). It is given the caller halves of the registry and
+             * the timer -- the timer is where its tcpip thread's tick comes
+             * from -- and the authority to run at all: an untyped its objects
+             * and its heap come out of, and its own VSpace root, because a
+             * service cannot map a link's window without one (specs/services.md). */
+            if (have_log && registry_endpoint != 0) {
+                static char const kNetName[] = "net";
+                static char const kNetBinary[] = "aegir-net";
+                /* Its delegation: the notifications, the tcpip thread's TCB and
+                 * stack, and the heap all come out of this, and the heap grows
+                 * inside it (no fixed MEM_SIZE); a later source is mem.main
+                 * (specs/net.md). */
+                constexpr uint32_t kNetUntypedBits = 23;
+                uint64_t const net_badge = 256u + binding_count + 1u;
+                aegir::mem::Account net_account{"net", 0, 0, 0};
+                seL4_Error net_error = seL4_NoError;
+                uint64_t net_physical = 0;
+                seL4_CPtr const net_untyped = g_objects.carve_untyped(
+                    kNetUntypedBits, net_account, &net_error, &net_physical);
+                seL4_CPtr const net_fault = g_objects.alloc_object(
+                    seL4_EndpointObject, seL4_EndpointBits, net_account, &net_error);
+                /* The timer's port: director gave us the unbadged copy beside
+                 * the driver kit because a child of ours -- this one -- needs
+                 * it, so it travels on as it stands. */
+                uint64_t timer_slot = 0;
+                bool const have_timer =
+                    aegir::bootstrap::capability("spawn:timer.main", 16, &timer_slot);
+                if (net_untyped == 0 || net_fault == 0 || !have_timer) {
+                    write_line("FAIL", "no memory or timer for the network stack");
+                } else {
+                    aegir::spawn::PortGrant const ports[] = {
+                        {aegir::log::kPortName, aegir::log::kPortNameLength,
+                         aegir::bootstrap::kSlotFirstDeclared,
+                         static_cast<seL4_CPtr>(log_slot), seL4_CapRights_new(1, 0, 0, 1),
+                         net_badge, 0, false, false},
+                        {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 1,
+                         net_untyped, seL4_AllRights, 0, kNetUntypedBits, false, false},
+                        /* The registry, badged with who the stack is and the
+                         * call mark, so the manager's serve loop sees a call and
+                         * not a signal (aegir/ipc/port.h's kCallMark). */
+                        {aegir::registry::kPortName, aegir::registry::kPortNameLength,
+                         aegir::bootstrap::kSlotFirstDeclared + 2, registry_endpoint,
+                         seL4_CapRights_new(1, 0, 0, 1), net_badge | aegir::ipc::kCallMark,
+                         0, false, false},
+                        /* The timer: the copy director made for this child's
+                         * need, with the rights it takes to hand a tick over. */
+                        {"timer.main", 10, aegir::bootstrap::kSlotFirstDeclared + 3,
+                         static_cast<seL4_CPtr>(timer_slot), seL4_AllRights, 0, 0, false,
+                         true},
+                    };
+                    aegir::spawn::Request request{};
+                    request.name = kNetName;
+                    request.name_length = sizeof(kNetName) - 1;
+                    request.binary = kNetBinary;
+                    request.binary_length = sizeof(kNetBinary) - 1;
+                    request.account = "system";
+                    request.account_length = 6;
+                    request.priority = seL4_MaxPrio - 1;
+                    request.ports = ports;
+                    request.port_count = 4;
+                    /* Its own address space: it maps the link windows it opens
+                     * through the registry, and a service cannot map for itself
+                     * without the root (specs/services.md). */
+                    request.give_vspace = true;
+                    request.untyped_physical = net_physical;
+                    request.untyped_bits = kNetUntypedBits;
+                    request.fault_endpoint = net_fault;
+                    request.badge = net_badge;
+                    aegir::spawn::Process process{};
+                    if (!spawner.spawn(request, net_account, process)) {
+                        aegir::debug_write("      FAIL spawning net: ");
+                        aegir::debug_write(spawner.problem());
+                        aegir::debug_write("\n");
+                    } else {
+                        aegir::debug_write("      spawned net, badge ");
+                        aegir::debug_write_unsigned(net_badge);
+                        aegir::debug_write("\n");
+                        /* Its ready: it signals once the stack is up and the
+                         * tick subscribed, before it serves anything. */
+                        seL4_Word net_ready = 0;
+                        seL4_Wait(process.supervision, &net_ready);
+                    }
+                }
+            }
+
             /* The partition manager, started once the drivers answer: it gets
              * the caller half of every bound block port, the pristine window
              * frames its reads move data through, and the authority to map

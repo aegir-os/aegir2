@@ -146,6 +146,13 @@ Rights rights_for(PortGraph::Name name) noexcept
     if (name_is(name, "devmgr.registry", 15)) {
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 0, 0, 1)};
     }
+    if (name_is(name, "timer.main", 10)) {
+        /* A subscriber hands the timer its tick notification on the subscribe
+         * call (aegir/timer.h), and nothing transfers unless the cap the sender
+         * invokes carries Grant (kernel/src/kernel/thread.c:212-218). The owner
+         * receives the cap and moves it, so Read is its half. */
+        return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     if (name_is(name, "console.gui", 11)) {
         /* frame's answer carries a capability (specs/console.md) -- the
          * namespace's shape, and the namespace's reason. The owner holds

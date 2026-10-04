@@ -60,7 +60,7 @@ device_manager = true
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, timer, partmgr
+spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, timer, partmgr, net
 # What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
 # framebuffers (megapages -- specs/services.md), the partition manager's
 # megabyte, the filesystem image, and the drivers' images, queues and windows.
@@ -178,6 +178,20 @@ authority = system
 account   = system
 needs     = log.main, vfs.namespace, clock.main
 spawns    = fs.*
+restart   = always
+
+# The network stack (specs/net.md): one service over every Ethernet link, a netif
+# each, so routing and the socket namespace belong to the stack and not to one
+# NIC. The device manager starts it once the links answer, with an untyped its
+# objects and heap come out of, its own VSpace root to map the link windows it
+# opens, and the caller halves of the registry and the timer (the timer is where
+# its tcpip thread's tick comes from). It knows nothing about virtio: the MAC,
+# MTU and link state come from the link port, and its address from DHCP.
+[net]
+binary    = aegir-net
+authority = system
+account   = system
+needs     = log.main, devmgr.registry, timer.main
 restart   = always
 
 # The FAT filesystem service: one instance per FAT partition, started by the

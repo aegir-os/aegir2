@@ -264,6 +264,14 @@ extern "C" err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg)
     return ERR_OK;
 }
 
+/* The interrupt-context form lwIP's tcpip.c references: the same as trypost
+ * here, because a mailbox post never blocks -- the caller is told the mailbox
+ * was full rather than waiting on it. */
+extern "C" err_t sys_mbox_trypost_fromisr(sys_mbox_t *mbox, void *msg)
+{
+    return sys_mbox_trypost(mbox, msg);
+}
+
 extern "C" u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout)
 {
     (void)timeout;
