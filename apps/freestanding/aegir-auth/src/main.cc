@@ -891,9 +891,11 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
     request.badge = spec.badge;
     request.give_vspace = true;
     /* A launcher stages images of its own (a nested terminal's is near a
-     * megabyte), so it gets the larger CSpace a spawner needs
-     * (specs/authority.md), exactly as the terminal does. */
-    constexpr uint32_t kLauncherCNodeBits = 13;
+     * megabyte) and holds every live command's caps at once -- the shell, the
+     * demo, a nested terminal and the datatype classes the session keeps -- so
+     * it gets a larger CSpace than a terminal has (specs/authority.md). 14 bits
+     * is 16384 slots. */
+    constexpr uint32_t kLauncherCNodeBits = 14;
     request.cnode_bits = kLauncherCNodeBits;
     request.untyped_physical = untyped_physical;
     request.untyped_bits = kLauncherUntypedBits;
