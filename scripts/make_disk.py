@@ -24,6 +24,7 @@ Delete it to make a fresh one.
 """
 
 import argparse
+import base64
 import shutil
 import struct
 import subprocess
@@ -98,6 +99,38 @@ def make_png() -> bytes:
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
             chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b""))
+
+
+def make_jpeg() -> bytes:
+    """A tiny JPEG fixture, read through the jpeg class.
+
+    The third datatype acceptance (specs/datatypes.md): the demo opens this
+    through the `jpeg.datatype` class, so the image is built here -- except that
+    it is not: the standard library has no JPEG encoder, so the bytes are
+    embedded. They were written at quality 100, 4:4:4, by an encoder other than
+    the one under test, so the class decodes a foreign file. 64x48, an orange
+    left half and a purple right half; the pinned libjpeg-turbo decodes those
+    halves to (255,127,0) and (127,0,255), which is what the acceptance pins --
+    the colours differ from make_ilbm's and make_png's, so a rect that named the
+    wrong image shows.
+    """
+    encoded = (
+        b"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
+        b"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEB"
+        b"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAAwAEADAREA"
+        b"AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+        b"AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3"
+        b"ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm"
+        b"p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEA"
+        b"AwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSEx"
+        b"BhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElK"
+        b"U1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
+        b"uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD64r/l"
+        b"XP8ApQCgAoAKAP5X6/8AX4P4HCgAoAKAP6oK/wDIHP74CgAoAKAP5X6/9fg/gcKACgAoA/qgr/yB"
+        b"z++AoAKACgD+V+v/AF+D+BwoAKACgD+qCv8AyBz++AoAKACgD+V+v/X4P4HCgAoAKAP6oK/8gc/v"
+        b"gKACgAoA/lfr/wBfg/gcKACgAoA/qgr/AMgc/vgKACgAoA/lfr/1+D+BwoAKACgD/9k="
+    )
+    return base64.b64decode(encoded)
 
 
 # The partitions, in disk order. The AEGIR and BFS volumes are built by
@@ -371,9 +404,10 @@ def aegir_tree(commands, datatypes) -> list:
     (specs/datatypes.md)."""
     tree = list(AEGIR_BFS_TREE)
     # The datatypes acceptance's images (specs/datatypes.md): the demo opens
-    # them through the ilbm and png classes, on the session's namespace.
+    # them through the ilbm, png and jpeg classes, on the session's namespace.
     tree.append(("file", "TestImage.ilbm", make_ilbm()))
     tree.append(("file", "TestImage.png", make_png()))
+    tree.append(("file", "TestImage.jpg", make_jpeg()))
     # A PNG named `.ilbm` (specs/datatypes.md's content-first walk): the name
     # hints ilbm.datatype, which declines, and the broker walks `DataTypes:`
     # until png.datatype claims it by content. The demo opens it to prove the

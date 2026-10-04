@@ -243,6 +243,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # palette. The two files are different pictures, so the pins below
             # name colours only the right class produces.
             QmpStep(r"demo: png 64x48 format 2 palette 0"),
+            # The third class (specs/datatypes.md): the demo opened
+            # Sys:TestImage.jpg through jpeg.datatype, which decoded it (through
+            # the vendored libjpeg-turbo) and served it as RGB -- format 1, no
+            # palette. Its colours are its own once more, so the JPEG pin below
+            # names a colour only the jpeg class produces; the class resolved
+            # from DataTypes:, where it is staged, not from the program
+            # directory.
+            QmpStep(r"datatypes: open DataTypes:jpeg\.datatype"),
+            QmpStep(r"demo: jpeg 64x48 format 1 palette 0"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up
@@ -1046,12 +1055,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"demo: rects",
                 clicks=(("demo.tabs.tab.5", 0.5, 0.5),),
             ),
-            # The Image tab: both decoded frames (specs/datatypes.md). The ILBM
-            # is palette red left / green right, the PNG blue left / white
-            # right; the pins read a pixel in each half of each, so the class,
-            # the client, the transfer page and the blit are one chain -- and
-            # the colours differ, so a rect naming the wrong image or a decode
-            # that mixed the channels shows. Then back to the Lists page.
+            # The Image tab: all three decoded frames (specs/datatypes.md). The
+            # ILBM is palette red left / green right, the PNG blue left / white
+            # right, the JPEG (lossy) orange left / purple right; the pins read
+            # a pixel in each half of each -- the JPEG's are the exact values
+            # the pinned libjpeg-turbo decodes that fixture to -- so the class,
+            # the client, the transfer page and the blit are one chain, and the
+            # colours differ, so a rect naming the wrong image or a decode that
+            # mixed the channels shows. Then back to the Lists page.
             QmpStep(
                 r"demo: tab 5",
                 dumps=("gpu0",),
@@ -1061,6 +1072,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", "demo.image", 0.75, 0.5, 0, 255, 0),
                     ("gpu0", "demo.png", 0.25, 0.5, 0, 0, 255),
                     ("gpu0", "demo.png", 0.75, 0.5, 255, 255, 255),
+                    ("gpu0", "demo.jpeg", 0.25, 0.5, 255, 127, 0),
+                    ("gpu0", "demo.jpeg", 0.75, 0.5, 127, 0, 255),
                 ),
                 clicks=(("demo.tabs.tab.3", 0.5, 0.5),),
             ),

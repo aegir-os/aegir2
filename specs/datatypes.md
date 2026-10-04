@@ -239,7 +239,20 @@ viewer at once, and each lives in one process rather than in each caller.
   directory was searched first. What is still open: a program-directory class
   with a **new** name is not listed for content-first identification (the class
   *list* is `DataTypes:`), only a name the extension hints is resolved there.
-- **Phase 3 -- JPEG**, libjpeg-turbo.
+- **Phase 3 -- JPEG.** Landed. `jpeg.datatype` decodes through the vendored
+  libjpeg-turbo (pinned by sha256 plus the project's own signature,
+  `specs/third_party.md`), normalising greyscale, YCbCr and CMYK to RGB -- the
+  class, not the name, fixes the layout. libjpeg's `error_exit` must not return,
+  so a decode runs under `setjmp` with the whole decode state on the heap, whose
+  address is fixed across the jump. The demo opens `Sys:TestImage.jpg` from the
+  session and the acceptance pins a pixel in each half, as it does for ILBM and
+  PNG -- the JPEG's own colours, so neither of the others can stand in for it.
+  The fixture is the one image *not* built in `scripts/make_disk.py`: with no
+  JPEG encoder in the standard library the bytes are embedded, written by an
+  encoder other than the one under test, so the class decodes a foreign file.
+  The host conformance (`make check-jpeg`) does the same over two such embedded
+  JPEGs, 29 checks, pinning the RGB normalisation, `width*3` stride, row order
+  and greyscale replication.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property
   the whole shape exists for.

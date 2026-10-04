@@ -320,15 +320,16 @@ int main(int argc, char *argv[])
         write("  demo: no font.main face for the outline label\n");
     }
 
-    /* The datatypes client's first calls (specs/datatypes.md): open the two
+    /* The datatypes client's first calls (specs/datatypes.md): open the three
      * fixtures, one through each class. The class is started under this
      * program's own badge by the session launcher -- the demo holds
      * launch.session as a command (specs/launch.md) -- and serves the frame a
      * page at a time; load_image converts it to the canvas's RGBA and prints
-     * what the class stated. The two files are the same picture, so the two
-     * pins reading the same colours is the cross-check between the classes. */
+     * what the class stated. Each fixture's colours are its own, so a pin that
+     * named the wrong class's frame shows. */
     std::unique_ptr<ImageView> image_view = load_image(app, "Sys:TestImage.ilbm", "image");
     std::unique_ptr<ImageView> png_view = load_image(app, "Sys:TestImage.png", "png");
+    std::unique_ptr<ImageView> jpeg_view = load_image(app, "Sys:TestImage.jpg", "jpeg");
     /* Content-first (specs/datatypes.md): a PNG named `.ilbm`, so the broker
      * must let the class, not the name, decide -- ilbm.datatype declines it and
      * png.datatype claims it by content. Decoded only to prove the walk (the
@@ -586,18 +587,22 @@ int main(int argc, char *argv[])
     text_page->set_weight(label_ptr, 0);
     tabs->add_page(U"Text", std::move(text_page));
 
-    /* Image: the two decoded frames (specs/datatypes.md), the ILBM over the
-     * PNG. Its own page, so the widgets the acceptance reads at boot keep their
-     * geometry; the cues name each frame and the acceptance pins a pixel in
-     * each reported rectangle. */
+    /* Image: the three decoded frames (specs/datatypes.md), the ILBM over the
+     * PNG over the JPEG. Its own page, so the widgets the acceptance reads at
+     * boot keep their geometry; the cues name each frame and the acceptance
+     * pins a pixel in each reported rectangle. */
     auto image_page = std::make_unique<Group>(Group::Orientation::VERTICAL, 8);
     ImageView* const image_ptr = image_view.get();
     ImageView* const png_ptr = png_view.get();
+    ImageView* const jpeg_ptr = jpeg_view.get();
     if (image_view != nullptr) {
         image_page->add_child(std::move(image_view));
     }
     if (png_view != nullptr) {
         image_page->add_child(std::move(png_view));
+    }
+    if (jpeg_view != nullptr) {
+        image_page->add_child(std::move(jpeg_view));
     }
     tabs->add_page(U"Image", std::move(image_page));
 
@@ -669,6 +674,10 @@ int main(int argc, char *argv[])
         if (png_ptr != nullptr) {
             report_rect("demo.png", png_ptr->image_screen_rect());
             png_ptr->report_parts("demo.png");
+        }
+        if (jpeg_ptr != nullptr) {
+            report_rect("demo.jpeg", jpeg_ptr->image_screen_rect());
+            jpeg_ptr->report_parts("demo.jpeg");
         }
     };
 

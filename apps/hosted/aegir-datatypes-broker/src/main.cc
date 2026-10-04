@@ -65,6 +65,9 @@ std::string class_from_extension(std::string_view path)
     if (ext == "png") {
         return "png.datatype";
     }
+    if (ext == "jpg" || ext == "jpeg" || ext == "jpe") {
+        return "jpeg.datatype";
+    }
     return {};
 }
 
