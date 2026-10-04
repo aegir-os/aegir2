@@ -194,6 +194,19 @@ public:
                          seL4_Word size_bits = seL4_PageBits) noexcept;
 
     /**
+     * A run of `count` equal 4 KiB frames, retyped in **one** kernel call into
+     * `count` consecutive slots. `count` must be a power of two: a single
+     * retype fills a consecutive destination run, and a buddy piece is a power
+     * of two, so the run is a whole piece. The first frame's capability comes
+     * back and the rest are the slots after it, so a caller reads a segment a
+     * page at a time by asking for the largest run its remaining pages allow --
+     * one `seL4_Untyped_Retype` covering many pages instead of one per page
+     * (specs/director.md's spawn path). 0 and `*error` on failure.
+     */
+    seL4_CPtr alloc_pages_run(seL4_Word count, Account &account, seL4_Error *error,
+                              void **cookie = nullptr) noexcept;
+
+    /**
      * A CNode capability retyped *directly into root slot* `l1_slot`: the
      * second-level CNode that a two-level CSpace grows with (specs/memory.md).
      * The root slot *is* the object's address, so a spawning child adds an L2
@@ -458,6 +471,14 @@ private:
      *  occupied"). Only the last reservation can be returned, which is all these paths
      *  need: one slot is outstanding at a time. */
     void slot_failed(seL4_CPtr slot) noexcept;
+
+    /** `count` *consecutive* free slots, or 0 when no run is free: one retype
+     *  of `count` objects needs a consecutive destination (alloc_pages_run). */
+    seL4_CPtr alloc_slot_run(seL4_Word count) noexcept;
+
+    /** Give a reserved slot run back on a failed retype, the way slot_failed
+     *  gives one slot back. */
+    void slot_failed_run(seL4_CPtr first, seL4_Word count) noexcept;
 
     /** A slot whose capability the kernel has deleted: free it in the pool when
      *  one is adopted (specs/memory.md), and do nothing under the cursor,

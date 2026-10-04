@@ -53,6 +53,33 @@ public:
         return 0;
     }
 
+    /** Reserve `count` *consecutive* free slots for `owner` and return the
+     *  first, or 0 when no such run is free. `alloc` one at a time promises
+     *  nothing about adjacency, and a single retype of `count` objects needs
+     *  the destination slots to be consecutive (allocator's alloc_pages_run). */
+    seL4_CPtr alloc_run(seL4_Word count, uint32_t owner) noexcept
+    {
+        if (owners_ == nullptr || count == 0 || count > count_) {
+            return 0;
+        }
+        for (seL4_Word start = 0; start + count <= count_; ++start) {
+            bool free = true;
+            for (seL4_Word j = 0; j < count; ++j) {
+                if (owners_[start + j] != 0) {
+                    free = false;
+                    break;
+                }
+            }
+            if (free) {
+                for (seL4_Word j = 0; j < count; ++j) {
+                    owners_[start + j] = owner;
+                }
+                return first_ + start;
+            }
+        }
+        return 0;
+    }
+
     /** Return one slot `owner` reserved. */
     void free(seL4_CPtr slot, uint32_t owner) noexcept
     {

@@ -640,6 +640,100 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     return slot;
 }
 
+seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
+{
+    if (slot_pool_ != nullptr) {
+        return slot_pool_->alloc_run(count, slot_owner_);
+    }
+    if (slots_descend_) {
+        if (slots_next_ < slots_first_ + count) {
+            return 0;
+        }
+        slots_next_ -= count;
+        slots_used_ += count;
+        return slots_next_;
+    }
+    if (slots_next_ + count > slots_end_) {
+        return 0;
+    }
+    seL4_CPtr const first = slots_next_;
+    slots_next_ += count;
+    slots_used_ += count;
+    return first;
+}
+
+void Allocator::slot_failed_run(seL4_CPtr first, seL4_Word count) noexcept
+{
+    if (slot_pool_ != nullptr) {
+        for (seL4_Word i = 0; i < count; ++i) {
+            slot_pool_->free(first + i, slot_owner_);
+        }
+        return;
+    }
+    if (slots_descend_) {
+        if (first == slots_next_) {
+            slots_next_ += count;
+            slots_used_ -= count;
+        }
+        return;
+    }
+    if (first + count == slots_next_) {
+        slots_next_ -= count;
+        slots_used_ -= count;
+    }
+}
+
+seL4_CPtr Allocator::alloc_pages_run(seL4_Word count, Account &account, seL4_Error *error,
+                                     void **cookie) noexcept
+{
+    *error = seL4_NoError;
+    /* A run is a whole buddy piece, so it is a power of two frames: a retype
+     * fills a consecutive destination run, and a piece is a power of two. */
+    if (count == 0 || (count & (count - 1)) != 0) {
+        *error = seL4_InvalidArgument;
+        return 0;
+    }
+    unsigned const page_bits = object_bits(seL4_RISCV_4K_Page, seL4_PageBits);
+    unsigned log = 0;
+    for (seL4_Word n = count; n > 1; n >>= 1) {
+        ++log;
+    }
+    unsigned const wanted = page_bits + log;
+    last_request_bits_ = page_bits;
+    last_candidate_bits_ = 0;
+    if (!refill(false, wanted)) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    Node *const node = take(false, wanted);
+    if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    last_candidate_bits_ = node->size_bits;
+    seL4_CPtr const first = alloc_slot_run(count);
+    if (first == 0) {
+        insert(false, node);
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    *error = seL4_Untyped_Retype(node->cap, seL4_RISCV_4K_Page, seL4_PageBits,
+                                 seL4_CapInitThreadCNode, retype_node_index(), cnode_depth_,
+                                 slot_offset(first), count);
+    if (*error != seL4_NoError) {
+        slot_failed_run(first, count);
+        free_node(node);
+        return 0;
+    }
+    if (cookie != nullptr) {
+        *cookie = node;
+    }
+    account.bytes += static_cast<uint64_t>(count) << page_bits;
+    account.objects += count;
+    allocated_bytes_ += static_cast<uint64_t>(count) << page_bits;
+    return first;
+}
+
 bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *first_out,
                               seL4_Error *error) noexcept
 {

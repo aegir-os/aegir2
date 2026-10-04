@@ -78,7 +78,6 @@ aegir::mem::Allocator g_tables(nullptr);
 aegir::mem::Scratch g_map_window(nullptr);
 uintptr_t g_map_base = 0;
 bool g_map_ready = false;
-seL4_CPtr g_frame_slot = 0;
 
 /* The CSpace slots the window keeps, taken from the top so the live-query scan
  * (which walks up from the block's own capabilities) never hands one out. */
@@ -956,21 +955,23 @@ void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t 
     }
     uint64_t const available = static_cast<uint64_t>(inode.size) - offset;
     uint32_t const got = static_cast<uint32_t>(wanted < available ? wanted : available);
-    if (!aegir::ipc::take_received_cap(g_frame_slot) ||
-        !g_map_window.map_at(g_map_base, g_frame_slot)) {
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
+    /* The frame cap sits in the scratch receive slot; map it from there, not
+     * through a slot of our own -- the map is what names it, and a move first
+     * would be one more kernel call per page. The slot is emptied after. */
+    seL4_CPtr const frame = aegir::bootstrap::kSlotReceiveCap;
+    if (!g_map_window.map_at(g_map_base, frame)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
                           aegir::bootstrap::kCNodeBits);
         port.reply_words(nullptr, 0);
         return;
     }
-    bool const read_ok =
-        got == 0 || g_volume.read_stream(inode, offset,
-                                         reinterpret_cast<uint8_t *>(g_map_base) +
-                                             frame_offset,
-                                         got);
-    g_map_window.unmap(g_frame_slot);
-    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
-                      aegir::bootstrap::kCNodeBits);
+    bool const read_ok = got == 0 || g_volume.read_stream(
+                                          inode, offset,
+                                          reinterpret_cast<uint8_t *>(g_map_base) +
+                                              frame_offset,
+                                          got);
+    g_map_window.unmap(frame);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
     if (!read_ok) {
         port.reply_words(nullptr, 0);
         return;
@@ -2035,9 +2036,8 @@ int main(int argc, char *argv[])
         aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
         aegir::bootstrap::capability_size_bits("untyped", 7, &untyped_bits)) {
         uint64_t const slot_top = 1ULL << aegir::bootstrap::kCNodeBits;
-        g_frame_slot = static_cast<seL4_CPtr>(slot_top - kWindowSlots);
-        g_tables.adopt_slots(static_cast<seL4_CPtr>(slot_top - kWindowSlots + 1),
-                             kWindowSlots - 1, 0, aegir::bootstrap::kCNodeBits);
+        g_tables.adopt_slots(static_cast<seL4_CPtr>(slot_top - kWindowSlots),
+                             kWindowSlots, 0, aegir::bootstrap::kCNodeBits);
         static_cast<void>(g_tables.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
                                                  untyped_bits));
         g_map_base = static_cast<uintptr_t>(map_window_base);

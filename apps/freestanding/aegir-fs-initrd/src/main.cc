@@ -60,7 +60,6 @@ aegir::mem::Allocator g_tables(nullptr);
 aegir::mem::Scratch g_window(nullptr);
 uintptr_t g_window_base = 0;
 bool g_window_ready = false;
-seL4_CPtr g_frame_slot = 0;
 
 /* The length of an entry's name: the archive's names are NUL-terminated on
  * disk (cpio_get_file compares against one, projects/util_libs/libcpio/
@@ -241,11 +240,12 @@ void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t 
         port.reply_words(nullptr, 0);
         return;
     }
-    /* The cap moves out of the scratch receive slot so the next transfer has an
-     * empty one; it is deleted when the mapping is gone. */
-    if (!aegir::ipc::take_received_cap(g_frame_slot) ||
-        !g_window.map_at(g_window_base, g_frame_slot)) {
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
+    /* The frame cap sits in the scratch receive slot; map it from there, not
+     * through a slot of our own -- the map is what names it, and a move first
+     * would be one more kernel call per page. The slot is emptied after. */
+    seL4_CPtr const frame = aegir::bootstrap::kSlotReceiveCap;
+    if (!g_window.map_at(g_window_base, frame)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
                           aegir::bootstrap::kCNodeBits);
         port.reply_words(nullptr, 0);
         return;
@@ -256,14 +256,10 @@ void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t 
     }
     uint64_t const available = size - offset;
     uint64_t const got = wanted < available ? wanted : available;
-    char *bytes = reinterpret_cast<char *>(g_window_base) + frame_offset;
-    char const *from = static_cast<char const *>(g_archive) + file_offset + offset;
-    for (uint64_t i = 0; i < got; ++i) {
-        bytes[i] = from[i];
-    }
-    g_window.unmap(g_frame_slot);
-    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
-                      aegir::bootstrap::kCNodeBits);
+    __builtin_memcpy(reinterpret_cast<char *>(g_window_base) + frame_offset,
+                     static_cast<char const *>(g_archive) + file_offset + offset, got);
+    g_window.unmap(frame);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
     uint64_t const answer[aegir::volume::kReadHeaderWords] = {
         got, offset + got >= size ? 1ULL : 0ULL};
     port.reply_words(answer, aegir::volume::kReadHeaderWords);
@@ -456,7 +452,7 @@ int main(int argc, char *argv[])
      * the allocator's own node frames (which map at the cursor) never land on
      * it. A grant that is absent or short leaves bulk reads off; inline reads
      * are unchanged. `caller_half` was deleted above, so `first_free` is free
-     * again: the frame takes one slot, the allocator the rest. */
+     * again and the allocator takes those slots. */
     uint64_t vspace_slot = 0;
     uint64_t window_base = 0;
     uint32_t window_bytes = 0;
@@ -466,10 +462,9 @@ int main(int argc, char *argv[])
         aegir::bootstrap::window(&window_base, &window_bytes) &&
         aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
         aegir::bootstrap::capability_size_bits("untyped", 7, &untyped_bits)) {
-        g_frame_slot = static_cast<seL4_CPtr>(first_free);
         g_tables.adopt_slots(
-            static_cast<seL4_CPtr>(first_free + 1),
-            (1u << aegir::bootstrap::kCNodeBits) - static_cast<uint32_t>(first_free + 1), 0,
+            static_cast<seL4_CPtr>(first_free),
+            (1u << aegir::bootstrap::kCNodeBits) - static_cast<uint32_t>(first_free), 0,
             aegir::bootstrap::kCNodeBits);
         static_cast<void>(g_tables.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
                                                  untyped_bits));
