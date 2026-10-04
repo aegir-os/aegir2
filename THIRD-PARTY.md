@@ -26,6 +26,14 @@ upstream release manifest (`manifests/upstream-16.0.0.xml`, from
 | `projects/sel4test/` | [seL4/sel4test](https://github.com/seL4/sel4test) | `BSD-2-Clause` | Upstream kernel test suite (our end-to-end acceptance test) |
 | `tools/opensbi/` | [riscv/opensbi](https://github.com/riscv/opensbi) | `BSD-2-Clause` | RISC-V firmware, used by the RISC-V image flow |
 | `tools/nanopb/` | [nanopb](https://github.com/nanopb/nanopb) | `Zlib` | Protocol buffers, pulled in by the release manifest |
+| `third_party/lwip/` | [lwIP](https://savannah.nongnu.org/projects/lwip) | `BSD-3-Clause` | The TCP/IP stack the network service owns (`specs/net.md`) |
+
+lwIP is the one vendored tree under `third_party/` rather than `projects/`: it
+ships a root `CMakeLists.txt`, and the seL4 build `add_subdirectory`s every
+`projects/*/CMakeLists.txt`, which would swallow it into the kernel build. It is
+pinned to the `STABLE-2_2_1_RELEASE` commit and fetched from the project's
+official GitHub mirror, because Savannah's git server is not a reliable fetch
+target (the same reason musl is a signed tarball source).
 
 `libsel4` — the userspace bindings to the kernel ABI — is `BSD-2-Clause` and is
 generated from `kernel/` into the build directory; that is what makes an

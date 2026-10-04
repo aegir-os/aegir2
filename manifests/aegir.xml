@@ -24,6 +24,7 @@
   <remote name="llvm" fetch="https://github.com/llvm"/>
   <remote name="notofonts" fetch="https://github.com/notofonts"/>
   <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
+  <remote name="lwip" fetch="https://github.com/lwip-tcpip"/>
 
   <!-- Unused: every project below pins its own revision. -->
   <default remote="seL4" revision="master"/>
@@ -90,5 +91,18 @@
 
   <!-- Noto fonts: Sans (Latin), CJK, Arabic, Hebrew. OFL-1.1. -->
   <project name="noto-fonts" path="projects/noto-fonts" remote="notofonts" revision="ffebf8c1ee449e544955a7e813c54f9b73848eac"/>
+
+  <!--
+    lwIP, the TCP/IP stack the network service owns (specs/net.md). BSD-3-Clause.
+    Savannah's git server is not a reliable fetch target (the same reason musl
+    is a tarball source), so the project's official GitHub mirror is used, pinned
+    by the STABLE-2_2_1_RELEASE commit.
+
+    It lands under third_party/ rather than projects/ on purpose: lwIP ships a
+    root CMakeLists.txt, and the seL4 build system
+    (tools/seL4/cmake-tool/projects.cmake) add_subdirectory()s every
+    projects/*/CMakeLists.txt, which would swallow it into the kernel build.
+  -->
+  <project name="lwip.git" path="third_party/lwip" remote="lwip" revision="77dcd25a72509eb83f72b033d219b1d40cd8eb95"/>
 
 </manifest>
