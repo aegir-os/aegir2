@@ -466,6 +466,23 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 10, 10, 0, 85, 170),
                 ),
             ),
+            # A move off the screen is refused (specs/window-manager.md), and
+            # the refusal must see through a wrapped coordinate: a client's
+            # negative origin arrives as a huge unsigned value, and
+            # `origin + size` would wrap small and pass. The test asks for
+            # minus one and minus a hundred; the red one must stay where the
+            # resize left it -- these pixels, not the console's crash.
+            QmpStep(
+                r"test: wrapped moves off the screen were refused -- the screen, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
+                pixels=(
+                    ("gpu0", 100, 100, 255, 0, 0),
+                    ("gpu0", 300, 100, 0, 85, 170),
+                    ("gpu0", 100, 300, 0, 85, 170),
+                    ("gpu0", 10, 10, 0, 85, 170),
+                ),
+            ),
             # The demo is no longer on the screen before login: it is a
             # command the session's Shell-Startup starts (specs/window-
             # manager.md), so there is nothing to drag here. It starts at the

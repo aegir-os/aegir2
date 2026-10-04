@@ -1295,9 +1295,14 @@ int main(int argc, char *argv[])
             uint64_t const flags = static_cast<uint64_t>(seL4_GetMR(6));
             bool const backdrop = (flags & aegir::console::kWindowBackdrop) != 0;
             Slice *slice = find_slice(badge);
+            /* As in a move: bound width and height to the screen before
+             * subtracting, so a huge (negative) x or y cannot wrap the clip
+             * check, and the bounded product keeps the slice check from
+             * overflowing. */
             bool const fits =
                 slice != nullptr && width != 0 && height != 0 &&
-                x + width <= g_width && y + height <= g_height &&
+                width <= g_width && height <= g_height &&
+                x <= g_width - width && y <= g_height - height &&
                 (offset & 3) == 0 &&
                 offset + width * height * 4 <=
                     (slice->frames << seL4_LargePageBits);
@@ -1481,8 +1486,19 @@ int main(int argc, char *argv[])
             uint64_t const x = static_cast<uint64_t>(seL4_GetMR(2));
             uint64_t const y = static_cast<uint64_t>(seL4_GetMR(3));
             Window *const window = find_window(id);
+            /* The rectangle must fit, and the test must not overflow. A client
+             * that drags a window off the top or left computes a negative
+             * origin and sends it as a huge unsigned value (the frame's x and y
+             * are a cast int). `x + window->width` would then wrap to something
+             * small and pass -- the window would keep an origin off the screen,
+             * and repaint_move's overlap indices would go negative and reach
+             * below the framebuffer, which is mapped at the window's next 2 MiB
+             * boundary with a hole beneath it. So subtract instead:
+             * window->width was bounded to the screen at create, so
+             * `g_width - window->width` is safe, and any x greater than it --
+             * a value off the edge, wrapped or not -- is refused. */
             if (window == nullptr || window->owner != badge ||
-                x + window->width > g_width || y + window->height > g_height) {
+                x > g_width - window->width || y > g_height - window->height) {
                 gui.reply(0);
                 continue;
             }
@@ -1522,10 +1538,14 @@ int main(int argc, char *argv[])
             Window *const window = find_window(id);
             Slice const *slice =
                 window != nullptr ? find_slice(window->owner) : nullptr;
+            /* As in a move and a create: bound the size before subtracting, so
+             * a huge width cannot wrap the clip check or the slice check.
+             * window->x and window->y are within the screen (create and move
+             * keep them so), so the subtractions cannot underflow. */
             bool const fits =
                 window != nullptr && window->owner == badge && width != 0 &&
-                height != 0 && window->x + width <= g_width &&
-                window->y + height <= g_height &&
+                height != 0 && width <= g_width - window->x &&
+                height <= g_height - window->y &&
                 window->offset + width * height * 4 <=
                     (slice != nullptr ? slice->frames << seL4_LargePageBits : 0);
             if (!fits) {

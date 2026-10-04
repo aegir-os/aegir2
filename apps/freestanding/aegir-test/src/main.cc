@@ -2977,6 +2977,20 @@ int main(int argc, char *argv[])
             ok = aegir::console::resize(gui, second_window, 200, 150);
             write("  test: the red one resized -- the screen, please\n");
         }
+        if (ok) {
+            /* A move off the screen is refused (specs/window-manager.md), and
+             * the refusal must see through the wrap: a client's negative
+             * origin arrives as a huge unsigned value, and `origin + size`
+             * would wrap to something small and pass. Two in a row -- if the
+             * first were wrongly taken the origin would be huge, and the
+             * second would drive repaint_move's overlap negative and reach
+             * below the framebuffer, which is the fault this guards. The
+             * answer does not say (the console replies the same word either
+             * way); the screen does, so the runner reads it. */
+            (void)aegir::console::move(gui, second_window, 64, static_cast<uint64_t>(-1));
+            (void)aegir::console::move(gui, second_window, 64, static_cast<uint64_t>(-100));
+            write("  test: wrapped moves off the screen were refused -- the screen, please\n");
+        }
         if (!ok) {
             write("  test: FAIL the console's window protocol did not hold\n");
             ++failed;
