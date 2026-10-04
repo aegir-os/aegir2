@@ -40,6 +40,7 @@ aegir::mem::Allocator *g_objects = nullptr;
 aegir::mem::Account *g_account = nullptr;
 aegir::thread::Builder *g_builder = nullptr;
 aegir::thread::Placement const *g_placement = nullptr;
+seL4_CPtr g_thread_tcb = 0;
 volatile uint32_t g_now_ms = 0;
 
 seL4_CPtr new_notification() noexcept
@@ -91,6 +92,11 @@ void set_threading(aegir::thread::Builder &builder,
 void set_now(uint32_t milliseconds) noexcept
 {
     g_now_ms = milliseconds;
+}
+
+seL4_CPtr thread_tcb() noexcept
+{
+    return g_thread_tcb;
 }
 
 }  // namespace aegir::lwip
@@ -328,6 +334,7 @@ extern "C" sys_thread_t sys_thread_new(const char *name, lwip_thread_fn thread, 
         return nullptr;
     }
     handle.tcb = built.tcb;
+    g_thread_tcb = built.tcb;
     return &handle;
 }
 
