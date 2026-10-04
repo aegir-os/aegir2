@@ -57,6 +57,9 @@ constexpr uint32_t kTxQueueOffset = aegir::virtio::kQueueBytes;
 constexpr uint32_t kRxBuffersOffset = 2 * aegir::virtio::kQueueBytes;
 constexpr uint32_t kRxBufferStride =
     (aegir::virtio::net::kReceiveBufferBytes + 63u) & ~63u;
+/* The transmit self-test's buffer, past every receive buffer: the device
+ * header (zeroed) then a frame, in one descriptor. */
+constexpr uint32_t kTxTestOffset = kRxBuffersOffset + aegir::virtio::kQueueSize * kRxBufferStride;
 
 }  // namespace
 
@@ -169,13 +172,56 @@ int main(int argc, char *argv[])
      * device kept, each big enough for the header and a full frame, so the
      * device has somewhere to put every frame from the first one on. */
     uint64_t const buffers_physical = memory_physical + kRxBuffersOffset;
-    uint32_t primed = 0;
     for (uint32_t i = 0; i < receiveq.size(); ++i) {
         aegir::virtio::ChainBuf const buffer[] = {
             {buffers_physical + i * kRxBufferStride, kRxBufferStride, true},
         };
         receiveq.publish(registers, static_cast<uint16_t>(i), buffer, 1);
-        ++primed;
+    }
+
+    /* A transmit self-test, before ready: one frame built in the queue page and
+     * sent, so the transmit queue is proven end to end -- the device reads the
+     * chain and posts a used entry whether or not the frame reaches anywhere
+     * useful. It is a broadcast with a local-experimental ethertype, so nothing
+     * on the wire needs to understand it. */
+    uint64_t const tx_physical = memory_physical + kTxTestOffset;
+    volatile uint8_t *const tx = memory + kTxTestOffset;
+    for (uint32_t i = 0; i < aegir::virtio::net::kHeaderBytes; ++i) {
+        tx[i] = 0; /* the device header, ignored with no offload negotiated */
+    }
+    uint8_t *const frame = const_cast<uint8_t *>(tx + aegir::virtio::net::kHeaderBytes);
+    for (uint32_t i = 0; i < 6; ++i) {
+        frame[i] = 0xff;       /* broadcast destination */
+        frame[6 + i] = mac[i]; /* our source */
+    }
+    frame[12] = 0x88;
+    frame[13] = 0xb5; /* local experimental ethertype */
+    char const greeting[] = "aegir-virtio-net";
+    uint32_t const frame_payload = 46;
+    for (uint32_t i = 0; i < frame_payload; ++i) {
+        frame[14 + i] =
+            i < sizeof(greeting) - 1 ? static_cast<uint8_t>(greeting[i]) : 0;
+    }
+    uint32_t const frame_bytes = 14 + frame_payload;
+    aegir::virtio::ChainBuf const tx_chain[] = {
+        {tx_physical, aegir::virtio::net::kHeaderBytes + frame_bytes, false},
+    };
+    transmitq.publish(registers, 0, tx_chain, 1);
+    aegir::virtio::UsedResult const tx_used = transmitq.wait_used(registers);
+    aegir::debug_write("      transmit: ");
+    if (tx_used.completed) {
+        /* The used entry's length is what the device *wrote*; a transmit writes
+         * nothing, so zero here is the success, and the used entry's arrival is
+         * the proof the device read the chain. */
+        aegir::debug_write("the device took the ");
+        aegir::debug_write_unsigned(aegir::virtio::net::kHeaderBytes + frame_bytes);
+        aegir::debug_write("-byte chain, used entry ");
+        aegir::debug_write_unsigned(tx_used.head);
+        aegir::debug_write("\n");
+    } else {
+        aegir::debug_write("no completion (device status ");
+        aegir::debug_write_unsigned(tx_used.device_status);
+        aegir::debug_write(")\n");
     }
 
     /* The interrupt the spawner paired with the device, when it did; a driver
