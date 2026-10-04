@@ -28,6 +28,14 @@
 
 namespace aegir::mem {
 
+/** Where the bytes that fill a frame come from when they are not held whole:
+ *  the source fills `destination` with `length` bytes read at `offset`,
+ *  returning false when it cannot. A program image read straight into the
+ *  child's frames uses this, so the spawner keeps no copy of the image
+ *  (specs/director.md's spawn path). */
+using ByteSource = bool (*)(void *context, uint64_t offset, uint64_t length,
+                            void *destination);
+
 class ChildVSpace {
 public:
     ChildVSpace(Allocator &allocator, Scratch &scratch) noexcept;
@@ -63,6 +71,21 @@ public:
                   uint64_t leading, bool writable, Account &account,
                   seL4_CPtr *first_frame = nullptr, char const **why = nullptr,
                   seL4_CPtr *frames_out = nullptr) noexcept;
+
+    /**
+     * `populate`, but the bytes are pulled from `fetch` instead of a buffer the
+     * caller holds whole: each frame is filled by calling
+     * `fetch(fetch_context, file_offset + consumed, chunk, window + skip)`. This
+     * is how a program image is read straight into the child's frames -- the
+     * file is the source, and no whole-image copy is kept
+     * (specs/director.md's spawn path). `file_offset` is where the segment's
+     * bytes start in the source.
+     */
+    bool populate_fetched(uintptr_t address, unsigned pages, uint64_t file_offset,
+                          uint64_t bytes, uint64_t leading, bool writable, Account &account,
+                          ByteSource fetch, void *fetch_context,
+                          seL4_CPtr *first_frame = nullptr, char const **why = nullptr,
+                          seL4_CPtr *frames_out = nullptr) noexcept;
 
     /** Map `frame` at `address`, creating the page tables above it if they are
      *  missing. `error`, when given, is why it did not work -- the kernel's own

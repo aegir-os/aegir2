@@ -158,6 +158,10 @@ public:
      * fresh pages each command. The bytes are the last load's, for spawn_shell
      * and for one command's spawn. */
     bool load_image(std::string const &path);
+    /* The Request::image_source that reads the open image at an offset; the
+     * context is this ServiceKit. */
+    static bool fetch_image(void *context, uint64_t offset, uint64_t length,
+                            void *destination) noexcept;
     char const *image() const { return image_.data(); }
     uint64_t image_bytes() const { return image_.size(); }
 
@@ -298,6 +302,12 @@ private:
     uint64_t pipeline_serial_ = 0;
     uint64_t owner_serial_ = 0;
     std::vector<char> image_;
+    /* The image the last `load_image` read: the file it came from, still open
+     * so the spawner can pull the segments straight into the child's frames
+     * (Request::image_source), and the whole image's size. Closed by
+     * end_staging, once the spawn has read what it needs. */
+    int image_fd_ = -1;
+    uint64_t image_size_ = 0;
     /* The path `load_image` last resolved, so a child is handed the directory
      * its own binary came from (specs/environment.md). Empty for an initrd
      * read. */

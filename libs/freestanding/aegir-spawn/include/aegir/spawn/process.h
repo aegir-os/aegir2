@@ -168,6 +168,16 @@ struct Request {
      * name is looked up in the spawner's initrd, as before. */
     void const *binary_image = nullptr;
     uint64_t binary_image_bytes = 0;
+    /* Where the image's bytes come from when they are not held whole: the
+     * spawner reads the ELF's headers from `binary_image` (a prefix that covers
+     * them) and fills each segment page by calling `image_source`, so a program
+     * image is read straight into the child's frames and never held in a buffer
+     * here (specs/director.md's spawn path). `image_size` is the whole image's
+     * size, for the ELF parse and its bounds; `image_context` is passed back to
+     * the source. Null means `binary_image` is the whole image. */
+    aegir::mem::ByteSource image_source = nullptr;
+    void *image_context = nullptr;
+    uint64_t image_size = 0;
     char const *account;
     uint32_t account_length;
     /* The arguments and environment the child starts with (specs/environment.md),

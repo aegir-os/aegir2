@@ -162,4 +162,78 @@ bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source
     return true;
 }
 
+bool ChildVSpace::populate_fetched(uintptr_t address, unsigned pages, uint64_t file_offset,
+                                   uint64_t bytes, uint64_t leading, bool writable,
+                                   Account &account, ByteSource fetch, void *fetch_context,
+                                   seL4_CPtr *first_frame, char const **why,
+                                   seL4_CPtr *frames_out) noexcept
+{
+    if (why != nullptr) {
+        *why = "";
+    }
+    if (fetch == nullptr || leading >= kPage ||
+        bytes + leading > static_cast<uint64_t>(pages) * kPage) {
+        if (why != nullptr) {
+            *why = "the bytes do not fit the pages";
+        }
+        return false;
+    }
+
+    uint64_t remaining = bytes;
+    uint64_t read_at = file_offset;
+    uint64_t skip = leading;
+    for (unsigned page = 0; page < pages; ++page) {
+        seL4_Error error = seL4_NoError;
+        seL4_CPtr frame =
+            allocator_.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account, &error);
+        if (frame == 0) {
+            if (why != nullptr) {
+                *why = "no memory for a frame";
+            }
+            return false;
+        }
+        if (page == 0 && first_frame != nullptr) {
+            *first_frame = frame;
+        }
+        if (frames_out != nullptr) {
+            frames_out[page] = frame;
+        }
+
+        /* Fill it first, through our own window, exactly as `populate` does --
+         * but the bytes come from the source rather than a buffer we hold. */
+        void *window = scratch_.map(frame);
+        if (window == nullptr) {
+            if (why != nullptr) {
+                *why = "the window the frame is filled through is full";
+            }
+            return false;
+        }
+        auto *destination = static_cast<unsigned char *>(window);
+        for (uint64_t i = 0; i < kPage; ++i) {
+            destination[i] = 0;
+        }
+        uint64_t const room = kPage - skip;
+        uint64_t const chunk = remaining < room ? remaining : room;
+        if (chunk != 0 &&
+            !fetch(fetch_context, read_at, chunk, destination + skip)) {
+            if (why != nullptr) {
+                *why = "a segment's bytes could not be read";
+            }
+            return false;
+        }
+        skip = 0;
+        scratch_.unmap(frame);
+
+        if (!map_page(address + static_cast<uintptr_t>(page) * kPage, frame, writable, account)) {
+            if (why != nullptr) {
+                *why = "a page could not be mapped into the child";
+            }
+            return false;
+        }
+        read_at += chunk;
+        remaining -= chunk;
+    }
+    return true;
+}
+
 }  // namespace aegir::mem

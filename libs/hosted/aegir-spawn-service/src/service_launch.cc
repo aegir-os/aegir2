@@ -96,31 +96,107 @@ void ServiceKit::adopt_identity(uint64_t own_badge)
     }
 }
 
+namespace {
+
+/* Read exactly `length` bytes at `offset` into `destination`; false on a short
+ * read. The offset is the file's, not the fd cursor's, so the spawner can pull
+ * segments in whatever order the ELF names them. */
+bool read_at(int fd, uint64_t offset, uint64_t length, void *destination) noexcept
+{
+    if (::lseek(fd, static_cast<long>(offset), SEEK_SET) != static_cast<long>(offset)) {
+        return false;
+    }
+    auto *out = static_cast<char *>(destination);
+    uint64_t total = 0;
+    while (total < length) {
+        long const got = ::read(fd, out + total, length - total);
+        if (got <= 0) {
+            return false;
+        }
+        total += static_cast<uint64_t>(got);
+    }
+    return true;
+}
+
+uint16_t read_le16(uint8_t const *at) noexcept
+{
+    return static_cast<uint16_t>(static_cast<uint16_t>(at[0]) |
+                                 static_cast<uint16_t>(static_cast<uint16_t>(at[1]) << 8));
+}
+
+uint64_t read_le64(uint8_t const *at) noexcept
+{
+    uint64_t value = 0;
+    for (int i = 7; i >= 0; --i) {
+        value = (value << 8) | at[i];
+    }
+    return value;
+}
+
+/* The most of an image the ELF's own headers may need held: the header and the
+ * program header table. A program whose table is larger is refused as malformed
+ * rather than read whole. */
+constexpr uint64_t kImagePrefixMax = 64 * 1024;
+
+}  // namespace
+
 bool ServiceKit::load_image(std::string const &path)
 {
+    if (image_fd_ >= 0) {
+        ::close(image_fd_);
+        image_fd_ = -1;
+    }
     int const fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
         return false;
     }
-    image_.clear();
     /* The size comes from the fd already open, not a second resolve by path:
      * the fd holds the volume capability, and a path stat would ask the
      * namespace to resolve the same file again. */
     struct stat info {};
+    uint64_t size = 0;
     if (::fstat(fd, &info) == 0 && info.st_size > 0) {
-        image_.reserve(static_cast<std::size_t>(info.st_size));
+        size = static_cast<uint64_t>(info.st_size);
     }
-    char chunk[4096];
-    ssize_t have = 0;
-    while ((have = ::read(fd, chunk, sizeof(chunk))) > 0) {
-        image_.insert(image_.end(), chunk, chunk + have);
-    }
-    ::close(fd);
-    if (image_.empty()) {
+    /* Read only the ELF header and the program header table -- enough for the
+     * spawner to parse the image -- and keep the fd open so the spawner reads
+     * each segment straight into the child's frames (Request::image_source).
+     * The whole image is never held here (specs/director.md's spawn path). */
+    uint8_t header[64];
+    if (size < sizeof(header) || !read_at(fd, 0, sizeof(header), header)) {
+        ::close(fd);
         return false;
     }
+    /* ELF64: e_phoff at 32, e_phentsize at 54, e_phnum at 56. */
+    uint64_t const phoff = read_le64(header + 32);
+    uint16_t const phentsize = read_le16(header + 54);
+    uint16_t const phnum = read_le16(header + 56);
+    uint64_t const prefix =
+        phoff + static_cast<uint64_t>(phentsize) * static_cast<uint64_t>(phnum);
+    if (phentsize == 0 || phnum == 0 || prefix > size || prefix > kImagePrefixMax) {
+        ::close(fd);
+        return false;
+    }
+    image_.resize(static_cast<std::size_t>(prefix));
+    if (!read_at(fd, 0, prefix, image_.data())) {
+        image_.clear();
+        ::close(fd);
+        return false;
+    }
+    image_fd_ = fd;
+    image_size_ = size;
     image_path_ = path;
     return true;
+}
+
+bool ServiceKit::fetch_image(void *context, uint64_t offset, uint64_t length,
+                             void *destination) noexcept
+{
+    auto *const kit = static_cast<ServiceKit *>(context);
+    if (kit == nullptr || kit->image_fd_ < 0) {
+        return false;
+    }
+    return read_at(kit->image_fd_, offset, length, destination);
 }
 
 /* The directory a spawned program's own binary came from (specs/environment.md):
@@ -366,6 +442,11 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     request.name_length = static_cast<uint32_t>(name.size());
     request.binary_image = image_.data();
     request.binary_image_bytes = image_.size();
+    /* The bytes are the ELF's headers only; the segments are read straight into
+     * the child's frames from the still-open image (Request::image_source). */
+    request.image_source = &ServiceKit::fetch_image;
+    request.image_context = this;
+    request.image_size = image_size_;
     request.account = kAccountText;
     request.account_length = sizeof(kAccountText) - 1;
     request.arguments = argument_pointers.empty() ? nullptr : argument_pointers.data();
@@ -599,6 +680,11 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     request.name_length = sizeof(kName) - 1;
     request.binary_image = image_.data();
     request.binary_image_bytes = image_.size();
+    /* The bytes are the ELF's headers only; the segments are read straight into
+     * the child's frames from the still-open image (Request::image_source). */
+    request.image_source = &ServiceKit::fetch_image;
+    request.image_context = this;
+    request.image_size = image_size_;
     request.account = kAccount;
     request.account_length = sizeof(kAccount) - 1;
     request.cwd = cwd.c_str();

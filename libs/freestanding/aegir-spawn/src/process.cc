@@ -283,7 +283,12 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         return fail("the manifest names a binary the initrd does not contain");
     }
     Elf elf;
-    if (!elf.parse(image, elf_size)) {
+    /* When the bytes are streamed from a source, `binary_image` is only the
+     * prefix that covers the ELF's own headers; the parse's bounds still use the
+     * whole image's size (process.h explains). */
+    uint64_t const parse_size =
+        request.image_source != nullptr ? request.image_size : elf_size;
+    if (!elf.parse(image, parse_size)) {
         return fail("that binary is not a loadable RISC-V 64 ELF");
     }
 
@@ -357,8 +362,21 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
              * program needs it. */
             return fail("two loadable segments share a page, which is not handled yet");
         }
-        if (!vspace.populate(page_base, static_cast<unsigned>(pages), elf.segment_bytes(header),
-                             header.filesz, leading, true, account, nullptr, &why)) {
+        bool populated = false;
+        if (request.image_source != nullptr) {
+            /* The bytes come from the source, so the segment is never held in a
+             * buffer here: each frame is filled as it is retyped
+             * (mem::ChildVSpace::populate_fetched). */
+            populated = vspace.populate_fetched(
+                page_base, static_cast<unsigned>(pages), header.offset, header.filesz,
+                leading, true, account, request.image_source, request.image_context, nullptr,
+                &why);
+        } else {
+            populated = vspace.populate(page_base, static_cast<unsigned>(pages),
+                                        elf.segment_bytes(header), header.filesz, leading,
+                                        true, account, nullptr, &why);
+        }
+        if (!populated) {
             detail_ = why;
             return fail("a segment of the program could not be mapped");
         }

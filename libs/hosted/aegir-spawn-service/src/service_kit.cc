@@ -23,6 +23,8 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/nmspace.h>
 
+#include <unistd.h>
+
 namespace aegir::spawn {
 
 namespace {
@@ -478,6 +480,13 @@ void ServiceKit::end_staging()
     spawner_.reset();
     arena_.reset();
     g_command_mem_call = 0;
+    /* The image's segments are in the child now, so the file the spawner read
+     * them from is done: close it, or the next load would leave it open behind
+     * (load_image closes a stale one too, belt and braces). */
+    if (image_fd_ >= 0) {
+        ::close(image_fd_);
+        image_fd_ = -1;
+    }
     /* The command holds its own copy of the badged mem.main port; ours is a
      * staging cap and goes now. The window is not rewound: the staging frames
      * are the command's memory until it is reaped, and only rewind_staging

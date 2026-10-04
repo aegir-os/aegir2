@@ -150,6 +150,14 @@ Objects come from `seL4_TCBObject`, `seL4_EndpointObject`, `seL4_NotificationObj
 and `seL4_CapTableObject` (`kernel/libsel4/include/sel4/objecttype.h:10-13`), plus
 frames — all of it retyped from untyped memory the account holds.
 
+Each segment frame is filled **as it is retyped**: the bytes come either from an
+image the caller holds whole (`Request::binary_image`) or from a source the
+caller provides (`Request::image_source`), so a program read through the VFS is
+read straight into the child's frames rather than into a launcher-side buffer
+the spawner copies. The launcher reads only the ELF's headers itself and leaves
+the file open for the source to pull the segments
+(`libs/hosted/aegir-spawn-service`).
+
 One thing the spawner deliberately does *not* touch: the child's floating point.
 A fresh TCB has FP enabled — only the idle thread opts out — so a service can
 compute in floating point because the kernel switches FP state per thread, not
