@@ -58,6 +58,7 @@ set(aegir_initrd_binaries
     aegir-virtio-rng
     aegir-virtio-input
     aegir-virtio-gpu
+    aegir-virtio-net
     aegir-partmgr
     aegir-fs-fat
     aegir-fs-bfs
@@ -94,6 +95,7 @@ set(aegir_initrd_binary_names
     "aegir-virtio-rng"
     "aegir-virtio-input"
     "aegir-virtio-gpu"
+    "aegir-virtio-net"
     "aegir-partmgr"
     "aegir-fs-fat"
     "aegir-fs-bfs"

@@ -60,7 +60,7 @@ device_manager = true
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, rngdriver, kbddriver, gpudriver, timer, partmgr
+spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, timer, partmgr
 # What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
 # framebuffers (megapages -- specs/services.md), the partition manager's
 # megabyte, the filesystem image, and the drivers' images, queues and windows.
@@ -98,6 +98,23 @@ device_id = 4
 # The queue's memory, as the block driver's above: the registry row is what
 # the device manager carves by.
 memory_kib = 16
+restart   = always
+
+# The network driver. virtio device 1, bound from the registry row like any
+# other (specs/services.md). It owns the transport's two queues and serves the
+# Ethernet link port (aegir/ethernet.h): raw frames to the stack above it,
+# which knows nothing about virtio, so a board's NIC is a new row and the stack
+# is unchanged (specs/net.md). The MAC, link state and MTU are read from the
+# device's config space; nothing about the machine is compiled in.
+[ethdriver]
+binary    = aegir-virtio-net
+authority = system
+account   = system
+needs     = log.main
+device_id = 1
+# Two 8 KiB queues plus one posted receive buffer per descriptor; the registry
+# row's `memory` (256 KiB) is what the device manager carves by.
+memory_kib = 256
 restart   = always
 
 # The keyboard driver. virtio device 18, bound from the registry row like any

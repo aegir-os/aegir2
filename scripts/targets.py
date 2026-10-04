@@ -158,6 +158,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             "-device virtio-mouse-device",
             "-device virtio-gpu-device,id=gpu0",
             "-device virtio-gpu-device,id=gpu1",
+            # The network device (specs/net.md). QEMU's user-mode networking
+            # hands the guest a DHCP lease, a gateway to reach and a DNS server,
+            # and a default MAC; none of it is compiled into the stack, which
+            # learns every bit of it over the wire.
+            "-netdev user,id=net0",
+            "-device virtio-net-device,netdev=net0",
             "-qmp unix:qmp.sock,server,nowait",
         ),
         qmp_socket="qmp.sock",
@@ -185,6 +191,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # requires it; the boot must report exactly that one fault, and any
             # *other* service faulting after the boot marker is a failure.
             QmpStep(r"AEGIR_CLIENT_FAULTING_ON_PURPOSE"),
+            # The network driver (specs/net.md): the pinned lwIP tree is
+            # compiled, the transport answers device id 1, and the MAC, MTU and
+            # link state came from the device's config space -- read, not
+            # compiled in. The cue is the driver's own line; a run where the
+            # device is not bound, or the config space reads wrong, fails this
+            # rather than passing quietly.
+            QmpStep(r"eth\.virtio0: mac [0-9a-f]{2}(:[0-9a-f]{2}){5}, mtu \d+, link up"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no
