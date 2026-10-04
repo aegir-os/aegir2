@@ -266,10 +266,31 @@ who is calling on every method, and a handle named by any other badge is
 
 Inline data bounds a call to what the envelope carries
 (`seL4_MsgMaxLength - 1` words). That is the right size for boot-time reads —
-configuration, the user database, service images. The recorded scaling path,
-when throughput matters: the client transfers a buffer capability at `open`,
-the filesystem DMAs into it, and `read`/`write` reply with a count. It needs
-no protocol change, only new methods — which is what method numbers are for.
+configuration, the user database, service images. The scaling path, when
+throughput matters, is the new method **read-frame** (kMethodReadFrame): the
+call carries a handle, an offset, a count and a frame offset, plus one
+capability — a 4 KiB frame of the caller's own — and the filesystem maps that
+frame into its own address space, writes the bytes into it, unmaps it, and
+answers with a count and an eof flag and no bytes at all. One call reads a page
+where the inline `read` needs five (`kReadMax` is one envelope), and the bytes
+never cross a message.
+
+The frame is the **caller's**, mapped transiently by the filesystem inside the
+one synchronous call. That is what makes it safe without a window per client:
+nothing the filesystem maps outlives the call, so no other client's data can
+appear under a caller that was preempted (the block layer's shared-window
+caveat, `libs/aegir-block/include/aegir/block.h`, does not apply because no
+window is shared). A filesystem therefore needs its own VSpace root to map the
+frame — the manifest's `maps` grant and an untyped for the page tables over its
+window (`bootstrap::window()`) — exactly what a spawner is trusted with.
+
+Transferring the capability is subject to seL4's own rule: nothing transfers
+unless the capability the *sender* invokes carries Grant. So the resolve mints
+that give a client its volume or union capability, the union's member mints, and
+the owner half of `vol.initrd`, all carry Grant; a filesystem that does not
+serve read-frame simply never has a capability transferred to it, and the
+caller's inline `read` is unchanged. The first filesystem to serve it is the
+initrd; BFS and the others follow, each with the same grant.
 
 A filesystem reads through a window of its own -- the block layer gives each
 client its own frames, so no other client's DMA can overwrite what it is
@@ -286,8 +307,11 @@ The initrd now answers a handle packed from the file's archive offset and size
 -- the archive is read-only and fixed, so the handle is stateless, needing no
 table and no per-client row -- and the union forwards `read-handle` to the
 member its open chose, so a union file resolves the member once and then walks
-nothing on any envelope. A buffer capability into a client window, for one call
-per whole file, remains the next scale (above).
+nothing on any envelope. The read handle is what read-frame (above) is built
+on: the program loader reads each segment page straight into the frame the
+child will hold, through the handle an open already resolved. A buffer
+capability spanning many pages, for one call per whole file, remains the next
+scale.
 
 ## Who registers, who serves
 

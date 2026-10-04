@@ -153,6 +153,21 @@ public:
     bool read_handle(uint64_t handle, uint64_t offset, uint64_t capacity,
                      Bytes &out) noexcept;
 
+    /**
+     * Read straight into `frame`, a 4 KiB page capability of the caller's,
+     * instead of into this Volume (volume::kMethodReadFrame): the bulk form of
+     * a read, one call per page where `read`/`read_handle` need several. Up to
+     * `capacity` bytes of the file at `offset` land in the frame starting
+     * `frame_offset` bytes in; the filesystem maps the frame for the one call
+     * and unmaps it before answering, so the bytes never cross a message and
+     * nothing of the caller's outlives the call. False when the volume refuses
+     * or has no window (a filesystem that does not serve read-frame). `count`
+     * is how many bytes were read and `eof` whether the file ends there.
+     */
+    bool read_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
+                    uint64_t frame_offset, seL4_CPtr frame, uint64_t &count,
+                    bool &eof) noexcept;
+
     /** One directory entry: the name (into this Volume), its size, its kind
      *  (volume::kKindFile or kKindDir) and its last-write time as whole seconds
      *  since the Unix epoch (zero when the filesystem has no clock). False at

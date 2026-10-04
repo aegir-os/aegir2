@@ -319,6 +319,25 @@ bool Volume::read_handle(uint64_t handle, uint64_t offset, uint64_t capacity,
     return true;
 }
 
+bool Volume::read_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
+                        uint64_t frame_offset, seL4_CPtr frame, uint64_t &count,
+                        bool &eof) noexcept
+{
+    uint64_t const wanted = capacity < volume::kFrameBytes ? capacity : volume::kFrameBytes;
+    uint64_t request[4] = {handle, offset, wanted, frame_offset};
+    aegir::ipc::WordsReply const reply =
+        port_.call_transfer(volume::kMethodReadFrame, request, 4, frame, reply_,
+                            aegir::ipc::kMaxWords, nullptr);
+    if (reply.error != 0 || reply.count < volume::kReadHeaderWords) {
+        return false;
+    }
+    count = reply_[0];
+    eof = reply_[1] != 0;
+    /* read-frame's answer carries no bytes, so the count is the whole check: a
+     * filesystem that answered more than it was asked for is refused. */
+    return count <= wanted;
+}
+
 bool Volume::list(char const *path, uint32_t length, uint64_t index, Entry &out) noexcept
 {
     uint64_t request[nmspace::kPathMax / 8 + 1];

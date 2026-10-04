@@ -168,6 +168,11 @@ void member_free(Member *member) noexcept
  * slot above them is the resolve mint's scratch. */
 seL4_CPtr g_next_slot = 0;
 seL4_CPtr g_mint_slot = 0;
+/* The slot a forwarded capability sits in between this service's receive slot
+ * and the member it is sent to (read-frame): the received cap moves here so the
+ * receive slot is empty for the member's answer, and this slot is emptied again
+ * before the next call. */
+seL4_CPtr g_carry_slot = 0;
 
 char folded(char c) noexcept
 {
@@ -927,7 +932,7 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
                             aegir::bootstrap::kCNodeBits,
                             aegir::bootstrap::kSlotOwnCNode, port.capability(),
                             aegir::bootstrap::kCNodeBits,
-                            seL4_CapRights_new(1, 0, 0, 1),
+                            seL4_CapRights_new(1, 1, 0, 1),
                             aegir::nmspace::union_badge(resolved.binding->union_id)) !=
             seL4_NoError) {
             write("  vfs: a union's cap would not mint\n");
@@ -951,7 +956,7 @@ void answer_resolve(aegir::ipc::Owner &port, uint64_t const *words, uint32_t cou
     if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, g_mint_slot,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
                         resolved.volume->port, aegir::bootstrap::kCNodeBits,
-                        seL4_CapRights_new(1, 0, 0, 1), badge) != seL4_NoError) {
+                        seL4_CapRights_new(1, 1, 0, 1), badge) != seL4_NoError) {
         write("  vfs: a resolve's badge would not mint\n");
         port.reply_words(nullptr, 0);
         return;
@@ -1181,7 +1186,7 @@ seL4_CPtr badged_member(Member const *member, uint64_t badge) noexcept
     if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, member->badged_slot,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
                         member->volume->port, aegir::bootstrap::kCNodeBits,
-                        seL4_CapRights_new(1, 0, 0, 1), badge) != seL4_NoError) {
+                        seL4_CapRights_new(1, 1, 0, 1), badge) != seL4_NoError) {
         return 0;
     }
     member->badged = member->badged_slot;
@@ -1252,6 +1257,25 @@ uint32_t member_words_call(Member const *member, uint64_t badge, uint32_t method
     aegir::ipc::Consumer const consumer(cap);
     aegir::ipc::WordsReply const reply =
         consumer.call_words(method, payload, count, out, out_capacity);
+    return reply.error == 0 ? reply.count : 0;
+}
+
+/* member_words_call with one capability beside the words -- the read-frame
+ * form (specs/vfs.md's scaling path). The cap is the caller's, which the union
+ * carried to `g_carry_slot`; it rides through to the member unchanged. The
+ * member's endpoint must carry Grant for anything to transfer, which is why the
+ * member cap is minted with it (badged_member). */
+uint32_t member_transfer_call(Member const *member, uint64_t badge, uint32_t method,
+                              uint64_t const *payload, uint32_t count, seL4_CPtr cap,
+                              uint64_t *out, uint32_t out_capacity) noexcept
+{
+    seL4_CPtr const endpoint = badged_member(member, badge);
+    if (endpoint == 0) {
+        return 0;
+    }
+    aegir::ipc::Consumer const consumer(endpoint);
+    aegir::ipc::WordsReply const reply =
+        consumer.call_transfer(method, payload, count, cap, out, out_capacity, nullptr);
     return reply.error == 0 ? reply.count : 0;
 }
 
@@ -1616,6 +1640,46 @@ void union_read_handle(aegir::ipc::Owner &port, Binding const *binding, uint64_t
     port.reply_words(answer, reply_count);
 }
 
+/* read-frame, forwarded (specs/vfs.md's scaling path): the union handle names
+ * the member, whose own handle the union substitutes, and the caller's frame
+ * capability rides through. The union receives the cap in its scratch receive
+ * slot, moves it to the carry slot so the receive slot is free for the member's
+ * answer, sends it on, and empties the carry slot again. It never maps the
+ * frame -- the capability is the caller's and the member is what reads through
+ * it. Words: handle, offset, count, frame offset. */
+void union_read_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                      uint64_t const *words, uint32_t count, bool cap_arrived) noexcept
+{
+    if (count < 4 || !cap_arrived) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    UnionHandle const *row = union_handle_find(words[0]);
+    Member const *member = row != nullptr ? member_at(binding, row->member) : nullptr;
+    if (member == nullptr || !aegir::ipc::take_received_cap(g_carry_slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_carry_slot,
+                          aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const payload[4] = {row->member_handle, words[1], words[2], words[3]};
+    uint64_t answer[aegir::ipc::kMaxWords];
+    uint32_t const reply_count =
+        member_transfer_call(member, badge, aegir::volume::kMethodReadFrame, payload, 4,
+                             g_carry_slot, answer, aegir::ipc::kMaxWords);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_carry_slot,
+                      aegir::bootstrap::kCNodeBits);
+    if (reply_count == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, reply_count);
+}
+
 /* write, forwarded: the union handle names the member, whose own handle the
  * union substitutes before the call; the client's count and bytes are
  * unchanged. */
@@ -1737,7 +1801,7 @@ void union_remove(aegir::ipc::Owner &port, Binding const *binding, uint64_t badg
  * the write side forwards to the member the path or handle names. A method
  * this version does not know is answered by saying nothing. */
 void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
-                  uint64_t const *words, uint32_t count) noexcept
+                  uint64_t const *words, uint32_t count, bool cap_arrived) noexcept
 {
     Binding const *binding = find_union(aegir::nmspace::union_id(badge));
     if (binding == nullptr) {
@@ -1751,6 +1815,9 @@ void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
         break;
     case aegir::volume::kMethodReadHandle:
         union_read_handle(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodReadFrame:
+        union_read_frame(port, binding, caller, words, count, cap_arrived);
         break;
     case aegir::volume::kMethodList:
         union_list(port, binding, caller, words, count);
@@ -1820,8 +1887,9 @@ int main(int argc, char *argv[])
     g_next_slot = static_cast<seL4_CPtr>(first_free);
     g_mint_slot = static_cast<seL4_CPtr>(first_free);
     /* The mint scratch must not collide with a stored cap: it takes the first
-     * slot, stored caps take the ones after. */
+     * slot, then the carry slot, and stored caps take the ones after. */
     ++g_next_slot;
+    g_carry_slot = g_next_slot++;
 
     write("  vfs: serving vfs.namespace\n");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
@@ -1834,7 +1902,15 @@ int main(int argc, char *argv[])
         uint32_t const method =
             port.receive_words(words, aegir::ipc::kMaxWords, &count, &badge, &cap_arrived);
         if (aegir::nmspace::is_union(badge)) {
-            answer_union(port, badge, method, words, count);
+            answer_union(port, badge, method, words, count, cap_arrived);
+            /* A capability that arrived on a method that does not take one
+             * would otherwise sit in the receive slot and refuse the next
+             * transfer; read-frame consumed or dropped its own. */
+            if (cap_arrived && method != aegir::volume::kMethodReadFrame) {
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                  aegir::bootstrap::kSlotReceiveCap,
+                                  aegir::bootstrap::kCNodeBits);
+            }
             continue;
         }
         switch (method) {

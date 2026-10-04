@@ -15,9 +15,14 @@ project(aegir-spawn-service CXX)
 add_library(aegir-spawn-service STATIC src/service_kit.cc src/service_launch.cc)
 
 target_include_directories(aegir-spawn-service PUBLIC include)
+# aegir-heap: the runtime's file layer, for the read-frame call that reads a
+# program segment straight into a child's frame (specs/director.md's spawn
+# path). The spawning process already runs the hosted runtime, so this is not a
+# new kind of dependency.
 target_link_libraries(
   aegir-spawn-service PUBLIC aegir-cxx-policy-hosted aegir-spawn aegir-spawn-kit
                             aegir-bootstrap aegir-ipc aegir-mem aegir-environment
                             aegir-console-protocol aegir-log aegir-namespace
-                            aegir-memory-protocol aegir-clock aegir-timer-protocol sel4
+                            aegir-memory-protocol aegir-clock aegir-timer-protocol
+                            aegir-heap sel4
 )

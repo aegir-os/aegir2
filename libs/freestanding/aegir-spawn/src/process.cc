@@ -287,7 +287,9 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * prefix that covers the ELF's own headers; the parse's bounds still use the
      * whole image's size (process.h explains). */
     uint64_t const parse_size =
-        request.image_source != nullptr ? request.image_size : elf_size;
+        (request.image_source != nullptr || request.image_frame_source != nullptr)
+            ? request.image_size
+            : elf_size;
     if (!elf.parse(image, parse_size)) {
         return fail("that binary is not a loadable RISC-V 64 ELF");
     }
@@ -363,7 +365,16 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
             return fail("two loadable segments share a page, which is not handled yet");
         }
         bool populated = false;
-        if (request.image_source != nullptr) {
+        if (request.image_frame_source != nullptr) {
+            /* The source writes each frame itself -- a filesystem mapping it as
+             * we retype it (mem::ChildVSpace::populate_frames) -- so the bytes
+             * go straight into the frame the child will hold, one call per page
+             * and no copy here. */
+            populated = vspace.populate_frames(
+                page_base, static_cast<unsigned>(pages), header.offset, header.filesz,
+                leading, true, account, request.image_frame_source,
+                request.image_frame_context, nullptr, &why);
+        } else if (request.image_source != nullptr) {
             /* The bytes come from the source, so the segment is never held in a
              * buffer here: each frame is filled as it is retyped
              * (mem::ChildVSpace::populate_fetched). */

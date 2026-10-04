@@ -162,6 +162,12 @@ public:
      * context is this ServiceKit. */
     static bool fetch_image(void *context, uint64_t offset, uint64_t length,
                             void *destination) noexcept;
+    /* The Request::image_frame_source: read the open image at an offset
+     * straight into a frame the spawner holds, through the volume's read-frame
+     * (aegir/heap.h) -- the filesystem maps the frame, so the bytes never cross
+     * a message. The context is this ServiceKit. */
+    static bool fetch_image_frame(void *context, uint64_t offset, uint64_t length,
+                                  uint64_t frame_offset, seL4_CPtr frame) noexcept;
     char const *image() const { return image_.data(); }
     uint64_t image_bytes() const { return image_.size(); }
 

@@ -17,6 +17,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/environment.h>
+#include <aegir/heap.h>
 #include <aegir/ipc/port.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
@@ -197,6 +198,35 @@ bool ServiceKit::fetch_image(void *context, uint64_t offset, uint64_t length,
         return false;
     }
     return read_at(kit->image_fd_, offset, length, destination);
+}
+
+bool ServiceKit::fetch_image_frame(void *context, uint64_t offset, uint64_t length,
+                                   uint64_t frame_offset, seL4_CPtr frame) noexcept
+{
+    auto *const kit = static_cast<ServiceKit *>(context);
+    if (kit == nullptr || kit->image_fd_ < 0) {
+        return false;
+    }
+    /* The bulk path: the filesystem maps our frame and writes the bytes into it,
+     * one call for the page (aegir/volume.h's read-frame). A filesystem that
+     * does not serve read-frame refuses it, and the frame is filled through our
+     * own window instead -- the inline read this stands in for, so a volume
+     * that has not learned read-frame still loads. */
+    if (aegir::heap::files::read_frame(kit->image_fd_, offset, frame_offset, length,
+                                       frame) == static_cast<long>(length)) {
+        return true;
+    }
+    if (kit->scratch_ == nullptr) {
+        return false;
+    }
+    void *window = kit->scratch_->map(frame);
+    if (window == nullptr) {
+        return false;
+    }
+    bool const ok =
+        read_at(kit->image_fd_, offset, length, static_cast<char *>(window) + frame_offset);
+    kit->scratch_->unmap(frame);
+    return ok;
 }
 
 /* The directory a spawned program's own binary came from (specs/environment.md):
@@ -446,6 +476,8 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * the child's frames from the still-open image (Request::image_source). */
     request.image_source = &ServiceKit::fetch_image;
     request.image_context = this;
+    request.image_frame_source = &ServiceKit::fetch_image_frame;
+    request.image_frame_context = this;
     request.image_size = image_size_;
     request.account = kAccountText;
     request.account_length = sizeof(kAccountText) - 1;
@@ -684,6 +716,8 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
      * the child's frames from the still-open image (Request::image_source). */
     request.image_source = &ServiceKit::fetch_image;
     request.image_context = this;
+    request.image_frame_source = &ServiceKit::fetch_image_frame;
+    request.image_frame_context = this;
     request.image_size = image_size_;
     request.account = kAccount;
     request.account_length = sizeof(kAccount) - 1;

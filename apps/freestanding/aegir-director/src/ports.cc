@@ -123,7 +123,12 @@ Rights rights_for(PortGraph::Name name) noexcept
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
     if (name_is(name, "vol.initrd", 10)) {
-        return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+        /* The owner half carries Grant, because the initrd's caller half must
+         * too (specs/vfs.md's scaling path): a client hands its read-frame
+         * buffer capability to the volume, and nothing transfers unless the cap
+         * the sender invokes has Grant. A mint keeps only what its source
+         * holds, so the owner half is where the right has to begin. */
+        return Rights{seL4_CapRights_new(1, 1, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
     if (name_is(name, "vol.nil", 7)) {
         /* NIL: mints its caller half like the initrd's, so this owner half

@@ -64,6 +64,24 @@ long vsyscall(long sysnum, ...) noexcept;
 bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
           uint64_t bytes) noexcept;
 
+/** The file layer's syscalls (files.cc). read-frame has no libc shape -- it
+ *  hands a page capability to the volume -- so it is named here rather than
+ *  reached through musl; everything else a caller needs is a libc call. */
+namespace files {
+
+/** Read `length` bytes of the file open as `fd`, from its `offset`, into
+ *  `frame` -- a 4 KiB page capability of the caller's -- starting
+ *  `frame_offset` bytes in. This is the volume protocol's read-frame
+ *  (aegir/volume.h): the filesystem maps the frame for the one call and the
+ *  bytes never cross a message, so a program image is read straight into the
+ *  frames the child will hold (specs/director.md's spawn path). Returns the
+ *  number of bytes read, or a negative errno -- EIO when the volume refuses,
+ *  EBADF when the fd is not a readable file with a handle. */
+long read_frame(int fd, uint64_t offset, uint64_t frame_offset, uint64_t length,
+                seL4_CPtr frame) noexcept;
+
+}  // namespace files
+
 }  // namespace aegir::heap
 
 #endif  // AEGIR_HEAP_H

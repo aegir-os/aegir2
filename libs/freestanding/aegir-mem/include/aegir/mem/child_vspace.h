@@ -36,6 +36,15 @@ namespace aegir::mem {
 using ByteSource = bool (*)(void *context, uint64_t offset, uint64_t length,
                             void *destination);
 
+/** The same, for a source that writes into a frame of ours rather than into a
+ *  buffer: the source fills `frame` -- a page capability -- with `length` bytes
+ *  read at `offset`, starting `frame_offset` bytes in, returning false when it
+ *  cannot. A filesystem that maps a caller's frame
+ *  (aegir/volume.h's read-frame) is written this way, so the spawner neither
+ *  maps the frame nor copies it (specs/vfs.md's scaling path). */
+using FrameSource = bool (*)(void *context, uint64_t offset, uint64_t length,
+                             uint64_t frame_offset, seL4_CPtr frame);
+
 class ChildVSpace {
 public:
     ChildVSpace(Allocator &allocator, Scratch &scratch) noexcept;
@@ -86,6 +95,30 @@ public:
                           ByteSource fetch, void *fetch_context,
                           seL4_CPtr *first_frame = nullptr, char const **why = nullptr,
                           seL4_CPtr *frames_out = nullptr) noexcept;
+
+    /**
+     * `populate_fetched`, but the source writes the frame *itself*: it fills
+     * `frame` -- a page capability of ours -- with `length` bytes read at
+     * `offset`, starting `frame_offset` bytes in, and the spawner never maps
+     * the frame at all. This is the bulk path (specs/vfs.md's read-frame): a
+     * filesystem that maps a caller's frame puts the segment's bytes straight
+     * into the frame the child will hold, one call per page instead of the
+     * several an inline read needs.
+     *
+     * The bytes the source does not write stay as the kernel handed them --
+     * and that is zero: seL4 zeroes an untyped's whole region when it is reset
+     * at the first retype after its children are gone
+     * (kernel/manual/parts/objects.tex:437-440,
+     * kernel/src/object/untyped.c:234-269), and a retype carves the region the
+     * kernel already zeroed, so a freshly retyped frame is zero everywhere the
+     * source did not write. That is what fills the gap before `leading` and the
+     * tail past the segment.
+     */
+    bool populate_frames(uintptr_t address, unsigned pages, uint64_t file_offset,
+                         uint64_t bytes, uint64_t leading, bool writable, Account &account,
+                         FrameSource fill, void *fill_context,
+                         seL4_CPtr *first_frame = nullptr, char const **why = nullptr,
+                         seL4_CPtr *frames_out = nullptr) noexcept;
 
     /** Map `frame` at `address`, creating the page tables above it if they are
      *  missing. `error`, when given, is why it did not work -- the kernel's own

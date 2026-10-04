@@ -657,6 +657,27 @@ long read(int fd, void *buffer, size_t count) noexcept
     return static_cast<long>(total);
 }
 
+/* Read into a caller's frame (aegir/volume.h's read-frame): one call per 4 KiB
+ * page rather than the several an inline read needs, and the bytes never cross
+ * a message. The fd must carry a read handle -- the shape an open for reading
+ * takes -- because the method names one. */
+long read_frame(int fd, uint64_t offset, uint64_t frame_offset, uint64_t length,
+                seL4_CPtr frame) noexcept
+{
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr || !entry->readable || entry->directory || entry->handle == 0 ||
+        frame == 0) {
+        return -EBADF;
+    }
+    uint64_t count = 0;
+    bool eof = false;
+    if (!aegir::vfs::Volume(entry->volume)
+             .read_frame(entry->handle, offset, length, frame_offset, frame, count, eof)) {
+        return -EIO;
+    }
+    return static_cast<long>(count);
+}
+
 long write(int fd, void const *buffer, size_t count) noexcept
 {
     Entry *entry = entry_for(fd);

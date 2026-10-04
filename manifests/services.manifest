@@ -205,6 +205,12 @@ account   = system
 owns      = vol.initrd
 needs     = log.main, vfs.namespace
 initrd    = true
+# maps (specs/vfs.md's scaling path): the service maps a caller's frame into
+# its own address space to read straight into it, so it is trusted with a
+# VSpace root and a window of free addresses, and the untyped the page tables
+# over that window are retyped from.
+maps       = true
+memory_kib = 16
 restart   = always
 
 # The null handler (specs/boot.md, specs/vfs.md): the NIL: device, where output

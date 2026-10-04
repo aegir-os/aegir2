@@ -120,6 +120,27 @@ constexpr uint32_t kMethodReadHandle = 23; /* in: handle, offset, max; answer: c
  * volume's (specs/vfs.md). */
 constexpr uint32_t kMethodSpace = 24;
 
+/* read-frame: the bulk form of a read (specs/vfs.md's recorded scaling path).
+ * Words: a handle, the offset in the file, how many bytes to read, and how far
+ * into the frame they land. One capability rides beside the words: a 4 KiB
+ * frame of the caller's own, which the filesystem maps, writes `min(length,
+ * kFrameBytes - frame_offset)` bytes of the file into at `frame_offset`,
+ * unmaps, and answers with read's header alone -- count and eof, no bytes.
+ *
+ * A 4 KiB read is one call here against five of the inline `read` it replaces,
+ * and the bytes never cross the message. The frame is the caller's, mapped
+ * transiently by the filesystem inside the one synchronous call, so no window
+ * is shared between clients and the block layer's "the window belongs to the
+ * most recent call" caveat does not apply. `frame_offset` exists because an
+ * ELF segment need not start on a page boundary: the loader maps the page the
+ * segment is in and puts the bytes at the offset within it. Answer: count,
+ * eof (kReadHeaderWords words). */
+constexpr uint32_t kMethodReadFrame = 25; /* in: handle, offset, count, frame offset; + 1 frame cap */
+
+/** The frame a read-frame call fills: one 4 KiB page, the same size the window
+ *  path's unit is built on (specs/vfs.md). */
+constexpr uint32_t kFrameBytes = 1u << 12;
+
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
 constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */

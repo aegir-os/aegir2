@@ -177,6 +177,13 @@ struct Request {
      * the source. Null means `binary_image` is the whole image. */
     aegir::mem::ByteSource image_source = nullptr;
     void *image_context = nullptr;
+    /* The bulk form: the source fills each retyped frame *itself* -- a
+     * filesystem that maps a caller's frame writes the segment's bytes straight
+     * into the frame the child will hold (aegir/volume.h's read-frame), so the
+     * spawner never maps or copies it. Preferred over `image_source` when set;
+     * `image_frame_context` is passed back to it. */
+    aegir::mem::FrameSource image_frame_source = nullptr;
+    void *image_frame_context = nullptr;
     uint64_t image_size = 0;
     char const *account;
     uint32_t account_length;
