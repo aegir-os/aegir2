@@ -53,9 +53,13 @@ window, the status handshake, and two queues on the shared `Queue` object.
   `MRG_RXBUF`, so there is no `num_buffers` field, and we do not negotiate the
   GSO/csum features, so the header is ignored on receive and zeroed on send.
 - **the frame does not fit the envelope.** A full frame is 1518 bytes and the
-  message registers carry 952, so frames cross through a **shared window** --
-  the same discipline as `aegir/block.h`, one window per client mapped by the
-  spawner, its physical base carried so nothing else has to guess.
+  message registers carry 952, so frames cross through the driver's **shared
+  window** (the registry row's `window` bits, 64 KiB): `send` transmits the
+  frame at its start, `receive` copies one there and answers its length, and the
+  client maps the same frames. One link serves one client, so one window per
+  link suffices -- where block's per-client windows guard a preempted client's
+  data against another's DMA, a second interface here is a second driver and a
+  second window, not a shared one.
 - a `mac`/`mtu`/`link` method answers what the stack needs to configure its
   netif; a `send` transmits the frame in the caller's window; a `receive` is a
   **held reply** that lands a frame in the window and answers its length
