@@ -7,7 +7,14 @@
 # linked into a freestanding binary belongs in libs/hosted instead.
 #
 
-add_compile_options(-fno-exceptions -fno-rtti -fno-threadsafe-statics)
+# The flags are C++'s, and are scoped to C++ so a C library in this directory
+# (lwip) is not handed -fno-rtti and -fno-threadsafe-statics, which GCC warns
+# are not valid for C.
+add_compile_options(
+  $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+  $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+  $<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>
+)
 
 add_subdirectory(aegir-runtime)
 add_subdirectory(aegir-devtree)
@@ -45,3 +52,4 @@ add_subdirectory(aegir-spawn)
 add_subdirectory(aegir-spawn-kit)
 add_subdirectory(aegir-thread)
 add_subdirectory(aegir-virtio)
+add_subdirectory(aegir-lwip)

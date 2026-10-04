@@ -72,9 +72,11 @@ window, the status handshake, and two queues on the shared `Queue` object.
 
 ## Vendoring lwIP
 
-**lwIP 2.2.1**, BSD-3-Clause, pinned by commit SHA (the
-`STABLE_2_2_1_RELEASE` tag on Savannah's git) in `manifests/aegir.xml`, and
-extracted to **`third_party/lwip`**.
+**lwIP 2.2.1**, BSD-3-Clause, pinned by commit SHA in `manifests/aegir.xml`
+and extracted to **`third_party/lwip`**. Savannah's git server is not a reliable
+fetch target here (the same reason musl is a signed tarball source), so the
+project's official GitHub mirror is used, pinned to the
+`STABLE-2_2_1_RELEASE` commit; git's object hashing is the anchor.
 
 That path is deliberate: lwIP 2.2.1 ships a root `CMakeLists.txt`, and the seL4
 build system does
@@ -88,9 +90,15 @@ and already gitignored. The source tree is read-only, as every vendored tree is
 (`specs/third_party.md`); any change of ours is a patch under
 `third_party/patches/third_party/lwip/`.
 
-`scripts/build_lwip.sh [TARGET]` builds it out of tree and static, the way
-`scripts/build_zlib.sh` builds zlib, linking only the modules we enable and
-against the freestanding musllibc.
+**It is compiled in-tree**, as the `lwip` static target in
+`libs/freestanding/aegir-lwip` -- not by an out-of-tree script the way the
+hosted vendored libraries (zlib, libpng, libjpeg) are. lwIP is a *freestanding*
+library: it must see the freestanding flags and muslc's staged headers, and
+those exist only inside the seL4 build. The source list is lwIP's own core,
+IPv4, api and netif sets (`src/Filelists.cmake`); ppp, 6LoWPAN, bridge, slip and
+the apps are the modules we did not take. `lwipopts.h` and `arch/cc.h` /
+`arch/sys_arch.h` beside it are the port's configuration, and the sys_arch
+implementation is the port's next slice.
 
 ## The stack: `aegir-net`
 
@@ -292,8 +300,9 @@ offline, and it exercises the client socket path end to end.
 
 ## Phases
 
-0. **Vendor lwIP** -- the pin, `scripts/build_lwip.sh`, the `THIRD-PARTY.md`
-   row.
+0. **Vendor lwIP** -- the pin, the `lwip` CMake target in
+   `libs/freestanding/aegir-lwip` that compiles it for the target, and the
+   `THIRD-PARTY.md` row. Landed.
 1. **`aegir-virtio-net`** and `aegir/ethernet.h`; the registry row; acceptance
    is the handshake, the MAC and link state.
 2. **`timer.main`'s periodic subscription**, on `aegir::signal`.
