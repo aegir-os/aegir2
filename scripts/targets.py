@@ -622,7 +622,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
                 events=TERMINAL_CLICK,
-                press="copy Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT Home:DosTest\n",
+                # Sys:BIG.TXT is bigger than one envelope, so its copy goes a
+                # frame at a time and, into a Home: directory, through the
+                # union's write-frame -- the acceptance's proof of both.
+                press="copy Sys:AEGIR.TXT Sys:DOCS/NESTED.TXT Sys:BIG.TXT Home:DosTest\n",
             ),
             QmpStep(
                 r"launcher: command started copy",

@@ -413,6 +413,11 @@ def aegir_tree(commands, datatypes) -> list:
     # until png.datatype claims it by content. The demo opens it to prove the
     # class, not the name, decides.
     tree.append(("file", "Mystery.ilbm", make_png()))
+    # Bigger than one volume envelope (936 bytes), so `copy`'s sendfile moves it
+    # a frame at a time -- and into a `Home:` directory the union's write-frame
+    # carries the filled frame to the member. The copy step is the acceptance's
+    # proof of both; 6 KiB crosses several frames.
+    tree.append(("file", "BIG.TXT", bytes(range(256)) * 24))
     png_class = next((data for name, data in datatypes if name == "png.datatype"), None)
     if commands:
         c_files = [("file", name, data) for name, data in commands]
