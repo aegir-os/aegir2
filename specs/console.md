@@ -99,9 +99,9 @@ method console does not know is answered by saying nothing.
 - `screen_bar`. In: one word, the height of the screen title strip. The
   sending window must be a backdrop; the console composites the backdrop's
   pixels in the strip above every window, so the screen bar is never covered,
-  and repaints it. Zero clears it. The strip is reserved in the compositor,
-  not the placer: a zoomed window still reaches the screen's top, and the bar
-  draws over it (`specs/workbench.md`).
+  and repaints it. Zero clears it. The height is also the bound a move or a
+  create enforces: a window's top may not be placed above it, so a titlebar
+  cannot be dragged under the bar (`specs/workbench.md`).
 - `screen_layer`. In: four words, a rectangle. The backdrop's pixels inside it
   composite above every window, so an open menu that drops below the bar is
   never covered by a window. It takes the pointer too: the hit-test inside the

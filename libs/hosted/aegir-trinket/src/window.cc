@@ -385,7 +385,15 @@ void Window::dispatch_pointer(uint64_t event) {
              * event's coordinates are relative to where the window was when
              * the console delivered it, not where it is now. */
             int const nx = pos.x - drag_offset_x_;
-            int const ny = pos.y - drag_offset_y_ + bar;
+            int ny = pos.y - drag_offset_y_ + bar;
+            /* A window's top may not enter the screen bar
+             * (specs/workbench.md), and the console refuses a move that would
+             * put it there. Clamping here too lets the titlebar ride the bar's
+             * foot under the pointer, instead of the window stopping at
+             * whatever last fit while the pointer ran on. The height is the
+             * theme's, the same value the bureau hands the console. */
+            int const floor = app_.theme().metric(MetricRole::MENUBAR_HEIGHT) + bar;
+            if (ny < floor) ny = floor;
             if (nx != rect_.x || ny != rect_.y) {
                 Rect const moved{nx, ny, rect_.width, rect_.height};
                 Rect const frame = frame_for(moved);
@@ -699,9 +707,10 @@ int Window::gadget_at(Point p) const {
     return 0;
 }
 
-/* Zoom toggles between where the window was and the whole screen, its
- * titlebar at the top. The screen's size is the bound a resize may reach
- * (specs/window-manager.md).
+/* Zoom toggles between where the window was and the whole screen below the
+ * screen bar, its titlebar at the bar's foot -- a window's top may not enter
+ * the bar (specs/workbench.md). The screen's size is the bound a resize may
+ * reach (specs/window-manager.md).
  *
  * The console composites a window's backing with the window's width as its
  * stride, so a resize must be told only after the backing has been drawn at
@@ -715,11 +724,15 @@ void Window::zoom() {
     int const bottom = bottombar_height();
     if (!zoomed_) {
         if (display.width_px == 0 || display.height_px == 0) return;
-        /* The whole screen is the frame: the content is what is left after
-         * both bars, or the frame would not fit and the paint would run past
-         * the backing. */
-        Rect const target{0, bar, static_cast<int>(display.width_px),
-                          static_cast<int>(display.height_px) - bar - bottom};
+        /* The screen bar is the bureau's, across the screen's top, and the
+         * console refuses a move whose frame top would enter it
+         * (specs/workbench.md). So the frame starts at the bar's foot, and the
+         * content is what is left after both bars -- the frame would otherwise
+         * not fit and the paint would run past the backing. The bar's height is
+         * the theme's, the same value the bureau hands the console. */
+        int const screen_bar = app_.theme().metric(MetricRole::MENUBAR_HEIGHT);
+        Rect const target{0, screen_bar + bar, static_cast<int>(display.width_px),
+                          static_cast<int>(display.height_px) - screen_bar - bar - bottom};
         if (target.width <= 0 || target.height <= 0) return;
         Rect const target_frame = frame_for(target);
         if (!aegir::console::move(app_.gui_port(), console_window_id_,

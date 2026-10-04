@@ -30,7 +30,9 @@ this arc.
   paint a titlebar, but it cannot change where the console puts its window or
   what is on top of what.
   - `move`: in the window's id and its new (x, y), clip-checked against the
-    screen. Console repaints the union of the old and new rectangles.
+    screen and the screen bar -- a window's top may not enter it
+    (`specs/workbench.md`). Console repaints the union of the old and new
+    rectangles.
   - `raise`: bring the window to the top of the z-order. A backdrop cannot be
     raised (`specs/console.md`: the backdrop stays at the bottom). Console
     repaints the window's rectangle.

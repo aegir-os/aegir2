@@ -1303,6 +1303,9 @@ int main(int argc, char *argv[])
                 slice != nullptr && width != 0 && height != 0 &&
                 width <= g_width && height <= g_height &&
                 x <= g_width - width && y <= g_height - height &&
+                /* As a move: a window's top starts below the screen bar
+                 * (specs/workbench.md). The backdrop is the screen. */
+                (backdrop || y >= g_bar_height) &&
                 (offset & 3) == 0 &&
                 offset + width * height * 4 <=
                     (slice->frames << seL4_LargePageBits);
@@ -1497,8 +1500,14 @@ int main(int argc, char *argv[])
              * window->width was bounded to the screen at create, so
              * `g_width - window->width` is safe, and any x greater than it --
              * a value off the edge, wrapped or not -- is refused. */
+            /* And a window's top may not enter the screen bar
+             * (specs/workbench.md): the bar is the screen's own top, over
+             * every window, and a titlebar dragged under it could not be
+             * reached to drag it out again. The backdrop *is* the screen, so
+             * it is exempt -- a bar of zero (no bureau yet) refuses nothing. */
             if (window == nullptr || window->owner != badge ||
-                x > g_width - window->width || y > g_height - window->height) {
+                x > g_width - window->width || y > g_height - window->height ||
+                (!window->backdrop && y < g_bar_height)) {
                 gui.reply(0);
                 continue;
             }

@@ -23,14 +23,16 @@ it painted once and exited. This arc makes it live and gives it the bar.
   short-lived smoke can be and the desktop cannot. auth therefore waits for
   the exit this never sends, which is what a session that is the desktop
   means; the ready/exit split is the supervisor arc's.
-- **The screen title bar is the bureau's, drawn into the backdrop, and the
-  console lifts it above the windows.** The bar is a strip across the top of
-  the screen holding the screen's menus, and the backdrop's own top; the
-  console reserves it in the compositor (`screen_bar`, specs/console.md), so
-  the screen bar is never covered -- a zoomed window still reaches the
-  screen's top, and the bar draws over it. The same mechanism lifts an open
-  menu (`screen_layer`), so a menu that drops below the bar is never covered
-  by a window either. The bureau marks both; the console does the lift.
+- **The screen title bar is the bureau's, and a window may not enter it.** The
+  bar is a strip across the top of the screen holding the screen's menus, and
+  the backdrop's own top. The console reserves it: a move or a create that
+  would put a window's top above the bar's foot is refused (`screen_bar`,
+  specs/console.md), so the bar is never covered and a titlebar can never be
+  dragged under it out of reach. A zoom therefore fills the screen *below* the
+  bar, not to the screen's top. The console also lifts the backdrop's pixels in
+  the strip, and an open menu's rectangle (`screen_layer`), above every window,
+  so a menu that drops below the bar is covered by no window either. The bureau
+  marks the strip and the menu; the console does the refusal and the lift.
 - **A menu item's accelerator runs from anywhere.** The Execute item shows
   `Win Space`, and the console delivers that chord to the backdrop's owner
   wherever the focus is (`kEventScreenKey`, specs/console.md), because the
