@@ -69,8 +69,9 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
     while (error == seL4_FailedLookup && attempts < 8) {
         ++attempts;
         seL4_Error created = seL4_NoError;
+        void *cookie = nullptr;
         seL4_CPtr table = allocator_.alloc_object(seL4_RISCV_PageTableObject, seL4_PageTableBits,
-                                                  account, &created);
+                                                  account, &created, &cookie);
         if (table == 0) {
             return false;
         }
@@ -78,7 +79,12 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
          * kernel places the table in the slot for that address. */
         seL4_Error mapped =
             seL4_RISCV_PageTable_Map(table, root_, address, seL4_RISCV_Default_VMAttributes);
-        if (mapped != seL4_NoError) {
+        if (mapped == seL4_DeleteFirst) {
+            /* A table already sits at the slot this address's walk reaches (an
+             * address that is a table boundary): ours is redundant, so give its
+             * memory back and retry (libsel4utils mapping.c:67-70). */
+            allocator_.free_object(cookie, seL4_PageTableBits);
+        } else if (mapped != seL4_NoError) {
             return false;
         }
         error = seL4_RISCV_Page_Map(frame, root_, address, rights, seL4_RISCV_Default_VMAttributes);

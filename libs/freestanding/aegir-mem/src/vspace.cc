@@ -204,14 +204,25 @@ bool Scratch::map_at(uintptr_t address, seL4_CPtr frame) noexcept
     while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
         ++attempts;
         seL4_Error created = seL4_NoError;
+        void *cookie = nullptr;
         Account self{"scratch", 0, 0, 0};
         seL4_CPtr const table = tables_->alloc_object(seL4_RISCV_PageTableObject,
-                                                      seL4_PageTableBits, self, &created);
+                                                      seL4_PageTableBits, self, &created,
+                                                      &cookie);
         if (table == 0) {
             return false;
         }
-        if (seL4_RISCV_PageTable_Map(table, root_, address,
-                                     seL4_RISCV_Default_VMAttributes) != seL4_NoError) {
+        seL4_Error const mapped =
+            seL4_RISCV_PageTable_Map(table, root_, address, seL4_RISCV_Default_VMAttributes);
+        if (mapped == seL4_DeleteFirst) {
+            /* A page table already sits at the slot this address's walk reaches
+             * -- which happens when the address is a table boundary (a window
+             * base that is a 2 MiB boundary, say). Ours is redundant, so give
+             * its memory back and retry the page map; bailing here is what made
+             * a spawn fail -- the upstream idiom for this exact error
+             * (projects/seL4_libs/libsel4utils/src/mapping.c:67-70). */
+            tables_->free_object(cookie, seL4_PageTableBits);
+        } else if (mapped != seL4_NoError) {
             return false;
         }
         error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
