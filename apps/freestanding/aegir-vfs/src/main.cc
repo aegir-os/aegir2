@@ -1550,6 +1550,40 @@ void union_open(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
     port.reply_words(&handle, 1);
 }
 
+/* read-handle, forwarded: the union handle names the member, whose own handle
+ * the union substitutes before the call, exactly as a write does. Unlike a path
+ * read it neither walks nor tries each member -- the member was resolved once
+ * at open -- which is what makes a window-at-a-time read of a union file (the
+ * class images under `DataTypes:`) cheap. */
+void union_read_handle(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
+                       uint64_t const *words, uint32_t count) noexcept
+{
+    if (count < 3) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    UnionHandle const *row = union_handle_find(words[0]);
+    if (row == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Member const *member = member_at(binding, row->member);
+    if (member == nullptr) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const payload[3] = {row->member_handle, words[1], words[2]};
+    uint64_t answer[aegir::ipc::kMaxWords];
+    uint32_t const reply_count =
+        member_words_call(member, badge, aegir::volume::kMethodReadHandle, payload, 3,
+                          answer, aegir::ipc::kMaxWords);
+    if (reply_count == 0) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    port.reply_words(answer, reply_count);
+}
+
 /* write, forwarded: the union handle names the member, whose own handle the
  * union substitutes before the call; the client's count and bytes are
  * unchanged. */
@@ -1682,6 +1716,9 @@ void answer_union(aegir::ipc::Owner &port, uint64_t badge, uint32_t method,
     switch (method) {
     case aegir::volume::kMethodRead:
         union_read(port, binding, caller, words, count);
+        break;
+    case aegir::volume::kMethodReadHandle:
+        union_read_handle(port, binding, caller, words, count);
         break;
     case aegir::volume::kMethodList:
         union_list(port, binding, caller, words, count);

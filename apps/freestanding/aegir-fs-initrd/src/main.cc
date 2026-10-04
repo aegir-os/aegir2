@@ -128,6 +128,83 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
                                  static_cast<uint32_t>((got + 7) / 8));
 }
 
+/* A read handle, packed: the file's data offset in the archive in the high bits
+ * and its size in the low. The archive is read-only and its layout fixed, so
+ * the handle needs no table and no per-client state -- a read-handle decodes it
+ * and copies in place, which is what makes a caller reading a program image a
+ * window at a time cheap. `kHandleSizeBits` bounds a file at 16 MiB and an offset
+ * at 1 TiB, both far past the boot image (specs/vfs.md). */
+constexpr uint32_t kHandleSizeBits = 24;
+
+void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 ||
+        !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax, &path,
+                                       &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1 || (words[path_words] & aegir::volume::kOpenRead) == 0) {
+        /* Read-only: a write open is refused, and so is a malformed call. */
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t size = 0;
+    void const *data = find_entry(path, path_length, &size);
+    if (data == nullptr || size >= (1ull << kHandleSizeBits)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const offset = static_cast<uint64_t>(
+        static_cast<char const *>(data) - static_cast<char const *>(g_archive));
+    uint64_t const handle = (offset << kHandleSizeBits) | size;
+    uint64_t const answer[1] = {handle};
+    port.reply_words(answer, 1);
+}
+
+void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words,
+                        uint32_t count) noexcept
+{
+    if (count < 3) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const handle = words[0];
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    uint64_t const file_offset = handle >> kHandleSizeBits;
+    uint64_t const size = handle & ((1ull << kHandleSizeBits) - 1);
+    if (handle == 0 || file_offset + size > g_archive_bytes || offset > size) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    if (wanted > aegir::volume::kReadMax) {
+        wanted = aegir::volume::kReadMax;
+    }
+    uint64_t const available = size - offset;
+    uint64_t const got = wanted < available ? wanted : available;
+    uint64_t answer[aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8];
+    answer[0] = got;
+    answer[1] = offset + got >= size ? 1 : 0;
+    char *bytes = reinterpret_cast<char *>(answer + aegir::volume::kReadHeaderWords);
+    char const *from = static_cast<char const *>(g_archive) + file_offset + offset;
+    for (uint64_t i = 0; i < got; ++i) {
+        bytes[i] = from[i];
+    }
+    port.reply_words(answer, aegir::volume::kReadHeaderWords +
+                                 static_cast<uint32_t>((got + 7) / 8));
+}
+
+void answer_close(aegir::ipc::Owner &port) noexcept
+{
+    /* The handle is stateless, so a close has nothing to free and answers yes. */
+    uint64_t const answer[1] = {1};
+    port.reply_words(answer, 1);
+}
+
 void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
     char const *path = nullptr;
@@ -312,6 +389,15 @@ int main(int argc, char *argv[])
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(port, words, count);
+            break;
+        case aegir::volume::kMethodReadHandle:
+            answer_read_handle(port, words, count);
+            break;
+        case aegir::volume::kMethodOpen:
+            answer_open(port, words, count);
+            break;
+        case aegir::volume::kMethodClose:
+            answer_close(port);
             break;
         case aegir::volume::kMethodList:
             answer_list(port, words, count);

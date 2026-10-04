@@ -110,7 +110,7 @@ bool ServiceKit::load_image(std::string const &path)
     if (::fstat(fd, &info) == 0 && info.st_size > 0) {
         image_.reserve(static_cast<std::size_t>(info.st_size));
     }
-    char chunk[512];
+    char chunk[4096];
     ssize_t have = 0;
     while ((have = ::read(fd, chunk, sizeof(chunk))) > 0) {
         image_.insert(image_.end(), chunk, chunk + have);

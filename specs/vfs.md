@@ -276,6 +276,19 @@ client its own frames, so no other client's DMA can overwrite what it is
 reading (`libs/aegir-block`) -- and copies the data out into the reply inside
 the one call.
 
+The **read handle** is the shape the program-load path stands on: an open
+resolves the path once, and each envelope after that carries only a handle and
+an offset, so nothing walks. The boot image is where it first mattered -- the
+class images under `DataTypes:` are initrd-served, and a *path* read of one
+re-resolved the union member and re-scanned the cpio archive on every envelope,
+so `Mystery.ilbm` (which walks `ilbm`, its decline, then `aaa`) took seconds.
+The initrd now answers a handle packed from the file's archive offset and size
+-- the archive is read-only and fixed, so the handle is stateless, needing no
+table and no per-client row -- and the union forwards `read-handle` to the
+member its open chose, so a union file resolves the member once and then walks
+nothing on any envelope. A buffer capability into a client window, for one call
+per whole file, remains the next scale (above).
+
 ## Who registers, who serves
 
 - **`Initrd:` is the first volume**, served by a tiny **initrd** service
