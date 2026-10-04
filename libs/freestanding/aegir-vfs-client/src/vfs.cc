@@ -338,6 +338,62 @@ bool Volume::read_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
     return count <= wanted;
 }
 
+bool Volume::open_read(char const *path, uint32_t length, uint64_t &handle,
+                       seL4_CPtr member, char *member_path, uint32_t member_capacity,
+                       uint32_t *member_path_length, bool *bypassed) noexcept
+{
+    uint64_t request[nmspace::kPathMax / 8 + 2];
+    uint32_t request_words = nmspace::pack_string(request, path, length, nmspace::kPathMax);
+    if (request_words == 0) {
+        return false;
+    }
+    request[request_words++] = volume::kOpenRead;
+    uint64_t answer[aegir::ipc::kMaxWords];
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply =
+        port_.call_transfer(volume::kMethodOpen, request, request_words, 0, answer,
+                            aegir::ipc::kMaxWords, &cap_arrived);
+    *bypassed = false;
+    if (reply.error != 0 || reply.count < 1) {
+        if (cap_arrived) {
+            aegir::ipc::drop_received_cap();
+        }
+        return false;
+    }
+    handle = answer[0];
+    /* Zero is "no handle" as well as a refusal: a filesystem that serves no
+     * read handles answers it, and the fd falls back to path reads on the port
+     * it opened on. */
+    if (handle == 0) {
+        if (cap_arrived) {
+            aegir::ipc::drop_received_cap();
+        }
+        return true;
+    }
+    if (cap_arrived) {
+        if (member == 0 || !aegir::ipc::take_received_cap(member)) {
+            /* The answer is a member handle and there is nowhere to put the cap
+             * that names it: refuse rather than leave an unusable handle. */
+            handle = 0;
+            return false;
+        }
+        char const *text = nullptr;
+        uint32_t text_length = 0;
+        uint32_t n = 0;
+        if (reply.count >= 2 &&
+            nmspace::unpack_string(answer + 1, reply.count - 1, nmspace::kPathMax, &text,
+                                   &text_length)) {
+            n = text_length < member_capacity ? text_length : member_capacity;
+            for (uint32_t i = 0; i < n; ++i) {
+                member_path[i] = text[i];
+            }
+        }
+        *member_path_length = n;
+        *bypassed = true;
+    }
+    return true;
+}
+
 bool Volume::list(char const *path, uint32_t length, uint64_t index, Entry &out) noexcept
 {
     uint64_t request[nmspace::kPathMax / 8 + 1];

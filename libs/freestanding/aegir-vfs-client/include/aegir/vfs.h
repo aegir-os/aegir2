@@ -168,6 +168,22 @@ public:
                     uint64_t frame_offset, seL4_CPtr frame, uint64_t &count,
                     bool &eof) noexcept;
 
+    /**
+     * Open for reading (volume::kOpenRead), returning the handle. A volume
+     * behind a union answers with a capability to the member it chose and that
+     * member's own path: the caller then names the member, not the union, so
+     * every read is one call instead of the union's forward on top of it
+     * (specs/vfs.md's scaling path). `member` must be an empty slot; when a
+     * capability arrives it is moved there, `member_path` receives the
+     * member-relative path (for stat and close) up to `member_capacity` bytes,
+     * and `bypassed` is set. When no capability arrives `bypassed` is false and
+     * `member` is left empty -- the caller keeps the port it opened on. False
+     * when the volume refuses.
+     */
+    bool open_read(char const *path, uint32_t length, uint64_t &handle, seL4_CPtr member,
+                   char *member_path, uint32_t member_capacity,
+                   uint32_t *member_path_length, bool *bypassed) noexcept;
+
     /** One directory entry: the name (into this Volume), its size, its kind
      *  (volume::kKindFile or kKindDir) and its last-write time as whole seconds
      *  since the Unix epoch (zero when the filesystem has no clock). False at

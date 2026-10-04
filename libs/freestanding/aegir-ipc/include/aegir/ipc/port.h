@@ -231,6 +231,12 @@ private:
  *  (aegir::bootstrap::kSlotReceiveCap). */
 bool take_received_cap(seL4_CPtr target) noexcept;
 
+/** Drop a capability that arrived in the scratch receive slot without moving
+ *  it anywhere, so the next transfer onto that slot is not refused; a no-op
+ *  when the slot is empty. The counterpart of take_received_cap for a receiver
+ *  that does not want what arrived. */
+void drop_received_cap() noexcept;
+
 }  // namespace aegir::ipc
 
 #endif  // AEGIR_IPC_PORT_H

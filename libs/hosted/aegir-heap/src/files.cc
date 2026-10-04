@@ -564,12 +564,41 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
         give_slot(slot);
         return -EISDIR;
     }
-    /* A read open takes a read handle, so the runtime's reads resolve the
-     * path once. A filesystem that does not serve read handles answers zero,
-     * and the fd falls back to path reads (volume::kMethodReadHandle is
-     * optional; the write side is not). */
-    uint64_t const handle =
-        volume.open(target.rest, target.rest_length, aegir::volume::kOpenRead);
+    /* A read open takes a read handle, and a union answers with a capability to
+     * the member it chose and that member's own path, so the fd names the
+     * member directly and every read is one call rather than one through the
+     * union and one on (specs/vfs.md's scaling path). A filesystem that serves
+     * no read handles answers zero, and the fd falls back to path reads
+     * (volume::kMethodReadHandle is optional; the write side is not). */
+    seL4_CPtr const member = take_slot();
+    uint64_t handle = 0;
+    char member_path[kPathCapacity];
+    uint32_t member_path_length = 0;
+    bool bypassed = false;
+    bool const opened = member != 0 &&
+                        volume.open_read(target.rest, target.rest_length, handle, member,
+                                         member_path, kPathCapacity, &member_path_length,
+                                         &bypassed);
+    if (!opened) {
+        if (member != 0) {
+            give_slot(member);
+        }
+        give_slot(slot);
+        return -EIO;
+    }
+    if (handle == 0) {
+        give_slot(member);
+        return install(slot, target, 0, false, true, false);
+    }
+    if (bypassed) {
+        /* The member's cap and its own path replace the union's. */
+        give_slot(slot);
+        Target member_target = target;
+        copy_text(member_target.rest, member_path, member_path_length);
+        member_target.rest_length = member_path_length;
+        return install(member, member_target, handle, false, true, false);
+    }
+    give_slot(member);
     return install(slot, target, handle, false, true, false);
 }
 

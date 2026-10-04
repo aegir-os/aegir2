@@ -275,6 +275,12 @@ answers with a count and an eof flag and no bytes at all. One call reads a page
 where the inline `read` needs five (`kReadMax` is one envelope), and the bytes
 never cross a message.
 
+A **read open through a union bypasses it**: the union hands the client a copy
+of the member's own badge-scoped cap, the handle, and the member-relative path,
+so every read reaches the member in one call instead of one through the union
+and one on. A write open still wraps in a union handle, because a write has
+per-member state to route.
+
 The frame is the **caller's**, mapped transiently by the filesystem inside the
 one synchronous call. That is what makes it safe without a window per client:
 nothing the filesystem maps outlives the call, so no other client's data can

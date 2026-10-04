@@ -1279,6 +1279,27 @@ uint32_t member_transfer_call(Member const *member, uint64_t badge, uint32_t met
     return reply.error == 0 ? reply.count : 0;
 }
 
+/* The volume-relative path a member call names: the member's own rest composed
+ * with the union's, with the member's own view base put back. A member that
+ * pins a view stored its rest relative to the view -- answer_bind stripped the
+ * base the resolve composed -- and the member's port is the view's *source*, so
+ * the base has to be put back before the call, the same compose_view a
+ * single-member resolve does. Without it a union member that is a `Home:` view
+ * lists the source volume's path, not the view's: `DataTypes:` would never see
+ * the user's own `Home:DataTypes`. False when the path does not fit. */
+bool member_composed_path(Member const *member, char const *path, uint32_t path_length,
+                          char *out, uint32_t capacity, uint32_t *out_length) noexcept
+{
+    static char member_path[aegir::nmspace::kPathMax];
+    uint32_t member_path_length = 0;
+    if (!compose_path(member->rest, member->rest_length, path, path_length, member_path,
+                      &member_path_length)) {
+        return false;
+    }
+    return compose_view(member->volume, member_path, member_path_length, out, capacity,
+                        out_length);
+}
+
 /* A member call whose path is the member's rest composed with the union's:
  * `extra_count` words follow the packed path. The answer lands in `out`. The
  * serve loop is one thread, so the working buffers are static. */
@@ -1287,25 +1308,12 @@ uint32_t member_path_call(Member const *member, uint64_t badge, uint32_t method,
                           uint64_t const *extra, uint32_t extra_count, uint64_t *out,
                           uint32_t out_capacity) noexcept
 {
-    static char member_path[aegir::nmspace::kPathMax];
     static char composed[aegir::nmspace::kPathMax];
     static uint64_t payload[aegir::ipc::kMaxWords];
 
-    uint32_t member_path_length = 0;
-    if (!compose_path(member->rest, member->rest_length, path, path_length, member_path,
-                      &member_path_length)) {
-        return 0;
-    }
-    /* The member's own view base (specs/ownership.md): a member that pins a view
-     * stored its rest relative to the view -- answer_bind stripped the base the
-     * resolve composed -- and the member's port is the view's *source*, so the
-     * base has to be put back before the call, the same compose_view a
-     * single-member resolve does. Without it a union member that is a `Home:`
-     * view lists the source volume's path, not the view's: `DataTypes:` would
-     * never see the user's own `Home:DataTypes`. */
     uint32_t composed_length = 0;
-    if (!compose_view(member->volume, member_path, member_path_length, composed,
-                      static_cast<uint32_t>(sizeof(composed)), &composed_length)) {
+    if (!member_composed_path(member, path, path_length, composed,
+                              static_cast<uint32_t>(sizeof(composed)), &composed_length)) {
         return 0;
     }
     uint32_t const member_words = aegir::nmspace::pack_string(
@@ -1578,13 +1586,52 @@ void union_open(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const extra[1] = {flags};
+    static char composed[aegir::nmspace::kPathMax];
+    uint32_t composed_length = 0;
+    static uint64_t payload[aegir::ipc::kMaxWords];
+    if (!member_composed_path(member, path, path_length, composed, sizeof(composed),
+                              &composed_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const member_words = aegir::nmspace::pack_string(
+        payload, composed, composed_length, aegir::nmspace::kPathMax);
+    if (member_words == 0 || member_words + 1 > aegir::ipc::kMaxWords) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    payload[member_words] = flags;
     uint64_t answer[aegir::ipc::kMaxWords];
     uint32_t const reply_count =
-        member_path_call(member, badge, aegir::volume::kMethodOpen, path, path_length,
-                         extra, 1, answer, aegir::ipc::kMaxWords);
+        member_words_call(member, badge, aegir::volume::kMethodOpen, payload,
+                          member_words + 1, answer, aegir::ipc::kMaxWords);
     if (reply_count < 1 || answer[0] == 0) {
         port.reply_words(nullptr, 0);
+        return;
+    }
+    /* A read open bypasses the union (specs/vfs.md's scaling path): the client
+     * gets a copy of the member's own badge-scoped cap and the handle just made,
+     * plus the member-relative path stat and close name, so every read reaches
+     * the member in one call instead of one through here and one on. A write
+     * open still wraps in a union handle, because a write has per-member state
+     * to route. */
+    if ((flags & aegir::volume::kOpenRead) != 0) {
+        seL4_CPtr const member_cap = badged_member(member, badge);
+        if (member_cap == 0) {
+            uint64_t const close_payload[1] = {answer[0]};
+            uint64_t closed[1];
+            member_words_call(member, badge, aegir::volume::kMethodClose, close_payload, 1,
+                              closed, 1);
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        /* words: the handle, then the packed member-relative path. */
+        uint64_t out[aegir::ipc::kMaxWords];
+        out[0] = answer[0];
+        uint32_t const out_words = 1 + aegir::nmspace::pack_string(
+                                             out + 1, composed, composed_length,
+                                             aegir::nmspace::kPathMax);
+        port.reply_cap(out, out_words, member_cap);
         return;
     }
     UnionHandle *row = union_handle_take();

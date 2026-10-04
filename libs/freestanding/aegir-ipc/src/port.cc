@@ -201,4 +201,10 @@ bool take_received_cap(seL4_CPtr target) noexcept
                            bootstrap::endpoint_depth()) == seL4_NoError;
 }
 
+void drop_received_cap() noexcept
+{
+    seL4_CNode_Delete(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+                      bootstrap::endpoint_depth());
+}
+
 }  // namespace aegir::ipc
