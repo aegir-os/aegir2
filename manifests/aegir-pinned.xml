@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remote name="llvm" fetch="https://github.com/llvm"/>
+  <remote name="lwip" fetch="https://github.com/lwip-tcpip"/>
   <remote name="mikebeaton" fetch="https://github.com/mikebeaton"/>
   <remote name="nanopb" fetch="https://github.com/nanopb"/>
   <remote name="notofonts" fetch="https://github.com/notofonts"/>
@@ -10,6 +11,7 @@
   <default remote="seL4" revision="master"/>
   
   <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
+  <project name="lwip.git" path="third_party/lwip" remote="lwip" revision="77dcd25a72509eb83f72b033d219b1d40cd8eb95"/>
   <project name="musllibc.git" path="projects/musllibc" revision="b0005f86fecbd6d0257b15363a5b013446914265" upstream="sel4" dest-branch="sel4"/>
   <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
   <project name="noto-fonts" path="projects/noto-fonts" remote="notofonts" revision="ffebf8c1ee449e544955a7e813c54f9b73848eac"/>
