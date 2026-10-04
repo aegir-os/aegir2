@@ -263,7 +263,8 @@ uintptr_t Spawner::build_start_frame(uint8_t *stack, uint64_t stack_size, uintpt
     return sp;
 }
 
-bool Spawner::spawn(Request const &request, mem::Account &account, Process &process) noexcept
+bool Spawner::spawn(Request const &request, mem::Account &account, Process &process,
+                    bool resume) noexcept
 {
     problem_ = "no problem";
     detail_ = "";
@@ -813,17 +814,46 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     /* gp and a0 are the startup code's business, not ours: the crt sets the
      * global pointer and derives its argument from sp
      * (projects/sel4runtime/crt/arch/riscv/crt0.S:30-37). */
-    error = seL4_TCB_WriteRegisters(process.tcb, 1 /* resume */, 0,
+    /* The registers go in either way; `resume` is what decides whether the
+     * thread runs. A spawner that must know the process before it can run --
+     * director records each service in the supervisor's table -- spawns held
+     * and starts it after. */
+    error = seL4_TCB_WriteRegisters(process.tcb, resume ? 1 : 0, 0,
                                     sizeof(context) / sizeof(seL4_Word), &context);
     if (error != seL4_NoError) {
-        return fail("the child could not be started");
+        return fail(resume ? "the child could not be started"
+                           : "the child's entry point could not be set");
     }
 
     process.entry = elf.entry();
+    process.stack_pointer = sp;
     process.stack_top = stack_top;
     process.block = block_at;
     process.vspace_root = vspace.root();
     process.mapped_end = shared_window_at + request.window_bytes;
+    return true;
+}
+
+bool Spawner::start(Process &process) noexcept
+{
+    problem_ = "no problem";
+    detail_ = "";
+    error_ = seL4_NoError;
+    if (process.tcb == 0) {
+        return fail("there is no process to start");
+    }
+    /* The registers were written when the process was spawned held; writing
+     * them again with it is harmless, and the wrapper reads `regs` even for a
+     * bare resume. */
+    seL4_UserContext context = {};
+    context.pc = process.entry;
+    context.sp = process.stack_pointer;
+    seL4_Error const resumed = seL4_TCB_WriteRegisters(
+        process.tcb, 1 /* resume */, 0, sizeof(context) / sizeof(seL4_Word), &context);
+    if (resumed != seL4_NoError) {
+        error_ = resumed;
+        return fail("the child could not be started");
+    }
     return true;
 }
 

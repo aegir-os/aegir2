@@ -54,11 +54,14 @@ void write_word(uint64_t value) noexcept
     aegir::debug_write_unsigned(value);
 }
 
+/* Through the line buffer, never straight to the serial. seL4_DebugPutChar
+ * lands a character *now*, while the line it belongs to is still being
+ * assembled; a name written that way turned up in front of its own line and
+ * left the parentheses empty -- "hello  supervisor: service 24 () faulted".
+ * aegir::debug_write puts it in the buffer with the rest of the line. */
 void write_name(char const *name, uint32_t length) noexcept
 {
-    for (uint32_t i = 0; i < length; ++i) {
-        seL4_DebugPutChar(name[i]);
-    }
+    aegir::debug_write(name, length);
 }
 
 /** What went wrong, said by the thing whose job it is to notice

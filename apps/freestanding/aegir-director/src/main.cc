@@ -124,11 +124,11 @@ void problem(char const *what) noexcept
     ++failures;
 }
 
+/* As in supervisor.cc: the name goes into the line buffer, not straight to the
+ * serial, or it arrives before the line it names. */
 void write_name(char const *name, unsigned length) noexcept
 {
-    for (unsigned i = 0; i < length; ++i) {
-        seL4_DebugPutChar(name[i]);
-    }
+    aegir::debug_write(name, length);
 }
 
 /** Map the device tree the firmware left us, and say where it is.

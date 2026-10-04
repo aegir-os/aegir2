@@ -74,8 +74,16 @@ int before_exit(int code) noexcept
  * is the transport's own bound rather than a chosen limit. */
 constexpr uint32_t kLineBytes =
     (seL4_MsgMaxLength - aegir::log::kConsoleBytesMr) * sizeof(seL4_Word);
-char g_line[kLineBytes];
-uint32_t g_line_at = 0;
+/* Per *thread*, not per process: director's boot thread and its supervisor
+ * thread both write, and one buffer shared between them can splice one thread's
+ * line into the other's if they write at once. A line is assembled here and
+ * handed to the logger whole, and a thread's own TLS (supervisor.cc writes its
+ * image; sel4runtime zeroes the .tbss) is what makes that true for both. (The
+ * fault report that read "hello  supervisor: service 24 () faulted" was a
+ * different bug -- write_name writing straight to the serial, ahead of its own
+ * line; supervisor.cc and main.cc say so.) */
+thread_local char g_line[kLineBytes];
+thread_local uint32_t g_line_at = 0;
 
 bool same_text(char const *text, uint32_t length, char const *other,
                uint32_t other_length) noexcept
@@ -97,8 +105,11 @@ bool same_text(char const *text, uint32_t length, char const *other,
  * port. */
 seL4_CPtr console_port() noexcept
 {
-    static seL4_CPtr port = 0;
-    static bool resolved = false;
+    /* Per thread as well, so the two threads' first resolutions are not a race
+     * on shared flags (both would compute the same port, but it is still a
+     * race). */
+    static thread_local seL4_CPtr port = 0;
+    static thread_local bool resolved = false;
     if (resolved) {
         return port;
     }

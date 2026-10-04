@@ -266,6 +266,7 @@ struct Process {
     seL4_CPtr vspace_root;    /* its address space's root -- what a minted copy of the
                                  "vspace" grant names */
     uint64_t entry;
+    uint64_t stack_pointer;   /* the sp the startup frame left, for start() */
     uint64_t stack_top;
     uint64_t block;           /* the child's bootstrap block */
     uint64_t mapped_end;      /* the first page past everything spawn() mapped: where
@@ -289,8 +290,17 @@ public:
             Initrd const &initrd, seL4_CPtr asid_pool, seL4_CPtr source_root,
             seL4_Word source_depth) noexcept;
 
-    /** Create, load and start the process a manifest entry describes. */
-    bool spawn(Request const &request, mem::Account &account, Process &process) noexcept;
+    /** Create and load the process a manifest entry describes. With `resume`
+     *  true -- the default -- it is started at once. A spawner that must know
+     *  the process before it can run passes false, does its own bookkeeping,
+     *  then calls start(): director records each service in the supervisor's
+     *  table, and a service that faults before it is recorded has no name. */
+    bool spawn(Request const &request, mem::Account &account, Process &process,
+               bool resume = true) noexcept;
+
+    /** Start a process spawn() left held (resume=false): write its entry point
+     *  and stack pointer again, and resume it. */
+    bool start(Process &process) noexcept;
 
     /** Why the last spawn failed: for the boot report, which is read by people. */
     char const *problem() const noexcept { return problem_; }

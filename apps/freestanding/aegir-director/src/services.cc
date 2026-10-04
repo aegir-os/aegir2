@@ -779,7 +779,12 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.badge = i + 1;
 
         spawn::Process process{};
-        if (!spawner_.spawn(request, account, process)) {
+        /* Spawn *held*, then record, then start: the service must be in the
+         * supervisor's table before it may run. Started first, a service that
+         * faults at once is reported without a name -- its record is not
+         * written yet -- and on another core it can fault before the boot is
+         * even waiting for it. */
+        if (!spawner_.spawn(request, account, process, false /* resume */)) {
             boot.problem = spawner_.problem();
             boot.detail = spawner_.detail();
             boot.error = spawner_.error();
@@ -796,6 +801,12 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         if (supervisor != nullptr) {
             supervisor->record(boot.started, request.badge, process.tcb, process.supervision,
                                entry.name.data, entry.name.length);
+        }
+        if (!spawner_.start(process)) {
+            boot.problem = spawner_.problem();
+            boot.detail = spawner_.detail();
+            boot.error = spawner_.error();
+            return;
         }
         ++boot.started;
     }

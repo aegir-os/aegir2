@@ -131,24 +131,19 @@ bool floating_point_works()
     return wide.bits == wide_expected.bits;
 }
 
+/* Both go through aegir::debug_write, which buffers the line and hands it to
+ * the logger whole. seL4_DebugPutChar lands a character at the serial *now*,
+ * while the line it belongs to is still being assembled -- the "5" of a
+ * max(4, 5) arrived in front of "  constexpr template max(4, 5): ", the same
+ * defect director's write_name had. */
 void write_unsigned(uint64_t value)
 {
-    char digits[20];
-    int length = 0;
-    do {
-        digits[length++] = static_cast<char>('0' + (value % 10));
-        value /= 10;
-    } while (value != 0 && length < static_cast<int>(sizeof(digits)));
-    while (length > 0) {
-        seL4_DebugPutChar(digits[--length]);
-    }
+    aegir::debug_write_unsigned(value);
 }
 
 void write_chars(char const *text, uint32_t length)
 {
-    for (uint32_t i = 0; i < length; ++i) {
-        seL4_DebugPutChar(text[i]);
-    }
+    aegir::debug_write(text, length);
 }
 
 void write_line(char const *label, char const *value)
