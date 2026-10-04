@@ -125,9 +125,11 @@ and method numbers make it additive (`specs/services.md`).
   starts a class -- as the caller's user class -- and asks it to `identify` the
   file, and the class, not a data file, is the authority on what it reads. A
   file extension may choose which class to ask first, but the class decides. The
-  class that claims the file lives for the session and serves the caller's port;
-  one that declines is **released** at once, so it is not left holding a port it
-  will not answer on. A file no class claims is reported "no class", loudly,
+  class that claims the file serves the caller's port, and the caller **releases**
+  it when it closes the object -- a class lives only as long as the open that
+  asked for it, so a viewer's classes give their CSpace slots back rather than
+  holding them for the session; one that declines is released at once, so it is
+  not left holding a port it will not answer on. A file no class claims is reported "no class", loudly,
   rather than shown as a wrong picture.
 - **A class declares its protocol version**, so `open_library`'s version check
   (`specs/libraries.md`) can refuse a class older than the caller needs.
@@ -253,6 +255,14 @@ viewer at once, and each lives in one process rather than in each caller.
   The host conformance (`make check-jpeg`) does the same over two such embedded
   JPEGs, 29 checks, pinning the RGB normalisation, `width*3` stride, row order
   and greyscale replication.
+- **Phase 2f -- the class goes back when its open closes.** Landed. `open`'s
+  answer carries the class's badge; when the caller is done with the object it
+  names that badge to the broker's `close`, and the broker releases the class
+  through the launcher (`launch.session`'s release). A class the caller started
+  directly (no broker) releases through the launcher itself. Before this a
+  claimed class was held for the session, so a viewer's classes held their
+  CSpace slots: the demo's four opens alone kept ~2800 of the launcher's pool.
+  The acceptance cues `datatypes: closed`.
 - **Add-on acceptance** (with Phase 2): a class binary placed in a session's
   `Home:DataTypes` is found and used without rebuilding anything -- the property
   the whole shape exists for.

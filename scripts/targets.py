@@ -252,6 +252,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # directory.
             QmpStep(r"datatypes: open DataTypes:jpeg\.datatype"),
             QmpStep(r"demo: jpeg 64x48 format 1 palette 0"),
+            # The class goes back when the caller is done with it
+            # (specs/datatypes.md): the demo reads each frame and lets the
+            # object go, so the client closes through the broker and the broker
+            # releases the class. A class held to the session's end is what let
+            # a viewer's classes fill the launcher's CSpace.
+            QmpStep(r"datatypes: closed"),
             # The greeter first (specs/console.md's login arc): auth starts
             # it before the test bed runs, so its cue is the boot's first
             # input cue. The dump reads the Workbench look up

@@ -76,6 +76,24 @@ bool put_string(uint64_t *words, uint32_t &at, std::string_view text)
 
 void Object::reset() noexcept
 {
+    /* Hand the class back before the port it serves goes: the broker reaps it,
+     * so its memory and its CSpace slots return to the session instead of being
+     * held for as long as the session lasts. A class the client started itself
+     * (no broker) is released through the launcher. */
+    if (class_badge_ != 0) {
+        uint64_t const badge = class_badge_;
+        uint64_t answer[1] = {};
+        if (manager_.valid()) {
+            (void)manager_.call_words(kMethodClose, &badge, 1, answer, 1);
+        } else {
+            aegir::ipc::Consumer const launcher = aegir::launch::launcher();
+            if (launcher.valid()) {
+                (void)launcher.call_words(aegir::launch::kMethodRelease, &badge, 1, answer, 1);
+            }
+        }
+        class_badge_ = 0;
+    }
+    manager_ = aegir::ipc::Consumer();
     if (send_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, send_,
                           aegir::bootstrap::cnode_bits());
@@ -96,11 +114,14 @@ void Object::reset() noexcept
 Object::~Object() { reset(); }
 
 Object::Object(Object &&other) noexcept
-    : class_(other.class_), allocator_(other.allocator_), scratch_(other.scratch_),
+    : class_(other.class_), manager_(other.manager_), class_badge_(other.class_badge_),
+      allocator_(other.allocator_), scratch_(other.scratch_),
       path_(std::move(other.path_)), info_(other.info_), frame_(other.frame_),
       page_(other.page_), send_(other.send_)
 {
     other.class_ = aegir::ipc::Consumer();
+    other.manager_ = aegir::ipc::Consumer();
+    other.class_badge_ = 0;
     other.allocator_ = nullptr;
     other.scratch_ = nullptr;
     other.info_ = Info{};
@@ -114,6 +135,8 @@ Object &Object::operator=(Object &&other) noexcept
     if (this != &other) {
         reset();
         class_ = other.class_;
+        manager_ = other.manager_;
+        class_badge_ = other.class_badge_;
         allocator_ = other.allocator_;
         scratch_ = other.scratch_;
         path_ = std::move(other.path_);
@@ -122,6 +145,8 @@ Object &Object::operator=(Object &&other) noexcept
         page_ = other.page_;
         send_ = other.send_;
         other.class_ = aegir::ipc::Consumer();
+        other.manager_ = aegir::ipc::Consumer();
+        other.class_badge_ = 0;
         other.allocator_ = nullptr;
         other.scratch_ = nullptr;
         other.info_ = Info{};
@@ -178,10 +203,16 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
         std::string const program_dir(aegir::environment::program_dir());
         if (put_string(request, words, class_name) && put_string(request, words, path) &&
             put_string(request, words, program_dir)) {
-            uint64_t answer[1] = {};
+            uint64_t answer[2] = {};
             aegir::ipc::WordsReply const reply = broker_port.call_transfer(
-                kMethodOpen, request, words, endpoint, answer, 1, nullptr);
-            started = reply.error == 0 && reply.count >= 1 && answer[0] == 1;
+                kMethodOpen, request, words, endpoint, answer, 2, nullptr);
+            started = reply.error == 0 && reply.count >= 2 && answer[0] == 1;
+            if (started) {
+                /* The class's badge: `reset` names it to the broker to release
+                 * the class when this object is done with it. */
+                object.manager_ = broker_port;
+                object.class_badge_ = answer[1];
+            }
         }
     } else if (!class_name.empty()) {
         /* No broker: start the class directly -- the first cut. */
@@ -190,6 +221,10 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
         uint64_t badge = 0;
         started = aegir::launch::spawn_serve(
             program.c_str(), static_cast<uint32_t>(program.size()), endpoint, &badge);
+        if (started) {
+            /* No broker: `reset` releases the class through the launcher. */
+            object.class_badge_ = badge;
+        }
     }
     if (!started) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, endpoint,

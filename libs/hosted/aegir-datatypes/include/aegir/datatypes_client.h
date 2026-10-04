@@ -51,6 +51,12 @@ private:
     void reset() noexcept;
 
     aegir::ipc::Consumer class_;
+    /* The broker, when one started the class, and the class's badge: `reset`
+     * closes through the broker (or the launcher, when the client started the
+     * class itself), so the class is released when the object is done with,
+     * rather than held for the session. */
+    aegir::ipc::Consumer manager_;
+    uint64_t class_badge_ = 0;
     aegir::mem::Allocator *allocator_ = nullptr;
     aegir::mem::Scratch *scratch_ = nullptr;
     std::string path_;

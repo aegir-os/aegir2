@@ -76,8 +76,10 @@ constexpr uint32_t kClassPortNameLength = sizeof(kClassPortName) - 1;
 
 /* `open`: the class name (empty to identify from the file), the file's path and
  * the caller's program directory, as strings; and one capability, the class
- * port the opener made. Answer: 1 and the class's identity, or 0 for no class.
- * `close`: no fields; the manager drops the reference. */
+ * port the opener made. Answer: 1 and the class's badge, or 0 for no class.
+ * `close`: the class's badge; the manager releases the class it started, so a
+ * class lives only as long as the open that asked for it -- not for the whole
+ * session, which is what let a viewer's classes hold their slots forever. */
 constexpr uint32_t kMethodOpen = 1;
 constexpr uint32_t kMethodClose = 2;
 

@@ -232,7 +232,12 @@ void handle_open(uint64_t const *words, uint32_t count, bool cap_arrived, uint64
             aegir::debug_write("  datatypes: open ");
             aegir::debug_write(resolved.c_str());
             aegir::debug_write("\n");
+            /* The class's badge rides back, so the caller can name it to close
+             * and the broker releases the class then -- a class lives only as
+             * long as the open it serves (specs/datatypes.md). */
             reply[0] = 1;
+            reply[1] = badge;
+            *reply_count = 2;
             break;
         }
         aegir::debug_write("  datatypes: ");
@@ -331,6 +336,13 @@ int main()
         if (method == aegir::datatypes::kMethodOpen) {
             handle_open(words, count, cap_arrived, reply, &reply_count);
         } else if (method == aegir::datatypes::kMethodClose) {
+            /* The caller is done with the class it names: release it, so its
+             * memory and its CSpace slots return to the session instead of
+             * being held to the session's end (specs/datatypes.md). */
+            if (count >= 1) {
+                release_class(words[0]);
+            }
+            aegir::debug_write("  datatypes: closed\n");
             reply[0] = 1;
             reply_count = 1;
         } else {
