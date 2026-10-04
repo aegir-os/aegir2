@@ -180,6 +180,76 @@ pools allocate from the heap rather than from compile-time counts. There is no
 hardcoded capacities (`AGENTS.md`). A region that is out of room refuses a
 connection; it does not silently cap the machine.
 
+## Configuration and introspection
+
+Status: **shape proposed, not decided.** This is the last step, and it lands
+once the stack works: the interface must be readable and writable, at boot from
+a file and live from the filesystem.
+
+There are two paths to the same parameters, and they must agree, because they
+are the same state seen at two times rather than two configurations.
+
+### At boot: `Sys:S/network.manifest`
+
+A TOML file on the system volume, the `Sys:S/session.manifest` shape and
+location (`specs/session.md`). It says what each adapter should be *before its
+interface comes up*: DHCP or static, the address, netmask, gateway and DNS, the
+MTU, which link to bind.
+
+It is read by the stack at startup, which forces the ordering question. The
+stack is spawned early -- the device manager's child, before the filesystem
+exists -- and `Sys:` is a filesystem that registers after auth. So the stack
+**waits for `Sys:` and retries the resolve**, the pattern the boot session
+already uses (`specs/boot.md`: "`Sys:` ... comes up after auth, so the bind is
+retried until the boot volume is there"). The stack is not on the boot's
+critical path -- nothing needs the network before the greeter -- so the wait
+costs nothing. A malformed manifest is announced **loudly**, with the parser's
+line and reason, and the stack falls back to DHCP; the loud-failure rule is
+`specs/session.md`'s and it is why the parser refuses to be forgiving.
+
+### Live: the `Net:` volume
+
+`Net:<adapter>/<parameter>` is a synthetic, read/write filesystem:
+
+- one directory per adapter, so `Net:virtio-net0/ipv4_address` names a
+  parameter of one interface. The adapter's name is the one open decision here:
+  the house convention is the link driver's instance (`eth.virtio0`), but the
+  example above (`virtio-net0`) reads a friendlier interface name, and that is a
+  choice to make, not a guess.
+- files per parameter: `ipv4_address`, `ipv4_netmask`, `ipv4_gateway`,
+  `ipv4_dns`, `mac`, `mtu`, `link`, `dhcp`, `state`, and `stats` -- the
+  read-only ones answer the stack, the writable ones reprogram it.
+- **a read answers the current value as text; a write applies it live**, the
+  same action the manifest took at boot. This is the `Net:` volume the VFS
+  resolves like any other (`specs/vfs.md`), so a client reads and writes it with
+  the ordinary file protocol -- no new client API.
+- it is served by a small service that registers the volume with
+  `vfs.namespace` and calls each stack's control port, so the stack does not
+  itself hold the namespace, and **every adapter appears in one volume**. The
+  registration table grows on demand and a volume is registered, not compiled
+  in, so a second interface is a second directory and nothing else.
+
+### The control port
+
+A stack serves a **control port**, separate from the socket port: `list` the
+adapters it serves, `get` a parameter, `set` a parameter. The `Net:` service is
+one client and the boot-manifest reader is another. Keeping it apart from
+`aegir/net.h` keeps "move bytes" and "reprogram the interface" as different
+protocols, the way the block driver's `caps` is not its `read`
+(`specs/services.md`).
+
+### Open
+
+- **the adapter name**, `eth.virtio0` or `virtio-net0` (above);
+- **who may write.** Reprogramming a system interface is an authority question,
+  not a convenience: `Net:` is likely owner/system-only, the `specs/ownership.md`
+  rule extended to a synthetic volume. Reads are open; writes are not.
+- **whether the boot manifest is the `Sys:` file or a build-packed copy.** The
+  `Sys:` file is the editable source of truth the requirement names; if the
+  ordering wait ever proves awkward, the `services.manifest` mechanism (packed
+  into the initrd, handed over at spawn) is the fallback shape, with `Sys:`
+  holding the copy a user edits for the next boot.
+
 ## Acceptance
 
 The runner grows `-device virtio-net-device,netdev=net0 -netdev user,id=net0`
@@ -207,6 +277,9 @@ offline, and it exercises the client socket path end to end.
    DHCP/ARP/ICMP, held replies; acceptance is the address and the echo.
 4. **`aegir/net.h` and the socket shim** -- a `ping` client first, then the
    musl BSD-socket rerouting, then TCP and DNS.
+5. **Configuration and introspection** -- the control port, the `Net:` volume
+   and its service, and `Sys:S/network.manifest`, so the interface can be read
+   and set at boot and live.
 
 ## What this is not
 
@@ -218,3 +291,6 @@ offline, and it exercises the client socket path end to end.
 - **Not the raw API at the edge.** The raw API is how the service learns a
   connection moved; clients speak BSD sockets through the port.
 - **Not a fixed-size stack.** Its memory is the region the manifest grants.
+- **Not two configurations.** The boot manifest and the live `Net:` volume set
+  the same state at two times; both reach the stack's control port, which is
+  the one place the interface is actually changed.
