@@ -166,8 +166,9 @@ void Window::close_popup_now() {
     popup_focus_ = nullptr;
     saved_focus_ = nullptr;
     popup_.reset();
-    /* The pointer cannot be over a widget that is gone. */
+    /* The pointer cannot be over -- or dragging -- a widget that is gone. */
     hovering_ = nullptr;
+    pressed_ = nullptr;
     /* What the popup covered is the region to repaint: the content under it is
      * what shows now. */
     damage(popup_rect_);
@@ -446,15 +447,27 @@ void Window::dispatch_pointer(uint64_t event) {
                     }
                 }
             }
+        } else if (pointer_held_) {
+            /* A button is still down, so the console has this window grabbed
+             * and delivers the pointer's *screen* position. Put it back into
+             * content coordinates and send it to the widget the press landed
+             * in: that is how a scrollbar's thumb and a slider's knob carry
+             * their drag. Feeding the screen point to the widget under the
+             * pointer, in a space that was not local, is why grabbing one did
+             * nothing. */
+            if (pressed_ != nullptr) {
+                Point const content_pos{pos.x - rect_.x, pos.y - rect_.y};
+                MouseEvent mouse;
+                mouse.pos = content_pos;
+                mouse.global_pos = content_pos;
+                mouse.button = MouseButton::LEFT;
+                pressed_->dispatch_mouse_move(mouse);
+            }
         } else {
-            /* Motion with no button, and no frame gesture in progress: the
-             * widget under the pointer. It is told when the pointer enters and
-             * leaves it -- the hovered state a button draws -- and told to move,
-             * which is what carries a drag on: a scrollbar's thumb, a slider's
-             * knob. The console delivers motion during a grab, and a popup
-             * takes it while one is up (specs/trinket/popup.md). Nothing
-             * received it before this, so the widgets that draw a hover or a
-             * drag had no way to be told. */
+            /* Motion with no button: the console sends window-local
+             * coordinates, and the widget under the pointer hears enter, leave
+             * and move -- the hovered state a button draws. A popup takes it
+             * while one is up (specs/trinket/popup.md). */
             Point const content_pos{pos.x, pos.y - bar};
             Widget* root = popup_ != nullptr ? popup_.get() : content_.get();
             if (popup_ != nullptr && !popup_rect_.contains(content_pos)) root = nullptr;
@@ -490,9 +503,20 @@ void Window::dispatch_pointer(uint64_t event) {
     }
 
     if (up) {
+        /* The widget the press landed in hears the release wherever the pointer
+         * is now -- a thumb dragged off its trough still ends its drag. Clear
+         * the capture first, so a handler that starts a gesture of its own is
+         * not cleared by this release. */
+        Widget* const released = pressed_;
+        pressed_ = nullptr;
+        pointer_held_ = false;
         if (dragging_ || resizing_) {
             dragging_ = false;
             resizing_ = false;
+            return;
+        }
+        if (released != nullptr) {
+            released->dispatch_mouse_up(mouse);
             return;
         }
         /* A popup takes the release when the press was inside it; a release
@@ -508,6 +532,13 @@ void Window::dispatch_pointer(uint64_t event) {
         if (target != nullptr) target->dispatch_mouse_up(mouse);
         return;
     }
+
+    /* A press: the console grabs the window until the button comes back up, and
+     * every motion during the grab carries the pointer's screen position. Mark
+     * the grab here and remember the widget it lands in, so that motion can be
+     * put back into content coordinates for it. */
+    pointer_held_ = true;
+    pressed_ = nullptr;
 
     /* A popup takes the pointer first (specs/trinket/popup.md): a down inside
      * it goes to its widget, and a down outside it dismisses it -- swallowed,
@@ -527,6 +558,7 @@ void Window::dispatch_pointer(uint64_t event) {
             target->set_focused(true);
         }
         hovering_ = target;
+        pressed_ = target;
         target->dispatch_mouse_down(mouse);
         return;
     }
@@ -571,6 +603,7 @@ void Window::dispatch_pointer(uint64_t event) {
     Widget* const target = hit_test(content_.get(), content_pos);
     if (target == nullptr) return;
     if (target->focusable()) set_focus(target);
+    pressed_ = target;
     target->dispatch_mouse_down(mouse);
 }
 

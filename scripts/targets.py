@@ -66,6 +66,12 @@ class QmpStep:
     # acceptance does not pin a coordinate the layout no longer holds
     # (the runner's `input_send_clicks`).
     clicks: tuple[tuple[str, float, float], ...] = ()
+    # Drags between two named rectangles: each is `(from_name, frx, fry,
+    # to_name, trx, try)` -- press at the fraction of the first, move to the
+    # fraction of the second, release. A widget's *drag* (a scrollbar's thumb, a
+    # slider's knob) is a press, a motion and a release, which `clicks` (a press
+    # and a release in place) cannot express (the runner's `input_send_drags`).
+    drags: tuple[tuple[str, float, float, str, float, float], ...] = ()
 
 
 # The terminal window's own click (its content, in the tablet's coordinates):
@@ -1175,7 +1181,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 1136, 730, 240, 240, 240),
                 ),
                 dark=(("gpu0", 1113, 722, 44, 24, 30),),
+                # Drag the bar's thumb to the far end of its trough. A scrollbar
+                # thumb is grabbed and carried, like the slider's knob; the
+                # value must reach the maximum (100 - 25 = 75) the far end names
+                # (specs/trinket/scrollbar.md).
+                drags=(("demo.hbar.thumb", 0.5, 0.5,
+                        "demo.hbar.trough", 1.0, 0.5),),
             ),
+            # The thumb drag took: the bar's value reached 75, its maximum. A
+            # click in the trough pages by a whole page, not to the end, so only
+            # the thumb carried there explains this.
+            QmpStep(r"demo: bar 75"),
             # The list's scrollbar arrow took: the rows moved up one, so the
             # chosen row now sits a row higher than it did. Then the Toggles tab
             # (specs/trinket/tabs.md), the last cue of the Lists page.
@@ -1272,7 +1288,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 1035, 519, 191, 191, 191),),
+                # Then drag the knob itself to the trough's far end. A knob
+                # moves only this way -- press, carry, release -- where a click
+                # in the trough steps by one; the value must reach the maximum
+                # the far end names (specs/trinket/slider.md). The knob's own
+                # rectangle is re-reported every poll, so the press lands on it
+                # where the 60 left it.
+                drags=(("demo.slider.knob", 0.5, 0.5,
+                        "demo.slider.trough", 1.0, 0.5),),
             ),
+            # The knob drag took: the value reached 100, the far end. A click in
+            # the trough could not have done this -- it steps by `step_` -- so
+            # only the drag carrying the knob explains the cue.
+            QmpStep(r"demo: slider 100"),
             # The cycle's button-cell click took: the active entry advanced from
             # the short one to the long one, so the text band's ink roughly
             # doubles (specs/trinket/cycle.md). Then the cycle's text, which opens

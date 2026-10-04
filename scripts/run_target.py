@@ -384,6 +384,40 @@ def input_send_clicks(socket_path: Path, clicks: tuple, anchors: dict,
     return None
 
 
+def input_send_drags(socket_path: Path, drags: tuple, anchors: dict,
+                     screen: tuple[int, int]) -> str | None:
+    """Drag from one named rectangle to another: move to the fraction of the
+    first, press, move to the fraction of the second, release. A widget's thumb
+    or knob is carried this way -- the press grabs it, the motion moves it and
+    the release ends the gesture -- where a `click` (press and release in place)
+    cannot. The events are paced (input_send_event), and the press is its own
+    command, so the console's drain delivers the pointer to the thumb before
+    the button goes down. Returns QMP's error text, or a message when a name was
+    never reported."""
+    for from_name, frx, fry, to_name, trx, try_ in drags:
+        from_box = anchors.get(from_name)
+        to_box = anchors.get(to_name)
+        if from_box is None:
+            return f"no rect cue for {from_name!r}"
+        if to_box is None:
+            return f"no rect cue for {to_name!r}"
+        from_x = from_box[0] + int(from_box[2] * frx)
+        from_y = from_box[1] + int(from_box[3] * fry)
+        to_x = to_box[0] + int(to_box[2] * trx)
+        to_y = to_box[1] + int(to_box[3] * try_)
+        problem = input_send_event(socket_path, (
+            {"type": "abs", "data": {"axis": "x", "value": axis_value(from_x, screen[0])}},
+            {"type": "abs", "data": {"axis": "y", "value": axis_value(from_y, screen[1])}},
+            {"type": "btn", "data": {"button": "left", "down": True}},
+            {"type": "abs", "data": {"axis": "x", "value": axis_value(to_x, screen[0])}},
+            {"type": "abs", "data": {"axis": "y", "value": axis_value(to_y, screen[1])}},
+            {"type": "btn", "data": {"button": "left", "down": False}},
+        ))
+        if problem is not None:
+            return problem
+    return None
+
+
 def screen_dump(socket_path: Path, device: str, filename: str) -> str | None:
     """One console's screen, as a PPM QEMU writes: the acceptance check's eyes.
     None when the dump happened, QMP's error text when it did not."""
@@ -725,6 +759,15 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     problem = input_send_clicks(socket_path, step.clicks, anchors, screen)
                     if problem is not None:
                         print(f"    runner: FAIL input-send-clicks: {problem}", flush=True)
+                        failed = True
+                if step.drags:
+                    # A drag between two reported rectangles: the thumb or knob
+                    # is grabbed at the first and carried to the second, so a
+                    # widget that only moves by dragging -- not by a click in
+                    # its gutter -- is exercised.
+                    problem = input_send_drags(socket_path, step.drags, anchors, screen)
+                    if problem is not None:
+                        print(f"    runner: FAIL input-send-drags: {problem}", flush=True)
                         failed = True
                 if step.press is not None:
                     # The guest said it is waiting: type the keys. Events

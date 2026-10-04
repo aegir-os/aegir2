@@ -208,10 +208,21 @@ private:
     void end_dispatch();
 
     // The widget the pointer is over, so a motion can tell enter from leave --
-    // the hovered state a button draws, and the drag a scrollbar's thumb
-    // begins. Motion with no button is the console's to deliver; when it
-    // arrives it goes here, and to the popup while one is up.
+    // the hovered state a button draws. Motion with no button is the console's
+    // to deliver, in window-local coordinates; when it arrives it goes here,
+    // and to the popup while one is up.
     Widget* hovering_ = nullptr;
+
+    // The widget a button-down landed in, and whether a button is still down.
+    // The console grabs the window for the length of a press, and during a grab
+    // it delivers the pointer's *screen* position -- it cannot know whether the
+    // window itself is about to move. A widget's drag (a scrollbar's thumb, a
+    // slider's knob) arrives that way, so the window keeps the pressed widget
+    // and puts the point back into content coordinates for it. Sending the
+    // screen point to the widget under the pointer instead is why grabbing a
+    // thumb did nothing.
+    Widget* pressed_ = nullptr;
+    bool pointer_held_ = false;
 
     // Console focus (the titlebar's active colour), and the titlebar drag and
     // the resize grip.
