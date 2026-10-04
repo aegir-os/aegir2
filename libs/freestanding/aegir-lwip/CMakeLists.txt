@@ -49,6 +49,7 @@ set(AEGIR_LWIP_SOURCES
     # reaches aegir-runtime's line writer).
     ${CMAKE_CURRENT_SOURCE_DIR}/src/port.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mem.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sys_arch.cc
 )
 
 add_library(lwip STATIC ${AEGIR_LWIP_SOURCES})
@@ -68,5 +69,9 @@ target_include_directories(lwip
 # C sources are upstream's and are not built with -Werror.
 target_link_libraries(lwip PUBLIC aegir-c-headers)
 target_include_directories(
-  lwip PRIVATE $<TARGET_PROPERTY:aegir-runtime,INTERFACE_INCLUDE_DIRECTORIES>
+  lwip
+  PRIVATE $<TARGET_PROPERTY:aegir-runtime,INTERFACE_INCLUDE_DIRECTORIES>
+          $<TARGET_PROPERTY:aegir-mem,INTERFACE_INCLUDE_DIRECTORIES>
+          $<TARGET_PROPERTY:aegir-thread,INTERFACE_INCLUDE_DIRECTORIES>
+          $<TARGET_PROPERTY:sel4,INTERFACE_INCLUDE_DIRECTORIES>
 )
