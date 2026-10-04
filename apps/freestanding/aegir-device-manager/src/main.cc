@@ -1208,11 +1208,15 @@ int main(int argc, char *argv[])
                      aegir::bootstrap::kSlotFirstDeclared + 1, driver_port,
                      seL4_CapRights_new(0, 0, 1, 0), 0, 0},
                     /* The interrupt pair: the driver waits on the notification
-                     * (Read is the whole grant) and acks on the handler after
-                     * each signal. Only present when the binding has an IRQ --
-                     * a driver that finds neither polls. */
+                     * and acks on the handler after each signal. The
+                     * notification is granted Write as well as Read, because a
+                     * service that binds one to tell a tick from a call must
+                     * mint a *badged* copy and point the handler at it
+                     * (SetNotification requires send rights -- the timer,
+                     * specs/timer.md). Only present when the binding has an IRQ
+                     * -- a driver that finds neither polls. */
                     {"irq.notify", 10, aegir::bootstrap::kSlotFirstDeclared + 2,
-                     irq_notification, seL4_CapRights_new(0, 0, 1, 0), 0, 0},
+                     irq_notification, seL4_CapRights_new(0, 0, 1, 1), 0, 0},
                     {"irq.handler", 11, aegir::bootstrap::kSlotFirstDeclared + 3,
                      irq_handler, seL4_AllRights, 0, 0},
                 };

@@ -10,18 +10,42 @@ two readings, never interprets one.
 
 ## The shape
 
-`timer.main` serves two methods:
+`timer.main` serves three methods:
 
 - `now`: no request words; the answer is the monotonic time as whole seconds,
   then nanoseconds within the second. Two readings bound an interval.
 - `sleep`: one request word, a duration in nanoseconds; the answer is one word,
   1 when the wait completed. A caller waiting until a time computes the
   duration from a `now` reading.
+- `subscribe`: one request word, a period in nanoseconds, and one capability
+  riding beside it -- the caller's notification, which the timer signals each
+  period. The answer is one word, 1 when the subscription is taken. It is the
+  clock edge a service that waits on the world needs and cannot poll for; the
+  tcpip thread's timed fetch is its first user (`specs/net.md`).
 
 A caller finds the port by name through its bootstrap block, the way it finds
 `clock.main` (specs/services.md). The hosted runtime answers
 `clock_gettime(CLOCK_MONOTONIC)` and `nanosleep` through it; the wall-clock
 calls stay `clock.main`'s.
+
+## Waiting on two sources
+
+A tick is not a call, and the two arrive on one receive. The service binds the
+interrupt's notification to its serving thread, so `seL4_Recv` on the port sees
+a call and a tick alike (`specs/signal.md`). Telling them apart is the badge: a
+call carries the caller's badge, and a *system* caller's is 0 -- the same as an
+unbadged signal. So the tick's notification is a **badged copy**: the service
+mints the interrupt's notification with a context bit and points the handler at
+the copy (`seL4_IRQHandler_SetNotification`), so a tick's badge is exactly that
+bit while badge 0 is a call. The device manager grants the notification Write,
+because pointing the handler at the copy is a send right on it.
+
+A sleep is a **held reply**: the caller's reply capability is saved and answered
+when the alarm reaches its target, so the service stays free to serve `now`, a
+`subscribe`, or another sleep meanwhile. Several sleeps are held at once (a held
+reply each, in a pool grown from the service's region), because hosted processes
+sleep independently and a refused sleep would be a silently shortened one -- the
+hosted `nanosleep` never reads the answer word.
 
 ## The hardware
 
@@ -38,10 +62,9 @@ sees changes.
 
 - **A wall clock.** `Date`, `Time` and file timestamps are `clock.main`'s
   (`aegir/clock.h`); the timer's epoch is unspecified.
-- **A timer for many clients at once.** The first timer service serves one
-  sleep at a time: calls serialize at the port, and the service blocks on the
-  interrupt while it waits. A later timer with a queue -- and a thread, or
-  deferred replies -- serves many; the protocol does not change.
+- **Not a queue of timers per client.** Several sleeps are held at once, and a
+  subscription is a capability to signal -- not a thread and not a queue per
+  client; a caller that needs many timers keeps its own bookkeeping.
 - **High resolution.** The device's granularity is the wait's, not the
   nanosecond the request is written in, so a caller must not assume a sleep
   returns on the nanosecond.

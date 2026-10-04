@@ -49,4 +49,4 @@ compatible=virtio,mmio id=1 prefix=eth bus=virtio binary=aegir-virtio-net memory
 # -- and it lays out no queue or window. On QEMU's virt machine the RTC's alarm
 # is the only interval source in userspace, so this is what backs the timer;
 # a platform with a real timer device gets its own row and driver.
-compatible=google,goldfish-rtc id=0 prefix=timer bus=rtc binary=aegir-timer memory=12 window=0 port=timer.main
+compatible=google,goldfish-rtc id=0 prefix=timer bus=rtc binary=aegir-timer memory=14 window=0 port=timer.main

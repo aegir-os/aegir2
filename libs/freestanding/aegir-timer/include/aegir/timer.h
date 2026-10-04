@@ -37,6 +37,13 @@ constexpr uint32_t kNowWords = 2;
 constexpr uint32_t kMethodSleep = 2;
 constexpr uint32_t kSleepWords = 1;
 
+/** Subscribe: one request word, the period in nanoseconds, and one capability
+ *  riding beside it -- the caller's notification, which the timer signals each
+ *  period. The answer is one word, 1 when the subscription is taken. The
+ *  subscription lives for the process that made it. */
+constexpr uint32_t kMethodSubscribe = 3;
+constexpr uint32_t kSubscribeWords = 1;
+
 }  // namespace aegir::timer
 
 #endif  // AEGIR_TIMER_H
