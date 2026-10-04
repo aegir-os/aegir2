@@ -24,7 +24,7 @@
 
 cmake_minimum_required(VERSION 3.16.0)
 
-project(aegir-lwip C)
+project(aegir-lwip C CXX)
 
 set(AEGIR_LWIP_DIR "${CMAKE_SOURCE_DIR}/third_party/lwip")
 if(NOT EXISTS "${AEGIR_LWIP_DIR}/src/core/init.c")
@@ -44,6 +44,9 @@ set(AEGIR_LWIP_SOURCES
     # The tcpip thread (NO_SYS=0) and the generic Ethernet framing.
     ${AEGIR_LWIP_DIR}/src/api/tcpip.c
     ${AEGIR_LWIP_DIR}/src/netif/ethernet.c
+    # The port's own code: the diag/assert/rand hooks arch/cc.h declares (C++,
+    # because a diagnostic reaches aegir-runtime's line writer).
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/port.cc
 )
 
 add_library(lwip STATIC ${AEGIR_LWIP_SOURCES})
@@ -57,5 +60,11 @@ target_include_directories(lwip
 
 # <stdint.h>, <string.h> and friends come from muslc's staged headers, through
 # the same interface every freestanding library uses; the archive itself is a
-# library, so it never chooses a C library (specs/build.md).
+# library, so it never chooses a C library (specs/build.md). The port's diag
+# hook reaches aegir-runtime's line writer, so its headers are borrowed here --
+# only the include directory, not the runtime's warning policy, because lwIP's
+# C sources are upstream's and are not built with -Werror.
 target_link_libraries(lwip PUBLIC aegir-c-headers)
+target_include_directories(
+  lwip PRIVATE $<TARGET_PROPERTY:aegir-runtime,INTERFACE_INCLUDE_DIRECTORIES>
+)
