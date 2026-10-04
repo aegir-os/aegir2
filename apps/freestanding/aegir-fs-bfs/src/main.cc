@@ -700,6 +700,55 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     port.reply_words(&written, 1);
 }
 
+/* write-frame: read-frame's mirror (specs/vfs.md's scaling path). A handle, a
+ * count and a frame offset, plus one capability -- the caller's own 4 KiB
+ * frame, filled. */
+void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                        uint64_t badge, bool cap_arrived) noexcept
+{
+    uint64_t written = 0;
+    if (count < 3 || !cap_arrived || !g_map_ready) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(&written, 1);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t wanted = words[1];
+    uint64_t const frame_offset = words[2];
+    aegir::bfs::Inode inode;
+    if (handle == nullptr || handle->kind != kHandleFile ||
+        frame_offset >= aegir::volume::kFrameBytes ||
+        !g_volume.read_inode(handle->inode_block, &inode) ||
+        !permits(badge, inode, kPermWrite)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(&written, 1);
+        return;
+    }
+    seL4_CPtr const frame = aegir::bootstrap::kSlotReceiveCap;
+    if (!g_map_window.map_at(g_map_base, frame)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
+                          aegir::bootstrap::kCNodeBits);
+        port.reply_words(&written, 1);
+        return;
+    }
+    uint64_t const room = aegir::volume::kFrameBytes - frame_offset;
+    if (wanted > room) {
+        wanted = room;
+    }
+    auto const *data = reinterpret_cast<uint8_t const *>(g_map_base) + frame_offset;
+    bool const ok = wanted == 0 || g_writer.write(handle->inode_block, handle->cursor, data,
+                                                  static_cast<uint32_t>(wanted), inode_time());
+    g_map_window.unmap(frame);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
+    if (ok) {
+        handle->cursor += wanted;
+        written = wanted;
+    }
+    port.reply_words(&written, 1);
+}
+
 void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                   uint64_t badge) noexcept
 {
@@ -2101,6 +2150,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodWrite:
             answer_write(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodWriteFrame:
+            answer_write_frame(vol, words, count, badge, cap_arrived);
             break;
         case aegir::volume::kMethodClose:
             answer_close(vol, words, count, badge);

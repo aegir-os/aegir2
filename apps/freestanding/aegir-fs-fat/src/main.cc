@@ -1116,22 +1116,12 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     port.reply_words(&handle, 1);
 }
 
-void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
-                  uint64_t badge) noexcept
+/* Append `bytes` of `data` at the handle's cursor, a sector at a time, and
+ * update the dirent's size and first cluster. Returns how many bytes were
+ * written. The inline write and the frame write share this. */
+uint64_t write_bytes(Handle *handle, uint8_t const *data, uint64_t bytes) noexcept
 {
     uint64_t written = 0;
-    if (count < 2) {
-        port.reply_words(&written, 1);
-        return;
-    }
-    Handle *handle = handle_lookup(words[0], badge);
-    uint64_t const bytes = words[1];
-    if (handle == nullptr || handle->kind != kHandleFile ||
-        bytes > aegir::volume::kWriteMax || count < 2 + (bytes + 7) / 8) {
-        port.reply_words(&written, 1);
-        return;
-    }
-    auto const *data = reinterpret_cast<uint8_t const *>(words + 2);
     uint32_t const cluster_bytes = g_volume.sectors_per_cluster * kSectorBytes;
     while (written < bytes) {
         uint32_t const cluster = chain_seek(handle);
@@ -1178,6 +1168,67 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
         }
         static_cast<void>(write_back(handle->dirent_sector, 1));
     }
+    return written;
+}
+
+void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    uint64_t written = 0;
+    if (count < 2) {
+        port.reply_words(&written, 1);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t const bytes = words[1];
+    if (handle == nullptr || handle->kind != kHandleFile ||
+        bytes > aegir::volume::kWriteMax || count < 2 + (bytes + 7) / 8) {
+        port.reply_words(&written, 1);
+        return;
+    }
+    auto const *data = reinterpret_cast<uint8_t const *>(words + 2);
+    written = write_bytes(handle, data, bytes);
+    port.reply_words(&written, 1);
+}
+
+/* write-frame: read-frame's mirror. A handle, a count and a frame offset, plus
+ * one capability -- the caller's own 4 KiB frame, filled. */
+void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                        uint64_t badge, bool cap_arrived) noexcept
+{
+    uint64_t written = 0;
+    if (count < 3 || !cap_arrived || !g_map_ready) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(&written, 1);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t wanted = words[1];
+    uint64_t const frame_offset = words[2];
+    if (handle == nullptr || handle->kind != kHandleFile ||
+        frame_offset >= aegir::volume::kFrameBytes) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(&written, 1);
+        return;
+    }
+    seL4_CPtr const frame = aegir::bootstrap::kSlotReceiveCap;
+    if (!g_map_window.map_at(g_map_base, frame)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
+                          aegir::bootstrap::kCNodeBits);
+        port.reply_words(&written, 1);
+        return;
+    }
+    uint64_t const room = aegir::volume::kFrameBytes - frame_offset;
+    if (wanted > room) {
+        wanted = room;
+    }
+    written = write_bytes(handle,
+                          reinterpret_cast<uint8_t const *>(g_map_base) + frame_offset,
+                          wanted);
+    g_map_window.unmap(frame);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
     port.reply_words(&written, 1);
 }
 
@@ -2362,6 +2413,9 @@ int main(int argc, char *argv[])
             break;
         case aegir::volume::kMethodWrite:
             answer_write(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodWriteFrame:
+            answer_write_frame(vol, words, count, badge, cap_arrived);
             break;
         case aegir::volume::kMethodClose:
             answer_close(vol, words, count, badge);

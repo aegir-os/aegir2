@@ -394,6 +394,21 @@ bool Volume::open_read(char const *path, uint32_t length, uint64_t &handle,
     return true;
 }
 
+bool Volume::write_frame(uint64_t handle, uint64_t capacity, uint64_t frame_offset,
+                         seL4_CPtr frame, uint64_t &count) noexcept
+{
+    uint64_t const wanted = capacity < volume::kFrameBytes ? capacity : volume::kFrameBytes;
+    uint64_t request[3] = {handle, wanted, frame_offset};
+    aegir::ipc::WordsReply const reply =
+        port_.call_transfer(volume::kMethodWriteFrame, request, 3, frame, reply_,
+                            aegir::ipc::kMaxWords, nullptr);
+    if (reply.error != 0 || reply.count < 1) {
+        return false;
+    }
+    count = reply_[0];
+    return count <= wanted;
+}
+
 bool Volume::list(char const *path, uint32_t length, uint64_t index, Entry &out) noexcept
 {
     uint64_t request[nmspace::kPathMax / 8 + 1];

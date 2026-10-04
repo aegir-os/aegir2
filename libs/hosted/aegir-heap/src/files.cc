@@ -1400,7 +1400,55 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
     if (offset != nullptr) {
         position = static_cast<uint64_t>(*offset);
     }
+    /* Frame-to-frame (specs/vfs.md's scaling path): a page is read straight
+     * into a frame of ours by the source filesystem and written whole from it
+     * by the destination -- one call a page where the inline path needs
+     * several, and never through a message. The frame is claimed for the copy
+     * and given back after. A source with no read handle, or a filesystem that
+     * serves no frames, fails the first read and the inline path takes over. */
     size_t total = 0;
+    if (in->handle != 0 && out->handle != 0 && g_allocator != nullptr && count > 0) {
+        aegir::mem::Account account{"copy", 0, 0, 0};
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        seL4_CPtr const frame = g_allocator->alloc_object(
+            seL4_RISCV_4K_Page, seL4_PageBits, account, &error, &cookie);
+        if (frame != 0) {
+            aegir::vfs::Volume source(in->volume);
+            aegir::vfs::Volume dest(out->volume);
+            while (total < count) {
+                uint64_t got = 0;
+                bool eof = false;
+                if (!source.read_frame(in->handle, position, aegir::volume::kFrameBytes, 0,
+                                       frame, got, eof) ||
+                    got == 0) {
+                    break;
+                }
+                uint64_t written = 0;
+                if (!dest.write_frame(out->handle, got, 0, frame, written) ||
+                    written == 0) {
+                    break;
+                }
+                position += written;
+                total += static_cast<size_t>(written);
+                if (eof) {
+                    break;
+                }
+            }
+            g_allocator->free_object(cookie, seL4_PageBits);
+        }
+    }
+    if (total > 0) {
+        if (offset != nullptr) {
+            *offset = static_cast<long>(position);
+        } else {
+            in->offset = position;
+        }
+        return static_cast<long>(total);
+    }
+    /* The inline path: a copy on a pipe, a source with no read handle, or a
+     * filesystem that serves no frames. */
+    total = 0;
     while (total < count) {
         aegir::vfs::Volume::Bytes bytes{};
         uint32_t const wanted = static_cast<uint32_t>(

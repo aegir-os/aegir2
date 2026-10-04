@@ -141,6 +141,12 @@ constexpr uint32_t kMethodReadFrame = 25; /* in: handle, offset, count, frame of
  *  path's unit is built on (specs/vfs.md). */
 constexpr uint32_t kFrameBytes = 1u << 12;
 
+/* write-frame: read-frame's mirror. Words: a handle, how many bytes to write,
+ * and how far into the frame they start. One capability rides beside the words:
+ * a 4 KiB frame of the caller's own, filled already, whose bytes the
+ * filesystem maps, copies out, and writes at the handle's cursor. */
+constexpr uint32_t kMethodWriteFrame = 26; /* in: handle, count, frame offset; + 1 frame cap */
+
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */
 constexpr uint64_t kOpenTruncate = 2; /* an old chain is freed at open */

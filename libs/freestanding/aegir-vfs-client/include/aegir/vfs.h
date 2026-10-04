@@ -168,6 +168,11 @@ public:
                     uint64_t frame_offset, seL4_CPtr frame, uint64_t &count,
                     bool &eof) noexcept;
 
+    /** read-frame's mirror: write up to `capacity` bytes of `frame` at the
+     *  handle's cursor (volume::kMethodWriteFrame). */
+    bool write_frame(uint64_t handle, uint64_t capacity, uint64_t frame_offset,
+                     seL4_CPtr frame, uint64_t &count) noexcept;
+
     /**
      * Open for reading (volume::kOpenRead), returning the handle. A volume
      * behind a union answers with a capability to the member it chose and that
