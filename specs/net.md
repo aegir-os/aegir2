@@ -187,9 +187,10 @@ connection; it does not silently cap the machine.
 
 ## Configuration and introspection
 
-Status: **shape proposed, not decided.** This is the last step, and it lands
-once the stack works: the interface must be readable and writable, at boot from
-a file and live from the filesystem.
+Status: **shape decided, detailed when it lands.** This is the last step: the
+interface must be readable and writable, at boot from a file and live from the
+filesystem. The parameter list and the manifest's TOML schema are that phase's
+own.
 
 There are two paths to the same parameters, and they must agree, because they
 are the same state seen at two times rather than two configurations.
@@ -197,20 +198,34 @@ are the same state seen at two times rather than two configurations.
 ### At boot: `Sys:S/network.manifest`
 
 A TOML file on the system volume, the `Sys:S/session.manifest` shape and
-location (`specs/session.md`). It says what each adapter should be *before its
-interface comes up*: DHCP or static, the address, netmask, gateway and DNS, the
-MTU, which link to bind.
+location (`specs/session.md`). It says what each adapter should be at boot:
+DHCP or static, the address, netmask, gateway and DNS, the MTU, which link to
+bind.
 
-It is read by the stack at startup, which forces the ordering question. The
-stack is spawned early -- the device manager's child, before the filesystem
-exists -- and `Sys:` is a filesystem that registers after auth. So the stack
-**waits for `Sys:` and retries the resolve**, the pattern the boot session
-already uses (`specs/boot.md`: "`Sys:` ... comes up after auth, so the bind is
-retried until the boot volume is there"). The stack is not on the boot's
-critical path -- nothing needs the network before the greeter -- so the wait
-costs nothing. A malformed manifest is announced **loudly**, with the parser's
-line and reason, and the stack falls back to DHCP; the loud-failure rule is
-`specs/session.md`'s and it is why the parser refuses to be forgiving.
+**It is applied by a command, not by the stack.** `NetConfig` (a command in
+`C:`) is run from `Sys:S/Startup-Sequence` (`specs/boot.md`); it reads the
+manifest and sets each parameter through the stack's control port -- the same
+path a live write to `Net:` takes. Two things fall out of that:
+
+- **there is no ordering wait.** Startup-Sequence *is* on `Sys:`, run by the
+  boot session's shell with the boot alias already bound, so the volume is up by
+  construction when the command runs. The stack -- the device manager's child,
+  starting before the filesystem exists -- never has to wait for the storage
+  stack, the VFS or auth.
+- **boot config and live config are one act.** The command and a `write` to
+  `Net:` reach the same control port, so the stack carries no config-file or TOML
+  dependency at all: where boot config comes from is `C:`'s and `S:`'s business,
+  not the driver's.
+
+A malformed manifest is announced **loudly**, with the parser's line and reason
+-- the loud-failure rule `specs/session.md` sets -- and the command leaves the
+interface on its bring-up default rather than applying half a file.
+
+While the stack is being built its bring-up default is DHCP, so it is useful and
+testable with no config at all (phase 3's acceptance). The final phase moves
+that default into the shipped `Sys:S/network.manifest` and starts the interface
+down until the command configures it, so a static setup makes no transient DHCP
+attempt.
 
 ### Live: the `Net:` volume
 
@@ -249,14 +264,6 @@ one client and the boot-manifest reader is another. Keeping it apart from
 protocols, the way the block driver's `caps` is not its `read`
 (`specs/services.md`).
 
-### Open
-
-- **whether the boot manifest is the `Sys:` file or a build-packed copy.** The
-  `Sys:` file is the editable source of truth the requirement names; if the
-  ordering wait ever proves awkward, the `services.manifest` mechanism (packed
-  into the initrd, handed over at spawn) is the fallback shape, with `Sys:`
-  holding the copy a user edits for the next boot.
-
 ## Acceptance
 
 The runner grows `-device virtio-net-device,netdev=net0 -netdev user,id=net0`
@@ -285,8 +292,10 @@ offline, and it exercises the client socket path end to end.
 4. **`aegir/net.h` and the socket shim** -- a `ping` client first, then the
    musl BSD-socket rerouting, then TCP and DNS.
 5. **Configuration and introspection** -- the control port, the `Net:` volume
-   and its service, and `Sys:S/network.manifest`, so the interface can be read
-   and set at boot and live.
+   and its service, `Sys:S/network.manifest`, and the `NetConfig` command in
+   `Sys:S/Startup-Sequence`, so the interface is read and set at boot and live.
+   The shipped manifest carries the DHCP default the stack had at bring-up, and
+   the interface starts down until the command configures it.
 
 ## What this is not
 
