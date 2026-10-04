@@ -289,11 +289,18 @@ unless the capability the *sender* invokes carries Grant. So the resolve mints
 that give a client its volume or union capability, the union's member mints, and
 the owner half of `vol.initrd`, all carry Grant; a filesystem that does not
 serve read-frame simply never has a capability transferred to it, and the
-caller's inline `read` is unchanged. Both filesystems the boot set uses serve
-it -- the initrd from director's grant and BFS from the partition manager's,
-each given the same `maps` grant, a window and a page-table untyped. On the
-demo's program-load path (its class binaries live on `Sys:DataTypes`, a BFS
-volume) it cut the launch from about 1.58 s to about 1.17 s.
+caller's inline `read` is unchanged. The file volumes the boot set uses serve
+it -- the initrd and NIL from director's grant, BFS and FAT from the partition
+manager's, each given the same `maps` grant, a window and a page-table
+untyped. On the demo's program-load path (its class binaries live on
+`Sys:DataTypes`, a BFS volume) it cut the launch from about 1.58 s to about
+1.17 s.
+
+PIPE does not serve it yet. Its buffers are a region the spawner maps for it
+(`memory_kib`), and a `maps` grant would instead hand that memory whole as an
+untyped, so PIPE would have to retype and map its own buffer frames -- a
+change to its memory model for a method no client can reach today (only the
+program loader calls read-frame, and a program does not live on a pipe).
 
 A filesystem reads through a window of its own -- the block layer gives each
 client its own frames, so no other client's DMA can overwrite what it is

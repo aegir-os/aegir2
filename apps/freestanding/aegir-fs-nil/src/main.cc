@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
         seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, caller_half,
                         aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
                         static_cast<seL4_CPtr>(owner_slot), aegir::bootstrap::kCNodeBits,
-                        seL4_CapRights_new(1, 0, 0, 1), 0) != seL4_NoError) {
+                        seL4_CapRights_new(1, 1, 0, 1), 0) != seL4_NoError) {
         write("  nil: the caller half would not mint\n");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
@@ -194,11 +194,16 @@ int main(int argc, char *argv[])
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
+        bool cap_arrived = false;
         uint32_t const method =
-            port.receive_words(words, aegir::ipc::kMaxWords, &count, nullptr);
+            port.receive_words(words, aegir::ipc::kMaxWords, &count, nullptr, &cap_arrived);
         switch (method) {
         case aegir::volume::kMethodRead:
         case aegir::volume::kMethodReadHandle:
+        /* A null device is at its end: read-frame answers the same header read
+         * does, and the caller's frame is never mapped (specs/vfs.md's scaling
+         * path). */
+        case aegir::volume::kMethodReadFrame:
             answer_read(port);
             break;
         case aegir::volume::kMethodList:
@@ -228,6 +233,14 @@ int main(int argc, char *argv[])
              * nothing (specs/services.md's versioning rule). */
             port.reply_words(nullptr, 0);
             break;
+        }
+        /* NIL never takes a capability -- read-frame's frame included -- so
+         * drop whatever arrived, or the receive slot stays occupied and the
+         * next transfer is refused. */
+        if (cap_arrived) {
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                              aegir::bootstrap::kSlotReceiveCap,
+                              aegir::bootstrap::kCNodeBits);
         }
     }
 }

@@ -133,8 +133,10 @@ Rights rights_for(PortGraph::Name name) noexcept
     if (name_is(name, "vol.nil", 7)) {
         /* NIL: mints its caller half like the initrd's, so this owner half
          * must carry Write too or the mint is read-only and a resolved NIL:
-         * cannot be called (specs/boot.md). */
-        return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+         * cannot be called (specs/boot.md). Grant is for read-frame: a client
+         * hands its buffer capability to a volume it reads, and NIL answers
+         * EOF to one (specs/vfs.md's scaling path). */
+        return Rights{seL4_CapRights_new(1, 1, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
     if (name_is(name, "vol.pipe", 8)) {
         /* PIPE: registers itself and mints its caller half like NIL:'s, so

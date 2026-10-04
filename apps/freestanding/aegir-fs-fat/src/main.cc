@@ -30,6 +30,8 @@
 #include <aegir/descriptor.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/partman.h>
@@ -86,6 +88,22 @@ bool g_writable = false;
 uint8_t *g_memory = nullptr;
 uint32_t g_memory_bytes = 0;
 uint64_t g_handle_serial = 0;
+
+/* The read-frame window (specs/vfs.md's scaling path), the BFS's shape: the
+ * partition manager trusts every filesystem it starts with its own VSpace root,
+ * a window of free addresses and a page-table untyped. A read-frame call maps
+ * the caller's frame there, reads the file's bytes into it, and unmaps it --
+ * one call per 4 KiB page against the several the inline read needs. */
+aegir::mem::Allocator g_tables(nullptr);
+aegir::mem::Scratch g_map_window(nullptr);
+uintptr_t g_map_base = 0;
+bool g_map_ready = false;
+seL4_CPtr g_frame_slot = 0;
+
+/* The CSpace slots the window keeps, taken from the top: FAT puts no other
+ * capability in its own CSpace (handles live in g_memory), so the top is
+ * free. */
+constexpr uint32_t kWindowSlots = 24;
 
 /* The clock, when the partition manager passed one: entries are stamped with
  * the time it answers, and without it the fields stay zero (specs/fat.md). */
@@ -1607,20 +1625,16 @@ void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words,
 /* The bytes of a read, once the dirent is known: follow the chain and pack
  * the answer. Shared by the path read and the handle read, which differ only
  * in how they found the dirent. */
-void serve_read(aegir::ipc::Owner &port, aegir::fat::Dirent const &dirent,
-                uint64_t offset, uint64_t wanted) noexcept
+/* The chain walk both reads share: `wanted` bytes of `dirent` at `offset` into
+ * `dest`, following the cluster chain and copying the overlapping part of each
+ * cluster out before the next read -- the FAT step's included -- clobbers the
+ * window: the "content belongs to the most recent call" caveat never reaches
+ * the volume's clients (aegir/volume.h). Returns how many bytes were filled. */
+uint64_t read_into(aegir::fat::Dirent const &dirent, uint64_t offset, uint64_t wanted,
+                   char *dest) noexcept
 {
-    if (wanted > aegir::volume::kReadMax) {
-        wanted = aegir::volume::kReadMax;
-    }
     uint64_t const available = dirent.bytes - offset;
     uint64_t const got = wanted < available ? wanted : available;
-    uint64_t answer[aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8];
-    char *bytes = reinterpret_cast<char *>(answer + aegir::volume::kReadHeaderWords);
-    /* Follow the chain, copying the overlapping part of each cluster out
-     * before the next read -- the FAT step's included -- clobbers the
-     * window: the "content belongs to the most recent call" caveat never
-     * reaches the volume's clients (aegir/volume.h). */
     uint32_t const cluster_bytes = g_volume.sectors_per_cluster * kSectorBytes;
     uint32_t const eoc = g_volume.fat32 ? aegir::fat::kEoc32 : aegir::fat::kEoc16;
     uint32_t cluster = dirent.first_cluster;
@@ -1636,7 +1650,7 @@ void serve_read(aegir::ipc::Owner &port, aegir::fat::Dirent const &dirent,
             uint64_t const room = cluster_bytes - at;
             uint64_t const take = got - filled < room ? got - filled : room;
             for (uint64_t i = 0; i < take; ++i) {
-                bytes[filled + i] = g_window[at + i];
+                dest[filled + i] = g_window[at + i];
             }
             filled += take;
         }
@@ -1649,10 +1663,78 @@ void serve_read(aegir::ipc::Owner &port, aegir::fat::Dirent const &dirent,
                       ? aegir::fat::next32(g_window, cluster % (kSectorBytes / 4))
                       : aegir::fat::next16(g_window, cluster % (kSectorBytes / 2));
     }
+    return filled;
+}
+
+void serve_read(aegir::ipc::Owner &port, aegir::fat::Dirent const &dirent,
+                uint64_t offset, uint64_t wanted) noexcept
+{
+    if (wanted > aegir::volume::kReadMax) {
+        wanted = aegir::volume::kReadMax;
+    }
+    uint64_t answer[aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8];
+    char *bytes = reinterpret_cast<char *>(answer + aegir::volume::kReadHeaderWords);
+    uint64_t const filled = read_into(dirent, offset, wanted, bytes);
     answer[0] = filled;
     answer[1] = offset + filled >= dirent.bytes ? 1 : 0;
     port.reply_words(answer, aegir::volume::kReadHeaderWords +
                                  static_cast<uint32_t>((filled + 7) / 8));
+}
+
+/* read-frame, the bulk read (specs/vfs.md's scaling path): a handle, an offset,
+ * a count and a frame offset, plus one capability -- the caller's own 4 KiB
+ * frame. The frame is mapped into our window, the file's bytes are read
+ * straight into it at that offset, and it is unmapped again before we answer.
+ * The answer is read's header alone; the bytes never cross a message. */
+void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                       uint64_t badge, bool cap_arrived) noexcept
+{
+    if (count < 4 || !cap_arrived || !g_map_ready) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    Handle *handle = handle_lookup(words[0], badge);
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    uint64_t const frame_offset = words[3];
+    if (handle == nullptr ||
+        (handle->kind != kHandleRead && handle->kind != kHandleFile) ||
+        frame_offset >= aegir::volume::kFrameBytes ||
+        !read(handle->dirent_sector, 1)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    aegir::fat::Dirent dirent;
+    aegir::fat::short_dirent(g_window + handle->dirent_index * 32, &dirent);
+    if (dirent.directory || offset > dirent.bytes) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const room = aegir::volume::kFrameBytes - frame_offset;
+    if (wanted > room) {
+        wanted = room;
+    }
+    if (!aegir::ipc::take_received_cap(g_frame_slot) ||
+        !g_map_window.map_at(g_map_base, g_frame_slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
+                          aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const filled =
+        read_into(dirent, offset, wanted, reinterpret_cast<char *>(g_map_base) + frame_offset);
+    g_map_window.unmap(g_frame_slot);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_frame_slot,
+                      aegir::bootstrap::kCNodeBits);
+    uint64_t const answer[aegir::volume::kReadHeaderWords] = {
+        filled, offset + filled >= dirent.bytes ? 1ULL : 0ULL};
+    port.reply_words(answer, aegir::volume::kReadHeaderWords);
 }
 
 void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
@@ -2207,6 +2289,45 @@ int main(int argc, char *argv[])
                                          aegir::clock::kPortNameLength);
     g_have_clock = g_clock.valid();
 
+    /* The read-frame window (specs/vfs.md's scaling path). The maps grant gives
+     * us a VSpace root and a window of free addresses; the page tables over it
+     * are retyped from the untyped the partition manager also grants, and the
+     * first read-frame builds them -- the same FailedLookup idiom a spawner's
+     * window uses. One page at the window's base is reserved for the caller's
+     * frame, so the allocator's own node frames (which map at the cursor) never
+     * land on it. A grant that is absent or short leaves bulk reads off; inline
+     * reads are unchanged. */
+    uint64_t vspace_slot = 0;
+    uint64_t map_window_base = 0;
+    uint32_t map_window_bytes = 0;
+    uint64_t untyped_slot = 0;
+    uint32_t untyped_bits = 0;
+    if (aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+        aegir::bootstrap::window(&map_window_base, &map_window_bytes) &&
+        aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
+        aegir::bootstrap::capability_size_bits("untyped", 7, &untyped_bits)) {
+        uint64_t const slot_top = 1ULL << aegir::bootstrap::kCNodeBits;
+        g_frame_slot = static_cast<seL4_CPtr>(slot_top - kWindowSlots);
+        g_tables.adopt_slots(static_cast<seL4_CPtr>(slot_top - kWindowSlots + 1),
+                             kWindowSlots - 1, 0, aegir::bootstrap::kCNodeBits);
+        static_cast<void>(g_tables.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot),
+                                                 untyped_bits));
+        g_map_base = static_cast<uintptr_t>(map_window_base);
+        if (g_map_window.adopt(static_cast<seL4_CPtr>(vspace_slot), g_map_base,
+                               g_map_base + map_window_bytes, &g_tables)) {
+            uintptr_t const reserved = g_map_window.reserve(1);
+            if (reserved != 0) {
+                g_map_base = reserved;
+                g_map_ready = true;
+            }
+        }
+    }
+    if (!g_map_ready) {
+        aegir::debug_write("      ");
+        aegir::debug_write(instance, instance_length);
+        aegir::debug_write(": no window for bulk reads; serving inline reads\n");
+    }
+
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
@@ -2214,14 +2335,18 @@ int main(int argc, char *argv[])
         /* The badge is whose call this is: a handle is only its owner's
          * (specs/vfs.md). */
         seL4_Word badge = 0;
+        bool cap_arrived = false;
         uint32_t const method =
-            vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+            vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge, &cap_arrived);
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count);
             break;
         case aegir::volume::kMethodReadHandle:
             answer_read_handle(vol, words, count, badge);
+            break;
+        case aegir::volume::kMethodReadFrame:
+            answer_read_frame(vol, words, count, badge, cap_arrived);
             break;
         case aegir::volume::kMethodList:
             answer_list(vol, words, count);
@@ -2278,6 +2403,14 @@ int main(int argc, char *argv[])
              * nothing (specs/services.md's versioning rule). */
             vol.reply_words(nullptr, 0);
             break;
+        }
+        /* A capability that arrived on a method that does not take one would
+         * otherwise sit in the receive slot and refuse the next transfer;
+         * read-frame consumed or dropped its own. */
+        if (cap_arrived && method != aegir::volume::kMethodReadFrame) {
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                              aegir::bootstrap::kSlotReceiveCap,
+                              aegir::bootstrap::kCNodeBits);
         }
     }
 }
