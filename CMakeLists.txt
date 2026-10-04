@@ -223,17 +223,19 @@ endforeach()
 add_custom_target(aegir-sys-c ALL DEPENDS ${aegir_command_images})
 
 # The datatype classes on Sys:DataTypes (specs/datatypes.md): ilbm.datatype,
-# staged and stripped like the commands and packed by scripts/make_disk.py.
+# png.datatype, jpeg.datatype, staged and stripped like the commands and packed
+# by scripts/make_disk.py.
 # Only when the hosted runtime is on, because a class is a hosted program.
 if(AEGIR_HOSTED_CXX)
   set(aegir_datatypes_dir "${CMAKE_BINARY_DIR}/sys-datatypes")
   set(aegir_datatype_images)
   # The classes on Sys:DataTypes, `target:name` like aegir_commands above: the
   # target builds it, the name is the class the search resolves -- the file name
-  # `ilbm.datatype`, `png.datatype` (specs/datatypes.md).
+  # `ilbm.datatype`, `png.datatype`, `jpeg.datatype` (specs/datatypes.md).
   set(aegir_datatype_classes
     aegir-ilbm-datatype:ilbm.datatype
     aegir-png-datatype:png.datatype
+    aegir-jpeg-datatype:jpeg.datatype
   )
   foreach(pair IN LISTS aegir_datatype_classes)
     string(REPLACE ":" ";" parts "${pair}")
