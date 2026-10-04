@@ -202,7 +202,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the queue page and sent, and the device read the chain and posted
             # a used entry. It is what proves the second queue works, not just
             # the first.
-            QmpStep(r"transmit: the device took the \d+-byte chain, used entry \d+"),
+            QmpStep(r"transmit: the device took the \d+-byte frame"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

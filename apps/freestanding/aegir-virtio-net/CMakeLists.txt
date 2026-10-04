@@ -21,5 +21,5 @@ target_compile_options(aegir-virtio-net PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-virtio-net PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ethernet aegir-ipc
-                           aegir-log aegir-virtio sel4 muslc sel4runtime
+                           aegir-log aegir-signal aegir-virtio sel4 muslc sel4runtime
 )
