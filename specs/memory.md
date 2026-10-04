@@ -274,6 +274,42 @@ default, the machine).
   the host conformance grows the two-level hand-off model. The console's slice
   is the first caller.
 
+## Growing the CSpace on demand
+
+A CSpace is a tree of CNodes, and a CNode is a fixed-size kernel object: growth
+means another CNode, addressed one level deeper, not a bigger one. Aegir today
+is single-level -- every process's own-CNode cap (slot `kSlotOwnCNode`) is a
+mint with **guard 0 and radix `kCNodeBits`**, so a slot *is* a plain number:
+`alloc_object` names the destination CNode itself (`node_depth = 0`,
+`kernel/src/object/untyped.c:113`) and a delete or revoke addresses a slot at
+depth `kCNodeBits` (`kernel/src/kernel/cspace.c`'s `resolveAddressBits`). The
+spawner's TCB guard (`seL4_WordBits - kCNodeBits`) is what lets a plain CPtr
+reach that mint.
+
+The launcher is where that runs out: it holds every live command's staging
+caps, and a session's set -- the demo, the shell, a nested terminal, and, until
+they were released on close, the datatype classes -- can press on one CNode.
+
+The two-level shape to adopt:
+
+- The root (the guard-0 own-CNode cap) holds **L2 CNode caps** in its high
+  slots; each L2 CNode is retyped on demand, and is itself guard 0 with radix
+  `l2`. A slot in L2 `i` is the address `(i << l2) | j`.
+- A cap op on that slot names the root, that address, and depth `l1 + l2`; a
+  retype *into* it names the L2 CNode cap (`node_index = i`, `node_depth = l1`,
+  `node_offset = j`). Guards are 0, so a level's bits are just its radix.
+- `aegir-mem` gains a CNode path -- `SlotPool` hands out `(l1, l2)` and an L2
+  allocator owns the L2 CNodes; `alloc_object`'s retype and the delete/revoke
+  paths carry the level depths. The launcher's `ServiceKit` places its own
+  objects and the L2 caps in disjoint root ranges, so the two cursors still
+  cannot meet.
+
+Until it lands, `kCNodeBits` is the size that holds: the launcher is given 14
+(16384 slots), and a class is released when its open closes, so a viewer's
+classes give their slots back (`specs/datatypes.md`'s phase 2f). This is the
+deferral `aegir-bootstrap`'s `kCNodeBits` comment has carried since the buddy
+allocator landed.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
