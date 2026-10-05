@@ -31,6 +31,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Forward-declared so this header stays plain (heap.cc includes it right after
+ * a musl header); the window carves from the runtime's own allocator and maps
+ * through its window, both handed in at startup. */
+namespace aegir::mem {
+class Allocator;
+class Scratch;
+}  // namespace aegir::mem
+
 namespace aegir::network {
 
 /** The first fd a socket gets. Everything below is a file (files.cc). */
@@ -39,6 +47,11 @@ constexpr int kSocketFdBase = 1 << 20;
 /** Find the socket port. Called at startup (heap::init); before it, every
  *  socket call is refused. */
 void adopt() noexcept;
+
+/** Hand the window path the runtime's memory: the allocator a bulk window's
+ *  frame is retyped from, and the window it is mapped through. Called at
+ *  startup (heap::init), before the first socket call. */
+void adopt_window(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexcept;
 
 /** Whether `fd` is this layer's (its range, and a live row). The dispatcher's
  *  routing test for close, read and write. */

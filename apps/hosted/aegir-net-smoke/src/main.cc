@@ -81,6 +81,8 @@ bool adopt_memory()
 
 char const kMessage[] = "Aegir libc sockets";
 uint32_t const kMessageLength = sizeof(kMessage) - 1;
+/* A payload past the envelope (864 bytes), to exercise the bulk window. */
+constexpr uint32_t kBulkBytes = 2000;
 
 /* Report a failure and answer the status the command exits with. */
 int fail(char const *what)
@@ -187,6 +189,41 @@ int main(int argc, char *argv[])
             return fail("the echo did not match");
         }
     }
+
+    /* The bulk path (specs/net.md): a payload past the envelope crosses in the
+     * shim's own window, a frame it carves and hands the stack by capability.
+     * Send it, read it back, compare. */
+    uint8_t bulk[kBulkBytes] = {};
+    for (uint32_t i = 0; i < kBulkBytes; ++i) {
+        bulk[i] = static_cast<uint8_t>('a' + (i % 26));
+    }
+    long bulk_sent = 0;
+    while (bulk_sent < static_cast<long>(kBulkBytes)) {
+        long const n =
+            send(client, bulk + bulk_sent, kBulkBytes - static_cast<uint32_t>(bulk_sent), 0);
+        if (n <= 0) {
+            return fail("bulk send");
+        }
+        bulk_sent += n;
+    }
+    uint8_t bulk_back[kBulkBytes] = {};
+    long bulk_received = 0;
+    while (bulk_received < static_cast<long>(kBulkBytes)) {
+        long const n = recv(server, bulk_back + bulk_received,
+                            kBulkBytes - static_cast<uint32_t>(bulk_received), 0);
+        if (n <= 0) {
+            return fail("bulk recv");
+        }
+        bulk_received += n;
+    }
+    for (uint32_t i = 0; i < kBulkBytes; ++i) {
+        if (bulk_back[i] != bulk[i]) {
+            return fail("the bulk payload did not match");
+        }
+    }
+    aegir::debug_write("  net-smoke: ");
+    aegir::debug_write_unsigned(kBulkBytes);
+    aegir::debug_write(" bytes crossed the window through libc\n");
 
     (void)close(server);
     (void)close(client);

@@ -266,11 +266,13 @@ time (`libs/hosted/aegir-network/src/resolver.cc`, this archive before
 the stack's DNS through the port's `resolve`, matching names by
 `aegir-resolver`'s `hosts_line` so a hosted and a freestanding client answer
 alike. `netsmoke` proves it -- `localhost`, a name only Sys:S/hosts holds --
-before it connects. And the **bulk window** is landed: `write-window` and
-`recv-window` carry the bytes in a frame the client owns, its capability riding
-the call, and `tcpbulk` proves a payload past the envelope crosses and returns.
-The hosted shim using that window for its own large `send`/`recv` is the last
-step.
+before it connects. And the **bulk window** is landed and used both ways:
+`write-window` and `recv-window` carry the bytes in a frame the client owns, its
+capability riding the call, and `tcpbulk` proves a payload past the envelope
+crosses and returns. The hosted shim shares that window too -- the runtime hands
+it the process's allocator and window at startup, it carves one frame on the
+first payload past the envelope, and `send`/`recv` cross through it
+(`netsmoke` carries 2000 bytes one way through libc).
 
 ## Memory: no fixed tables
 
@@ -471,8 +473,8 @@ console idle.
    shim's syscalls and its acceptance (`netsmoke`, a loopback echo through
    libc), the libc name lookup (`getaddrinfo`/`gethostbyname` over Sys:S/hosts
    and the port's `resolve`), and the bulk window (`write-window`/`recv-window`,
-   `tcpbulk`). Remaining: the hosted shim sending and receiving through the
-   window for payloads past the envelope.
+   `tcpbulk`), which the hosted shim now uses too: `netsmoke` carries 2000 bytes
+   past the envelope through libc's own `send`/`recv`. Landed.
 5. **`Net:`, the filesystem view** -- the live half: the volume and its service,
    `Net:<adapter>/<parameter>`, so the running state can be read and set the way
    the boot manifest set it. Landed: the service registers with the VFS and

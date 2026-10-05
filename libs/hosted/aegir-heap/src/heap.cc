@@ -384,8 +384,11 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     /* The file layer's capability slots come from the same allocator. */
     files::adopt(allocator, scratch);
 
-    /* The socket layer: find the socket port, if this process was given one. */
+    /* The socket layer: find the socket port, if this process was given one,
+     * and hand it the runtime's memory -- the allocator and the window a bulk
+     * transfer's frame comes from (specs/net.md). */
     network::adopt();
+    network::adopt_window(allocator, scratch);
 
     /* The top of the window, page-aligned so brk arithmetic stays on page
      * boundaries, and below nothing the window already holds. */

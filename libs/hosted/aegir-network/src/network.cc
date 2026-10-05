@@ -25,8 +25,11 @@
 
 #include <aegir/bootstrap.h>
 #include <aegir/ipc/port.h>
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
 #include <aegir/net.h>
 #include <errno.h>
+#include <sel4/sel4.h>
 #include <stdlib.h>
 
 namespace aegir::network {
@@ -58,6 +61,48 @@ struct Entry {
 Entry *g_entries = nullptr;
 uint32_t g_capacity = 0;
 aegir::ipc::Consumer g_sockets{};
+
+/* The bulk window: one frame the runtime's allocator retypes, a pristine copy
+ * the stack maps (minted before we map our own, or it is pinned to our ASID),
+ * and our own mapping to write and read through. Carved lazily on the first
+ * call past the envelope, so a socket that never sends one costs nothing
+ * (specs/net.md). */
+aegir::mem::Allocator *g_window_allocator = nullptr;
+aegir::mem::Scratch *g_window_scratch = nullptr;
+uint8_t *g_window_address = nullptr;
+seL4_CPtr g_window_cap = 0;
+uint32_t g_window_bytes = 0;
+
+/* Carve the window, once. False before the runtime has handed its memory in
+ * (adopt_window) or when the carve is refused. */
+bool ensure_window() noexcept
+{
+    if (g_window_address != nullptr) {
+        return true;
+    }
+    if (g_window_allocator == nullptr || g_window_scratch == nullptr) {
+        return false;
+    }
+    seL4_Error error = seL4_NoError;
+    aegir::mem::Account account{"net-window", 0, 0, 0};
+    seL4_CPtr const frame = g_window_allocator->alloc_page(account, &error);
+    seL4_CPtr const copy = g_window_allocator->alloc_slot();
+    if (frame == 0 || copy == 0 ||
+        seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, copy,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        frame, aegir::bootstrap::kCNodeBits,
+                        seL4_AllRights) != seL4_NoError) {
+        return false;
+    }
+    auto *const at = static_cast<uint8_t *>(g_window_scratch->map(frame));
+    if (at == nullptr) {
+        return false;
+    }
+    g_window_address = at;
+    g_window_cap = copy;
+    g_window_bytes = 4096;
+    return true;
+}
 
 Entry *entry_for(int fd) noexcept
 {
@@ -162,6 +207,12 @@ uint32_t id_of(int fd) noexcept
 void adopt() noexcept
 {
     g_sockets = aegir::ipc::Consumer::find(aegir::net::kPortName, aegir::net::kPortNameLength);
+}
+
+void adopt_window(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexcept
+{
+    g_window_allocator = &allocator;
+    g_window_scratch = &scratch;
 }
 
 bool owns(int fd) noexcept
@@ -319,6 +370,63 @@ long connect(int fd, void const *address, int address_length) noexcept
     return 0;
 }
 
+/* A stream payload past the envelope: copy it into our window a page at a time
+ * and hand each piece to the stack with the window cap (specs/net.md). Returns
+ * the bytes taken -- less than asked when the send buffer fills, which the
+ * caller retries. */
+long send_window(uint32_t id, uint8_t const *bytes, size_t length) noexcept
+{
+    uint32_t total = 0;
+    while (total < length) {
+        uint32_t chunk = static_cast<uint32_t>(length - total);
+        if (chunk > g_window_bytes) {
+            chunk = g_window_bytes;
+        }
+        for (uint32_t i = 0; i < chunk; ++i) {
+            g_window_address[i] = bytes[total + i];
+        }
+        uint64_t const request[2] = {id, chunk};
+        uint64_t answer[1] = {0};
+        bool cap_received = false;
+        aegir::ipc::WordsReply const reply = g_sockets.call_transfer(
+            aegir::net::kMethodWriteWindow, request, 2, g_window_cap, answer, 1,
+            &cap_received);
+        if (reply.error != 0 || reply.count < 1 || answer[0] == 0) {
+            break;
+        }
+        total += static_cast<uint32_t>(answer[0]);
+        if (answer[0] < chunk) {
+            break; /* the send buffer is full; the caller retries the rest */
+        }
+    }
+    return total > 0 ? static_cast<long>(total) : -EIO;
+}
+
+/* A stream read past the envelope: the stack writes into our window and answers
+ * its length; we copy it to the caller. Zero is end-of-stream. */
+long recv_window(uint32_t id, void *buffer, size_t length) noexcept
+{
+    uint32_t capacity = g_window_bytes;
+    if (length < capacity) {
+        capacity = static_cast<uint32_t>(length);
+    }
+    uint64_t const request[3] = {id, 0, capacity};
+    uint64_t answer[1] = {0};
+    bool cap_received = false;
+    aegir::ipc::WordsReply const reply = g_sockets.call_transfer(
+        aegir::net::kMethodRecvWindow, request, 3, g_window_cap, answer, 1, &cap_received);
+    if (reply.error != 0 || reply.count < 1) {
+        return -EIO;
+    }
+    uint32_t const got = static_cast<uint32_t>(answer[0]);
+    uint32_t const taken = got < capacity ? got : capacity;
+    auto *const out = static_cast<uint8_t *>(buffer);
+    for (uint32_t i = 0; i < taken; ++i) {
+        out[i] = g_window_address[i];
+    }
+    return static_cast<long>(taken);
+}
+
 long sendto(int fd, void const *buffer, size_t length, int flags, void const *address,
             int address_length) noexcept
 {
@@ -328,7 +436,12 @@ long sendto(int fd, void const *buffer, size_t length, int flags, void const *ad
         return -EBADF;
     }
     if (length > aegir::net::kMaxPayloadWords * 8) {
-        return -EMSGSIZE;
+        /* Past the envelope, a stream's bytes cross in the client's own window;
+         * a datagram has no window path and is still refused. */
+        if (entry->type != kSockStream || !ensure_window()) {
+            return -EMSGSIZE;
+        }
+        return send_window(entry->id, static_cast<uint8_t const *>(buffer), length);
     }
     uint64_t request[4 + aegir::net::kMaxPayloadWords] = {0};
     uint32_t method = aegir::net::kMethodWrite;
@@ -383,6 +496,12 @@ long recvfrom(int fd, void *buffer, size_t length, int flags, void *address,
     Entry *const entry = entry_for(fd);
     if (entry == nullptr) {
         return -EBADF;
+    }
+    if (entry->type == kSockStream && length > aegir::net::kMaxPayloadWords * 8 &&
+        ensure_window()) {
+        /* A stream read past the envelope crosses in the client's own window
+         * (specs/net.md). */
+        return recv_window(entry->id, buffer, length);
     }
     uint64_t const request[2] = {entry->id, 0};
     uint64_t answer[kAnswerWords] = {0};

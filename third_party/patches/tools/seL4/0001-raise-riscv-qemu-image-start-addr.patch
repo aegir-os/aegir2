@@ -1,0 +1,27 @@
+From: Aegir <aegir@example.invalid>
+Subject: [PATCH] raise the RISC-V qemu elfloader start address
+
+The user image sits just above the kernel and grows up into the elfloader at
+IMAGE_START_ADDR. The initrd's boot services have grown past 0x81000000, so
+the elfloader is moved up (still below the DTB OpenSBI loads at 0x82200000).
+---
+ cmake-tool/helpers/application_settings.cmake | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+--- a/cmake-tool/helpers/application_settings.cmake
++++ b/cmake-tool/helpers/application_settings.cmake
+@@ -60,7 +60,13 @@
+     # But the RISC-V kernel is currently loaded to a different
+     # address than what's modelled by the shoehorn.py tool.
+     # So force the start address to one that works.
+-    set(IMAGE_START_ADDR 0x81000000 CACHE INTERNAL "" FORCE)
++    #
++    # Aegir (third_party/patches/tools/seL4/0001): the user image is placed just
++    # above the kernel and grows up into the elfloader at this address. The
++    # initrd's boot services have grown past 0x81000000, so the elfloader is
++    # moved up -- still below the DTB OpenSBI loads at 0x82200000 -- to keep the
++    # image clear of it.
++    set(IMAGE_START_ADDR 0x81400000 CACHE INTERNAL "" FORCE)
+   endif()
+   if(KernelPlatformStar64)
+     set(UseRiscVOpenSBI OFF CACHE BOOL "" FORCE)

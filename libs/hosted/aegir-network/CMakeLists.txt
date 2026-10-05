@@ -25,4 +25,4 @@ add_library(aegir-network STATIC src/network.cc src/resolver.cc)
 target_include_directories(aegir-network PUBLIC include)
 
 target_link_libraries(aegir-network PUBLIC aegir-cxx-policy aegir-ipc aegir-net-protocol
-                                           aegir-resolver aegir-runtime musl_full)
+                                           aegir-mem aegir-resolver aegir-runtime musl_full)
