@@ -158,12 +158,14 @@ our own patch is fixed (`AGENTS.md`).
 ### Phase 2 — the POSIX personality
 
 A new `libs/aegir-posix`, with the handlers reached through the existing
-`__sysinfo` switch, backed by Aegir's VFS, ports and seL4. The surface already
-exists, inside `libs/hosted/aegir-heap`; the first step is therefore to move
-those handlers into `libs/aegir-posix` and leave the heap the memory calls it
-owns, so the surface grows in one place rather than in the heap. Each sub-arc
-has its own acceptance client, independent of clang, because the rule is that
-the calls live in a library and not a program (`specs/userland.md:149-156`):
+`__sysinfo` switch, backed by Aegir's VFS, ports and seL4. The `/`-rooted path
+view it presents — every volume and assign under `/`, native paths unchanged —
+is `specs/posix.md`. The surface already exists, inside
+`libs/hosted/aegir-heap`; the first step is therefore to move those handlers
+into `libs/aegir-posix` and leave the heap the memory calls it owns, so the
+surface grows in one place rather than in the heap. Each sub-arc has its own
+acceptance client, independent of clang, because the rule is that the calls live
+in a library and not a program (`specs/userland.md:149-156`):
 
 1. **Files** — `open/close/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir`
    over `vfs.namespace` and the volume protocol. The largest prerequisite, and it
