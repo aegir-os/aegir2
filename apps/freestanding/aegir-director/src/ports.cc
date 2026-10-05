@@ -143,6 +143,14 @@ Rights rights_for(PortGraph::Name name) noexcept
          * the owner half carries Write too (specs/pipe.md). */
         return Rights{seL4_CapRights_new(1, 0, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
     }
+    if (name_is(name, "vol.net", 7)) {
+        /* Net: registers itself and mints its caller half like NIL:'s, so the
+         * owner half must carry Write too or the mint is read-only and a
+         * resolved Net: cannot be called (specs/net.md). Grant is for
+         * read-frame, the day a bulk window crosses: a client hands its buffer
+         * capability to a volume it reads. */
+        return Rights{seL4_CapRights_new(1, 1, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+    }
     if (name_is(name, "devmgr.registry", 15)) {
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 0, 0, 1)};
     }

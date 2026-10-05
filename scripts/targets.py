@@ -267,9 +267,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The live half (specs/net.md): the Net: filesystem view registers
             # itself with the VFS as a synthetic volume -- one directory per
             # adapter, one file per parameter -- that reads and reprograms the
-            # running stack through its control port. A client reading it with
-            # the ordinary file protocol is the next piece.
+            # running stack through its control port.
             QmpStep(r"netvol: Net: registered, serving"),
+            # `net NE0/ipv4_address` reads the address back through that volume:
+            # resolved by path through the ordinary namespace, read with the
+            # ordinary file protocol, so the cue is the DHCP number coming back
+            # out of Net: the way it went into the stack.
+            QmpStep(r"net: NE0/ipv4_address = \d+\.\d+\.\d+\.\d+"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no
