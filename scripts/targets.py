@@ -264,12 +264,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # accept, write, recv, the whole lifecycle, all on the loopback with
             # nothing on the wire.
             QmpStep(r"tcpecho: \d+ bytes echoed over loopback: Aegir TCP echo"),
-            # The live half (specs/net.md): `net NE0/ipv4_address` reads the
-            # address back through the Net: filesystem view -- the volume
-            # registered with the VFS, resolved by path, read with the ordinary
-            # file protocol -- and prints it, so the cue is the DHCP number
-            # coming back out of the volume the way it went into the stack.
-            QmpStep(r"net: NE0/ipv4_address = \d+\.\d+\.\d+\.\d+"),
+            # The live half (specs/net.md): the Net: filesystem view registers
+            # itself with the VFS as a synthetic volume -- one directory per
+            # adapter, one file per parameter -- that reads and reprograms the
+            # running stack through its control port. A client reading it with
+            # the ordinary file protocol is the next piece.
+            QmpStep(r"netvol: Net: registered, serving"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no
