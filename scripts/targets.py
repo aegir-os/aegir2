@@ -236,6 +236,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # ...and it registered the export's own tag as a volume, so the host
             # directory is reachable by the ordinary file protocol.
             QmpStep(r"9p: host: registered, serving"),
+            # The write side (specs/9p.md): the machine created a file through
+            # the volume and read it back, so the write handlers and the
+            # transport's write path are proved. The runner checks the host
+            # directory afterwards, which is where the bytes had to land.
+            QmpStep(r"9p: wrote \d+ bytes, read back: Aegir 9P: the machine wrote this "
+                    r"through the volume\."),
             # The network stack (specs/net.md): director started it as a system
             # service, and it brought lwIP up -- lwip_init, the tcpip thread
             # (where the sys_arch, the thread builder and the page-backed heap

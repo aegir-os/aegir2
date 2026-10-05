@@ -850,6 +850,26 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                 flush=True,
             )
             failed = True
+        # The write side of the 9P volume (specs/9p.md): the guest created a
+        # file through the volume, and the runner finds it in the shared host
+        # directory. The guest's read-back cue proves the path; this proves the
+        # bytes left the machine and landed on the host. Only targets that
+        # actually export a 9P directory are checked.
+        if any("virtio-9p-device" in argument for argument in target.qemu_args):
+            written = build_dir / "host" / "written.txt"
+            expected = b"Aegir 9P: the machine wrote this through the volume.\n"
+            if not written.is_file() or written.read_bytes() != expected:
+                print(
+                    f"    runner: FAIL the host file the guest wrote is missing or "
+                    f"wrong: {written}",
+                    flush=True,
+                )
+                failed = True
+            else:
+                print(
+                    f"    runner: the guest's write is on the host: {written.name}",
+                    flush=True,
+                )
     finally:
         # Take the whole process group down: QEMU is a child of the shell, and
         # neither notices that the target is finished.

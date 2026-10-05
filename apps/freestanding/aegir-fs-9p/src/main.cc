@@ -8,15 +8,16 @@
  * bound p9.* transport through the device manager's registry, maps the window
  * it serves through, runs a 9P session over it (aegir/p9client.h), and answers
  * the volume protocol (aegir/volume.h) by turning each call into a walk and a
- * message. It registers the export's own tag as a volume, so `list`, `type` and
- * the rest reach the host directory by the ordinary file protocol -- which is
- * the whole reason the transport exists (specs/9p.md).
+ * message. It registers the export's own tag as a volume, so `list`, `type`
+ * and the rest reach the host directory by the ordinary file protocol -- which
+ * is the whole reason the transport exists (specs/9p.md).
  *
  * A read path is stateless: walk from the attached root, open, read, clunk. A
- * write path is a handle, and the handle side is phase 3; until then the volume
- * answers no read handle (the hosted file layer falls back to path reads) and
- * is marked read-only. What the messages *mean* is here; how they travel is the
- * transport's (aegir/p9transport.h); the machine is neither.
+ * write path is a handle -- the serial, its badge, the server fid and the
+ * cursor -- held in a table retyped from the service's untyped, so a write
+ * continues where the last one left off and a close or a reap clunks the fid.
+ * The same core functions serve the volume port and the self-test, so what the
+ * boot proves is what a command reaches.
  */
 
 #include <aegir/9p.h>
@@ -55,10 +56,11 @@ void write_unsigned(uint64_t value) noexcept
     aegir::debug_write_unsigned(value);
 }
 
-/* The maps grant: our own objects, the window we map the transport's frames
- * through, and what we charge to. */
+/* The maps grant: our own objects, the window we map the transport's frames and
+ * the handle table through, and what an allocation is charged to. */
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
+aegir::mem::Account g_account{"fs-9p", 0, 0, 0};
 
 /* The transport driver's port and the window it serves through, mapped into our
  * own address space at consecutive pages. */
@@ -70,15 +72,66 @@ uint32_t g_window_bytes = 0;
 char g_tag[aegir::p9transport::kTagMax];
 uint32_t g_tag_length = 0;
 
-/* Fids are the client's own; 0 is the attached root and is never clunked. A
- * scratch fid is allocated per call and released at the end of it, so the
- * counter only has to avoid 0 and the reserved value. */
+/* Fids are the client's own; 0 is the attached root and is never clunked. */
 uint32_t g_fid_next = 1;
 
 /* The path a list entry's own getattr is walked at: the directory's path, a
  * slash, the entry's name. Static and generously sized because the service is
  * single-threaded and a deep path plus a long name can approach kPathMax. */
 char g_child[aegir::nmspace::kPathMax + 256];
+
+/* The write side's handle table, retyped from the service's untyped and mapped
+ * into our window: each row is one open file -- the serial the client names,
+ * whose badge it is, the server fid, and the write cursor. The table's bound is
+ * the grant, and reaching it is a refusal, never a quiet overwrite
+ * (specs/vfs.md). */
+struct Handle {
+    uint64_t serial;
+    uint64_t badge;
+    uint32_t fid;
+    uint64_t cursor;
+};
+
+uint8_t *g_handles = nullptr;
+uint32_t g_handles_bytes = 0;
+uint64_t g_handle_serial = 0;
+
+uint32_t handle_capacity() noexcept
+{
+    return g_handles_bytes / static_cast<uint32_t>(sizeof(Handle));
+}
+
+Handle *handle_lookup(uint64_t serial, uint64_t badge) noexcept
+{
+    if (serial == 0 || g_handles == nullptr) {
+        return nullptr;
+    }
+    auto *rows = reinterpret_cast<Handle *>(g_handles);
+    for (uint32_t i = 0; i < handle_capacity(); ++i) {
+        if (rows[i].serial == serial) {
+            return rows[i].badge == badge ? rows + i : nullptr;
+        }
+    }
+    return nullptr;
+}
+
+Handle *handle_alloc(uint64_t badge) noexcept
+{
+    if (g_handles == nullptr) {
+        return nullptr;
+    }
+    auto *rows = reinterpret_cast<Handle *>(g_handles);
+    for (uint32_t i = 0; i < handle_capacity(); ++i) {
+        if (rows[i].serial == 0) {
+            rows[i].serial = ++g_handle_serial;
+            rows[i].badge = badge;
+            rows[i].fid = 0;
+            rows[i].cursor = 0;
+            return rows + i;
+        }
+    }
+    return nullptr;
+}
 
 /* The transport the client speaks through: the virtio driver's window is both
  * buffers, the request at the start and the reply in the second half
@@ -129,15 +182,22 @@ uint32_t alloc_fid() noexcept
     return fid;
 }
 
+/** A fresh fid that names the same file as `fid` (a zero-name Twalk). */
+uint32_t clone_fid(uint32_t fid) noexcept
+{
+    uint32_t const next = alloc_fid();
+    int32_t const walked = g_client.walk(fid, next, nullptr, 0, nullptr, 0);
+    return walked == 0 ? next : aegir::p9::kNoFid;
+}
+
 /** One chunk of components walked in a single Twalk: a path is walked a handful
  *  at a time so neither a Name array nor the message has to hold the whole
- *  path at once. Large enough that an ordinary path is one walk. */
+ *  path at once. */
 constexpr uint32_t kWalkChunk = 16;
 
 /** Walk `path` (slash-separated; empty is the root) from `start` into a fresh
  *  fid. Answers that fid, or kNoFid when any component is missing; `start` is
- *  left alone, and for an empty path the fresh fid is a clone of it. `last`
- *  receives the final component's qid when it is not null. */
+ *  left alone, and for an empty path the fresh fid is a clone of it. */
 uint32_t walk_path(uint32_t start, char const *path, uint32_t length, Qid *last) noexcept
 {
     uint32_t current = start;
@@ -179,15 +239,200 @@ uint32_t walk_path(uint32_t start, char const *path, uint32_t length, Qid *last)
     return current;
 }
 
+/** Split `path` into its parent directory and its final name. False when the
+ *  path is empty or names the root (a trailing slash): neither has a name to
+ *  make, remove or rename. */
+bool split_path(char const *path, uint32_t length, uint32_t *parent_length,
+                char const **name, uint32_t *name_length) noexcept
+{
+    if (length == 0) {
+        return false;
+    }
+    uint32_t slash = length; /* no separator: the parent is the root */
+    for (uint32_t i = length; i > 0; --i) {
+        if (path[i - 1] == '/') {
+            slash = i - 1;
+            break;
+        }
+    }
+    if (slash == length) {
+        *parent_length = 0;
+        *name = path;
+        *name_length = length;
+        return true;
+    }
+    *parent_length = slash;
+    *name = path + slash + 1;
+    *name_length = length - slash - 1;
+    return *name_length != 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * The core operations: what the volume port and the self-test both call.
+ * ------------------------------------------------------------------ */
+
+/* Open `path` for writing, making it when `kOpenCreate` and cutting it to
+ * nothing when `kOpenTruncate`. Answers the handle, or zero. */
+uint64_t do_open(char const *path, uint32_t length, uint64_t flags, uint64_t badge) noexcept
+{
+    uint32_t parent_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (!split_path(path, length, &parent_length, &name, &name_length)) {
+        return 0;
+    }
+    uint32_t const dfid = walk_path(0, path, parent_length, nullptr);
+    if (dfid == aegir::p9::kNoFid) {
+        return 0;
+    }
+    uint32_t ffid = walk_path(dfid, name, name_length, nullptr);
+    bool opened = false;
+    if (ffid != aegir::p9::kNoFid) {
+        opened = g_client.open(ffid, aegir::p9::kOWrite);
+        if (opened && (flags & aegir::volume::kOpenTruncate) != 0) {
+            opened = g_client.setattr_size(ffid, 0);
+        }
+    } else if ((flags & aegir::volume::kOpenCreate) != 0) {
+        ffid = clone_fid(dfid);
+        opened = ffid != aegir::p9::kNoFid &&
+                 g_client.create(ffid, name, name_length, aegir::p9::kOWrite, 0644, 0);
+    }
+    if (!opened) {
+        if (ffid != aegir::p9::kNoFid) {
+            (void)g_client.clunk(ffid);
+        }
+        (void)g_client.clunk(dfid);
+        return 0;
+    }
+    (void)g_client.clunk(dfid);
+    Handle *handle = handle_alloc(badge);
+    if (handle == nullptr) {
+        (void)g_client.clunk(ffid);
+        return 0;
+    }
+    handle->fid = ffid;
+    return handle->serial;
+}
+
+uint32_t do_write(uint64_t serial, uint64_t badge, uint8_t const *bytes,
+                  uint32_t count) noexcept
+{
+    Handle *handle = handle_lookup(serial, badge);
+    if (handle == nullptr) {
+        return 0;
+    }
+    int32_t const written = g_client.write(handle->fid, handle->cursor, bytes, count);
+    if (written <= 0) {
+        return 0;
+    }
+    handle->cursor += static_cast<uint64_t>(written);
+    return static_cast<uint32_t>(written);
+}
+
+bool do_close(uint64_t serial, uint64_t badge) noexcept
+{
+    Handle *handle = handle_lookup(serial, badge);
+    if (handle == nullptr) {
+        return false;
+    }
+    (void)g_client.clunk(handle->fid);
+    handle->serial = 0;
+    return true;
+}
+
+bool do_mkdir(char const *path, uint32_t length) noexcept
+{
+    uint32_t parent_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (!split_path(path, length, &parent_length, &name, &name_length)) {
+        return false;
+    }
+    uint32_t const dfid = walk_path(0, path, parent_length, nullptr);
+    if (dfid == aegir::p9::kNoFid) {
+        return false;
+    }
+    bool const ok = g_client.mkdir(dfid, name, name_length, 0755, 0);
+    (void)g_client.clunk(dfid);
+    return ok;
+}
+
+bool do_remove(char const *path, uint32_t length) noexcept
+{
+    uint32_t parent_length = 0;
+    char const *name = nullptr;
+    uint32_t name_length = 0;
+    if (!split_path(path, length, &parent_length, &name, &name_length)) {
+        return false;
+    }
+    uint32_t const dfid = walk_path(0, path, parent_length, nullptr);
+    if (dfid == aegir::p9::kNoFid) {
+        return false;
+    }
+    uint32_t const target = walk_path(dfid, name, name_length, nullptr);
+    if (target == aegir::p9::kNoFid) {
+        (void)g_client.clunk(dfid);
+        return false;
+    }
+    Client::Attr attr{};
+    bool const is_dir = g_client.getattr(target, &attr) && attr.is_dir;
+    (void)g_client.clunk(target);
+    /* AT_REMOVEDIR for a directory; the flag is the only difference. */
+    bool const ok = g_client.unlinkat(dfid, name, name_length, is_dir ? 0x200u : 0u);
+    (void)g_client.clunk(dfid);
+    return ok;
+}
+
+bool do_rename(char const *src, uint32_t src_length, char const *dst,
+               uint32_t dst_length) noexcept
+{
+    uint32_t src_parent = 0;
+    char const *src_name = nullptr;
+    uint32_t src_name_length = 0;
+    uint32_t dst_parent = 0;
+    char const *dst_name = nullptr;
+    uint32_t dst_name_length = 0;
+    if (!split_path(src, src_length, &src_parent, &src_name, &src_name_length) ||
+        !split_path(dst, dst_length, &dst_parent, &dst_name, &dst_name_length)) {
+        return false;
+    }
+    uint32_t const sfid = walk_path(0, src, src_parent, nullptr);
+    if (sfid == aegir::p9::kNoFid) {
+        return false;
+    }
+    uint32_t const dfid = walk_path(0, dst, dst_parent, nullptr);
+    if (dfid == aegir::p9::kNoFid) {
+        (void)g_client.clunk(sfid);
+        return false;
+    }
+    bool const ok = g_client.renameat(sfid, src_name, src_name_length, dfid, dst_name,
+                                      dst_name_length);
+    (void)g_client.clunk(sfid);
+    (void)g_client.clunk(dfid);
+    return ok;
+}
+
+bool do_truncate(char const *path, uint32_t length, uint64_t size) noexcept
+{
+    uint32_t const fid = walk_path(0, path, length, nullptr);
+    if (fid == aegir::p9::kNoFid) {
+        return false;
+    }
+    bool const ok = g_client.setattr_size(fid, size);
+    (void)g_client.clunk(fid);
+    return ok;
+}
+
 /* ------------------------------------------------------------------ *
  * The volume protocol (aegir/volume.h).
  * ------------------------------------------------------------------ */
 
-/* read: a path, an offset, how many bytes. The file is walked and opened, the
- * bytes are copied into the answer *before* the clunk (which is another
- * message and would overwrite the reply), and the clunk releases the fid. */
-void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+/* read: a path, an offset, how many bytes. The bytes are copied into the answer
+ * *before* the clunk (which is another message and would overwrite the reply). */
+void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
+    static_cast<void>(badge);
     char const *path = nullptr;
     uint32_t path_length = 0;
     if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
@@ -240,8 +485,10 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
 /* list: a path and an index. A directory is opened and read chunk by chunk
  * until the index-th entry is found; the entry's own size and time are then a
  * walk and a getattr, because a 9P dirent carries neither. */
-void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
+    static_cast<void>(badge);
     char const *path = nullptr;
     uint32_t path_length = 0;
     if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
@@ -327,7 +574,7 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     uint64_t mtime = 0;
     uint32_t const cfid = walk_path(0, g_child, at, nullptr);
     if (cfid != aegir::p9::kNoFid) {
-        aegir::p9::Client::Attr attr{};
+        Client::Attr attr{};
         if (g_client.getattr(cfid, &attr)) {
             size = attr.size;
             mtime = attr.mtime;
@@ -352,8 +599,10 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
 
 /* stat: a path. The walk ends at the thing it names and a getattr answers its
  * kind, size and time. A directory has no size, so its size word is zero. */
-void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
+    static_cast<void>(badge);
     char const *path = nullptr;
     uint32_t path_length = 0;
     if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
@@ -367,7 +616,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     bool ok = false;
     uint32_t const fid = walk_path(0, path, path_length, nullptr);
     if (fid != aegir::p9::kNoFid) {
-        aegir::p9::Client::Attr attr{};
+        Client::Attr attr{};
         if (g_client.getattr(fid, &attr)) {
             kind = attr.is_dir ? aegir::volume::kKindDir : aegir::volume::kKindFile;
             size = attr.is_dir ? 0 : attr.size;
@@ -385,9 +634,13 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
 }
 
 /* space: the export's capacity, from a statfs on the attached root. */
-void answer_space(aegir::ipc::Owner &port) noexcept
+void answer_space(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
 {
-    aegir::p9::Client::Statfs stats{};
+    static_cast<void>(badge);
+    static_cast<void>(words);
+    static_cast<void>(count);
+    Client::Statfs stats{};
     if (!g_client.statfs(0, &stats)) {
         port.reply_words(nullptr, 0);
         return;
@@ -396,26 +649,155 @@ void answer_space(aegir::ipc::Owner &port) noexcept
     port.reply_words(answer, aegir::volume::kSpaceTailWords);
 }
 
-/* open: no read handles until the write side lands, so the answer is zero --
- * the volume's "no handle, fall back to path reads" (aegir/vfs-client's
- * Volume::open_read), not a refusal. */
-void answer_open(aegir::ipc::Owner &port) noexcept
+/* open: a path and mode flags. A read open answers no handle (the hosted file
+ * layer falls back to path reads); a write open answers the handle do_open
+ * makes, or zero on refusal. */
+void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
 {
-    uint64_t const answer[1] = {0};
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                                     &path, &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const flags = words[path_words];
+    uint64_t handle = 0;
+    if ((flags & aegir::volume::kOpenRead) == 0) {
+        handle = do_open(path, path_length, flags, badge);
+    }
+    port.reply_words(&handle, 1);
+}
+
+/* write: a handle and the bytes packed after the count. */
+void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    if (count < 2) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const handle = words[0];
+    uint64_t const bytes_count = words[1];
+    if (bytes_count > aegir::volume::kWriteMax ||
+        count < 2 + (bytes_count + 7) / 8) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    auto const *bytes = reinterpret_cast<uint8_t const *>(words + 2);
+    uint32_t const written =
+        do_write(handle, badge, bytes, static_cast<uint32_t>(bytes_count));
+    uint64_t const answer[1] = {written};
     port.reply_words(answer, 1);
 }
 
-/* close: nothing was opened to a handle, so nothing is freed. */
-void answer_close(aegir::ipc::Owner &port) noexcept
+void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
 {
-    uint64_t const answer[1] = {1};
+    uint64_t const handle = count >= 1 ? words[0] : 0;
+    uint64_t const answer[1] = {do_close(handle, badge) ? 1ULL : 0ULL};
     port.reply_words(answer, 1);
 }
 
-/* reap: no handle is held, so a badge has nothing to drop. */
-void answer_reap(aegir::ipc::Owner &port) noexcept
+/* mkdir: a path. */
+void answer_mkdir(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
 {
-    uint64_t const answer[1] = {0};
+    static_cast<void>(badge);
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                                     &path, &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const answer[1] = {do_mkdir(path, path_length) ? 1ULL : 0ULL};
+    port.reply_words(answer, 1);
+}
+
+void answer_remove(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                   uint64_t badge) noexcept
+{
+    static_cast<void>(badge);
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                                     &path, &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const answer[1] = {do_remove(path, path_length) ? 1ULL : 0ULL};
+    port.reply_words(answer, 1);
+}
+
+void answer_rename(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                   uint64_t badge) noexcept
+{
+    static_cast<void>(badge);
+    char const *src = nullptr;
+    uint32_t src_length = 0;
+    if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                                     &src, &src_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const src_words = 1 + (src_length + 7) / 8;
+    char const *dst = nullptr;
+    uint32_t dst_length = 0;
+    if (!aegir::nmspace::unpack_string(words + src_words, count - src_words,
+                                       aegir::nmspace::kPathMax, &dst, &dst_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const answer[1] = {do_rename(src, src_length, dst, dst_length) ? 1ULL : 0ULL};
+    port.reply_words(answer, 1);
+}
+
+void answer_truncate(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                     uint64_t badge) noexcept
+{
+    static_cast<void>(badge);
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    if (count == 0 || !aegir::nmspace::unpack_string(words, count, aegir::nmspace::kPathMax,
+                                                     &path, &path_length)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint32_t const path_words = 1 + (path_length + 7) / 8;
+    if (count < path_words + 1) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const size = words[path_words];
+    uint64_t const answer[1] = {do_truncate(path, path_length, size) ? 1ULL : 0ULL};
+    port.reply_words(answer, 1);
+}
+
+/* reap: a badge. Every fid its handles name is clunked, as though closed. */
+void answer_reap(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
+{
+    static_cast<void>(badge);
+    uint64_t const target = count >= 1 ? words[0] : 0;
+    uint64_t reaped = 0;
+    if (g_handles != nullptr) {
+        auto *rows = reinterpret_cast<Handle *>(g_handles);
+        for (uint32_t i = 0; i < handle_capacity(); ++i) {
+            if (rows[i].serial != 0 && rows[i].badge == target) {
+                (void)g_client.clunk(rows[i].fid);
+                rows[i].serial = 0;
+                ++reaped;
+            }
+        }
+    }
+    uint64_t const answer[1] = {reaped};
     port.reply_words(answer, 1);
 }
 
@@ -443,10 +825,46 @@ uint64_t first_free_slot() noexcept
     return first_free;
 }
 
+/* The handle table: a run of pages retyped from the untyped and mapped into our
+ * window, half the grant so the page tables the window mapping needs still have
+ * room. Must run before anything else maps, so the run is contiguous. */
+bool handles_init(uint32_t untyped_bits) noexcept
+{
+    uint32_t pages = (1u << untyped_bits) / 8192u;
+    if (pages == 0) {
+        return false;
+    }
+    uint32_t power = 1;
+    while (power * 2 <= pages) {
+        power *= 2;
+    }
+    pages = power;
+    if (pages * sizeof(Handle) < 2 * sizeof(Handle)) {
+        return false;
+    }
+    uintptr_t const base = g_scratch.reserve(pages);
+    if (base == 0) {
+        return false;
+    }
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const run = g_objects.alloc_pages_run(pages, g_account, &error);
+    if (run == 0) {
+        return false;
+    }
+    for (uint32_t i = 0; i < pages; ++i) {
+        if (!g_scratch.map_at(base + i * 4096u, run + i)) {
+            return false;
+        }
+    }
+    g_handles = reinterpret_cast<uint8_t *>(base);
+    g_handles_bytes = pages * 4096u;
+    return true;
+}
+
 /* Open the bound p9.* transport and map the window it serves through into our
  * own address space. The row may not be there yet -- the device manager binds
  * the driver asynchronously -- so the caller retries. */
-bool open_transport(int64_t *row_out, seL4_CPtr *port_slot_out) noexcept
+bool open_transport() noexcept
 {
     aegir::ipc::Consumer const registry =
         aegir::ipc::Consumer::find(aegir::registry::kPortName,
@@ -494,9 +912,31 @@ bool open_transport(int64_t *row_out, seL4_CPtr *port_slot_out) noexcept
     g_transport = aegir::ipc::Consumer(port_slot);
     g_window = window;
     g_window_bytes = static_cast<uint32_t>(pages * (1ull << page_bits));
-    *row_out = row;
-    *port_slot_out = port_slot;
     return true;
+}
+
+/** A whole-file read through the client, for the self-test: walk, open, read
+ *  up to `capacity`, clunk. */
+bool read_file(char const *path, uint32_t length, char *out, uint32_t capacity,
+               uint32_t *got) noexcept
+{
+    bool ok = false;
+    uint32_t const fid = walk_path(0, path, length, nullptr);
+    if (fid != aegir::p9::kNoFid) {
+        if (g_client.open(fid, aegir::p9::kORead)) {
+            uint8_t const *data = nullptr;
+            int32_t const n = g_client.read(fid, 0, capacity, &data);
+            if (n >= 0) {
+                *got = static_cast<uint32_t>(n);
+                for (uint32_t i = 0; i < *got; ++i) {
+                    out[i] = static_cast<char>(data[i]);
+                }
+                ok = true;
+            }
+        }
+        (void)g_client.clunk(fid);
+    }
+    return ok;
 }
 
 }  // namespace
@@ -514,7 +954,7 @@ int main(int argc, char *argv[])
     }
 
     /* The maps grant: our own objects, our VSpace root and the window we map the
-     * transport's frames through. */
+     * transport's frames and the handle table through. */
     uint64_t untyped_slot = 0;
     uint32_t untyped_bits = 0;
     uint64_t vspace_slot = 0;
@@ -549,14 +989,16 @@ int main(int argc, char *argv[])
                            static_cast<seL4_CPtr>(first_free),
                            aegir::bootstrap::kCNodeBits);
 
-    /* The transport, retried until the device manager has bound its driver. */
-    int64_t row = -1;
-    seL4_CPtr port_slot = 0;
-    while (!open_transport(&row, &port_slot)) {
+    /* The handle table first, so its run is contiguous; then the transport,
+     * retried until the device manager has bound its driver. */
+    if (!handles_init(untyped_bits)) {
+        write("  9p: no room for the write side's handle table\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    while (!open_transport()) {
         seL4_Yield();
     }
-    static_cast<void>(row);
-    static_cast<void>(port_slot);
 
     /* The export's name, then the session: version and attach. */
     {
@@ -595,35 +1037,45 @@ int main(int argc, char *argv[])
     write("\n");
 
     /* The self-test, before `ready`: read a file the runner put in the host
-     * directory, so the whole path -- walk, open, read, clunk -- is proved
-     * against the host's own bytes. */
+     * directory, so walk, open, read and clunk are proved against the host's
+     * own bytes; then write one and read it back, so the same is proved for the
+     * write side. The runner checks the host file after the run. */
     {
-        static char const kFile[] = "hello.txt";
+        static char const kIn[] = "hello.txt";
         char content[256];
         uint32_t got = 0;
-        bool ok = false;
-        uint32_t const fid = walk_path(0, kFile, sizeof(kFile) - 1, nullptr);
-        if (fid != aegir::p9::kNoFid) {
-            if (g_client.open(fid, aegir::p9::kORead)) {
-                uint8_t const *data = nullptr;
-                int32_t const n = g_client.read(fid, 0, sizeof(content), &data);
-                if (n >= 0) {
-                    got = static_cast<uint32_t>(n);
-                    for (uint32_t i = 0; i < got; ++i) {
-                        content[i] = static_cast<char>(data[i]);
-                    }
-                    ok = true;
-                }
-            }
-            (void)g_client.clunk(fid);
-        }
-        if (!ok) {
-            write("  9p: FAIL the export would not read hello.txt\n");
-        } else {
+        if (read_file(kIn, sizeof(kIn) - 1, content, sizeof(content), &got)) {
             write("  9p: read ");
             write_unsigned(got);
             write(" bytes: ");
             write(content, got);
+            write("\n");
+        } else {
+            write("  9p: FAIL the export would not read hello.txt\n");
+        }
+
+        static char const kOut[] = "written.txt";
+        static char const kText[] = "Aegir 9P: the machine wrote this through the volume.\n";
+        uint32_t const text_length = sizeof(kText) - 1;
+        uint64_t const handle =
+            do_open(kOut, sizeof(kOut) - 1,
+                    aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate, 0);
+        uint32_t written = 0;
+        if (handle != 0) {
+            written = do_write(handle, 0, reinterpret_cast<uint8_t const *>(kText),
+                               text_length);
+            (void)do_close(handle, 0);
+        }
+        uint32_t readback = 0;
+        bool const read_ok = read_file(kOut, sizeof(kOut) - 1, content, sizeof(content),
+                                       &readback);
+        if (written != text_length || !read_ok || readback != text_length) {
+            write("  9p: FAIL the export would not take a write\n");
+        } else {
+            write("  9p: wrote ");
+            write_unsigned(written);
+            write(" bytes, read back: ");
+            write(content, readback);
             write("\n");
         }
     }
@@ -658,12 +1110,12 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    /* Register the volume, named after the export. Read-only until the write
-     * side lands (specs/9p.md). */
+    /* Register the volume, named after the export. It takes writes now, so no
+     * read-only flag (specs/9p.md). */
     uint64_t out[aegir::nmspace::kNameMax / 8 + aegir::nmspace::kTypeMax / 8 + 2];
     uint32_t out_words = aegir::nmspace::pack_string(out, g_tag, g_tag_length,
                                                      aegir::nmspace::kNameMax);
-    out[out_words++] = aegir::nmspace::kFlagReadOnly | aegir::nmspace::kFlagPublic;
+    out[out_words++] = aegir::nmspace::kFlagPublic;
     static char const kType[] = "9P";
     out_words += aegir::nmspace::pack_string(out + out_words, kType, sizeof(kType) - 1,
                                              aegir::nmspace::kTypeMax);
@@ -691,29 +1143,45 @@ int main(int argc, char *argv[])
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
+        uint64_t badge = 0;
         uint32_t const method =
-            volume.receive_words(words, aegir::ipc::kMaxWords, &count, nullptr);
+            volume.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
         switch (method) {
         case aegir::volume::kMethodRead:
-            answer_read(volume, words, count);
+            answer_read(volume, words, count, badge);
             break;
         case aegir::volume::kMethodList:
-            answer_list(volume, words, count);
+            answer_list(volume, words, count, badge);
             break;
         case aegir::volume::kMethodStat:
-            answer_stat(volume, words, count);
+            answer_stat(volume, words, count, badge);
             break;
         case aegir::volume::kMethodSpace:
-            answer_space(volume);
+            answer_space(volume, words, count, badge);
             break;
         case aegir::volume::kMethodOpen:
-            answer_open(volume);
+            answer_open(volume, words, count, badge);
+            break;
+        case aegir::volume::kMethodWrite:
+            answer_write(volume, words, count, badge);
             break;
         case aegir::volume::kMethodClose:
-            answer_close(volume);
+            answer_close(volume, words, count, badge);
+            break;
+        case aegir::volume::kMethodMkdir:
+            answer_mkdir(volume, words, count, badge);
+            break;
+        case aegir::volume::kMethodRemove:
+            answer_remove(volume, words, count, badge);
+            break;
+        case aegir::volume::kMethodRename:
+            answer_rename(volume, words, count, badge);
+            break;
+        case aegir::volume::kMethodTruncate:
+            answer_truncate(volume, words, count, badge);
             break;
         case aegir::volume::kMethodReap:
-            answer_reap(volume);
+            answer_reap(volume, words, count, badge);
             break;
         default:
             /* A method this version does not know is answered by saying

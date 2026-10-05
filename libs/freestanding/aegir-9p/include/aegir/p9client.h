@@ -171,6 +171,123 @@ public:
         return run(w, r, kRclunk, tag);
     }
 
+    /** `valid` bits for Tsetattr: only the size is used here. */
+    static constexpr uint32_t kSetattrSize = 0x8;
+
+    /** Create `name` in the directory `fid` and open it: the fid becomes the
+     *  new file's (9P reuse), so the caller keeps the same number. */
+    bool create(uint32_t fid, char const *name, uint32_t name_length, uint32_t flags,
+                uint32_t mode, uint32_t gid) noexcept
+    {
+        uint16_t const tag = next_tag();
+        Writer w(transport_->request_buffer(), transport_->request_capacity());
+        w.begin(kTlcreate, tag);
+        w.put_u32(fid);
+        w.put_string(name, name_length);
+        w.put_u32(flags);
+        w.put_u32(mode);
+        w.put_u32(gid);
+        Reader r(nullptr, 0);
+        if (!run(w, r, kRlcreate, tag)) {
+            return false;
+        }
+        r.get_bytes(kQidBytes);
+        r.get_u32(); /* iounit */
+        return r.ok();
+    }
+
+    /** A directory in `fid` named `name`. */
+    bool mkdir(uint32_t fid, char const *name, uint32_t name_length, uint32_t mode,
+               uint32_t gid) noexcept
+    {
+        uint16_t const tag = next_tag();
+        Writer w(transport_->request_buffer(), transport_->request_capacity());
+        w.begin(kTmkdir, tag);
+        w.put_u32(fid);
+        w.put_string(name, name_length);
+        w.put_u32(mode);
+        w.put_u32(gid);
+        Reader r(nullptr, 0);
+        if (!run(w, r, kRmkdir, tag)) {
+            return false;
+        }
+        r.get_bytes(kQidBytes);
+        return r.ok();
+    }
+
+    /** Remove the file (or, with `flags` AT_REMOVEDIR, the empty directory)
+     *  `name` from the directory `fid`. */
+    bool unlinkat(uint32_t fid, char const *name, uint32_t name_length,
+                  uint32_t flags) noexcept
+    {
+        uint16_t const tag = next_tag();
+        Writer w(transport_->request_buffer(), transport_->request_capacity());
+        w.begin(kTunlinkat, tag);
+        w.put_u32(fid);
+        w.put_string(name, name_length);
+        w.put_u32(flags);
+        Reader r(nullptr, 0);
+        return run(w, r, kRunlinkat, tag);
+    }
+
+    /** Rename `oldname` in `oldfid` to `newname` in `newfid`. */
+    bool renameat(uint32_t oldfid, char const *oldname, uint32_t oldname_length,
+                  uint32_t newfid, char const *newname, uint32_t newname_length) noexcept
+    {
+        uint16_t const tag = next_tag();
+        Writer w(transport_->request_buffer(), transport_->request_capacity());
+        w.begin(kTrenameat, tag);
+        w.put_u32(oldfid);
+        w.put_string(oldname, oldname_length);
+        w.put_u32(newfid);
+        w.put_string(newname, newname_length);
+        Reader r(nullptr, 0);
+        return run(w, r, kRrenameat, tag);
+    }
+
+    /** Set the file's size (Tsetattr with only the size bit): the tail is freed
+     *  on a shrink, zeroed on a grow. */
+    bool setattr_size(uint32_t fid, uint64_t size) noexcept
+    {
+        uint16_t const tag = next_tag();
+        Writer w(transport_->request_buffer(), transport_->request_capacity());
+        w.begin(kTsetattr, tag);
+        w.put_u32(fid);
+        w.put_u32(kSetattrSize);
+        w.put_u32(0); /* mode */
+        w.put_u32(0); /* uid */
+        w.put_u32(0); /* gid */
+        w.put_u64(size);
+        w.put_u64(0); /* atime_sec */
+        w.put_u64(0); /* atime_nsec */
+        w.put_u64(0); /* mtime_sec */
+        w.put_u64(0); /* mtime_nsec */
+        Reader r(nullptr, 0);
+        return run(w, r, kRsetattr, tag);
+    }
+
+    /** Write `count` bytes at `offset`. Answers the bytes written, or -1. */
+    int32_t write(uint32_t fid, uint64_t offset, uint8_t const *data,
+                  uint32_t count) noexcept
+    {
+        uint16_t const tag = next_tag();
+        Writer w(transport_->request_buffer(), transport_->request_capacity());
+        w.begin(kTwrite, tag);
+        w.put_u32(fid);
+        w.put_u64(offset);
+        w.put_u32(count);
+        w.put_bytes(data, count);
+        Reader r(nullptr, 0);
+        if (!run(w, r, kRwrite, tag)) {
+            return -1;
+        }
+        uint32_t const written = r.get_u32();
+        if (!r.ok()) {
+            return -1;
+        }
+        return static_cast<int32_t>(written);
+    }
+
     /** Read `count` bytes at `offset`. `data` points into the reply -- valid
      *  until the next call on this client -- and the answer is the bytes read,
      *  or -1 on refusal. */
