@@ -61,6 +61,7 @@ set(aegir_initrd_binaries
     aegir-virtio-net
     aegir-net
     aegir-net-config
+    aegir-ping
     aegir-partmgr
     aegir-fs-fat
     aegir-fs-bfs
@@ -100,6 +101,7 @@ set(aegir_initrd_binary_names
     "aegir-virtio-net"
     "aegir-net"
     "aegir-net-config"
+    "aegir-ping"
     "aegir-partmgr"
     "aegir-fs-fat"
     "aegir-fs-bfs"

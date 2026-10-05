@@ -228,6 +228,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # build. slirp's lease is what a run sees.
             QmpStep(r"net: NE0 ipv4 \d+\.\d+\.\d+\.\d+ netmask \d+\.\d+\.\d+\.\d+ "
                     r"gateway \d+\.\d+\.\d+\.\d+"),
+            # The socket port's first client (specs/net.md): a raw ICMP echo to
+            # the DHCP-supplied gateway, which slirp answers. It is the plan's
+            # small landing -- the whole path (socket, send, held recv) end to
+            # end before TCP.
+            QmpStep(r"ping: reply from \d+\.\d+\.\d+\.\d+, type 0, \d+ bytes"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

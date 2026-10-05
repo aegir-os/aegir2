@@ -214,6 +214,17 @@ account   = system
 needs     = log.main, net.control
 restart   = never
 
+# The socket port's first client (specs/net.md): a raw ICMP echo. It waits for
+# DHCP's gateway through the control port and pings it -- the plan's small
+# landing before TCP carries a connection state machine. Names (Sys:S/hosts,
+# then DNS) and a command line follow; today it is the acceptance's last step.
+[ping]
+binary    = aegir-ping
+authority = system
+account   = system
+needs     = log.main, net.control, net.socket, timer.main
+restart   = never
+
 # The FAT filesystem service: one instance per FAT partition, started by the
 # partition manager with the block device's port and a range grant rather than
 # the whole device (specs/services.md). FAT16/32/ExFAT are the interchange
