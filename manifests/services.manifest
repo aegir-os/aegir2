@@ -201,6 +201,20 @@ maps       = true
 memory_kib = 8192
 restart    = always
 
+# The Net: filesystem view (specs/net.md): the live half. A synthetic volume --
+# one directory per adapter, one file per parameter -- that reads and
+# reprograms the running stack through its control port, and registers itself
+# with the VFS so an ordinary file client reads and writes it. It is a system
+# service because it holds the control port and the namespace, and its writes
+# are what reprogram a system interface.
+[netvol]
+binary     = aegir-net-volume
+authority  = system
+account    = system
+owns       = vol.net
+needs      = log.main, vfs.namespace, net.control
+restart    = never
+
 # The network is configured and proved from Startup-Sequence, not here
 # (specs/net.md): `netconfig` reads Sys:S/network.manifest and applies it through
 # the control port, and `ping` sends the ICMP echo. Neither can be a boot service

@@ -60,6 +60,7 @@ set(aegir_initrd_binaries
     aegir-virtio-gpu
     aegir-virtio-net
     aegir-net
+    aegir-net-volume
     aegir-partmgr
     aegir-fs-fat
     aegir-fs-bfs
@@ -98,6 +99,7 @@ set(aegir_initrd_binary_names
     "aegir-virtio-gpu"
     "aegir-virtio-net"
     "aegir-net"
+    "aegir-net-volume"
     "aegir-partmgr"
     "aegir-fs-fat"
     "aegir-fs-bfs"

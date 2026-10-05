@@ -199,6 +199,7 @@ set(aegir_commands
   aegir-tftp:tftp
   aegir-tcpecho:tcpecho
   aegir-net-config:netconfig
+  aegir-net-show:net
   aegir-assign:assign
   aegir-which:which
   aegir-version:version
