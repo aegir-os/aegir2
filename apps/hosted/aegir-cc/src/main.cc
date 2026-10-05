@@ -18,6 +18,8 @@
 
 #include "probe.h"
 
+#include <new>
+
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/heap.h>
@@ -27,10 +29,17 @@
 
 namespace {
 
-/* Static, like the smokes': the allocator's tables and the scratch window's
- * bookkeeping are tens of kilobytes, and a service's stack is pages. */
-aegir::mem::Allocator g_objects(nullptr);
-aegir::mem::Scratch g_scratch(nullptr);
+/* Storage, not objects: the allocator and the scratch window are constructed in
+ * cc_claim_heap (constructor 300), ahead of the library's own constructors, so a
+ * library global constructor that allocates has a heap. As plain globals they
+ * would be constructed in the default-priority phase -- after that point, and
+ * interleaved with the library's -- so the ordering could not be relied on.
+ * Static, like the smokes': their tables are tens of kilobytes and a process's
+ * stack is pages. */
+alignas(aegir::mem::Allocator) unsigned char g_objects_storage[sizeof(aegir::mem::Allocator)];
+alignas(aegir::mem::Scratch) unsigned char g_scratch_storage[sizeof(aegir::mem::Scratch)];
+aegir::mem::Allocator *g_objects = nullptr;
+aegir::mem::Scratch *g_scratch = nullptr;
 
 /* The mapping authority the spawn kit installs: the delegated untyped, the
  * VSpace root and the free-address window. The pattern is the cxx-smoke's. */
@@ -61,19 +70,53 @@ bool adopt_memory()
     bool ok = aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
               aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
               aegir::bootstrap::window(&window_base, &window_bytes) &&
-              g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
-                                      untyped_physical);
+              g_objects->adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
+                                       untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0,
-                              aegir::bootstrap::kCNodeBits);
-        ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
-                             static_cast<uintptr_t>(window_base),
-                             static_cast<uintptr_t>(window_base + window_bytes), &g_objects);
+        uint32_t const bits = aegir::bootstrap::cnode_bits();
+        g_objects->adopt_slots(first_free, (1u << bits) - first_free, 0, bits);
+        ok = g_scratch->adopt(static_cast<seL4_CPtr>(vspace_slot),
+                              static_cast<uintptr_t>(window_base),
+                              static_cast<uintptr_t>(window_base + window_bytes), g_objects);
     }
     return ok;
 }
 
 }  // namespace
+
+/* Before main, and before LLVM's own constructors: proves the runtime reached
+ * this program's constructors at all. `debug_write` is safe this early (the
+ * crt zeroes the TLS before the init array), so a run that prints nothing at
+ * all hung before any of this program's code. */
+__attribute__((constructor(1))) void cc_early_marker() noexcept
+{
+    aegir::debug_write("cc: runtime up\n");
+}
+
+/* The window is claimed here, at a priority above the library's own
+ * constructors (which have the default priority, so they run last): a C++
+ * program this size allocates from its global constructors, and before `init`
+ * the memory syscalls answer -ENOSYS, so an allocation there fails. `seed_musl`
+ * (200) has already pointed musl at the dispatcher; the window is what is
+ * missing, and this gives it. */
+__attribute__((constructor(300))) void cc_claim_heap() noexcept
+{
+    g_objects = new (g_objects_storage) aegir::mem::Allocator(nullptr);
+    g_scratch = new (g_scratch_storage) aegir::mem::Scratch(nullptr);
+    /* Room for LLVM's Support globals and a file mapping; the seed is a floor
+     * and the heap grows past it through mem.main (specs/memory.md Phase 2). */
+    constexpr uint64_t kHeapBytes = 16ull << 20;
+    if (!adopt_memory()) {
+        aegir::debug_write("  cc: FAIL no untyped, vspace or window\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+    if (!aegir::heap::init(*g_objects, *g_scratch, kHeapBytes)) {
+        aegir::debug_write("  cc: FAIL the heap could not claim the window\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -82,20 +125,9 @@ int main(int argc, char *argv[])
 
     aegir::debug_write("\naegir-cc: the on-device compiler's first measurement\n");
 
-    if (!adopt_memory()) {
-        aegir::debug_write("  cc: FAIL no untyped, vspace or window\n");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        aegir::halt();
-    }
-
-    /* Room for LLVM's Support globals and a file mapping; the seed is a floor
-     * and the heap grows past it through mem.main (specs/memory.md Phase 2). */
-    constexpr uint64_t kHeapBytes = 16ull << 20;
-    if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
-        aegir::debug_write("  cc: FAIL the heap could not claim the window\n");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        aegir::halt();
-    }
+    /* The window was claimed by cc_claim_heap (constructor 300), before the
+     * library's own constructors could allocate; a failure there halted the
+     * process. */
 
     int failed = aegir::clang_probe::read_file("Initrd:services.manifest");
     aegir::debug_write(failed == 0 ? "AEGIR_CC_READ_OK\n" : "AEGIR_CC_READ_FAIL\n");

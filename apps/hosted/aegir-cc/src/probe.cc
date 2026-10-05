@@ -53,6 +53,7 @@ int compile(char const *source_path, char const *object_path)
     /* A freestanding source the first compile uses: no headers and no runtime,
      * just a function and a value. Deliberately the shape specs/clang-on-aegir
      * starts with, so no on-device sysroot is needed yet. */
+    aegir::debug_write("  cc: opening the source for write\n");
     {
         std::error_code ec;
         llvm::raw_fd_ostream source(source_path, ec, llvm::sys::fs::OF_Text);
@@ -62,8 +63,11 @@ int compile(char const *source_path, char const *object_path)
             aegir::debug_write("\n");
             return 1;
         }
+        aegir::debug_write("  cc: source opened; writing\n");
         source << "int aegir_probe(void) { return 42; }\n";
+        aegir::debug_write("  cc: wrote; closing\n");
     }
+    aegir::debug_write("  cc: source written\n");
 
     CompilerInstance ci;
     ci.createDiagnostics(*llvm::vfs::getRealFileSystem());
@@ -83,6 +87,7 @@ int compile(char const *source_path, char const *object_path)
     llvm::ArrayRef<const char *> arg_ref(args.data(), args.size());
     CompilerInvocation::CreateFromArgs(*invocation, arg_ref, ci.getDiagnostics());
     ci.setInvocation(std::move(invocation));
+    aegir::debug_write("  cc: invocation built; running clang\n");
 
     if (!ExecuteCompilerInvocation(&ci)) {
         aegir::debug_write("  cc: FAIL clang could not compile the source\n");
