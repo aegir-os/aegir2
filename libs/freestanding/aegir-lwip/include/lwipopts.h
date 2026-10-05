@@ -60,6 +60,10 @@
  * LWIP_HAVE_LOOPIF is derived from it. */
 #define LWIP_NETIF_LOOPBACK         1
 #define LWIP_HAVE_LOOPIF            1
+/* The hostname rides DHCP option 12 (specs/net.md): with this on, lwIP carries
+ * netif->hostname in its discover and request, so the name a manifest declares
+ * is what the network sees -- not only a label the machine keeps. */
+#define LWIP_NETIF_HOSTNAME         1
 /* The tcpip mailbox holds more than one message: lwIP schedules internal work
  * through it with a *try*post (netif_poll after a loopback send, callbacks), and
  * a one-slot ring silently drops that work -- which is what kept `ping

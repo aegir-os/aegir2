@@ -32,6 +32,11 @@ namespace {
 
 using ethernet::kFrameMax;
 
+/* A host name's ceiling: DNS caps a label at 63 bytes (RFC 1035), and the
+ * hostname DHCP option 12 carries is a label, not a name with a domain. It is a
+ * protocol bound, not a size chosen here. */
+constexpr uint32_t kHostnameMax = 63;
+
 /* One link's state: the port it is called through, the window it maps, the
  * netif lwIP routes through, and what the control port describes -- the
  * addresses cached when the tcpip thread learned them, so a reader on another
@@ -47,6 +52,11 @@ struct Link {
     bool link_up;
     uint32_t unit;
     uint64_t name; /* "NE0" packed low byte first */
+    /* The hostname (specs/net.md), in the link's own storage because lwIP's
+     * netif holds the pointer rather than a copy: it must outlive the set that
+     * made it. DHCP option 12 carries it. */
+    char hostname[kHostnameMax + 1];
+    uint32_t hostname_length;
     /* Cached for `describe`, written in the tcpip thread. */
     uint64_t ipv4;
     uint64_t netmask;
@@ -226,6 +236,8 @@ struct Configure {
     struct netif *netif;
     uint32_t parameter;
     uint64_t value;
+    uint64_t const *text; /* the set-text value, packed low byte first */
+    uint32_t text_length;
     bool taken;
     sys_sem_t done;
 };
@@ -261,6 +273,27 @@ void apply_configure(void *argument) noexcept
         }
         job->taken = true;
         break;
+    case netcontrol::kParamHostname: {
+        auto *const link = static_cast<Link *>(netif->state);
+        uint32_t const length = job->text_length;
+        if (length == 0 || length > kHostnameMax) {
+            break;
+        }
+        for (uint32_t i = 0; i < length; ++i) {
+            link->hostname[i] =
+                static_cast<char>((job->text[i / 8] >> (8 * (i % 8))) & 0xff);
+        }
+        link->hostname[length] = '\0';
+        link->hostname_length = length;
+        netif_set_hostname(netif, link->hostname);
+        job->taken = true;
+        aegir::debug_write("      net: NE");
+        aegir::debug_write_unsigned(link->unit);
+        aegir::debug_write(" hostname ");
+        aegir::debug_write(link->hostname, length);
+        aegir::debug_write("\n");
+        break;
+    }
     default:
         job->taken = false;
         break;
@@ -367,6 +400,8 @@ unsigned add_links(Authority const &authority) noexcept
         link->link_up = (raw[2] & ethernet::kInfoLinkUp) != 0;
         link->unit = trailing_unit(row->instance, name_length);
         link->name = pack_name(link->unit);
+        link->hostname[0] = '\0';
+        link->hostname_length = 0;
         link->ipv4 = 0;
         link->netmask = 0;
         link->gateway = 0;
@@ -452,6 +487,51 @@ bool link_configure(unsigned index, uint32_t parameter, uint64_t value) noexcept
     sys_arch_sem_wait(&job.done, 0);
     sys_sem_free(&job.done);
     return job.taken;
+}
+
+bool link_set_text(unsigned index, uint32_t parameter, uint64_t const *packed,
+                   uint32_t length) noexcept
+{
+    Link *const link = link_at(index);
+    if (link == nullptr || packed == nullptr || length == 0) {
+        return false;
+    }
+    Configure job{};
+    job.netif = &link->netif;
+    job.parameter = parameter;
+    job.text = packed;
+    job.text_length = length;
+    job.taken = false;
+    if (sys_sem_new(&job.done, 0) != ERR_OK) {
+        return false;
+    }
+    if (tcpip_callback(apply_configure, &job) != ERR_OK) {
+        sys_sem_free(&job.done);
+        return false;
+    }
+    sys_arch_sem_wait(&job.done, 0);
+    sys_sem_free(&job.done);
+    return job.taken;
+}
+
+bool link_get_text(unsigned index, uint32_t parameter, uint64_t *packed,
+                   uint32_t capacity_bytes, uint32_t *length) noexcept
+{
+    Link *const link = link_at(index);
+    if (link == nullptr || parameter != netcontrol::kParamHostname || packed == nullptr ||
+        length == nullptr || link->hostname_length == 0) {
+        return false;
+    }
+    uint32_t const count = link->hostname_length;
+    if (count > capacity_bytes) {
+        return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        packed[i / 8] |= static_cast<uint64_t>(static_cast<uint8_t>(link->hostname[i]))
+                         << (8 * (i % 8));
+    }
+    *length = count;
+    return true;
 }
 
 }  // namespace aegir::net

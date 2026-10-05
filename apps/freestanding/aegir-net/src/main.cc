@@ -286,10 +286,11 @@ int main(int argc, char *argv[])
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("net", "ready: the stack is up");
     for (;;) {
-        uint64_t words[4] = {0, 0, 0, 0};
+        uint64_t words[aegir::ipc::kMaxWords] = {0};
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = control.receive_words(words, 4, &count, &badge);
+        uint32_t const method =
+            control.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
         if (method == aegir::netcontrol::kMethodList) {
             control.reply(aegir::net::link_count());
         } else if (method == aegir::netcontrol::kMethodDescribe && count >= 1) {
@@ -305,6 +306,24 @@ int main(int argc, char *argv[])
             bool const taken = aegir::net::link_configure(
                 static_cast<unsigned>(words[0]), static_cast<uint32_t>(words[1]), words[2]);
             control.reply(taken ? 1 : 0);
+        } else if (method == aegir::netcontrol::kMethodSetText && count >= 3 &&
+                   words[2] <= static_cast<uint64_t>(count - 3) * 8) {
+            bool const taken = aegir::net::link_set_text(
+                static_cast<unsigned>(words[0]), static_cast<uint32_t>(words[1]), &words[3],
+                static_cast<uint32_t>(words[2]));
+            control.reply(taken ? 1 : 0);
+        } else if (method == aegir::netcontrol::kMethodGetText && count >= 2) {
+            uint64_t answer[aegir::ipc::kMaxWords] = {0};
+            uint32_t length = 0;
+            if (aegir::net::link_get_text(static_cast<unsigned>(words[0]),
+                                          static_cast<uint32_t>(words[1]), &answer[1],
+                                          (aegir::ipc::kMaxWords - 1) * 8, &length) &&
+                length > 0) {
+                answer[0] = length;
+                control.reply_words(answer, 1 + (length + 7) / 8);
+            } else {
+                control.reply(0);
+            }
         } else {
             /* A method we do not know is a protocol version we do not speak. */
             control.reply(0);

@@ -44,6 +44,19 @@ constexpr uint32_t kDescribeWords = 5;
 constexpr uint32_t kMethodSet = 3;
 constexpr uint32_t kSetWords = 3;
 
+/** Set-text: a `set` whose value is text rather than a word. Request words: the
+ *  adapter's index, the parameter, the value's byte length, then the bytes
+ *  packed low byte first (the packing `aegir/net.h`'s DNS name uses). The
+ *  answer is one word, 1 when the parameter was taken. The text's ceiling is
+ *  the message envelope's, not a number chosen here. */
+constexpr uint32_t kMethodSetText = 4;
+
+/** Get-text: read a text parameter. Request words: the adapter's index and the
+ *  parameter. The answer is the byte length followed by the bytes packed low
+ *  byte first; a single zero word means the parameter is not one the stack
+ *  speaks or has no value. */
+constexpr uint32_t kMethodGetText = 5;
+
 /* Parameters (the `set` request's second word). */
 /** DHCP: 1 asks the network for an address, netmask, gateway and DNS server and
  *  brings the interface up; 0 stops it. The numbers are the network's, never
@@ -57,6 +70,10 @@ constexpr uint32_t kParamUp = 2;
 constexpr uint32_t kParamIpv4Address = 3;
 constexpr uint32_t kParamIpv4Netmask = 4;
 constexpr uint32_t kParamIpv4Gateway = 5;
+/** Hostname: the machine's name, text (`kMethodSetText`/`kMethodGetText`). The
+ *  stack puts it in DHCP option 12, so it is what the network sees and not only
+ *  a label the machine keeps (specs/net.md). */
+constexpr uint32_t kParamHostname = 6;
 
 /* State bits (the `describe` answer's last word). */
 constexpr uint64_t kStateUp = 1;     /* the interface is up */

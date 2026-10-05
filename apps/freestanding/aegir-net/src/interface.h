@@ -66,6 +66,21 @@ bool link_state(unsigned index, LinkState *state) noexcept;
  *  is not one the stack speaks. */
 bool link_configure(unsigned index, uint32_t parameter, uint64_t value) noexcept;
 
+/** Apply a `set-text` (aegir/netcontrol.h) to adapter `index`: a parameter whose
+ *  value is text, `length` bytes packed low byte first in `packed`. The change
+ *  runs in the tcpip thread and the call waits for it. False when the index or
+ *  the parameter is not one the stack speaks, or the text will not fit the
+ *  parameter. */
+bool link_set_text(unsigned index, uint32_t parameter, uint64_t const *packed,
+                   uint32_t length) noexcept;
+
+/** Read a text parameter of adapter `index` (aegir/netcontrol.h): the bytes
+ *  packed low byte first into `packed` (up to `capacity_bytes`), with the count
+ *  in `length`. False when the index or the parameter is not one the stack
+ *  speaks, or the parameter has no value yet. */
+bool link_get_text(unsigned index, uint32_t parameter, uint64_t *packed,
+                   uint32_t capacity_bytes, uint32_t *length) noexcept;
+
 }  // namespace aegir::net
 
 #endif  // AEGIR_NET_INTERFACE_H
