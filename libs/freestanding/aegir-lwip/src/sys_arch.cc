@@ -298,15 +298,21 @@ extern "C" u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout
     while (handle->count == 0) {
         seL4_Word badge = 0;
         seL4_Wait(handle->notification, &badge);
+        if (badge != 0) {
+            /* TEMP diagnostic: the first time the bound notification wakes us,
+             * say with what badge -- the tick's badge must be exactly kTickBit. */
+            static bool announced = false;
+            if (!announced) {
+                announced = true;
+                aegir::debug_write("      net: the tcpip thread woke on a signal, badge ");
+                aegir::debug_write_hex(badge);
+                aegir::debug_write("\n");
+            }
+        }
         if (badge == aegir::lwip::kTickBit) {
             /* The timer tick: advance the clock lwIP reads, then let it run its
              * timers (a clock that never moves makes every timeout never
              * fire). */
-            static bool announced = false;
-            if (!announced) {
-                announced = true;
-                aegir::debug_write("      net: the tcpip thread saw its first tick\n");
-            }
             g_now_ms += g_tick_ms;
             return SYS_ARCH_TIMEOUT;
         }

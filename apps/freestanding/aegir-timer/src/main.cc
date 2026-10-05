@@ -305,11 +305,22 @@ int main(int argc, char *argv[])
         if (badge == kTickBit && have_tick) {
             /* The alarm fired: clear and ack it, then answer everything that is
              * now due. */
+            static bool fired = false;
+            if (!fired) {
+                fired = true;
+                aegir::debug_write("      timer: the alarm fired\n");
+            }
             registers[kClearInterrupt / 4] = 1;
             seL4_IRQHandler_Ack(handler);
             for (Subscriber *s = g_subs; s != nullptr; s = s->link) {
                 if (now >= s->next) {
                     seL4_Signal(s->cap);
+                    /* TEMP diagnostic: did the timer signal a subscription? */
+                    static bool announced = false;
+                    if (!announced) {
+                        announced = true;
+                        aegir::debug_write("      timer: signalled a subscription\n");
+                    }
                     /* Advance from now, not the old `next`: a period that was
                      * missed signals once, no burst (specs/signal.md). */
                     s->next = now + s->period;
