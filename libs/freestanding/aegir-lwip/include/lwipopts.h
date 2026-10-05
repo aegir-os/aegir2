@@ -38,6 +38,11 @@
  * ping is (specs/net.md). */
 #define LWIP_RAW                    1
 #define LWIP_DHCP                   1
+/* No address-conflict probing after the DHCP ACK (lwIP 2.2's ACD): it costs
+ * seconds of boot delay for a lease a DHCP server already made unique, and this
+ * network's server is trusted (QEMU's slirp). A deployment that shares a
+ * segment with hand-configured hosts would turn it back on. */
+#define LWIP_DHCP_DOES_ACD_CHECK    0
 #define LWIP_DNS                    1
 #define LWIP_TCP                    1
 #define LWIP_UDP                    1
