@@ -35,17 +35,23 @@ than heroic:
 - **The syscall redirection is already in the tree.** The tracked musl patch
   (`third_party/patches/projects/musl/0001-riscv64-redirect-syscalls-to-sel4-vsyscall.patch`)
   routes *every* musl syscall through the `__sysinfo` function pointer, and
-  `libs/aegir-heap/src/heap.cc` already owns that switch (`vsyscall`, `:310`).
+  `libs/hosted/aegir-heap/src/heap.cc` already owns that switch (`vsyscall`).
   Adding a POSIX surface is adding handlers, not re-plumbing.
 - **LLVM's defaults already match Aegir's tier-1 runtime.** LLVM 20 defaults
   `LLVM_ENABLE_EH=OFF` and `LLVM_ENABLE_RTTI=OFF`, exactly what
   `scripts/build_libcxx.sh` builds libc++ with. Exceptions and RTTI are not a
   prerequisite here, unlike so much else.
 
-The same fact cuts the other way: the current dispatcher answers eight calls —
-`brk`, `mmap`, `munmap`, `mremap`, `madvise`, `write`, `writev`, `exit`
-(`libs/aegir-heap/src/heap.cc:215-352`) — and a compiler is file-heavy and
-process-aware. The gap map below is the work.
+The same fact cuts the other way: the dispatcher has grown well past the first
+handful this plan named. `libs/hosted/aegir-heap/src/heap.cc`'s `vsyscall` — the
+function musl's `__sysinfo` points at — now answers the whole file surface a
+`std::filesystem` needs (`openat`, `close`, `read`, `lseek`, `newfstatat`,
+`fstat`, `getdents64`, `mkdirat`, `unlinkat`, `renameat2`, `truncate`,
+`ftruncate`, `chdir`, the xattr family, `sendfile`) over `aegir::vfs`, plus
+`clock_gettime`/`nanosleep`, the socket family and `exit_group`. The gap map
+below is corrected to the tree. What remains for a compiler is one load-bearing
+call — file-backed `mmap` (the dispatcher's `sys_mmap` is anonymous-private
+only, `heap.cc:513`) — and a small tail (signals, threads, process).
 
 ## The decisions
 
@@ -83,14 +89,14 @@ Verified in the tree. Each row is a prerequisite arc.
 
 | Capability | What LLVM/Clang needs | Aegir today |
 | --- | --- | --- |
-| File I/O | `open/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir` | `write(1/2)` only (`heap.cc:279`); the VFS exists but there is no POSIX bridge |
-| Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | anonymous `mmap` only; `munmap` is a no-op, `mprotect` absent (`heap.cc:215-274`) |
-| Process | `posix_spawn`/`fork`/`execve` for cc1 + ld | none; Aegir spawn is a capability path (`specs/director.md`) |
-| Threads | `pthread_create`, mutex, atomics | `clone` refused (`specs/cxx.md:214`); buildable with `LLVM_ENABLE_THREADS=OFF` |
+| File I/O | `open/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir` | **done** — the dispatcher answers all of these over `aegir::vfs` (`libs/hosted/aegir-heap/src/heap.cc`) |
+| Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | anonymous `mmap` only (`sys_mmap`, `heap.cc:513`); `munmap`/`mremap` exist, `mprotect` absent. **The one load-bearing gap.** |
+| Process | `posix_spawn`/`fork`/`execve` for cc1 + ld | none; the in-process driver (Phase 3) avoids them, so deferred |
+| Threads | `pthread_create`, mutex, atomics | `LLVM_ENABLE_THREADS=OFF` avoids them; a `clone` route exists (musl patch 0002) but is not on this path |
 | Signals | `sigaction` (crash handlers) | none; disable or stub |
-| Time/env | `clock_gettime`, `nanosleep`, `getenv`, `uname`, `getcwd` | `argc`/`argv` only (`specs/environment.md`) |
-| C++ | libc++ **no EH/RTTI** | already built tier-1 (`scripts/build_libcxx.sh:91-92`) |
-| Assembler/linker | integrated assembler + lld | buildable from the vendored tree; not on device |
+| Time/env | `clock_gettime`, `nanosleep`, `getenv`, `uname`, `getcwd` | `clock_gettime`/`nanosleep`/`getcwd` done; `environ`/`getenv` on `aegir::environment`; `uname`/`sysconf` a stub |
+| C++ | libc++ **no EH/RTTI** | already built tier-1 (`scripts/build_libcxx.sh`) |
+| Assembler/linker | integrated assembler + lld | cross-buildable from the vendored tree (Phase 1); not on device |
 
 ## The shape of the work
 
@@ -100,7 +106,7 @@ scripts/build_llvm.sh                    # Phase 1: cross-build clang+lld+builti
 libs/aegir-llvm/imported.cmake           # Phase 1: expose clang/lld to CMake
 third_party/patches/projects/llvm-project/0002-riscv64-aegir-triple.patch  # the one new LLVM patch
 libs/aegir-posix/                        # Phase 2: the personality (files, mem, env, time)
-libs/aegir-heap/src/heap.cc              # grows: the dispatcher gains the new handlers
+libs/hosted/aegir-heap/src/heap.cc       # shrinks: the file handlers move to libs/aegir-posix
 apps/aegir-cc/                           # Phase 3: libclang + liblld single-process driver
 apps/aegir-clang-test/                   # the acceptance service
 ```
@@ -152,9 +158,12 @@ our own patch is fixed (`AGENTS.md`).
 ### Phase 2 — the POSIX personality
 
 A new `libs/aegir-posix`, with the handlers reached through the existing
-`__sysinfo` switch, backed by Aegir's VFS, ports and seL4. Each sub-arc has its
-own acceptance client, independent of clang, because the rule is that the calls
-live in a library and not a program (`specs/userland.md:149-156`):
+`__sysinfo` switch, backed by Aegir's VFS, ports and seL4. The surface already
+exists, inside `libs/hosted/aegir-heap`; the first step is therefore to move
+those handlers into `libs/aegir-posix` and leave the heap the memory calls it
+owns, so the surface grows in one place rather than in the heap. Each sub-arc
+has its own acceptance client, independent of clang, because the rule is that
+the calls live in a library and not a program (`specs/userland.md:149-156`):
 
 1. **Files** — `open/close/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir`
    over `vfs.namespace` and the volume protocol. The largest prerequisite, and it
