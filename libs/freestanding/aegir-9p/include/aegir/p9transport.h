@@ -67,4 +67,25 @@ constexpr uint32_t reply_bytes(uint32_t window_bytes) noexcept
     return window_bytes - window_bytes / 2;
 }
 
+/** A transport a 9P client speaks through: where to build a request, and how
+ *  to run it. The virtio transport's shared window is both buffers -- the
+ *  request at the start, the reply in the second half -- where a socket
+ *  transport would be two of its own. The client owns none of the storage and
+ *  copies nothing: it writes into `request_buffer` and reads the reply where
+ *  `reply` points. No virtual destructor on purpose, the way
+ *  `aegir::devtree::Visitor` has none: nothing deletes through this interface,
+ *  and a deleting destructor would need `operator delete`, which a freestanding
+ *  program does not have. */
+class Transport {
+public:
+    virtual uint8_t *request_buffer() noexcept = 0;
+    virtual uint32_t request_capacity() noexcept = 0;
+    /** Run the request of `length` bytes already in `request_buffer`; leave
+     *  the reply visible through `reply`/`reply_length`. False when the device
+     *  did not answer. */
+    virtual bool round_trip(uint32_t length) noexcept = 0;
+    virtual uint8_t const *reply() noexcept = 0;
+    virtual uint32_t reply_length() noexcept = 0;
+};
+
 }  // namespace aegir::p9transport

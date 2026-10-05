@@ -228,6 +228,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # line names the dialect and the size the host offered, so a
             # transport that came up but could not carry a message fails here.
             QmpStep(r"p9\.virtio0: 9P2000\.L, msize \d+, tag host"),
+            # The 9P filesystem (specs/9p.md): a service opened the bound
+            # transport through the registry, spoke 9P2000.L over it, and read
+            # the file the runner put in the shared host directory -- walk,
+            # open, read and clunk proved against the host's own bytes.
+            QmpStep(r"9p: read \d+ bytes: Aegir 9P: this file lives on the host\."),
+            # ...and it registered the export's own tag as a volume, so the host
+            # directory is reachable by the ordinary file protocol.
+            QmpStep(r"9p: host: registered, serving"),
             # The network stack (specs/net.md): director started it as a system
             # service, and it brought lwIP up -- lwip_init, the tcpip thread
             # (where the sys_arch, the thread builder and the page-backed heap

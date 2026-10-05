@@ -67,6 +67,7 @@ set(aegir_initrd_binaries
     aegir-fs-bfs
     aegir-vfs
     aegir-fs-initrd
+    aegir-fs-9p
     aegir-fs-nil
     aegir-memory
     aegir-mem-smoke
@@ -106,6 +107,7 @@ set(aegir_initrd_binary_names
     "aegir-fs-bfs"
     "aegir-vfs"
     "aegir-fs-initrd"
+    "aegir-fs-9p"
     "aegir-fs-nil"
     "aegir-memory"
     "aegir-mem-smoke"

@@ -293,6 +293,24 @@ maps       = true
 memory_kib = 16
 restart   = always
 
+# The 9P filesystem (specs/9p.md): the host directory a run shares, mounted as
+# a volume. Director starts it -- it is a filesystem, not a driver and not a
+# partition the partition manager would find -- and it opens the bound p9.*
+# transport through the device manager's registry, speaks 9P2000.L over it, and
+# registers the export's own tag as a volume. `maps` is what lets it map the
+# transport's window through its own VSpace root; the untyped is the page
+# tables over that window. Its name is not in the fs.* class, like the initrd's,
+# because that class is partmgr's spawn right.
+[hostfs]
+binary     = aegir-fs-9p
+authority  = system
+account    = system
+owns       = vol.hostfs
+needs      = log.main, vfs.namespace, devmgr.registry
+maps       = true
+memory_kib = 256
+restart    = never
+
 # The null handler (specs/boot.md, specs/vfs.md): the NIL: device, where output
 # goes to disappear and input is always at its end. A volume like any other, so
 # redirection reaches it by path and the VFS needs no special case for it --
