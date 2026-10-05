@@ -293,13 +293,15 @@ AEGIR_BFS_TREE = [
         # resolver reads Sys:S/hosts in the client, and 127.0.0.1 is lwIP's own
         # loopback, so nothing touches the wire. `tftp` fetches a file from the
         # virtual host's TFTP server over UDP -- the socket port's datagram
-        # slice, exercised with real bytes on the wire (specs/net.md). `filenote`
+        # slice, exercised with real bytes on the wire -- and `tcpecho` carries a
+        # string out and back over the loopback, the stream slice's whole
+        # lifecycle with nothing on the wire at all (specs/net.md). `filenote`
         # is the marker no other acceptance step cues on, so the boot window
         # stays hidden. EndCLI >NIL: is the Amiga's quiet close; it needs the
         # NIL: handler.
         ("file", "Startup-Sequence",
          b"; Aegir system startup: the network, then the quiet close.\n"
-         b"netconfig\nping\nping localhost\ntftp aegir.txt\n"
+         b"netconfig\nping\nping localhost\ntftp aegir.txt\ntcpecho\n"
          b"filenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
         # The interpreter's acceptance (specs/shell.md): a built-in changes the
         # shell, and the next line only runs if the script did -- the shell

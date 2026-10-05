@@ -258,6 +258,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # content and not only the count; nothing external was reached.
             QmpStep(r"tftp: \d+ bytes in \d+ blocks? from \d+\.\d+\.\d+\.\d+"),
             QmpStep(r"tftp: first line: Aegir TFTP: this file crossed the wire\."),
+            # The stream slice (specs/net.md): `tcpecho` binds a listener on
+            # 127.0.0.1, connects to it, accepts the connection, writes a string,
+            # reads the echo back and compares it -- bind, listen, connect,
+            # accept, write, recv, the whole lifecycle, all on the loopback with
+            # nothing on the wire.
+            QmpStep(r"tcpecho: \d+ bytes echoed over loopback: Aegir TCP echo"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

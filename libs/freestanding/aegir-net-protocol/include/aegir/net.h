@@ -30,13 +30,15 @@ constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
 /* socket(2)'s arguments, as the values the C library uses. The raw slice
  * speaks AF_INET / SOCK_RAW / IPPROTO_ICMP; the datagram slice adds AF_INET /
- * SOCK_DGRAM / IPPROTO_UDP, which is what a TFTP fetch needs. The rest is
- * refused. */
+ * SOCK_DGRAM / IPPROTO_UDP, which is what a TFTP fetch needs; the stream slice
+ * adds AF_INET / SOCK_STREAM / IPPROTO_TCP. The rest is refused. */
 constexpr uint32_t kAfInet = 2;
 constexpr uint32_t kSockRaw = 3;
 constexpr uint32_t kIpprotoIcmp = 1;
 constexpr uint32_t kSockDgram = 2;
 constexpr uint32_t kIpprotoUdp = 17;
+constexpr uint32_t kSockStream = 1;
+constexpr uint32_t kIpprotoTcp = 6;
 
 /* socket: three request words (domain, type, protocol). The answer is one word,
  * the socket's id, or 0 when the combination is one the stack does not speak. */
@@ -79,6 +81,36 @@ constexpr uint32_t kMethodSendTo = 6;
  * and the payload words. A datagram is a whole message, so the length is its
  * own and the reply carries all of it. */
 constexpr uint32_t kMethodRecvFrom = 7;
+
+/* The stream slice. A TCP socket is a lifecycle: a server binds and listens,
+ * `accept` answers a new socket per connection, a client `connect`s, and both
+ * `write` and `recv` move the bytes. */
+
+/* bind: the id, the local address (network order; zero is any), and the port
+ * (host order, low 16 bits). The answer is 1 when bound, 0 when refused. */
+constexpr uint32_t kMethodBind = 8;
+
+/* listen: the id. The answer is 1 when listening, 0 when refused. */
+constexpr uint32_t kMethodListen = 9;
+
+/* accept: the id and a timeout in milliseconds (0 waits forever). The answer is
+ * *held* until a connection arrives or the timeout passes, then one word, the
+ * new connection's socket id, or 0 on timeout. The connection is its own socket
+ * -- `recv`/`write`/`close` take its id -- so one listener serves many. */
+constexpr uint32_t kMethodAccept = 10;
+
+/* connect: the id, the peer's address (network order), the peer's port (host
+ * order, low 16 bits), and a timeout in milliseconds (0 waits forever). The
+ * answer is *held* until the handshake completes or fails, then one word, 1 when
+ * connected and 0 when refused or timed out. */
+constexpr uint32_t kMethodConnect = 11;
+
+/* write: the stream form of send -- a connected socket has its peer already, so
+ * there is no destination. Request words: the id, the payload's length in bytes,
+ * then the payload words (low byte first). The answer is the bytes the stack
+ * took (zero when the send buffer is full, which a later `tcp_sent` wait
+ * refines). */
+constexpr uint32_t kMethodWrite = 12;
 
 /* A name's ceiling: DNS's own limit, not a number of ours. */
 constexpr uint32_t kMaxNameBytes = 255;

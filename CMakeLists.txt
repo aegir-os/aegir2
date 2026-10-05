@@ -197,6 +197,7 @@ set(aegir_commands
   aegir-info:info
   aegir-ping:ping
   aegir-tftp:tftp
+  aegir-tcpecho:tcpecho
   aegir-net-config:netconfig
   aegir-assign:assign
   aegir-which:which
