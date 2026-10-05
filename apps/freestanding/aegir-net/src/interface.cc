@@ -274,6 +274,11 @@ void apply_configure(void *argument) noexcept
             if (dhcp_start(netif) == ERR_OK) {
                 job->taken = true;
                 sys_timeout(500, dhcp_poll, netif->state);
+                static bool announced = false;
+                if (!announced) {
+                    announced = true;
+                    aegir::debug_write("      net: the dhcp poll is armed\n");
+                }
             }
         } else {
             dhcp_stop(netif);

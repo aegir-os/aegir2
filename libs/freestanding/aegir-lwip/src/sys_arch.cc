@@ -30,6 +30,7 @@ extern "C" {
 #include <lwip/sys.h>
 }
 
+#include <aegir/debug.h>
 #include <sel4/sel4.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -301,6 +302,11 @@ extern "C" u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout
             /* The timer tick: advance the clock lwIP reads, then let it run its
              * timers (a clock that never moves makes every timeout never
              * fire). */
+            static bool announced = false;
+            if (!announced) {
+                announced = true;
+                aegir::debug_write("      net: the tcpip thread saw its first tick\n");
+            }
             g_now_ms += g_tick_ms;
             return SYS_ARCH_TIMEOUT;
         }
