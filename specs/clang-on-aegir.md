@@ -224,10 +224,10 @@ re-checked at every LLVM bump (`specs/third_party.md`'s upgrade list).
 ## Cross-cutting
 
 - **Disk.** The compiler is on the order of 100–200 MiB. The acceptance disk is
-  **32 MiB** (`scripts/make_disk.py:34`, four FAT partitions) and cannot hold it.
-  The compiler gets a dedicated, larger image and target rather than growing the
-  disk the existing tests stand on — the created-once, `-snapshot` invariant
-  (`scripts/targets.py`) stays true for those.
+  small (`scripts/make_disk.py`) and cannot hold it; `specs/development.md` gives
+  the compiler its own target and larger disk, so the disk the existing tests
+  stand on — created once and run `-snapshot` (`scripts/targets.py`) — is not
+  grown.
 - **Envelope.** The 2 GiB floor cannot host a compiler; development and
   acceptance are on `aegir-8g-smp4`. That is a capacity finding for
   `specs/aegir.md` to carry, not a quiet change of the floor.
@@ -266,8 +266,9 @@ sizes; it does not require them to run.
   manifest service. A user reaching it interactively needs a shell or a session
   command, and neither exists yet (`specs/services.md`'s session row is a
   placeholder). That is a later arc.
-- **On-device sysroot packaging.** What goes on the compiler volume, and how it
-  is versioned with the runtime, is not designed here.
+- **On-device sysroot packaging.** Designed in `specs/development.md`: the
+  compiler ships in `Sys:Development` (`C`, `Include`, `Libs`), a program on the
+  system volume run from the session, versioned with the runtime.
 - **Whether `posix_spawn` is ever needed.** The in-process driver avoids it; the
   stock `clang` binary would not. This plan chooses the driver, but a POSIX
   process model may be wanted for other ports and is the natural next client of
