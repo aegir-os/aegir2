@@ -196,6 +196,7 @@ set(aegir_commands
   aegir-filenote:filenote
   aegir-info:info
   aegir-ping:ping
+  aegir-tftp:tftp
   aegir-net-config:netconfig
   aegir-assign:assign
   aegir-which:which

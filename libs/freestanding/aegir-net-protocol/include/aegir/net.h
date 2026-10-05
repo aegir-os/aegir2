@@ -9,12 +9,13 @@
  * the way `socket(2)` is, so a client -- including a hosted one through the
  * later musl shim -- uses familiar calls and never touches a `tcp_pcb`.
  *
- * The first slice is a **raw ICMP socket**, which is what `ping` needs: a
- * client creates one, sends an echo request, and receives until the reply
- * comes. The protocol grows by adding family/type/protocol combinations and
- * the methods they need, not by guessing at TCP before it is exercised. The
- * calls that genuinely wait -- `recv`, `resolve` -- are **held replies**: the
- * caller blocks inside the call until the answer exists (specs/signal.md).
+ * The raw slice is a **raw ICMP socket**, which is what `ping` needs: a client
+ * creates one, sends an echo request, and receives until the reply comes. The
+ * datagram slice adds **UDP**, which is what a TFTP fetch needs. The protocol
+ * grows by adding family/type/protocol combinations and the methods they need,
+ * not by guessing at TCP before it is exercised. The calls that genuinely wait
+ * -- `recv`, `recvfrom`, `resolve` -- are **held replies**: the caller blocks
+ * inside the call until the answer exists (specs/signal.md).
  */
 
 #ifndef AEGIR_NET_H
@@ -27,12 +28,15 @@ namespace aegir::net {
 constexpr char kPortName[] = "net.socket";
 constexpr uint32_t kPortNameLength = sizeof(kPortName) - 1;
 
-/* socket(2)'s arguments, as the values the C library uses. The first slice
- * speaks one combination -- AF_INET / SOCK_RAW / IPPROTO_ICMP -- and refuses
- * the rest. */
+/* socket(2)'s arguments, as the values the C library uses. The raw slice
+ * speaks AF_INET / SOCK_RAW / IPPROTO_ICMP; the datagram slice adds AF_INET /
+ * SOCK_DGRAM / IPPROTO_UDP, which is what a TFTP fetch needs. The rest is
+ * refused. */
 constexpr uint32_t kAfInet = 2;
 constexpr uint32_t kSockRaw = 3;
 constexpr uint32_t kIpprotoIcmp = 1;
+constexpr uint32_t kSockDgram = 2;
+constexpr uint32_t kIpprotoUdp = 17;
 
 /* socket: three request words (domain, type, protocol). The answer is one word,
  * the socket's id, or 0 when the combination is one the stack does not speak. */
@@ -60,6 +64,21 @@ constexpr uint32_t kMethodRecv = 4;
  * passes, then one word, the address (network order), or 0 when it does not
  * resolve. */
 constexpr uint32_t kMethodResolve = 5;
+
+/* sendto: the datagram form of send -- a UDP socket has no connected peer, so
+ * the destination is the call's. Request words: the id, the destination address
+ * (network order), the destination port (host order, low 16 bits), the payload's
+ * length in bytes, then the payload words (low byte first). The answer is the
+ * payload bytes the stack took. */
+constexpr uint32_t kMethodSendTo = 6;
+
+/* recvfrom: the datagram form of recv. Request words: the id and a timeout in
+ * milliseconds (0 waits forever). The answer is *held* until a datagram arrives
+ * or the timeout passes, then the source address (network order), the source
+ * port (host order, low 16 bits), the payload's length -- zero on timeout --
+ * and the payload words. A datagram is a whole message, so the length is its
+ * own and the reply carries all of it. */
+constexpr uint32_t kMethodRecvFrom = 7;
 
 /* A name's ceiling: DNS's own limit, not a number of ours. */
 constexpr uint32_t kMaxNameBytes = 255;

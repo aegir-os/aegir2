@@ -28,27 +28,37 @@ extern "C" {
 #include <lwip/sys.h>
 #include <lwip/tcpip.h>
 #include <lwip/timeouts.h>
+#include <lwip/udp.h>
 }
 
 namespace aegir::net {
 namespace {
 
-/* A received datagram waiting for its socket's next `recv`: the source
- * address, the length, and the bytes. */
+/* What a socket is: a raw ICMP PCB, or a UDP one. The two answer `recv` and
+ * `recvfrom` in their own layouts -- a datagram carries its peer's port, an ICMP
+ * message does not -- so the kind travels with the waiting reply. */
+constexpr uint32_t kRaw = 0;
+constexpr uint32_t kUdp = 1;
+
+/* A received datagram waiting for its socket's next `recv`: the source address,
+ * the source port (UDP; zero for raw ICMP), the length, and the bytes. */
 struct Datagram {
     uint32_t source;
+    uint32_t source_port;
     uint32_t length;
     Datagram *next;
     uint8_t payload[];
 };
 
-/* One open socket: the lwIP raw pcb, the reply slot a `recv` saved (0 when the
- * client is not waiting), and a datagram that arrived with no waiter. `held`
- * and `pending` cross between this thread and the tcpip thread, so they are
- * touched atomically. */
+/* One open socket: the lwIP raw/udp PCB, the reply slot a waited call saved (0
+ * when the client is not waiting), and datagrams that arrived with no waiter.
+ * `held` and the queue cross between this thread and the tcpip thread, so they
+ * are touched atomically. */
 struct Socket {
     uint32_t id;
-    struct raw_pcb *pcb;
+    uint32_t kind;
+    struct raw_pcb *raw;
+    struct udp_pcb *udp;
     volatile uintptr_t held;
     /* Datagrams that arrived with no waiter, oldest first. A raw ICMP socket
      * sees more than one message per exchange -- the looped request and its
@@ -249,35 +259,40 @@ uint32_t ip_payload_offset(struct pbuf *packet) noexcept
     return header <= packet->tot_len ? header : 0;
 }
 
-/* A reply from the link: answer the waiting `recv`, or keep the datagram for
- * the next one. Runs in the tcpip thread. The payload's bytes are the low bytes
- * of the answer's words, so they are copied straight into the word array. */
-u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
-                  ip_addr_t const *source) noexcept
+/* Hand a received message to a waiting `recv`/`recvfrom`, or queue it. Runs in
+ * the tcpip thread. The answer's shape follows the socket's kind: a datagram
+ * carries its peer's port, a raw ICMP message does not. The bytes are copied
+ * straight into the message registers, not into an array and then from the
+ * array into the registers. */
+void deliver(Socket *socket, uint32_t source, uint32_t source_port,
+             struct pbuf *packet, uint32_t offset) noexcept
 {
-    static_cast<void>(pcb);
-    auto *const socket = static_cast<Socket *>(argument);
-    uint32_t const offset = ip_payload_offset(packet);
     uint32_t length = packet->tot_len - offset;
     if (length > kMaxPayloadWords * 8) {
         length = kMaxPayloadWords * 8;
     }
     uintptr_t const held = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
     if (held != 0) {
-        /* One write: the datagram is copied straight into the message registers,
-         * not into an array and then from the array into the registers. */
         seL4_Word *const message = seL4_GetIPCBuffer()->msg;
-        message[0] = ip_word(source);
-        message[1] = length;
-        pbuf_copy_partial(packet, reinterpret_cast<uint8_t *>(message + 2),
+        uint32_t at = 2;
+        message[0] = source;
+        if (socket->kind == kUdp) {
+            message[1] = source_port;
+            message[2] = length;
+            at = 3;
+        } else {
+            message[1] = length;
+        }
+        pbuf_copy_partial(packet, reinterpret_cast<uint8_t *>(message + at),
                           static_cast<u16_t>(length), static_cast<u16_t>(offset));
-        seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 2 + (length + 7) / 8));
+        seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, at + (length + 7) / 8));
         slot_put(static_cast<seL4_CPtr>(held));
     } else {
         auto *const datagram =
             static_cast<Datagram *>(mem_malloc(sizeof(Datagram) + length));
         if (datagram != nullptr) {
-            datagram->source = ip_word(source);
+            datagram->source = source;
+            datagram->source_port = source_port;
             datagram->length = length;
             datagram->next = nullptr;
             pbuf_copy_partial(packet, datagram->payload, static_cast<u16_t>(length),
@@ -285,12 +300,34 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
             queue_push(socket, datagram);
         }
     }
+}
+
+/* A reply from the link: answer the waiting `recv`, or keep the datagram for
+ * the next one. Runs in the tcpip thread. */
+u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
+                  ip_addr_t const *source) noexcept
+{
+    static_cast<void>(pcb);
+    auto *const socket = static_cast<Socket *>(argument);
+    deliver(socket, ip_word(source), 0, packet, ip_payload_offset(packet));
     /* Not consumed: lwIP's ICMP layer must still see the packet, or an echo
      * request to a local address -- 127.0.0.1, looped back -- is never answered,
      * because raw_input runs first and eating the packet stops the chain. The
      * socket has its copy either way, so ping still sees the request and then
      * the reply. */
     return 0;
+}
+
+/* A UDP datagram: the pbuf is this socket's now, with no IP header before the
+ * payload, and the callback owns it -- so it is freed here, after the copy.
+ * Runs in the tcpip thread. */
+void udp_received(void *argument, struct udp_pcb *pcb, struct pbuf *packet,
+                  ip_addr_t const *source, u16_t source_port) noexcept
+{
+    static_cast<void>(pcb);
+    auto *const socket = static_cast<Socket *>(argument);
+    deliver(socket, ip_word(source), source_port, packet, 0);
+    pbuf_free(packet);
 }
 
 /* A `recv` no packet answered: answer the held reply with a zero length -- a
@@ -302,7 +339,13 @@ void recv_timeout(void *argument) noexcept
     uintptr_t const held = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
     if (held != 0) {
         seL4_SetMR(0, 0);
-        seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 1));
+        uint32_t words = 1;
+        if (socket->kind == kUdp) {
+            seL4_SetMR(1, 0);
+            seL4_SetMR(2, 0);
+            words = 3;
+        }
+        seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, words));
         slot_put(static_cast<seL4_CPtr>(held));
     }
 }
@@ -315,11 +358,26 @@ struct CreateArg {
 void do_create(void *argument) noexcept
 {
     auto *const create = static_cast<CreateArg *>(argument);
-    create->socket->pcb = raw_new(IP_PROTO_ICMP);
-    if (create->socket->pcb != nullptr) {
-        raw_recv(create->socket->pcb, raw_received, create->socket);
+    Socket *const socket = create->socket;
+    create->ok = false;
+    if (socket->kind == kUdp) {
+        socket->udp = udp_new();
+        if (socket->udp != nullptr) {
+            udp_recv(socket->udp, udp_received, socket);
+            /* Bind an ephemeral port now, so a server's reply lands on a socket
+             * that is already listening for it rather than racing the first
+             * send's implicit bind. */
+            if (udp_bind(socket->udp, IP_ANY_TYPE, 0) == ERR_OK) {
+                create->ok = true;
+            }
+        }
+    } else {
+        socket->raw = raw_new(IP_PROTO_ICMP);
+        if (socket->raw != nullptr) {
+            raw_recv(socket->raw, raw_received, socket);
+            create->ok = true;
+        }
     }
-    create->ok = create->socket->pcb != nullptr;
 }
 
 struct SendArg {
@@ -355,7 +413,48 @@ void do_send(void *argument) noexcept
     }
     ip_addr_t destination;
     ip_addr_set_ip4_u32(&destination, static_cast<uint32_t>(send->words[0]));
-    if (raw_sendto(send->socket->pcb, packet, &destination) == ERR_OK) {
+    if (raw_sendto(send->socket->raw, packet, &destination) == ERR_OK) {
+        send->sent = length;
+    } else {
+        pbuf_free(packet);
+    }
+}
+
+/* A `sendto` on a UDP socket: the destination is the call's, and the payload is
+ * the UDP payload -- the stack adds the UDP and IP headers. The pbuf is the
+ * stack's on success and ours on failure, the same convention the raw send
+ * keeps. Runs in the tcpip thread. */
+struct SendToArg {
+    Socket *socket;
+    uint64_t const *words; /* [address, port, length, payload words...] */
+    uint32_t count;
+    uint32_t sent;
+};
+
+void do_sendto(void *argument) noexcept
+{
+    auto *const send = static_cast<SendToArg *>(argument);
+    send->sent = 0;
+    if (send->socket->udp == nullptr || send->count < 3) {
+        return;
+    }
+    uint32_t const address = static_cast<uint32_t>(send->words[0]);
+    auto const port = static_cast<u16_t>(send->words[1] & 0xffff);
+    uint32_t const length = static_cast<uint32_t>(send->words[2]);
+    if (length == 0 || length > kMaxPayloadWords * 8) {
+        return;
+    }
+    struct pbuf *const packet = pbuf_alloc(PBUF_TRANSPORT, static_cast<u16_t>(length),
+                                           PBUF_RAM);
+    if (packet == nullptr) {
+        return;
+    }
+    uint8_t scratch[kMaxPayloadWords * 8];
+    unpack_words(send->words + 3, send->count - 3, scratch, length);
+    pbuf_take(packet, scratch, static_cast<u16_t>(length));
+    ip_addr_t destination;
+    ip_addr_set_ip4_u32(&destination, address);
+    if (udp_sendto(send->socket->udp, packet, &destination, port) == ERR_OK) {
         send->sent = length;
     } else {
         pbuf_free(packet);
@@ -369,9 +468,14 @@ struct CloseArg {
 void do_close(void *argument) noexcept
 {
     auto *const close = static_cast<CloseArg *>(argument);
-    if (close->socket->pcb != nullptr) {
-        raw_remove(close->socket->pcb);
-        close->socket->pcb = nullptr;
+    Socket *const socket = close->socket;
+    if (socket->raw != nullptr) {
+        raw_remove(socket->raw);
+        socket->raw = nullptr;
+    }
+    if (socket->udp != nullptr) {
+        udp_remove(socket->udp);
+        socket->udp = nullptr;
     }
 }
 
@@ -437,7 +541,15 @@ Socket *find_socket(uint32_t id) noexcept
 
 uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol) noexcept
 {
-    if (domain != kAfInet || type != kSockRaw || protocol != kIpprotoIcmp) {
+    uint32_t kind = kRaw;
+    if (domain != kAfInet) {
+        return 0;
+    }
+    if (type == kSockRaw && protocol == kIpprotoIcmp) {
+        kind = kRaw;
+    } else if (type == kSockDgram && protocol == kIpprotoUdp) {
+        kind = kUdp;
+    } else {
         return 0;
     }
     auto *const socket = static_cast<Socket *>(mem_malloc(sizeof(Socket)));
@@ -445,7 +557,9 @@ uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol) noexcept
         return 0;
     }
     socket->id = g_next_id++;
-    socket->pcb = nullptr;
+    socket->kind = kind;
+    socket->raw = nullptr;
+    socket->udp = nullptr;
     socket->held = 0;
     socket->pending_head = nullptr;
     socket->pending_tail = nullptr;
@@ -483,7 +597,7 @@ uint32_t close_socket(uint32_t id) noexcept
 uint32_t send_on(uint32_t id, uint64_t const *words, uint32_t count) noexcept
 {
     Socket *const socket = find_socket(id);
-    if (socket == nullptr || socket->pcb == nullptr) {
+    if (socket == nullptr || socket->raw == nullptr) {
         return 0;
     }
     SendArg send{socket, words, count, 0};
@@ -493,18 +607,78 @@ uint32_t send_on(uint32_t id, uint64_t const *words, uint32_t count) noexcept
     return send.sent;
 }
 
-/* Does a datagram wait? If so, fill the answer words and free it. */
-bool take_pending(Socket *socket, uint64_t *words, uint32_t *count) noexcept
+uint32_t sendto_on(uint32_t id, uint64_t const *words, uint32_t count) noexcept
+{
+    Socket *const socket = find_socket(id);
+    if (socket == nullptr || socket->udp == nullptr) {
+        return 0;
+    }
+    SendToArg send{socket, words, count, 0};
+    if (!in_tcpip(do_sendto, &send)) {
+        return 0;
+    }
+    return send.sent;
+}
+
+/* Does a datagram wait? If so, fill the answer words and free it. The shape
+ * follows the socket's kind: a datagram's answer carries its peer's port, a raw
+ * message's does not. */
+bool take_pending(Socket *socket, uint64_t *words, uint32_t *count, bool with_port) noexcept
 {
     Datagram *const datagram = queue_pop(socket);
     if (datagram == nullptr) {
         return false;
     }
-    words[0] = datagram->source;
-    words[1] = datagram->length;
-    *count = 2 + pack_bytes(datagram->payload, datagram->length, words + 2);
+    if (with_port) {
+        words[0] = datagram->source;
+        words[1] = datagram->source_port;
+        words[2] = datagram->length;
+        *count = 3 + pack_bytes(datagram->payload, datagram->length, words + 3);
+    } else {
+        words[0] = datagram->source;
+        words[1] = datagram->length;
+        *count = 2 + pack_bytes(datagram->payload, datagram->length, words + 2);
+    }
     mem_free(datagram);
     return true;
+}
+
+/* A `recv`/`recvfrom`: answer with a datagram already waiting, or hold the
+ * caller's reply cap until one arrives (or the timeout passes). The reply cap
+ * is saved in the shared CSpace so the tcpip thread can answer it -- the shape
+ * specs/signal.md sets for a held reply. `with_port` is the datagram layout. */
+void serve_recv(ipc::Owner &port, Socket *socket, uint32_t timeout, bool with_port,
+                uint64_t *words) noexcept
+{
+    seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
+    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    uint32_t count = 0;
+    if (take_pending(socket, words, &count, with_port)) {
+        port.reply_words(words, count);
+        return;
+    }
+    seL4_CPtr const slot = slot_get();
+    if (slot == 0 || seL4_CNode_SaveCaller(root, slot, depth) != seL4_NoError) {
+        if (slot != 0) {
+            slot_put(slot);
+        }
+        port.reply(0);
+        return;
+    }
+    __atomic_store_n(&socket->held, static_cast<uintptr_t>(slot), __ATOMIC_RELEASE);
+    /* A datagram may have arrived in the gap; take it back. */
+    if (take_pending(socket, words, &count, with_port)) {
+        uintptr_t const taken = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
+        if (taken != 0) {
+            slot_put(static_cast<seL4_CPtr>(taken));
+        }
+        port.reply_words(words, count);
+    } else if (timeout != 0) {
+        /* The client asked not to wait forever: lwIP's timers answer the reply
+         * with a zero length if nothing comes. */
+        sys_timeout(timeout, recv_timeout, socket);
+    }
+    /* else: held; the receive path answers it. */
 }
 
 }  // namespace
@@ -535,39 +709,18 @@ bool take_pending(Socket *socket, uint64_t *words, uint32_t *count) noexcept
             port.reply(close_socket(static_cast<uint32_t>(words[0])));
         } else if (method == aegir::net::kMethodSend && count >= 2) {
             port.reply(send_on(static_cast<uint32_t>(words[0]), words + 1, count - 1));
-        } else if (method == aegir::net::kMethodRecv && count >= 1) {
+        } else if (method == aegir::net::kMethodSendTo && count >= 4) {
+            port.reply(sendto_on(static_cast<uint32_t>(words[0]), words + 1, count - 1));
+        } else if ((method == aegir::net::kMethodRecv ||
+                    method == aegir::net::kMethodRecvFrom) &&
+                   count >= 1) {
             Socket *const socket = find_socket(static_cast<uint32_t>(words[0]));
             uint32_t const timeout = count >= 2 ? static_cast<uint32_t>(words[1]) : 0;
             if (socket == nullptr) {
                 port.reply(0);
-            } else if (take_pending(socket, words, &count)) {
-                port.reply_words(words, count);
             } else {
-                seL4_CPtr const slot = slot_get();
-                if (slot == 0 || seL4_CNode_SaveCaller(root, slot, depth) != seL4_NoError) {
-                    if (slot != 0) {
-                        slot_put(slot);
-                    }
-                    port.reply(0);
-                } else {
-                    __atomic_store_n(&socket->held, static_cast<uintptr_t>(slot),
-                                     __ATOMIC_RELEASE);
-                    /* A reply may have arrived in the gap; take it back. */
-                    if (take_pending(socket, words, &count)) {
-                        uintptr_t const taken =
-                            __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
-                        if (taken != 0) {
-                            slot_put(static_cast<seL4_CPtr>(taken));
-                        }
-                        port.reply_words(words, count);
-                    } else if (timeout != 0) {
-                        /* The client asked not to wait forever: lwIP's timers
-                         * answer the reply with a zero length if no packet
-                         * comes. */
-                        sys_timeout(timeout, recv_timeout, socket);
-                    }
-                    /* else: held; the link's receive path answers it. */
-                }
+                serve_recv(port, socket, timeout,
+                           method == aegir::net::kMethodRecvFrom, words);
             }
         } else if (method == aegir::net::kMethodResolve && count >= 2) {
             uint32_t const name_length = static_cast<uint32_t>(words[0]);

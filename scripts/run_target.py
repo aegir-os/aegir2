@@ -490,6 +490,21 @@ def ensure_disk(build_dir: Path) -> None:
     subprocess.run(command, check=True)
 
 
+def ensure_tftp(build_dir: Path) -> None:
+    """The directory QEMU's user-mode network serves over TFTP (specs/net.md):
+    the acceptance's `tftp` fetch reads a file from it, so the bytes the wire
+    carried are the run's own. QEMU resolves the `tftp=` path under its working
+    directory, which is the build directory, so the directory is `tftp/` there.
+    It lives in the build output, where scratch belongs, and is rewritten each
+    run so its content is never a stale surprise."""
+    directory = build_dir / "tftp"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "aegir.txt").write_bytes(
+        b"Aegir TFTP: this file crossed the wire.\n"
+        b"The block came back through the socket port.\n"
+    )
+
+
 def boot_interactive(target: Target, build_dir: Path) -> int:
     """Boot the image with QEMU's own window on the displays: the user is the
     runner. The keys the acceptance check's script would press are theirs to
@@ -497,6 +512,7 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
     and QEMU stops when its window closes, not at a marker -- so nothing here
     watches, and nothing here is timed out but the user."""
     ensure_disk(build_dir)
+    ensure_tftp(build_dir)
     extra = " ".join(target.qemu_args)
     # -g/-s replace simulate's -nographic: a GTK window on the consoles, the
     # serial console on the terminal. Attached with `=`, for the same reason
@@ -523,6 +539,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # and the script's argparse refuses a value that looks like an option (and
     # would read a loose `-bios` as its own `-b`).
     ensure_disk(build_dir)
+    ensure_tftp(build_dir)
 
     extra = " ".join(target.qemu_args)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)

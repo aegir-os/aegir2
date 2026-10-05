@@ -161,8 +161,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The network device (specs/net.md). QEMU's user-mode networking
             # hands the guest a DHCP lease, a gateway to reach and a DNS server,
             # and a default MAC; none of it is compiled into the stack, which
-            # learns every bit of it over the wire.
-            "-netdev user,id=net0",
+            # learns every bit of it over the wire. `tftp=tftp` is the
+            # acceptance's server: the virtual host serves the build directory's
+            # `tftp/` over TFTP, so the `tftp` command fetches a file whose bytes
+            # the run chose -- still offline, nothing external.
+            "-netdev user,id=net0,tftp=tftp",
             "-device virtio-net-device,netdev=net0",
             "-qmp unix:qmp.sock,server,nowait",
         ),
@@ -248,6 +251,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # with the console idle; a name typed into the interactive shell
             # would risk the keyboard queue instead, for no more evidence.
             QmpStep(r"ping: reply from 127\.0\.0\.1, type 0, \d+ bytes"),
+            # The datagram slice (specs/net.md): `tftp` fetches a file from the
+            # virtual host's TFTP server over UDP, so the socket port carries
+            # real bytes both ways -- an RRQ out, DATA blocks back, an ACK for
+            # each. The first line is the run's own, so the cue proves the
+            # content and not only the count; nothing external was reached.
+            QmpStep(r"tftp: \d+ bytes in \d+ blocks? from \d+\.\d+\.\d+\.\d+"),
+            QmpStep(r"tftp: first line: Aegir TFTP: this file crossed the wire\."),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no
