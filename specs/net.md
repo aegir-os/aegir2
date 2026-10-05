@@ -124,7 +124,11 @@ The service starts lwIP's `tcpip_thread` with `aegir-thread`'s `Builder`
 
 - `sys_sem` and `sys_mutex` over **seL4 notifications** plus a protected
   counter, in-process;
-- `sys_mbox` as a pointer ring with a semaphore;
+- `sys_mbox` as a pointer ring whose post nudges an **endpoint** the fetch
+  receives on -- an endpoint, not a notification, because the kernel delivers a
+  bound notification only to a thread blocked in an endpoint receive
+  (`ThreadState_BlockedOnReceive`, `kernel/src/object/notification.c:69`), and
+  the timed fetch below needs the tick to wake it;
 - `sys_arch_protect`/`unprotect` as the critical section;
 - `sys_now()` from a cached monotonic reading (`clock.main`/`timer.main`),
   advanced on the tick, never a port call per read;
@@ -133,8 +137,9 @@ The service starts lwIP's `tcpip_thread` with `aegir-thread`'s `Builder`
 **The timed mailbox fetch is the lwIP timer.** `tcpip_thread` calls
 `sys_arch_mbox_fetch(mbox, msg, timeout)` with the next lwIP timer's timeout so
 `sys_check_timeouts()` runs while the link is idle (TCP retransmit, ARP, DHCP).
-seL4 has no timed receive, so it waits on **two** notifications -- the mailbox's
-and the timer tick -- and returns how long it waited. That is
+seL4 has no timed receive, so the tcpip thread has the timer's tick bound to it
+and waits on its mailbox's endpoint, receiving the tick's badge as well; a wake
+with that badge returns `SYS_ARCH_TIMEOUT` and lwIP runs its timeouts. That is
 `aegir::signal`'s `Receiver` shape (`specs/signal.md`).
 
 ### The tick comes from `timer.main`
