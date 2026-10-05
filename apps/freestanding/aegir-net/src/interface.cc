@@ -22,6 +22,7 @@ extern "C" {
 #include <lwip/mem.h>
 #include <lwip/netif.h>
 #include <lwip/pbuf.h>
+#include <lwip/sys.h>
 #include <lwip/timeouts.h>
 #include <lwip/tcpip.h>
 }
@@ -226,11 +227,14 @@ struct Configure {
     uint32_t parameter;
     uint64_t value;
     bool taken;
+    sys_sem_t done;
 };
 
 /* A `set`, applied in the tcpip thread (every netif operation belongs there).
- * lwIP's own timeout runs the DHCP poll, so the answer is reported when it
- * arrives rather than the setter waiting for it. */
+ * `tcpip_callback` posts the work; the call's own semaphore, signalled when the
+ * work finishes, makes the caller wait for it. lwIP's own timeout then runs the
+ * DHCP poll, and the answer is reported when it arrives rather than the setter
+ * waiting for it. */
 void apply_configure(void *argument) noexcept
 {
     auto *const job = static_cast<Configure *>(argument);
@@ -261,6 +265,7 @@ void apply_configure(void *argument) noexcept
         job->taken = false;
         break;
     }
+    sys_sem_signal(&job->done);
 }
 
 void write_hex_byte(uint8_t value) noexcept
@@ -432,10 +437,20 @@ bool link_configure(unsigned index, uint32_t parameter, uint64_t value) noexcept
     if (link == nullptr) {
         return false;
     }
-    Configure job{&link->netif, parameter, value, false};
-    if (tcpip_callback_with_block(apply_configure, &job, 1) != ERR_OK) {
+    Configure job{};
+    job.netif = &link->netif;
+    job.parameter = parameter;
+    job.value = value;
+    job.taken = false;
+    if (sys_sem_new(&job.done, 0) != ERR_OK) {
         return false;
     }
+    if (tcpip_callback(apply_configure, &job) != ERR_OK) {
+        sys_sem_free(&job.done);
+        return false;
+    }
+    sys_arch_sem_wait(&job.done, 0);
+    sys_sem_free(&job.done);
     return job.taken;
 }
 
