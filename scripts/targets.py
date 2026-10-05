@@ -241,6 +241,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the whole path (socket, send, held recv) end to end before TCP.
             QmpStep(r"launcher: command started ping"),
             QmpStep(r"ping: reply from \d+\.\d+\.\d+\.\d+, type 0, \d+ bytes"),
+            # The names path (specs/net.md): `ping localhost` resolves through
+            # Sys:S/hosts -- the resolver reads it in the client, before DNS --
+            # and 127.0.0.1 is lwIP's own loopback, so no packet touches the
+            # wire. Both commands are Startup-Sequence lines, run one at a time
+            # with the console idle; a name typed into the interactive shell
+            # would risk the keyboard queue instead, for no more evidence.
+            QmpStep(r"ping: reply from 127\.0\.0\.1, type 0, \d+ bytes"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

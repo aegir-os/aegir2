@@ -286,15 +286,17 @@ AEGIR_BFS_TREE = [
         # the point of the boot session's launcher. The network comes up here,
         # not in a boot service (specs/net.md): `netconfig` reads
         # Sys:S/network.manifest (Sys: is up by construction when the boot
-        # session runs this) and applies it through the stack's control port, and
+        # session runs this) and applies it through the stack's control port;
         # `ping` proves the path with an ICMP echo to the DHCP-supplied gateway
         # (no argument: the command asks the stack for the gateway, so nothing
-        # names the machine). `filenote` is the marker no other acceptance step
-        # cues on, so the boot window stays hidden. EndCLI >NIL: is the Amiga's
-        # quiet close; it needs the NIL: handler.
+        # names the machine); `ping localhost` proves the names path -- the
+        # resolver reads Sys:S/hosts in the client, and 127.0.0.1 is lwIP's own
+        # loopback, so nothing touches the wire. `filenote` is the marker no
+        # other acceptance step cues on, so the boot window stays hidden.
+        # EndCLI >NIL: is the Amiga's quiet close; it needs the NIL: handler.
         ("file", "Startup-Sequence",
          b"; Aegir system startup: the network, then the quiet close.\n"
-         b"netconfig\nping\nfilenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
+         b"netconfig\nping\nping localhost\nfilenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
         # The interpreter's acceptance (specs/shell.md): a built-in changes the
         # shell, and the next line only runs if the script did -- the shell
         # expands the alias x to date, so date starting is the proof.
