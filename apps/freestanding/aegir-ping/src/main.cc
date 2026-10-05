@@ -15,7 +15,8 @@
  */
 
 #include <aegir/bootstrap.h>
-#include <aegir/console.h>
+#include <aegir/console_stream.h>
+#include <aegir/console_stream_client.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
