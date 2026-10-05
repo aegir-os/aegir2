@@ -202,7 +202,7 @@ the ELF loader and Aegir's own userland — is compiled and linked by **clang
 
 1. **Pin and wire clang.** `manifests/toolchain.toml` gains the LLVM 20.1.x
    release tarball (clang, lld, and the LLVM binutils) with a sha256;
-   `scripts/fetch_toolchain.py` unpacks it and `scripts/env.sh` puts it on
+   `scripts/fetch_llvm.py` unpacks it and `scripts/env.sh` puts it on
    `PATH`. `configs/*.cmake` set `TRIPLE=riscv64-unknown-elf` — the switch that
    selects `llvm.cmake` — and point CMake's `CMAKE_OBJCOPY`/`CMAKE_READELF` at
    the LLVM tools. Acceptance: `make tools-check` passes and both compilers

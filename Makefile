@@ -47,12 +47,14 @@ help: ## list available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  %-14s %s\n", $$1, $$2}'
 
-tools: ## fetch the pinned RISC-V toolchain and host build tools
+tools: ## fetch the pinned toolchains (LLVM + RISC-V) and host build tools
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/fetch_llvm.py
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/fetch_toolchain.py
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/setup_tools.py
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/build_dtc.py
 
 tools-check: ## verify the fetched tools match their pins
+	$(PYTHON) scripts/fetch_llvm.py --check
 	$(PYTHON) scripts/fetch_toolchain.py --check
 	$(PYTHON) scripts/setup_tools.py --check
 	$(PYTHON) scripts/build_dtc.py --check

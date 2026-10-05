@@ -114,3 +114,28 @@ url = "https://mirrors.edge.kernel.org/pub/software/utils/dtc/dtc-1.8.1.tar.xz"
 # artifact fails the fetch instead of silently building something else.
 sha256 = "23526015a6f1550e0541a53fe7acea1b5a11e3697cdf3a3bdc076abc38f6045d"
 archive = "dtc-1.8.1.tar.xz"
+
+# --- LLVM host toolchain ---------------------------------------------------
+#
+# clang, lld and the LLVM binutils, from the official x86_64 Linux release
+# distribution. This is the compiler for everything Aegir builds; the GNU cross
+# toolchain above is kept only to build OpenSBI (specs/build.md).
+#
+# 20.1 is the newest series seL4 16.0.0 enables (kernel/CHANGES.md), and the
+# vendored projects/llvm-project (manifests/aegir.xml) is pinned to
+# llvmorg-20.1.8, so the host toolchain and the tree libc++ is built from share
+# a revision.
+#
+# The archive is ~2 GiB and extracts to a ~5 GiB tree. Its sha256 is the digest
+# the release's own sigstore attestation names (the .jsonl alongside it), not
+# merely a hash computed here.
+
+[llvm]
+name = "clang"
+version = "20.1.8"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.8/LLVM-20.1.8-Linux-X64.tar.xz"
+sha256 = "1ead36b3dfcb774b57be530df42bec70ab2d239fbce9889447c7a29a4ddc1ae6"
+archive = "LLVM-20.1.8-Linux-X64.tar.xz"
+# The single top-level directory the archive extracts to (`pins.extract` keeps
+# it). The tools are under `<prefix>/bin`.
+prefix = "LLVM-20.1.8-Linux-X64"

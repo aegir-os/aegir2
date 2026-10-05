@@ -45,6 +45,25 @@ else
   echo "scripts/env.sh: no RISC-V toolchain yet — run 'make tools'" >&2
 fi
 
+# The LLVM host toolchain: clang, lld and the LLVM binutils, under
+# third_party/toolchain/<llvm release dir>/bin. This is the compiler for
+# everything Aegir builds (specs/build.md); the GNU cross toolchain above is
+# kept only to build OpenSBI. The probe is a glob loop for the same reason as
+# the shims loop above: a head(1) that exits early can SIGPIPE the find under
+# pipefail.
+_aegir_llvm_bin=""
+for _aegir_candidate in "$AEGIR_ROOT"/third_party/toolchain/*/bin; do
+  if [ -x "$_aegir_candidate/clang" ]; then
+    _aegir_llvm_bin="$_aegir_candidate"
+    break
+  fi
+done
+if [ -n "$_aegir_llvm_bin" ]; then
+  export PATH="$_aegir_llvm_bin:$PATH"
+else
+  echo "scripts/env.sh: no LLVM host toolchain yet — run 'make tools'" >&2
+fi
+
 # cmake, ninja and the seL4 build's python dependencies.
 if [ -x "$AEGIR_ROOT/third_party/tools/venv/bin/cmake" ]; then
   export PATH="$AEGIR_ROOT/third_party/tools/venv/bin:$PATH"
@@ -59,4 +78,4 @@ else
   echo "scripts/env.sh: no dtc yet — run 'make tools'" >&2
 fi
 
-unset _aegir_root _aegir_candidate _aegir_toolchain_shims
+unset _aegir_root _aegir_candidate _aegir_toolchain_shims _aegir_llvm_bin
