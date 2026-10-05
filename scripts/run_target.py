@@ -505,6 +505,29 @@ def ensure_tftp(build_dir: Path) -> None:
     )
 
 
+def ensure_host(build_dir: Path) -> None:
+    """The directory QEMU's 9P transport shares into the machine (specs/9p.md):
+    a host tree the guest reads and writes as a volume, so files move in and
+    out of a run without rebuilding the image. QEMU resolves the `path=host`
+    under its working directory, which is the build directory, so the share is
+    `host/` there. It is rewritten each run with one known file the acceptance
+    can read; AEGIR_9P_DIR points the share at a real host tree instead, by
+    symlink, for interactive work."""
+    share = build_dir / "host"
+    source = os.environ.get("AEGIR_9P_DIR")
+    if source:
+        if share.is_symlink() or share.is_file():
+            share.unlink()
+        elif share.is_dir():
+            shutil.rmtree(share)
+        share.symlink_to(source)
+        return
+    if share.is_symlink():
+        share.unlink()
+    share.mkdir(parents=True, exist_ok=True)
+    (share / "hello.txt").write_bytes(b"Aegir 9P: this file lives on the host.\n")
+
+
 def boot_interactive(target: Target, build_dir: Path) -> int:
     """Boot the image with QEMU's own window on the displays: the user is the
     runner. The keys the acceptance check's script would press are theirs to
@@ -513,6 +536,7 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
     watches, and nothing here is timed out but the user."""
     ensure_disk(build_dir)
     ensure_tftp(build_dir)
+    ensure_host(build_dir)
     extra = " ".join(target.qemu_args)
     # -g/-s replace simulate's -nographic: a GTK window on the consoles, the
     # serial console on the terminal. Attached with `=`, for the same reason
@@ -540,6 +564,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # would read a loose `-bios` as its own `-b`).
     ensure_disk(build_dir)
     ensure_tftp(build_dir)
+    ensure_host(build_dir)
 
     extra = " ".join(target.qemu_args)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)

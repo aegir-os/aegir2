@@ -204,8 +204,9 @@ What the bureau is, and what it grows into, is `specs/bureau.md`.
 ## What this is not
 
 A focus model beyond click-to-focus; window resizing, depth gadgets, menus;
-alpha and blend; the hardware cursor; the second head (gpu1 stays parked —
-multi-head is its own decision, about seats, not windows); the toolkit.
+alpha and blend; the hardware cursor; multi-head (the machine's eighth
+virtio-mmio slot is the 9P transport's now, `specs/9p.md`, so one head
+remains); the toolkit.
 Window dragging and depth arrived with the window manager
 (`specs/window-manager.md`): the console gained `move` and `raise`, and the
 client draws its own titlebar. Each is easier with the compositor standing.

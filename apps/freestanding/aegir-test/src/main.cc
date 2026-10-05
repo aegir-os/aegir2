@@ -171,7 +171,6 @@ bool describe_path(char const *path, uint32_t path_length,
  * release after its press. The Wait on the notification is the kernel's
  * wait, not a spin; the ring is drained between wakeups. */
 constexpr uint16_t kKeyB = 48; /* Linux's KEY_*, which virtio-input carries unchanged */
-constexpr uint16_t kKeyC = 46;
 constexpr uint16_t kKeyD = 32;
 constexpr uint16_t kKeyE = 18;
 constexpr uint16_t kKeyF = 33;
@@ -212,9 +211,8 @@ bool wait_ring_key(volatile uint64_t *ring, seL4_CPtr events, uint64_t window,
     return false;
 }
 
-/* The framebuffer port's two questions (aegir/framebuffer.h): info answered
- * with exactly this geometry, stride, format and glass size, and set_mode
- * applied (true) or refused (false, the two-zero answer). */
+/* The framebuffer port's info question (aegir/framebuffer.h): answered with
+ * exactly this geometry, stride, format and glass size. */
 bool info_is(aegir::ipc::Consumer const &gpu, uint64_t width, uint64_t height,
              uint64_t phys_width_mm, uint64_t phys_height_mm) noexcept
 {
@@ -226,15 +224,6 @@ bool info_is(aegir::ipc::Consumer const &gpu, uint64_t width, uint64_t height,
            in[0] == width && in[1] == height && in[2] == width * 4 &&
            in[3] == aegir::framebuffer::kFormatB8G8R8X8 && in[4] == phys_width_mm &&
            in[5] == phys_height_mm;
-}
-
-bool set_mode(aegir::ipc::Consumer const &gpu, uint64_t width, uint64_t height) noexcept
-{
-    uint64_t const out[] = {width, height};
-    uint64_t in[2];
-    aegir::ipc::WordsReply const answer =
-        gpu.call_words(aegir::framebuffer::kMethodSetMode, out, 2, in, 2);
-    return answer.error == 0 && answer.count == 2 && in[0] == width && in[1] == height;
 }
 
 /* The registry walk -- find the bound row by name, open it -- is the lib's
@@ -2768,68 +2757,38 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* The displays, discovered the same way: two heads of one registry row.
-     * gpu0 is the console's screen now (specs/console.md) -- its backdrop
-     * went up over the driver's bands at boot -- so the port protocol's
-     * poking happens on gpu1, the parked head: geometry, the glass's size
-     * from EDID, a mode applied and one refused. What the *screens* show is
-     * read from outside (scripts/run_target.py): the cue lines pace the
-     * runner's screendumps, and gpu0's dumps assert the console's backdrop
-     * never moved. */
+    /* The display, discovered through the registry like the input devices: one
+     * head, gpu.virtio0, and it is the console's screen (specs/console.md) --
+     * its backdrop went up over the driver's bands at boot. What the screen
+     * *shows* is read from outside (scripts/run_target.py): the cue line below
+     * paces the runner's screendump, and the dump asserts the console's
+     * backdrop never moved. The port protocol's mode-setting was exercised on
+     * a parked head while the machine had one; the second display's
+     * virtio-mmio slot is the 9P transport's now (specs/9p.md), so this is the
+     * geometry check alone. */
     {
         aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
             aegir::registry::kPortName, aegir::registry::kPortNameLength);
-        seL4_CPtr const gpu0_slot = static_cast<seL4_CPtr>(first_free + 12);
-        seL4_CPtr const gpu1_slot = static_cast<seL4_CPtr>(first_free + 13);
-        bool ok = registry.valid() && open_bound(registry, "gpu.virtio0", 11, gpu0_slot) &&
-                  open_bound(registry, "gpu.virtio1", 11, gpu1_slot);
-        aegir::ipc::Consumer const gpu0(gpu0_slot);
-        aegir::ipc::Consumer const gpu1(gpu1_slot);
+        seL4_CPtr const gpu_slot = static_cast<seL4_CPtr>(first_free + 12);
+        bool ok = registry.valid() && open_bound(registry, "gpu.virtio0", 11, gpu_slot);
+        aegir::ipc::Consumer const gpu0(gpu_slot);
         if (ok) {
-            ok = info_is(gpu0, 1280, 800, 320, 200) && info_is(gpu1, 1280, 800, 320, 200);
+            ok = info_is(gpu0, 1280, 800, 320, 200);
         }
         if (!ok) {
-            write("  test: FAIL the two heads did not both answer 1280x800, 320x200 mm\n");
+            write("  test: FAIL gpu.virtio0 did not answer 1280x800, 320x200 mm\n");
             ++failed;
         } else {
-            write("  test: gpu.virtio0 and gpu.virtio1 both answer 1280x800, 320x200 mm\n");
+            write("  test: gpu.virtio0 answers 1280x800, 320x200 mm\n");
         }
-        if (ok) {
-            /* This line is the runner's cue to dump both heads at 1280x800
-             * -- the drivers' own markers passed long before this service
-             * could say it was listening, so the cue is ours -- and the 'b'
-             * that says the dumps are done comes back routed, through the
-             * focused window's ring. */
-            write("  test: both heads answered -- the screens, please\n");
-            ok = channel && wait_ring_key(ring, events, first_window, kKeyB, 'b');
-        }
-        if (ok) {
-            /* The parked head shrinks; the console's screen must not move. */
-            ok = set_mode(gpu1, 1024, 768) && info_is(gpu0, 1280, 800, 320, 200);
-        }
-        if (!ok) {
-            write("  test: FAIL set_mode 1024x768 was not applied, or the console's head moved\n");
-            ++failed;
-        } else {
-            write("  test: gpu.virtio1 took 1024x768; gpu.virtio0 stands at 1280x800\n");
-        }
-        if (ok) {
-            /* 'c' says the shrunken head's dump is done; then 4K, the window's
-             * whole reason for being 32 MiB. */
-            ok = channel && wait_ring_key(ring, events, first_window, kKeyC, 'c') &&
-                 set_mode(gpu1, 3840, 2160);
-        }
-        /* A mode the window cannot hold is refused, and the screen keeps what
-         * it had: 8192x8192 at 32 bits a pixel is 256 MiB, eight windows. */
-        bool const refused = ok && !set_mode(gpu1, 8192, 8192) && info_is(gpu1, 3840, 2160, 320, 200);
-        if (!ok) {
-            write("  test: FAIL set_mode 3840x2160 was not applied\n");
-            ++failed;
-        } else if (!refused) {
-            write("  test: FAIL a mode past the window was not refused cleanly\n");
-            ++failed;
-        } else {
-            write("  test: gpu.virtio1 took 3840x2160, and 8192x8192 was refused\n");
+        if (ok && channel) {
+            /* This line is the runner's cue to dump the screen at 1280x800 --
+             * the driver's own marker passed long before this service could
+             * say it was listening, so the cue is ours -- and the 'b' that
+             * says the dump is done comes back routed, through the focused
+             * window's ring. */
+            write("  test: the head answered -- the screens, please\n");
+            (void)wait_ring_key(ring, events, first_window, kKeyB, 'b');
         }
     }
 

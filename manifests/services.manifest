@@ -60,7 +60,7 @@ device_manager = true
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, timer, partmgr
+spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, p9driver, timer, partmgr
 # What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
 # framebuffers (megapages -- specs/services.md), the partition manager's
 # megabyte, the filesystem image, and the drivers' images, queues and windows.
@@ -116,6 +116,23 @@ device_id = 1
 # row's `memory` (256 KiB) is what the device manager carves by.
 memory_kib = 256
 restart   = always
+
+# The 9P transport driver (specs/9p.md): virtio device 9, bound from the
+# registry row like any other. It carries 9P messages to a host export and
+# back -- one request queue, and a shared window split into a request half and
+# a reply half, so a message never crosses the envelope. The filesystem that
+# speaks 9P is a separate service that opens this driver through the registry;
+# the driver itself knows nothing about volumes or the VFS.
+[p9driver]
+binary     = aegir-virtio-9p
+authority  = system
+account    = system
+needs      = log.main
+device_id  = 9
+# One 8 KiB request queue; the registry row's `memory` is what the device
+# manager carves by.
+memory_kib = 16
+restart    = always
 
 # The keyboard driver. virtio device 18, bound from the registry row like any
 # other (specs/services.md): two queues -- the event queue primed with one

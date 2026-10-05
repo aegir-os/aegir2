@@ -897,13 +897,13 @@ and answers "who owns this device?" for everyone else.
   page) -- and a third driver's images, queues and windows outgrew the
   spawner's 2 MiB delegation, which is 4 now (specs/authority.md's budget,
   not a capacity).
-- **done**: the fourth driver draws -- two heads, and the first port whose
-  window *is* the answer. virtio-gpu (device id 16) arrives twice on QEMU's
-  command line (`gpu0`, `gpu1`); one registry row (`id=16 prefix=gpu
-  memory=13 window=25`) serves both, the probe re-pointing each transport at
-  it and the per-binding spawn loop starting one driver process per device --
-  `gpu.virtio0` and `gpu.virtio1`, the instance model doing what it was built
-  for. The driver runs the control queue only: `GET_DISPLAY_INFO` (honored,
+- **done**: the fourth driver draws -- and the first port whose window *is*
+  the answer. virtio-gpu (device id 16) arrives on QEMU's command line
+  (`gpu0`); one registry row (`id=16 prefix=gpu memory=13 window=25`) serves it
+  and the per-binding spawn loop starts one driver process -- `gpu.virtio0`.
+  (Two transports once stood here, `gpu0` and `gpu1`, exercising the instance
+  model; the machine's eighth virtio-mmio slot is the 9P transport's now,
+  specs/9p.md.) The driver runs the control queue only: `GET_DISPLAY_INFO` (honored,
   not hardcoded), `RESOURCE_CREATE_2D`, `RESOURCE_ATTACH_BACKING`,
   `SET_SCANOUT`, then `TRANSFER_TO_HOST_2D` and `RESOURCE_FLUSH` per frame
   (virtio 1.x, 5.7). Its port (`libs/aegir-framebuffer`) serves `info`
@@ -918,9 +918,11 @@ and answers "who owns this device?" for everyone else.
   screen, read from outside: the runner's QMP socket issues `screendump` per
   console (it works headless -- QEMU's display is `none`, and the console
   surface exists anyway), and the checks are the dumped dimensions and the
-  band colors at them -- both heads at 1280x800 first, then `set_mode`
-  shrinks `gpu.virtio0` to 1024x768 and grows it to 3840x2160, each time
-  exactly one head changing, and 8192x8192 refused for outgrowing the window.
+  band colors at them -- the head at 1280x800. The `set_mode` protocol was
+  exercised on a parked second head, shrinking it to 1024x768 and growing it
+  to 3840x2160 with 8192x8192 refused for outgrowing the window, until that
+  head's slot became the 9P transport's (specs/9p.md); `info` is what the
+  test bed checks now.
   Four decisions the sizing forced, one assumption the second head broke, and
   one note for the boards:
   - **the window rides as megapages.** 1280x800 at 32 bits a pixel is 1024

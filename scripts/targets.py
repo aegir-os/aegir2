@@ -123,16 +123,19 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         build_dir=f"out/{name}",
         configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}"),
         marker="AEGIR_BOOT_OK",
-        # Five real virtio devices, so the transports the tree describes are
-        # not all empty: an entropy source (which needs no backing file), a
+        # The machine's virtio devices, so the transports the tree describes
+        # are not all empty: an entropy source (which needs no backing file), a
         # block device (which does -- the path is relative because QEMU runs
         # with the build directory as its working directory, and the runner
-        # puts a disk there), a keyboard, and two displays. The keyboard's
-        # acceptance check needs a finger, and the displays' a screen to read
-        # back: the QMP socket is both (scripts/run_target.py). The gpu ids
-        # name the consoles, which is how a screendump says which head it
-        # read. EDID is on by default on this QEMU, so each head answers how
-        # big its glass is.
+        # puts a disk there), a keyboard, two pointers, one display and a NIC.
+        # The keyboard's acceptance check needs a finger, and the display's a
+        # screen to read back: the QMP socket is both (scripts/run_target.py).
+        # The gpu id names the console, which is how a screendump says which
+        # head it read. EDID is on by default on this QEMU, so the head answers
+        # how big its glass is. The RISC-V virt machine has exactly eight
+        # virtio-mmio slots (VIRTIO_COUNT in QEMU's hw/riscv/virt.h) and they
+        # are all here: a second display stood in one until the 9P transport
+        # wanted it (specs/9p.md), so one head remains.
         qemu_args=(
             "-bios none",
             f"-smp {cores}",
@@ -156,8 +159,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # a tablet click cannot be injected without a bound console.
             "-device virtio-tablet-device",
             "-device virtio-mouse-device",
+            # One display: the console's screen. The machine's eighth
+            # virtio-mmio slot, where a second head once stood, is the 9P
+            # transport's now (specs/9p.md); the driver-protocol mode test that
+            # poked the parked head went with it.
             "-device virtio-gpu-device,id=gpu0",
-            "-device virtio-gpu-device,id=gpu1",
             # The network device (specs/net.md). QEMU's user-mode networking
             # hands the guest a DHCP lease, a gateway to reach and a DNS server,
             # and a default MAC; none of it is compiled into the stack, which
@@ -167,15 +173,24 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the run chose -- still offline, nothing external.
             "-netdev user,id=net0,tftp=tftp",
             "-device virtio-net-device,netdev=net0",
+            # The 9P transport (specs/9p.md): a host directory shared into the
+            # machine, so files move in and out without rebuilding the image.
+            # QEMU resolves `path=host` under its working directory, which is
+            # the build directory, where the runner creates it -- and
+            # AEGIR_9P_DIR points it at a real tree for interactive work
+            # (scripts/run_target.py). security_model=none hands the guest the
+            # host user's own files.
+            "-fsdev local,id=fsdev0,path=host,security_model=none",
+            "-device virtio-9p-device,fsdev=fsdev0,mount_tag=host",
             "-qmp unix:qmp.sock,server,nowait",
         ),
         qmp_socket="qmp.sock",
         # The script the runner plays against the QMP socket, in order. The
-        # test bed's lines are the cues it waits on; the screens' other cues
-        # are the gpu drivers' marker lines, two heads naming themselves.
-        # After each screen moment the runner dumps both heads (the dumps are
-        # which-console-is-which agnostic: the *set* of dimensions is what is
-        # checked) and presses the key that paces the guest's next step.
+        # test bed's lines are the cues it waits on; the screen's other cue is
+        # the gpu driver's marker line, the head naming itself. After each
+        # screen moment the runner dumps the head (a screendump names the gpu
+        # id it read, and the dimensions are what is checked) and presses the
+        # key that paces the guest's next step.
         qmp_steps=(
             # The process environment's acceptance client (specs/environment.md):
             # a spawned boot service that checks the argv, the environment and
@@ -206,6 +221,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # a used entry. It is what proves the second queue works, not just
             # the first.
             QmpStep(r"transmit: the device took the \d+-byte frame"),
+            # The 9P transport (specs/9p.md): the driver laid out its queue,
+            # read the export's name from the device's config space, and
+            # answered a version handshake -- the whole transport (queue, kick,
+            # completion, reply) proved before any filesystem stands on it. The
+            # line names the dialect and the size the host offered, so a
+            # transport that came up but could not carry a message fails here.
+            QmpStep(r"p9\.virtio0: 9P2000\.L, msize \d+, tag host"),
             # The network stack (specs/net.md): director started it as a system
             # service, and it brought lwIP up -- lwip_init, the tcpip thread
             # (where the sys_arch, the thread builder and the page-backed heap
@@ -433,44 +455,23 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     {"type": "btn", "data": {"button": "left", "down": False}},
                 ),
             ),
-            # Both heads up at the display's preferred mode. The cue is the
-            # test bed's, not the drivers': their marker lines pass while the
-            # boot is still spawning, before the test could be listening, and
-            # a key pressed then would be consumed by the keyboard check's
-            # own wait. The screens have been up since the markers; what the
-            # cue paces is the reading of them. gpu0 is the console's screen
+            # The head up at the display's preferred mode. The cue is the test
+            # bed's, not the driver's: its marker line passes while the boot is
+            # still spawning, before the test could be listening, and a key
+            # pressed then would be consumed by the keyboard check's own wait.
+            # The screen has been up since the marker; what the cue paces is
+            # the reading of it. gpu0 is the console's screen
             # (specs/console.md) -- the Workbench-blue backdrop, painted over
-            # the driver's bands at boot; gpu1 is the parked head the driver
-            # protocol is exercised on, bands and all.
+            # the driver's bands at boot.
             QmpStep(
-                r"test: both heads answered -- the screens, please",
-                dumps=("gpu0", "gpu1"),
-                expect=((1280, 800), (1280, 800)),
-                bands=("gpu1",),
+                r"test: the head answered -- the screens, please",
+                dumps=("gpu0",),
+                expect=((1280, 800),),
                 pixels=(
                     ("gpu0", 10, 10, 0, 85, 170),
                     ("gpu0", 1279, 799, 0, 85, 170),
                 ),
                 press="b",
-            ),
-            # The parked head shrinks; the console's screen does not move.
-            QmpStep(
-                r"gpu\.virtio\d: scanout 1024x768",
-                dumps=("gpu0", "gpu1"),
-                expect=((1024, 768), (1280, 800)),
-                bands=("gpu1",),
-                pixels=(("gpu0", 10, 10, 0, 85, 170),),
-                press="c",
-            ),
-            # The parked head is 4K now: the window's whole reason for being
-            # 32 MiB. The console's screen never moved from the preferred
-            # mode, and its backdrop stands.
-            QmpStep(
-                r"gpu\.virtio\d: scanout 3840x2160",
-                dumps=("gpu0", "gpu1"),
-                expect=((3840, 2160), (1280, 800)),
-                bands=("gpu1",),
-                pixels=(("gpu0", 10, 10, 0, 85, 170),),
             ),
             # The window protocol, from the test bed: a white window over
             # the blue backdrop, then a red one overlapping on top, then the

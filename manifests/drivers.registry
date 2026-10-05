@@ -29,9 +29,10 @@ compatible=virtio,mmio id=4 prefix=rng bus=virtio binary=aegir-virtio-rng memory
 compatible=virtio,mmio id=18 evtype=key prefix=kbd bus=virtio binary=aegir-virtio-input memory=15 window=0
 compatible=virtio,mmio id=18 evtype=rel prefix=mouse bus=virtio binary=aegir-virtio-input memory=15 window=0
 compatible=virtio,mmio id=18 evtype=abs prefix=tablet bus=virtio binary=aegir-virtio-input memory=15 window=0
-# The display. One row serves every head: two transports on QEMU's command
-# line are two bindings of this row and one aegir-virtio-gpu process each
-# (gpu.virtio0, gpu.virtio1 -- specs/services.md). The window is the
+# The display. One row serves every head: one transport on QEMU's command line
+# is one binding of this row and one aegir-virtio-gpu process (gpu.virtio0 --
+# specs/services.md). A second head stood here until the machine's eighth
+# virtio-mmio slot became the 9P transport's (specs/9p.md). The window is the
 # framebuffer itself -- 32 MiB of mega pages, because 3840x2160 at 32 bits a
 # pixel fits in 32 MiB -- and a window of 21 bits or more is carved as
 # seL4_RISCV_Mega_Page frames, not thousands of 4 KiB caps.
@@ -44,6 +45,14 @@ compatible=virtio,mmio id=16 prefix=gpu bus=virtio binary=aegir-virtio-gpu memor
 # frame at its start, receive copies one there -- and the stack maps the same
 # frames.
 compatible=virtio,mmio id=1 prefix=eth bus=virtio binary=aegir-virtio-net memory=18 window=16
+# The 9P transport (specs/9p.md): a filesystem passthrough rather than a block
+# device, so its driver carries 9P messages instead of sectors. virtio id 9;
+# the window is split in half by the driver and its client -- the request
+# leaves the first half, the reply lands in the second, and neither copies --
+# so 128 KiB (32 pages) carries two 64 KiB messages. The filesystem service
+# reaches it through the registry's `open` and `window`, the same way the
+# stack reaches an eth.* link; a run mounts a host directory as a volume.
+compatible=virtio,mmio id=9 prefix=p9 bus=virtio binary=aegir-virtio-9p memory=14 window=17
 # The interval timer (specs/timer.md): a platform device, so id is 0 and the
 # compatible alone decides. It owns the named port timer.main rather than one
 # the registry opens -- a client finds it by name, the way it finds clock.main

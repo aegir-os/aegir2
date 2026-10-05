@@ -292,7 +292,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* The instance name heads the marker line: two heads print two lines, and
+    /* The instance name heads the marker line: a head prints its own line, and
      * the runner's screen dump keys on which one said it. */
     uint32_t name_length = 0;
     char const *name = aegir::bootstrap::name(&name_length);

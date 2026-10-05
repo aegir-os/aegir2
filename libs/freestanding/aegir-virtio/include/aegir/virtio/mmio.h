@@ -78,13 +78,16 @@ enum Status : uint32_t {
 /* Device ids, as the bus numbers them. 1, 2 and 3 are in
  * projects/sel4_projects_libs/libsel4vmmplatsupport/include/sel4vmmplatsupport/drivers/virtio.h;
  * 4 is the entropy device, which is what QEMU's virtio-rng-device reports and what
- * director's survey measured on this machine. 18 is the input device
+ * director's survey measured on this machine. 9 is the 9P transport
+ * (QEMU's virtio-9p-device), which carries a 9P filesystem rather than a
+ * block device (specs/9p.md). 18 is the input device
  * (virtio 1.x, 5.8). */
 enum DeviceId : uint32_t {
     kDeviceIdNet = 1,
     kDeviceIdBlock = 2,
     kDeviceIdConsole = 3,
     kDeviceIdEntropy = 4,
+    kDeviceId9p = 9,
     kDeviceIdGpu = 16,
     kDeviceIdInput = 18,
 };

@@ -59,6 +59,7 @@ set(aegir_initrd_binaries
     aegir-virtio-input
     aegir-virtio-gpu
     aegir-virtio-net
+    aegir-virtio-9p
     aegir-net
     aegir-net-volume
     aegir-partmgr
@@ -97,6 +98,7 @@ set(aegir_initrd_binary_names
     "aegir-virtio-input"
     "aegir-virtio-gpu"
     "aegir-virtio-net"
+    "aegir-virtio-9p"
     "aegir-net"
     "aegir-net-volume"
     "aegir-partmgr"
