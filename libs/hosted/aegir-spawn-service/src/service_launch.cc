@@ -518,6 +518,12 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     if (!spawner().spawn(request, account, process)) {
         aegir::debug_write("  spawn: FAIL spawning a command: ");
         aegir::debug_write(spawner().problem());
+        char const *const detail = spawner().detail();
+        if (detail != nullptr && detail[0] != '\0') {
+            aegir::debug_write(" (");
+            aegir::debug_write(detail);
+            aegir::debug_write(")");
+        }
         aegir::debug_write("\n");
         abandon(badge, owner);
         return false;

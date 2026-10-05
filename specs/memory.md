@@ -306,6 +306,14 @@ gets a **two-level** CSpace instead (`Request.cspace_l1_bits != 0`):
   slots 1 upward), so the command pool grows with the number of live commands
   rather than running out at one CNode. The launcher's own caps stay in L2 CNode
   0, so the two never meet.
+- A command's own pool is a **run** of consecutive L2 CNodes, one per ~4096
+  caps its image needs (`ServiceKit::command_cnode_count`), not one CNode: an
+  84 MB image is ~21,000 frame caps, past a single CNode's 4096 -- and a
+  spawned command died on exactly that ("a segment could not be mapped"). The
+  allocator's slot cursor is encoded, so it spans the run, and each retype names
+  its CNode from the slot (`Allocator::retype_node_index`); a run never crosses
+  a CNode, because one retype names one. The bound on a command is its image and
+  the machine, never a single CNode.
 
 The block carries `l1` in the CNodeBits entry's `length` field, which that entry
 had never used, so a reader that knows only `cnode_bits` is undisturbed.

@@ -498,11 +498,15 @@ private:
 
     /** The `node_index` a retype names: the root cap itself at full depth in a
      *  single-level CSpace, and the L2 CNode cap's root slot in a two-level one
-     *  (adopt_slots_level_two explains). */
-    seL4_CPtr retype_node_index() const noexcept
+     *  (adopt_slots_level_two explains). The slot is encoded
+     *  `(cnode_index << l2) | offset`, so its high bits name the CNode -- the
+     *  cursor spans as many L2 CNodes as the caller adopted, so a pool is not
+     *  bounded by one CNode (specs/memory.md). */
+    seL4_CPtr retype_node_index(seL4_CPtr slot) const noexcept
     {
-        return level_two_bits_ != 0 ? cnode_index_
-                                    : static_cast<seL4_CPtr>(seL4_CapInitThreadCNode);
+        return level_two_bits_ != 0
+                   ? static_cast<seL4_CPtr>(slot >> level_two_bits_)
+                   : static_cast<seL4_CPtr>(seL4_CapInitThreadCNode);
     }
 
     seL4_BootInfo *bootinfo_;
@@ -539,12 +543,12 @@ private:
     /* The depth that addresses our slots: the whole word for the kernel's root CNode,
      * and zero for a service that addresses its own CSpace (adopt_slots explains). */
     seL4_Word cnode_depth_ = seL4_WordBits;
-    /* The L2 CNode radix when this allocator's slots live one CNode down, and
-     * the root slot of the CNode they live in; zero means a single-level CSpace
-     * (adopt_slots_level_two explains). `level_two_bits_` doubles as the flag:
-     * it is zero in every single-level process. */
+    /* The L2 CNode radix when this allocator's slots live one CNode down; zero
+     * means a single-level CSpace (adopt_slots_level_two explains).
+     * `level_two_bits_` doubles as the flag: it is zero in every single-level
+     * process. Which CNode a slot lives in is derived from the slot itself
+     * (retype_node_index), so the cursor may span several CNodes. */
     seL4_Word level_two_bits_ = 0;
-    seL4_Word cnode_index_ = 0;
     seL4_CPtr slots_first_;
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;

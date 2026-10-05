@@ -203,9 +203,8 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     cnode_l2_ = aegir::bootstrap::cnode_bits();
     if (cnode_l1_ != 0) {
         /* Root slot 0 holds the L2 CNode with our own caps; the pool's CNodes
-         * start at 1. No shared slot table: a command's whole CNode comes and
-         * goes with it. */
-        next_l1_slot_ = 1;
+         * start at 1. No shared slot table: a command's whole CNode run comes
+         * and goes with it. */
         g_command_mem.adopt_slot_pool(nullptr, 0);
     } else {
         /* The command-slot pool: the reserved spawn range, one owner per live
@@ -392,6 +391,79 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
     return true;
 }
 
+uint32_t ServiceKit::command_cnode_count() const
+{
+    /* The frames the image needs, one per page, plus a CNode for the page
+     * tables, the stack and the command's own objects. The file size is an
+     * over-estimate of the loaded bytes -- headers and unloaded sections are
+     * counted -- so the pool is never short; it is sized by the image, not by a
+     * cap. An image staked to the initrd has no file size and takes one CNode. */
+    seL4_Word const per_cnode = static_cast<seL4_Word>(1) << cnode_l2_;
+    seL4_Word const frames = image_size_ / 4096 + 1;
+    seL4_Word const nodes = (frames + per_cnode - 1) / per_cnode + 1;
+    return static_cast<uint32_t>(nodes);
+}
+
+bool ServiceKit::allocate_command_cnodes(uint32_t owner, uint32_t nodes, seL4_Word *base)
+{
+    seL4_Word const limit = static_cast<seL4_Word>(1) << cnode_l1_;
+    /* Root slot 0 is the launcher's own L2 CNode; a command's run starts at 1
+     * and must be consecutive, so one encoded slot cursor spans it. First fit
+     * over the run, skipping slots a live command holds. */
+    seL4_Word start = 1;
+    while (start + nodes <= limit) {
+        bool free_run = true;
+        for (seL4_Word s = start; s < start + nodes && free_run; ++s) {
+            for (OwnerCnode const &entry : owner_cnodes_) {
+                if (entry.slot == s) {
+                    free_run = false;
+                    break;
+                }
+            }
+        }
+        if (free_run) {
+            break;
+        }
+        ++start;
+    }
+    if (start + nodes > limit) {
+        return false;
+    }
+    for (seL4_Word s = start; s < start + nodes; ++s) {
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        seL4_CPtr const created =
+            allocator_->alloc_cnode_at_l1(cnode_l2_, s, account_, &error, &cookie);
+        if (created == 0) {
+            release_command_cnodes(owner);
+            return false;
+        }
+        owner_cnodes_.push_back(OwnerCnode{owner, s, cookie});
+    }
+    *base = start;
+    return true;
+}
+
+void ServiceKit::release_command_cnodes(uint32_t owner)
+{
+    for (std::size_t i = 0; i < owner_cnodes_.size();) {
+        if (owner_cnodes_[i].owner != owner) {
+            ++i;
+            continue;
+        }
+        /* Give the L2 CNode back: freeing the piece revokes the CNode cap at
+         * its root slot and returns the memory, so the slot is ready for the
+         * next command (specs/memory.md). */
+        if (owner_cnodes_[i].cookie != nullptr) {
+            (void)allocator_->free_object(
+                owner_cnodes_[i].cookie,
+                static_cast<seL4_Word>(aegir::mem::Allocator::object_bits(
+                    seL4_CapTableObject, cnode_l2_)));
+        }
+        owner_cnodes_.erase(owner_cnodes_.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+}
+
 bool ServiceKit::begin(uint32_t owner)
 {
     if (!ready_) {
@@ -404,34 +476,18 @@ bool ServiceKit::begin(uint32_t owner)
      * shared pool. */
     g_command_mem.reset();
     if (cnode_l1_ != 0) {
-        seL4_Word slot = 0;
-        for (OwnerCnode const &entry : owner_cnodes_) {
-            if (entry.owner == owner) {
-                slot = entry.slot;
-                break;
-            }
+        /* The command's pool is as many L2 CNodes as its image needs, laid
+         * down consecutively so one encoded slot cursor spans them
+         * (allocator.h's retype_node_index). A small command takes one, a big
+         * one more -- a command is not bounded by a single CNode
+         * (specs/memory.md). */
+        uint32_t const nodes = command_cnode_count();
+        seL4_Word base = 0;
+        if (!allocate_command_cnodes(owner, nodes, &base)) {
+            return false;
         }
-        if (slot == 0) {
-            if (!free_l1_slots_.empty()) {
-                slot = free_l1_slots_.back();
-                free_l1_slots_.pop_back();
-            } else if (next_l1_slot_ < (static_cast<seL4_Word>(1) << cnode_l1_)) {
-                slot = next_l1_slot_++;
-            } else {
-                return false;
-            }
-            seL4_Error error = seL4_NoError;
-            void *cookie = nullptr;
-            seL4_CPtr const created = allocator_->alloc_cnode_at_l1(
-                cnode_l2_, slot, account_, &error, &cookie);
-            if (created == 0) {
-                free_l1_slots_.push_back(slot);
-                return false;
-            }
-            owner_cnodes_.push_back(OwnerCnode{owner, slot, cookie});
-        }
-        g_command_mem.adopt_slots_level_two(0, static_cast<seL4_Word>(1) << cnode_l2_,
-                                            cnode_l1_, cnode_l2_, slot);
+        g_command_mem.adopt_slots_level_two(
+            0, static_cast<seL4_Word>(nodes) << cnode_l2_, cnode_l1_, cnode_l2_, base);
     } else {
         g_command_mem.adopt_slot_pool(&slot_pool_, owner);
     }
@@ -559,23 +615,7 @@ void ServiceKit::reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner)
         (void)stack.call_words(aegir::net::kMethodReap, &word, 1, &dropped, 1);
     }
     if (cnode_l1_ != 0) {
-        for (std::size_t i = 0; i < owner_cnodes_.size(); ++i) {
-            if (owner_cnodes_[i].owner != owner) {
-                continue;
-            }
-            /* Give the L2 CNode back: freeing the piece revokes the CNode cap
-             * at its root slot and returns the memory, so the slot is ready for
-             * the next command (specs/memory.md). */
-            if (owner_cnodes_[i].cookie != nullptr) {
-                (void)allocator_->free_object(
-                    owner_cnodes_[i].cookie,
-                    static_cast<seL4_Word>(aegir::mem::Allocator::object_bits(
-                        seL4_CapTableObject, cnode_l2_)));
-            }
-            free_l1_slots_.push_back(owner_cnodes_[i].slot);
-            owner_cnodes_.erase(owner_cnodes_.begin() + static_cast<std::ptrdiff_t>(i));
-            break;
-        }
+        release_command_cnodes(owner);
     } else {
         slot_pool_.free_owner(owner);
     }

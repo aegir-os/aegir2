@@ -281,6 +281,12 @@ private:
      * system serial when there is none. Zero when the range is spent. */
     uint64_t take_badge();
     uint32_t take_owner();
+    /* The L2 CNodes one command's pool needs, from its image size, and the run
+     * of them laid down consecutively so one encoded slot cursor spans them
+     * (allocator.h's retype_node_index, specs/memory.md). */
+    uint32_t command_cnode_count() const;
+    bool allocate_command_cnodes(uint32_t owner, uint32_t nodes, seL4_Word *base);
+    void release_command_cnodes(uint32_t owner);
     /* Split a NUL-separated environment into pointers. */
     static void split_environment(std::string const &text,
                                   std::vector<std::string> &storage,
@@ -341,16 +347,16 @@ private:
      * process, and the pool above is what it uses. */
     uint32_t cnode_l1_ = 0;
     uint32_t cnode_l2_ = 0;
-    /* One live command's own L2 CNode: the root slot whose capability is the L2
-     * CNode, and the untyped piece to give back when the command is reaped. */
+    /* One of a live command's own L2 CNodes: the root slot whose capability is
+     * the L2 CNode, and the untyped piece to give back when the command is
+     * reaped. A command owns a consecutive run of these -- its pool -- so a
+     * big image is not bounded by one CNode (specs/memory.md). */
     struct OwnerCnode {
         uint32_t owner;
         seL4_Word slot;
         void *cookie;
     };
     std::vector<OwnerCnode> owner_cnodes_;
-    std::vector<seL4_Word> free_l1_slots_;
-    seL4_Word next_l1_slot_ = 0;
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
     /* The output view's endpoint, once one is up (specs/launch.md): the view

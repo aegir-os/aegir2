@@ -445,7 +445,7 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
          * free pointer, :294-302 retypes and moves it). */
         seL4_Error const first = seL4_Untyped_Retype(
             parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
-            retype_node_index(), cnode_depth_, slot_offset(left_slot), 1);
+            retype_node_index(left_slot), cnode_depth_, slot_offset(left_slot), 1);
         if (first != seL4_NoError) {
             /* The piece cannot even yield one child, so it is not whole: it is
              * already off the list, and it stays off. */
@@ -457,7 +457,7 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
         }
         seL4_Error const second = seL4_Untyped_Retype(
             parent->cap, seL4_UntypedObject, size_bits, seL4_CapInitThreadCNode,
-            retype_node_index(), cnode_depth_, slot_offset(right_slot), 1);
+            retype_node_index(right_slot), cnode_depth_, slot_offset(right_slot), 1);
         if (second != seL4_NoError) {
             /* The parent held one child, not two: a retype already spent its
              * low half, so the parent is partial. It is off the list already,
@@ -615,7 +615,7 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
         return 0;
     }
     *error = seL4_Untyped_Retype(node->cap, type, size_bits, seL4_CapInitThreadCNode,
-                                 retype_node_index(), cnode_depth_, slot_offset(slot), 1);
+                                 retype_node_index(slot), cnode_depth_, slot_offset(slot), 1);
     if (*error != seL4_NoError) {
         slot_failed(slot);
         /* The piece cannot yield the object, so it is not a usable piece: it is
@@ -652,6 +652,16 @@ seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
         slots_next_ -= count;
         slots_used_ += count;
         return slots_next_;
+    }
+    if (level_two_bits_ != 0) {
+        /* A run must not cross an L2 CNode: one retype names one CNode. The
+         * caller halves the run on a refusal, so a run that would straddle a
+         * boundary is retried smaller and the tail is used by smaller runs. */
+        seL4_Word const mask = (static_cast<seL4_Word>(1) << level_two_bits_) - 1;
+        seL4_Word const offset = static_cast<seL4_Word>(slots_next_ & mask);
+        if (offset + count > mask + 1) {
+            return 0;
+        }
     }
     if (slots_next_ + count > slots_end_) {
         return 0;
@@ -717,14 +727,29 @@ seL4_CPtr Allocator::alloc_pages_run(seL4_Word count, Account &account, seL4_Err
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    *error = seL4_Untyped_Retype(node->cap, seL4_RISCV_4K_Page, seL4_PageBits,
-                                 seL4_CapInitThreadCNode, retype_node_index(), cnode_depth_,
-                                 slot_offset(first), count);
-    if (*error != seL4_NoError) {
-        slot_failed_run(first, count);
-        free_node(node);
-        return 0;
+    /* One retype call carries at most `seL4_UntypedRetypeMaxObjects` objects
+     * (kernel/src/object/untyped.c:144), and a run can be a bigger power of two
+     * -- a 2 MiB run is 512 frames, past the 256 fan-out limit. So the run is
+     * laid down in consecutive chunks: each call fills the next destination
+     * slots from the piece's free index, which advances through the piece, so
+     * the chunks together cover the whole run. */
+    for (seL4_Word done = 0; done < count;) {
+        seL4_Word const remaining = count - done;
+        seL4_Word const chunk = remaining < seL4_UntypedRetypeMaxObjects
+                                    ? remaining
+                                    : seL4_UntypedRetypeMaxObjects;
+        seL4_Error const retyped = seL4_Untyped_Retype(
+            node->cap, seL4_RISCV_4K_Page, seL4_PageBits, seL4_CapInitThreadCNode,
+            retype_node_index(first + done), cnode_depth_, slot_offset(first + done), chunk);
+        if (retyped != seL4_NoError) {
+            slot_failed_run(first + done, count - done);
+            free_node(node);
+            *error = retyped;
+            return 0;
+        }
+        done += chunk;
     }
+    *error = seL4_NoError;
     if (cookie != nullptr) {
         *cookie = node;
     }
@@ -766,7 +791,7 @@ bool Allocator::device_window(uint64_t base_paddr, unsigned pages, seL4_CPtr *fi
             seL4_Error const retyped =
                 seL4_Untyped_Retype(bootinfo_->untyped.start + i, seL4_RISCV_4K_Page,
                                     seL4_PageBits, seL4_CapInitThreadCNode,
-                                    retype_node_index(), cnode_depth_, slot_offset(slot), 1);
+                                    retype_node_index(slot), cnode_depth_, slot_offset(slot), 1);
             if (retyped != seL4_NoError) {
                 slot_failed(slot);
                 *error = retyped;
@@ -798,7 +823,6 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth,
     cnode_depth_ = depth;
     cnode_size_bits_ = static_cast<unsigned>(radix);
     level_two_bits_ = 0;
-    cnode_index_ = 0;
 }
 
 void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth,
@@ -812,21 +836,21 @@ void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word dep
     cnode_depth_ = depth;
     cnode_size_bits_ = static_cast<unsigned>(radix);
     level_two_bits_ = 0;
-    cnode_index_ = 0;
 }
 
 void Allocator::adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Word l1,
                                       seL4_Word l2, seL4_Word cnode_index) noexcept
 {
     level_two_bits_ = l2;
-    cnode_index_ = cnode_index;
     /* Both CNodes have guard zero, so a cap op addresses an L2 slot at
      * l1 + l2, while a retype names the L2 CNode cap at depth l1 against the
      * guard-zero own-CNode cap (specs/memory.md). */
     cnode_depth_ = l1;
     cnode_size_bits_ = static_cast<unsigned>(l1 + l2);
-    /* The cursor lives in encoded space; because first + count stays inside one
-     * L2 CNode, encoding is additive there (adopt_slots_level_two explains). */
+    /* The cursor lives in encoded space, `(cnode_index << l2) | first`. `count`
+     * may span several consecutive CNodes, so the cursor's high bits keep
+     * naming the right one as it crosses a boundary (retype_node_index derives
+     * the CNode from the slot); `first` is 0 for a multi-CNode pool. */
     seL4_CPtr const base = static_cast<seL4_CPtr>((cnode_index << l2) | first);
     slots_first_ = base;
     slots_next_ = base;
@@ -887,7 +911,7 @@ seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
         size_bits == seL4_PageBits ? seL4_RISCV_4K_Page : seL4_RISCV_Mega_Page;
     seL4_Error const retyped =
         seL4_Untyped_Retype(untyped_cap, type, size_bits, seL4_CapInitThreadCNode,
-                            retype_node_index(), cnode_depth_, slot_offset(slot), 1);
+                            retype_node_index(slot), cnode_depth_, slot_offset(slot), 1);
     if (retyped != seL4_NoError) {
         slot_failed(slot);
         *error = retyped;
