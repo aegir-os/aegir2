@@ -105,7 +105,6 @@ int main(int argc, char *argv[])
     if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
         fail("the heap could not claim the window");
     }
-
     int const listener = socket(AF_INET, SOCK_STREAM, 0);
     if (listener < 0) {
         fail("socket (listener)");

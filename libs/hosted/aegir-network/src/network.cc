@@ -91,6 +91,7 @@ int alloc_fd() noexcept
             g_capacity = capacity;
         }
         if (!g_entries[row].used) {
+            g_entries[row].used = true;
             return kSocketFdBase + static_cast<int>(row);
         }
     }
