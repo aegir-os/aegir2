@@ -217,6 +217,16 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
     if (length > kMaxPayloadWords * 8) {
         length = kMaxPayloadWords * 8;
     }
+    /* TEMP: every ICMP from 127.0.0.1, to see whether the looped request and its
+     * reply reach the raw socket at all. */
+    uint32_t const src = ip_word(source);
+    if ((src & 0xff) == 127) {
+        uint8_t kind = 0;
+        pbuf_copy_partial(packet, &kind, 1, static_cast<u16_t>(offset));
+        aegir::debug_write("      net: loopback icmp type ");
+        aegir::debug_write_unsigned(kind);
+        aegir::debug_write("\n");
+    }
     uintptr_t const held = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
     if (held != 0) {
         /* One write: the datagram is copied straight into the message registers,
