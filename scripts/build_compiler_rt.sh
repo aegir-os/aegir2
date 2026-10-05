@@ -24,7 +24,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TARGET="${1:-aegir}"
-OUT_DIR="${ROOT_DIR}/out/${TARGET}"
+# The runtime is shared across targets: every Aegir target is the same ABI
+# (riscv64/lp64d), so musl, libc++ and the rest are built once in out/runtime
+# and read by every target. TARGET names the build for the message only.
+OUT_DIR="${ROOT_DIR}/out/runtime"
 BUILD_DIR="${OUT_DIR}/builtins-build"
 INSTALL_DIR="${OUT_DIR}/builtins-install"
 

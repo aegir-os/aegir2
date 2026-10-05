@@ -6,7 +6,7 @@
 # redirection patch that makes musl usable on seL4 is applied by `make deps`
 # (third_party/patches/projects/musl) before that build.
 
-set(AEGIR_MUSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/musl-install")
+set(AEGIR_MUSL_INSTALL_DIR "${CMAKE_SOURCE_DIR}/out/runtime/musl-install")
 
 if(NOT EXISTS "${AEGIR_MUSL_INSTALL_DIR}/lib/libc.a")
   message(

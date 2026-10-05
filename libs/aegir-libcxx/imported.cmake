@@ -3,7 +3,7 @@
 # target's build directory. Included by the top-level CMakeLists when
 # AEGIR_HOSTED_CXX is ON.
 
-set(AEGIR_CXX_INSTALL_DIR "${CMAKE_BINARY_DIR}/cxx-install")
+set(AEGIR_CXX_INSTALL_DIR "${CMAKE_SOURCE_DIR}/out/runtime/cxx-install")
 
 foreach(library libunwind.a libc++abi.a libc++.a)
   if(NOT EXISTS "${AEGIR_CXX_INSTALL_DIR}/lib/${library}")

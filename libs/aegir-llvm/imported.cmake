@@ -7,8 +7,8 @@
 # `--start-group ... --end-group`, so listing them all is enough -- the group
 # rescans, and the linker pulls only the members a symbol needs.
 
-set(AEGIR_LLVM_INSTALL_DIR "${CMAKE_BINARY_DIR}/llvm-install")
-set(AEGIR_LLVM_BUILD_DIR "${CMAKE_BINARY_DIR}/llvm-build")
+set(AEGIR_LLVM_INSTALL_DIR "${CMAKE_SOURCE_DIR}/out/runtime/llvm-install")
+set(AEGIR_LLVM_BUILD_DIR "${CMAKE_SOURCE_DIR}/out/runtime/llvm-build")
 set(AEGIR_LLVM_SOURCE_DIR "${CMAKE_SOURCE_DIR}/projects/llvm-project")
 
 foreach(required libLLVMSupport.a libclangFrontend.a libclangCodeGen.a liblldCommon.a)

@@ -8,7 +8,7 @@
 # hosted runtime's full musl. It links zlib in turn, so a consumer links only
 # `png` and the compressed stream comes along.
 
-set(AEGIR_LIBPNG_INSTALL_DIR "${CMAKE_BINARY_DIR}/libpng-install")
+set(AEGIR_LIBPNG_INSTALL_DIR "${CMAKE_SOURCE_DIR}/out/runtime/libpng-install")
 
 if(NOT EXISTS "${AEGIR_LIBPNG_INSTALL_DIR}/lib/liblibpng16_static.a")
   message(

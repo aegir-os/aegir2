@@ -7,7 +7,7 @@
 # class); nothing links it directly. The archive and headers are a matched pair
 # from one build, compiled against the hosted runtime's full musl.
 
-set(AEGIR_ZLIB_INSTALL_DIR "${CMAKE_BINARY_DIR}/zlib-install")
+set(AEGIR_ZLIB_INSTALL_DIR "${CMAKE_SOURCE_DIR}/out/runtime/zlib-install")
 
 if(NOT EXISTS "${AEGIR_ZLIB_INSTALL_DIR}/lib/libz.a")
   message(

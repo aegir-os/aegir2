@@ -8,7 +8,7 @@
 # hosted runtime's full musl. Only the libjpeg API library is built -- no
 # TurboJPEG -- so a consumer links only `jpeg`.
 
-set(AEGIR_LIBJPEG_INSTALL_DIR "${CMAKE_BINARY_DIR}/libjpeg-install")
+set(AEGIR_LIBJPEG_INSTALL_DIR "${CMAKE_SOURCE_DIR}/out/runtime/libjpeg-install")
 
 if(NOT EXISTS "${AEGIR_LIBJPEG_INSTALL_DIR}/lib/libjpeg.a")
   message(
