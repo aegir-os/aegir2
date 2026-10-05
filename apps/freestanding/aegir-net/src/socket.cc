@@ -412,7 +412,7 @@ bool window_from_pbuf(seL4_CPtr window, struct pbuf *packet, uint32_t offset,
         pbuf_copy_partial(packet, at, static_cast<u16_t>(length),
                           static_cast<u16_t>(offset));
     }
-    seL4_RISCV_Page_Unmap(window);
+    g_scratch->unmap(window);
     return true;
 }
 
@@ -1203,7 +1203,7 @@ void do_write_window(void *argument) noexcept
     auto *const at = reinterpret_cast<uint8_t *>(g_window_copy);
     err_t const err = tcp_write(write->socket->tcp, at, static_cast<u16_t>(write->length),
                                 TCP_WRITE_FLAG_COPY);
-    seL4_RISCV_Page_Unmap(write->window);
+    g_scratch->unmap(write->window);
     if (err == ERR_OK) {
         write->written = write->length;
         (void)tcp_output(write->socket->tcp);
@@ -1277,7 +1277,7 @@ uint32_t drain_pending_window(Socket *socket, seL4_CPtr window, uint32_t capacit
         total += datagram->length;
         mem_free(datagram);
     }
-    seL4_RISCV_Page_Unmap(window);
+    g_scratch->unmap(window);
     return total;
 }
 
@@ -1449,7 +1449,7 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
         seL4_Error error = seL4_NoError;
         seL4_CPtr const frame = g_objects->alloc_page(*g_account, &error);
         if (frame != 0 && g_scratch->map_at(reserved, frame)) {
-            seL4_RISCV_Page_Unmap(frame);
+            g_scratch->unmap(frame);
             g_window_copy = reserved;
         }
     }
