@@ -20,6 +20,7 @@
 #include <aegir/log.h>
 #include <aegir/net.h>
 #include <aegir/netcontrol.h>
+#include <aegir/resolve.h>
 #include <aegir/timer.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
@@ -90,70 +91,8 @@ void print_address(uint32_t address) noexcept
     }
 }
 
-/* "a.b.c.d" (dotted decimal) into the network-order word the socket port wants,
- * or 0 when it is not an address -- then it is a name. */
-uint32_t parse_ipv4(char const *text) noexcept
-{
-    uint32_t value = 0;
-    uint32_t part = 0;
-    uint32_t parts = 0;
-    uint32_t digits = 0;
-    for (char const *p = text;; ++p) {
-        char const c = *p;
-        if (c >= '0' && c <= '9') {
-            part = part * 10 + static_cast<uint32_t>(c - '0');
-            if (part > 255 || ++digits > 3) {
-                return 0;
-            }
-        } else if (c == '.' || c == '\0') {
-            if (digits == 0 || parts > 3) {
-                return 0;
-            }
-            value |= part << (8 * parts);
-            ++parts;
-            part = 0;
-            digits = 0;
-            if (c == '\0') {
-                break;
-            }
-        } else {
-            return 0;
-        }
-    }
-    return parts == 4 ? value : 0;
-}
-
-uint32_t name_length(char const *text) noexcept
-{
-    uint32_t length = 0;
-    while (length <= aegir::net::kMaxNameBytes && text[length] != '\0') {
-        ++length;
-    }
-    return length;
-}
-
-/* Ask the stack to resolve a name (its DNS), answering the address or 0. The
- * hosts file is the resolver's first table and belongs to the client; it lands
- * with the shared client library, and this is the DNS fallback. */
-uint32_t resolve_name(aegir::ipc::Consumer const &sockets, char const *name) noexcept
-{
-    uint32_t const length = name_length(name);
-    if (length == 0 || length > aegir::net::kMaxNameBytes) {
-        return 0;
-    }
-    uint64_t request[1 + (aegir::net::kMaxNameBytes + 7) / 8] = {0};
-    request[0] = length;
-    pack(reinterpret_cast<uint8_t const *>(name), length, request + 1);
-    uint64_t answer[1] = {0};
-    aegir::ipc::WordsReply const resolved = sockets.call_words(
-        aegir::net::kMethodResolve, request, 1 + (length + 7) / 8, answer, 1);
-    if (resolved.error != 0 || resolved.count < 1) {
-        return 0;
-    }
-    return static_cast<uint32_t>(answer[0]);
-}
-
 constexpr uint32_t kEchoRequest = 8;
+constexpr uint32_t kEchoReply = 0;
 constexpr uint32_t kMessageBytes = 64;
 
 }  // namespace
@@ -188,9 +127,16 @@ int main(int argc, char *argv[])
     uint64_t target = 0;
     bool const has_argument = argc > 1 && argv[1] != nullptr && argv[1][0] != '\0';
     if (has_argument) {
-        target = parse_ipv4(argv[1]);
+        target = aegir::resolve::parse_ipv4(argv[1]);
         if (target == 0) {
-            target = resolve_name(sockets, argv[1]);
+            uint32_t length = 0;
+            while (argv[1][length] != '\0') {
+                ++length;
+            }
+            uint32_t resolved = 0;
+            if (aegir::resolve::lookup(argv[1], length, &resolved)) {
+                target = resolved;
+            }
         }
         if (target == 0) {
             write_line("FAIL", "ping: the name would not resolve");
@@ -272,26 +218,45 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    /* The reply is held until it arrives. */
+    /* The reply is held until it arrives. A raw ICMP socket sees every ICMP
+     * message, so one that is not an echo reply -- the request itself, looped
+     * back on 127.0.0.1 -- is skipped rather than printed. */
     uint64_t identifier = socket_id;
-    uint64_t reply[2 + (kMessageBytes + 7) / 8] = {0};
-    aegir::ipc::WordsReply const received = sockets.call_words(
-        aegir::net::kMethodRecv, &identifier, 1, reply, 2 + (kMessageBytes + 7) / 8);
-    if (received.error != 0 || received.count < 2 || reply[1] == 0) {
-        write_line("FAIL", "ping: no reply arrived");
+    uint8_t answered[(kMessageBytes + 7) / 8 * 8];
+    uint32_t source = 0;
+    uint32_t length = 0;
+    bool got_reply = false;
+    for (unsigned attempt = 0; attempt < 8 && !got_reply; ++attempt) {
+        uint64_t reply[2 + (kMessageBytes + 7) / 8] = {0};
+        aegir::ipc::WordsReply const received = sockets.call_words(
+            aegir::net::kMethodRecv, &identifier, 1, reply, 2 + (kMessageBytes + 7) / 8);
+        if (received.error != 0) {
+            break;
+        }
+        if (received.count < 2 || reply[1] == 0) {
+            continue;
+        }
+        length = static_cast<uint32_t>(reply[1]);
+        if (length > sizeof(answered)) {
+            length = sizeof(answered);
+        }
+        unpack(reply + 2, received.count - 2, answered, length);
+        if (length >= 1 && answered[0] == kEchoReply) {
+            source = static_cast<uint32_t>(reply[0]);
+            got_reply = true;
+        }
+    }
+    if (!got_reply) {
+        write_line("FAIL", "ping: no echo reply arrived");
         (void)sockets.call(aegir::net::kMethodClose, socket_id);
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    uint32_t const source = static_cast<uint32_t>(reply[0]);
-    uint32_t const length = static_cast<uint32_t>(reply[1]);
-    uint8_t answered[(kMessageBytes + 7) / 8 * 8];
-    unpack(reply + 2, received.count - 2, answered, length);
 
     aegir::debug_write("      ping: reply from ");
     print_address(source);
     aegir::debug_write(", type ");
-    aegir::debug_write_unsigned(length >= 1 ? answered[0] : 0);
+    aegir::debug_write_unsigned(answered[0]);
     aegir::debug_write(", ");
     aegir::debug_write_unsigned(length);
     aegir::debug_write(" bytes\n");

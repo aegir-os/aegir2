@@ -244,6 +244,15 @@ AEGIR_BFS_TREE = [
          b"needs      = log.main, vfs.namespace, launch.session\n"
          b"maps       = true\n"
          b"memory_kib = 4096\n"),
+        # Names the resolver knows without DNS (specs/net.md): a classic
+        # `address name [aliases...]` file, `#` comments. The resolver is the
+        # client's and reads this before it asks the network, so `ping
+        # localhost` resolves with nothing on the wire -- and `127.0.0.1` is
+        # lwIP's own loopback, which answers it.
+        ("file", "hosts",
+         b"# Sys:S/hosts -- names the resolver knows without DNS (specs/net.md).\n"
+         b"# address name [aliases...], one per line; # starts a comment.\n"
+         b"127.0.0.1 localhost\n"),
         # Resource limits, opt-in (specs/limits.md): the shipped file is
         # comments plus the commented-out default example, so out of the box
         # it restricts nothing. An operator edits it without reimaging.
