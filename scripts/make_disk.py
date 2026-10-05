@@ -436,14 +436,16 @@ def font_tree() -> list:
     return to_tree(root)
 
 
-def aegir_tree(commands, datatypes) -> list:
+def aegir_tree(commands, datatypes, development=()) -> list:
     """The system volume's tree, with the command set as Sys:C and the datatype
     classes as Sys:DataTypes.
 
     `commands` is a list of (name, bytes): each becomes C/<name>, the flat
     lowercase command name the shell resolves (specs/dos.md). `datatypes` is the
     same for DataTypes/<name>, the classes a file is decoded by
-    (specs/datatypes.md)."""
+    (specs/datatypes.md). `development` is the `Sys:Development` tree's children
+    (specs/development.md) -- the compiler under C, the sysroot under Include and
+    Libs -- and is empty for a target that does not carry it."""
     tree = list(AEGIR_BFS_TREE)
     # The datatypes acceptance's images (specs/datatypes.md): the demo opens
     # them through the ilbm, png and jpeg classes, on the session's namespace.
@@ -506,10 +508,31 @@ def aegir_tree(commands, datatypes) -> list:
         home_children.append(
             ("dir", "DataTypes", [("file", "aaa.datatype", png_class)]))
     tree.append(("dir", "Homes", [("dir", "rroland", home_children)]))
+    if development:
+        tree.append(("dir", "Development", list(development)))
     return tree
 
 
-def partition_table(commands, datatypes) -> list:
+def development_tree(root) -> list:
+    """The `Sys:Development` tree's children (specs/development.md): `root` laid
+    out as Development/<name>..., the compiler under C and the sysroot under
+    Include and Libs. An absent `root` is no development tree."""
+    if root is None or not root.is_dir():
+        return []
+
+    def walk(directory: Path) -> list:
+        children = []
+        for path in sorted(directory.iterdir()):
+            if path.is_dir():
+                children.append(("dir", path.name, walk(path)))
+            elif path.is_file():
+                children.append(("file", path.name, path.read_bytes()))
+        return children
+
+    return walk(root)
+
+
+def partition_table(commands, datatypes, development=()) -> list:
     """Lay the partitions out from their contents.
 
     AEGIR's size is its tree's, computed (specs/dos.md); every start is the
@@ -527,7 +550,7 @@ def partition_table(commands, datatypes) -> list:
             # cannot take a session's first write. `bfs_minimum_bytes` is the
             # tree alone, so the reserve is a second tree's worth: the volume
             # is sized to be written, not only read (specs/bfs.md).
-            needed = bfs_minimum_bytes(aegir_tree(commands, datatypes), name) * 2
+            needed = bfs_minimum_bytes(aegir_tree(commands, datatypes, development), name) * 2
             sectors = (needed + SECTOR - 1) // SECTOR
             sectors = ((sectors + 2047) // 2048) * 2048
         last = first + sectors - 1
@@ -576,6 +599,11 @@ def main() -> int:
         "--datatypes", type=Path, default=None,
         help="a directory of datatype class images, one per file, packed as "
              "Sys:DataTypes (specs/datatypes.md)")
+    parser.add_argument(
+        "--development", type=Path, default=None,
+        help="a directory laid out as the Sys:Development tree -- the compiler "
+             "under C and the sysroot under Include and Libs "
+             "(specs/development.md)")
     args = parser.parse_args()
 
     commands = []
@@ -586,7 +614,8 @@ def main() -> int:
     if args.datatypes is not None and args.datatypes.is_dir():
         datatypes = [(path.name, path.read_bytes())
                      for path in sorted(args.datatypes.iterdir()) if path.is_file()]
-    partitions = partition_table(commands, datatypes)
+    development = development_tree(args.development)
+    partitions = partition_table(commands, datatypes, development)
     total_bytes = disk_bytes(partitions)
 
     for tool in ("sgdisk", "mformat", "mcopy", "mdir"):
@@ -726,7 +755,8 @@ def main() -> int:
     with args.image.open("r+b") as handle:
         handle.seek(0)
         image = bytearray(handle.read())
-        for name, tree in (("AEGIR", aegir_tree(commands, datatypes)), ("BFS", BFS_TREE)):
+        for name, tree in (("AEGIR", aegir_tree(commands, datatypes, development)),
+                           ("BFS", BFS_TREE)):
             first = next(p[1] for p in partitions if p[0] == name)
             last = next(p[2] for p in partitions if p[0] == name)
             make_bfs(image, first * SECTOR, (last - first + 1) * SECTOR, name, tree)

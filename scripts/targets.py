@@ -113,6 +113,12 @@ class Target:
     # input and have no screen to read.
     qmp_steps: tuple[QmpStep, ...] = ()
     qmp_socket: str | None = None
+    # Whether this target's disk carries the development tree
+    # (specs/development.md): the compiler under Sys:Development/C and its sysroot
+    # beside it, sized from them. Off by default -- the compiler is tens of
+    # megabytes, and the targets the existing tests stand on should not pay for
+    # it.
+    development: bool = False
 
 
 def _aegir(memory_mib: int, cores: int, name: str) -> Target:
@@ -1729,7 +1735,7 @@ TARGETS: dict[str, Target] = {
     # upper end of the expected range.
     "aegir-2g-smp2": _aegir(2048, 2, "aegir-2g-smp2"),
     "aegir-2g-smp4": _aegir(2048, 4, "aegir-2g-smp4"),
-    "aegir-8g-smp4": _aegir(8192, 4, "aegir-8g-smp4"),
+    "aegir-8g-smp4": replace(_aegir(8192, 4, "aegir-8g-smp4"), development=True),
     "sel4test": Target(
         name="sel4test",
         description="upstream seL4 test suite (acceptance test for the vendored kernel)",

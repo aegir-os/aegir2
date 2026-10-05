@@ -485,14 +485,18 @@ def bands_at_posts(width: int, height: int, pixels: bytes) -> bool:
     )
 
 
-def ensure_disk(build_dir: Path) -> None:
+def ensure_disk(target: Target, build_dir: Path) -> None:
     """The machine's block device needs a disk to be a block device *of*. It is
     a GPT built by make_disk.py in the build directory, with the command set
     packed as Sys:C (specs/dos.md). Rebuilt on every run, because the commands
     it carries change with the build and the AEGIR partition is sized from
     them: a stale disk would serve a stale command. QEMU's -snapshot keeps even
     a writing run off it. It lives in the build output rather than the
-    repository, where scratch belongs."""
+    repository, where scratch belongs.
+
+    A target that carries the development tree (specs/development.md) also gets
+    `Sys:Development`, laid out from this build's own artifacts so the compiler
+    and the sysroot are one build."""
     disk = build_dir / "disk.img"
     commands = build_dir / "sys-c"
     datatypes = build_dir / "sys-datatypes"
@@ -501,7 +505,26 @@ def ensure_disk(build_dir: Path) -> None:
         command += ["--commands", str(commands)]
     if datatypes.is_dir():
         command += ["--datatypes", str(datatypes)]
+    if target.development:
+        command += ["--development", str(development_tree(build_dir))]
     subprocess.run(command, check=True)
+
+
+def development_tree(build_dir: Path) -> Path:
+    """Lay out `Sys:Development` for make_disk (specs/development.md): the
+    compiler under C, the sysroot under Include and Libs. The compiler is this
+    build's `aegir-cc`; the sysroot is the next increment -- the first compile is
+    freestanding (`specs/clang-on-aegir.md`), so Include and Libs are the tree's
+    shape and not yet its content."""
+    root = build_dir / "development"
+    shutil.rmtree(root, ignore_errors=True)
+    (root / "C").mkdir(parents=True)
+    (root / "Include").mkdir()
+    (root / "Libs").mkdir()
+    compiler = build_dir / "apps/hosted/aegir-cc/aegir-cc"
+    if compiler.is_file():
+        shutil.copy2(compiler, root / "C" / "aegir-cc")
+    return root
 
 
 def ensure_tftp(build_dir: Path) -> None:
@@ -553,7 +576,7 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
     press (the console says when, and which), the heads are the window's tabs,
     and QEMU stops when its window closes, not at a marker -- so nothing here
     watches, and nothing here is timed out but the user."""
-    ensure_disk(build_dir)
+    ensure_disk(target, build_dir)
     ensure_tftp(build_dir)
     ensure_host(build_dir)
     extra = " ".join(target.qemu_args)
@@ -581,7 +604,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # than passed as a separate argument, because the value starts with `-bios`
     # and the script's argparse refuses a value that looks like an option (and
     # would read a loose `-bios` as its own `-b`).
-    ensure_disk(build_dir)
+    ensure_disk(target, build_dir)
     ensure_tftp(build_dir)
     ensure_host(build_dir)
 
