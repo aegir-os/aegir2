@@ -75,3 +75,8 @@ target_include_directories(
           $<TARGET_PROPERTY:aegir-thread,INTERFACE_INCLUDE_DIRECTORIES>
           $<TARGET_PROPERTY:sel4,INTERFACE_INCLUDE_DIRECTORIES>
 )
+# A generator expression names a target but does not order the build, so without
+# this lwip can compile before libsel4 has generated the headers those
+# directories hold (`sel4/syscall.h`): a race a target with more parallelism
+# hits. The dependency is what the expressions above assume.
+add_dependencies(lwip sel4 aegir-mem aegir-thread aegir-runtime)
