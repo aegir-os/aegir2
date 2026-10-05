@@ -55,6 +55,7 @@
 #include <aegir/memory.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/network.h>
 #include <aegir/thread.h>
 #include <errno.h>
 #include <sched.h>
@@ -383,6 +384,9 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     /* The file layer's capability slots come from the same allocator. */
     files::adopt(allocator, scratch);
 
+    /* The socket layer: find the socket port, if this process was given one. */
+    network::adopt();
+
     /* The top of the window, page-aligned so brk arithmetic stays on page
      * boundaries, and below nothing the window already holds. */
     uintptr_t const top = align_down(scratch.limit());
@@ -643,6 +647,9 @@ long stdout_fd() noexcept
  * (specs/cxx.md step 5, specs/shell.md's Phase 4). */
 long sys_write(int fd, void const *buffer, size_t length) noexcept
 {
+    if (network::owns(fd)) {
+        return network::sendto(fd, buffer, length, 0, nullptr, 0);
+    }
     if (fd == 1) {
         /* Redirected output (specs/shell.md): the spawner named a file, and the
          * write lands there rather than on the grid. */
@@ -685,6 +692,9 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
  * has no stdin. Any other fd is a file. */
 long sys_read(int fd, void *buffer, size_t length) noexcept
 {
+    if (network::owns(fd)) {
+        return network::recvfrom(fd, buffer, length, 0, nullptr, nullptr);
+    }
     if (fd == 0) {
         /* Redirected input (specs/shell.md): the spawner named a file, and the
          * read drains it to its end rather than the console's queue. A NIL:
@@ -959,8 +969,53 @@ long vsyscall(long sysnum, ...) noexcept
         ret = files::openat(va_arg(ap, int), va_arg(ap, char const *),
                             va_arg(ap, int), va_arg(ap, int));
         break;
-    case 57: /* SYS_close */
-        ret = files::close(va_arg(ap, int));
+    case 57: { /* SYS_close: a socket fd is the socket layer's, a file fd the files' */
+        int const fd = va_arg(ap, int);
+        ret = network::owns(fd) ? network::close(fd) : files::close(fd);
+        break;
+    }
+    case 198: /* SYS_socket */
+        ret = network::socket(va_arg(ap, int), va_arg(ap, int), va_arg(ap, int));
+        break;
+    case 200: /* SYS_bind */
+        ret = network::bind(va_arg(ap, int), va_arg(ap, void const *), va_arg(ap, int));
+        break;
+    case 201: /* SYS_listen */
+        ret = network::listen(va_arg(ap, int), va_arg(ap, int));
+        break;
+    case 202: /* SYS_accept */
+        ret = network::accept(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, int *));
+        break;
+    case 242: /* SYS_accept4: the flags are accepted; the stack has none to set */
+        ret = network::accept(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, int *));
+        break;
+    case 203: /* SYS_connect */
+        ret = network::connect(va_arg(ap, int), va_arg(ap, void const *), va_arg(ap, int));
+        break;
+    case 204: /* SYS_getsockname */
+        ret = network::getsockname(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, int *));
+        break;
+    case 205: /* SYS_getpeername */
+        ret = network::getpeername(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, int *));
+        break;
+    case 206: /* SYS_sendto: musl's send and sendto both land here */
+        ret = network::sendto(va_arg(ap, int), va_arg(ap, void const *), va_arg(ap, size_t),
+                              va_arg(ap, int), va_arg(ap, void const *), va_arg(ap, int));
+        break;
+    case 207: /* SYS_recvfrom: musl's recv and recvfrom both land here */
+        ret = network::recvfrom(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t),
+                                va_arg(ap, int), va_arg(ap, void *), va_arg(ap, int *));
+        break;
+    case 208: /* SYS_setsockopt */
+        ret = network::setsockopt(va_arg(ap, int), va_arg(ap, int), va_arg(ap, int),
+                                  va_arg(ap, void const *), va_arg(ap, int));
+        break;
+    case 209: /* SYS_getsockopt */
+        ret = network::getsockopt(va_arg(ap, int), va_arg(ap, int), va_arg(ap, int),
+                                  va_arg(ap, void *), va_arg(ap, int *));
+        break;
+    case 210: /* SYS_shutdown */
+        ret = network::shutdown(va_arg(ap, int), va_arg(ap, int));
         break;
     case 61: /* SYS_getdents64 */
         ret = files::getdents(va_arg(ap, int), va_arg(ap, void *),

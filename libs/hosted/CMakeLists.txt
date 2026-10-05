@@ -8,6 +8,7 @@
 #
 
 add_subdirectory(aegir-heap)
+add_subdirectory(aegir-network)
 add_subdirectory(aegir-environment)
 add_subdirectory(aegir-launch)
 add_subdirectory(aegir-spawn-service)

@@ -279,6 +279,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # stack through the control port -- and the read that follows shows
             # the stack's own new value, so the cue is a write that landed.
             QmpStep(r"net: NE0/hostname = aegir-live"),
+            # The musl shim (specs/net.md): `net-smoke` is a hosted program
+            # that reaches the stack only through libc's socket calls, does a
+            # loopback echo, and prints what came back -- the rerouting the shim
+            # exists for, proved end to end.
+            QmpStep(r"net-smoke: \d+ bytes echoed through libc: Aegir libc sockets"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

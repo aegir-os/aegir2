@@ -84,6 +84,7 @@ set(aegir_initrd_binaries
     aegir-cxx-smoke
     aegir-env-smoke
     aegir-fs-smoke
+    aegir-net-smoke
     aegir-gui-demo
     aegir-font
 )
@@ -123,6 +124,7 @@ set(aegir_initrd_binary_names
     "aegir-cxx-smoke"
     "aegir-env-smoke"
     "aegir-fs-smoke"
+    "aegir-net-smoke"
     "aegir-gui-demo"
     "aegir-font"
 )
