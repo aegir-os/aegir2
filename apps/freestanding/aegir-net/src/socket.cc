@@ -187,6 +187,20 @@ void answer_held(seL4_CPtr held, uint64_t word) noexcept
     slot_put(held);
 }
 
+/* Where the IP payload starts: lwIP hands a raw socket the whole IP packet, but
+ * this port's `send` takes the protocol payload (the stack adds the IP header),
+ * so `recv` is symmetric and gives the payload too. The IP header's length is
+ * its first byte's low nibble, in 32-bit words. */
+uint32_t ip_payload_offset(struct pbuf *packet) noexcept
+{
+    uint8_t first = 0;
+    if (pbuf_copy_partial(packet, &first, 1, 0) != 1) {
+        return 0;
+    }
+    uint32_t const header = static_cast<uint32_t>(first & 0x0f) * 4;
+    return header <= packet->tot_len ? header : 0;
+}
+
 /* A reply from the link: answer the waiting `recv`, or keep the datagram for
  * the next one. Runs in the tcpip thread. The payload's bytes are the low bytes
  * of the answer's words, so they are copied straight into the word array. */
@@ -195,7 +209,8 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
 {
     static_cast<void>(pcb);
     auto *const socket = static_cast<Socket *>(argument);
-    uint32_t length = packet->tot_len;
+    uint32_t const offset = ip_payload_offset(packet);
+    uint32_t length = packet->tot_len - offset;
     if (length > kMaxPayloadWords * 8) {
         length = kMaxPayloadWords * 8;
     }
@@ -207,7 +222,7 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
         message[0] = ip_word(source);
         message[1] = length;
         pbuf_copy_partial(packet, reinterpret_cast<uint8_t *>(message + 2),
-                          static_cast<u16_t>(length), 0);
+                          static_cast<u16_t>(length), static_cast<u16_t>(offset));
         seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 2 + (length + 7) / 8));
         slot_put(static_cast<seL4_CPtr>(held));
     } else {
@@ -219,7 +234,8 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
                 datagram->source = ip_word(source);
                 datagram->length = length;
                 datagram->next = nullptr;
-                pbuf_copy_partial(packet, datagram->payload, static_cast<u16_t>(length), 0);
+                pbuf_copy_partial(packet, datagram->payload, static_cast<u16_t>(length),
+                                  static_cast<u16_t>(offset));
                 if (!__atomic_compare_exchange_n(&socket->pending, &expected, datagram,
                                                  false, __ATOMIC_RELEASE,
                                                  __ATOMIC_RELAXED)) {
