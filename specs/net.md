@@ -227,10 +227,22 @@ data then crosses the way block data does, a window the starter carves and the
 stack learns by badge.
 
 A **hosted application gets a musl shim**: `socket`, `connect`, `recv`,
-`send`, `getaddrinfo` and friends in `src/network/` are rerouted to the port,
-over an fd-to-connection table, the way the hosted runtime answers the clock
-through `clock.main` (`specs/cxx.md`). That shim is what makes "apps using our
-TCP/IP stack" true, and it is its own phase.
+`send`, `getaddrinfo` and friends are rerouted to the port, over an
+fd-to-connection table, the way the hosted runtime answers the clock through
+`clock.main` (`specs/cxx.md`). That shim is what makes "apps using our TCP/IP
+stack" true, and it is its own phase.
+
+Landed: the socket syscalls -- `socket`, `bind`, `listen`, `connect`, `accept`,
+`sendto`/`send`, `recvfrom`/`recv`, `shutdown`, `getsockname`/`getpeername`,
+`setsockopt`/`getsockopt` and `close` -- in `libs/hosted/aegir-network`, reached
+through aegir-heap's dispatcher the way the filesystem calls are. A socket fd is
+a row in the shim's own fd table, kept apart from the file fds by range, and a
+process the session did not give `net.socket` has no sockets.
+`aegir-net-smoke` (the command `netsmoke`) is the acceptance: a hosted program
+that reaches the stack only through libc's calls, does a loopback echo, and
+says what came back. **`getaddrinfo`/`gethostbyname` over the port's `resolve`
+is the next piece**: musl's own reads `/etc/hosts` and `/etc/resolv.conf`,
+neither of which the VFS has, so an override is what a name lookup needs.
 
 ## Memory: no fixed tables
 
@@ -427,7 +439,11 @@ console idle.
 4. **`aegir/net.h` and the socket shim** -- a `ping` client first (raw ICMP),
    then the datagram slice (UDP, and `tftp` as the client-path test), then the
    stream slice (TCP, and `tcpecho` as its lifecycle test), then the client's
-   shared window for bulk data, then the musl BSD-socket rerouting.
+   shared window for bulk data, then the musl BSD-socket rerouting. Landed: the
+   shim's syscalls and its acceptance (`netsmoke`, a loopback echo through
+   libc); remaining: `getaddrinfo` over `resolve`, and the shared window -- a
+   RAM carve-out the client owns and hands the stack by badge, the stack mapping
+   the frames inside a call.
 5. **`Net:`, the filesystem view** -- the live half: the volume and its service,
    `Net:<adapter>/<parameter>`, so the running state can be read and set the way
    the boot manifest set it. Landed: the service registers with the VFS and
