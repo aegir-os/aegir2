@@ -50,7 +50,11 @@ struct Socket {
     uint32_t id;
     struct raw_pcb *pcb;
     volatile uintptr_t held;
-    Datagram *volatile pending;
+    /* Datagrams that arrived with no waiter, oldest first. A raw ICMP socket
+     * sees more than one message per exchange -- the looped request and its
+     * reply -- so one slot would drop all but the first. */
+    Datagram *pending_head;
+    Datagram *pending_tail;
     Socket *next;
 };
 
@@ -58,6 +62,47 @@ Socket *g_sockets = nullptr;
 uint32_t g_next_id = 1;
 aegir::mem::Allocator *g_objects = nullptr;
 aegir::mem::Account *g_account = nullptr;
+
+/* The pending queues cross this thread (a `recv`) and the tcpip thread (a
+ * reply), so a short spinlock guards them. */
+volatile int g_queue_lock = 0;
+
+void lock_queue() noexcept
+{
+    while (__atomic_test_and_set(&g_queue_lock, __ATOMIC_ACQUIRE)) {
+    }
+}
+void unlock_queue() noexcept
+{
+    __atomic_clear(&g_queue_lock, __ATOMIC_RELEASE);
+}
+
+void queue_push(Socket *socket, Datagram *datagram) noexcept
+{
+    lock_queue();
+    datagram->next = nullptr;
+    if (socket->pending_tail != nullptr) {
+        socket->pending_tail->next = datagram;
+    } else {
+        socket->pending_head = datagram;
+    }
+    socket->pending_tail = datagram;
+    unlock_queue();
+}
+
+Datagram *queue_pop(Socket *socket) noexcept
+{
+    lock_queue();
+    Datagram *const datagram = socket->pending_head;
+    if (datagram != nullptr) {
+        socket->pending_head = datagram->next;
+        if (socket->pending_head == nullptr) {
+            socket->pending_tail = nullptr;
+        }
+    }
+    unlock_queue();
+    return datagram;
+}
 
 /* Reply slots, reused: a `recv`/`resolve` takes one, the answer puts it back.
  * Both this thread and the tcpip thread touch the pool, so a short spinlock
@@ -217,16 +262,6 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
     if (length > kMaxPayloadWords * 8) {
         length = kMaxPayloadWords * 8;
     }
-    /* TEMP: every ICMP from 127.0.0.1, to see whether the looped request and its
-     * reply reach the raw socket at all. */
-    uint32_t const src = ip_word(source);
-    if ((src & 0xff) == 127) {
-        uint8_t kind = 0;
-        pbuf_copy_partial(packet, &kind, 1, static_cast<u16_t>(offset));
-        aegir::debug_write("      net: loopback icmp type ");
-        aegir::debug_write_unsigned(kind);
-        aegir::debug_write("\n");
-    }
     uintptr_t const held = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
     if (held != 0) {
         /* One write: the datagram is copied straight into the message registers,
@@ -239,22 +274,15 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
         seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 2 + (length + 7) / 8));
         slot_put(static_cast<seL4_CPtr>(held));
     } else {
-        Datagram *expected = nullptr;
-        if (__atomic_load_n(&socket->pending, __ATOMIC_RELAXED) == nullptr) {
-            auto *const datagram =
-                static_cast<Datagram *>(mem_malloc(sizeof(Datagram) + length));
-            if (datagram != nullptr) {
-                datagram->source = ip_word(source);
-                datagram->length = length;
-                datagram->next = nullptr;
-                pbuf_copy_partial(packet, datagram->payload, static_cast<u16_t>(length),
-                                  static_cast<u16_t>(offset));
-                if (!__atomic_compare_exchange_n(&socket->pending, &expected, datagram,
-                                                 false, __ATOMIC_RELEASE,
-                                                 __ATOMIC_RELAXED)) {
-                    mem_free(datagram);
-                }
-            }
+        auto *const datagram =
+            static_cast<Datagram *>(mem_malloc(sizeof(Datagram) + length));
+        if (datagram != nullptr) {
+            datagram->source = ip_word(source);
+            datagram->length = length;
+            datagram->next = nullptr;
+            pbuf_copy_partial(packet, datagram->payload, static_cast<u16_t>(length),
+                              static_cast<u16_t>(offset));
+            queue_push(socket, datagram);
         }
     }
     /* Not consumed: lwIP's ICMP layer must still see the packet, or an echo
@@ -419,7 +447,8 @@ uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol) noexcept
     socket->id = g_next_id++;
     socket->pcb = nullptr;
     socket->held = 0;
-    socket->pending = nullptr;
+    socket->pending_head = nullptr;
+    socket->pending_tail = nullptr;
     socket->next = g_sockets;
     CreateArg create{socket, false};
     if (!in_tcpip(do_create, &create) || !create.ok) {
@@ -443,11 +472,9 @@ uint32_t close_socket(uint32_t id) noexcept
     *link = socket->next;
     CloseArg close{socket};
     (void)in_tcpip(do_close, &close);
-    Datagram *datagram = __atomic_exchange_n(&socket->pending, nullptr, __ATOMIC_ACQ_REL);
-    while (datagram != nullptr) {
-        Datagram *const next = datagram->next;
+    Datagram *datagram = nullptr;
+    while ((datagram = queue_pop(socket)) != nullptr) {
         mem_free(datagram);
-        datagram = next;
     }
     mem_free(socket);
     return 1;
@@ -469,8 +496,7 @@ uint32_t send_on(uint32_t id, uint64_t const *words, uint32_t count) noexcept
 /* Does a datagram wait? If so, fill the answer words and free it. */
 bool take_pending(Socket *socket, uint64_t *words, uint32_t *count) noexcept
 {
-    Datagram *const datagram =
-        __atomic_exchange_n(&socket->pending, nullptr, __ATOMIC_ACQ_REL);
+    Datagram *const datagram = queue_pop(socket);
     if (datagram == nullptr) {
         return false;
     }
