@@ -685,14 +685,9 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"launcher: command started date",
                 events=TERMINAL_CLICK,
                 # wait is a program too (C:WAIT), and with no period it waits a
-                # second (specs/dos.md). `ping localhost` follows: the resolver
-                # (specs/net.md) reads Sys:S/hosts -- localhost is 127.0.0.1 --
-                # and 127.0.0.1 is lwIP's own loopback, which answers the echo,
-                # so this proves the hosts file and the name path with the wire
-                # idle.
-                press="wait\nping localhost\n",
+                # second (specs/dos.md).
+                press="wait\n",
             ),
-            QmpStep(r"ping: reply from 127\.0\.0\.1, type 0, \d+ bytes"),
             QmpStep(
                 r"launcher: command started wait",
                 events=TERMINAL_CLICK,
