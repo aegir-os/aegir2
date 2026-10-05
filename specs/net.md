@@ -342,6 +342,18 @@ is unusable, so it is the stack's own interface, not an extra.
   synthetic volume. A program lists and reads `Net:` freely; changing an
   address or turning DHCP off is a privileged write.
 
+Landed: the service registers `Net:` with the VFS and serves `list`, `stat` and
+`read`, plus the write side (`open`, `write`, `close`, and `reap` for a badge's
+teardown) for the parameters the control port can answer today --
+`ipv4_address`, `ipv4_netmask`, `ipv4_gateway`, `dhcp`, `link`, `state` and
+`hostname`. A write is the ordinary file protocol, and the **close** applies
+it: `open`, `write`, `close` is one act seen at two times with the manifest, both
+through the same control port. The open handles live in the service's declared
+memory grant, a free row one whose serial is zero, the way `fs-bfs`'s and
+`fs-fat`'s handle pages are. The remaining parameters wait on the control port:
+`mac`, `mtu`, `ipv4_dns` and `stats` are the stack's to expose before the volume
+can answer them, and DNS is the one the manifest does not carry yet either.
+
 ### The control port
 
 A stack serves a **control port**, separate from the socket port: `list` the
@@ -418,7 +430,12 @@ console idle.
    shared window for bulk data, then the musl BSD-socket rerouting.
 5. **`Net:`, the filesystem view** -- the live half: the volume and its service,
    `Net:<adapter>/<parameter>`, so the running state can be read and set the way
-   the boot manifest set it.
+   the boot manifest set it. Landed: the service registers with the VFS and
+   serves reads (`list`, `stat`, `read`) and writes (`open`, `write`, `close`,
+   `reap`) for the parameters the control port carries; the acceptance reads the
+   DHCP address back and writes then reads back the hostname. The parameters the
+   control port does not yet answer (`mac`, `mtu`, `ipv4_dns`, `stats`) land when
+   it does.
 
 ## What this is not
 
