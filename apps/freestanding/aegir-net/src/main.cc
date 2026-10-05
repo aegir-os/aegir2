@@ -26,6 +26,7 @@
 #include <aegir/lwip/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/netcontrol.h>
 #include <aegir/registry.h>
 #include <aegir/thread.h>
 #include <aegir/timer.h>
@@ -211,15 +212,6 @@ int main(int argc, char *argv[])
         fail("the tick notification could not be made");
     }
 
-    /* A notification the main thread parks on once the tcpip thread owns the
-     * work; the service's own control and socket ports land on top of it. */
-    seL4_CPtr const park = g_objects.alloc_object(seL4_NotificationObject,
-                                                  seL4_NotificationBits, g_account,
-                                                  &notify_error);
-    if (park == 0) {
-        fail("no notification to park on");
-    }
-
     /* Start lwIP: lwip_init, the tcpip mailbox, and the tcpip thread -- which is
      * where the sys_arch, the thread builder and the heap are all exercised for
      * the first time. */
@@ -270,11 +262,40 @@ int main(int argc, char *argv[])
         fail("the timer refused the tick");
     }
 
-    /* Ready, then park: the tcpip thread does the work and the timer drives its
-     * timers. */
+    /* Ready, then serve the control port -- how an adapter is listed and
+     * configured, apart from the socket port (specs/net.md). It is served on
+     * this thread while the tcpip thread runs lwIP; the tick belongs to the
+     * tcpip thread, so a wake here is always a call. */
+    aegir::ipc::Owner control = aegir::ipc::Owner::find(
+        aegir::netcontrol::kPortName, aegir::netcontrol::kPortNameLength);
+    if (!control.valid()) {
+        fail("no control port was given to me");
+    }
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("net", "ready: the stack is up");
     for (;;) {
-        seL4_Wait(park, nullptr);
+        uint64_t words[4] = {0, 0, 0, 0};
+        uint32_t count = 0;
+        seL4_Word badge = 0;
+        uint32_t const method = control.receive_words(words, 4, &count, &badge);
+        if (method == aegir::netcontrol::kMethodList) {
+            control.reply(aegir::net::link_count());
+        } else if (method == aegir::netcontrol::kMethodDescribe && count >= 1) {
+            aegir::net::LinkState state{};
+            if (aegir::net::link_state(static_cast<unsigned>(words[0]), &state)) {
+                uint64_t const answer[aegir::netcontrol::kDescribeWords] = {
+                    state.name, state.ipv4, state.netmask, state.gateway, state.flags};
+                control.reply_words(answer, aegir::netcontrol::kDescribeWords);
+            } else {
+                control.reply(0);
+            }
+        } else if (method == aegir::netcontrol::kMethodSet && count >= 3) {
+            bool const taken = aegir::net::link_configure(
+                static_cast<unsigned>(words[0]), static_cast<uint32_t>(words[1]), words[2]);
+            control.reply(taken ? 1 : 0);
+        } else {
+            /* A method we do not know is a protocol version we do not speak. */
+            control.reply(0);
+        }
     }
 }

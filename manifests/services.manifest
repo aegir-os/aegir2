@@ -195,10 +195,24 @@ restart   = always
 binary     = aegir-net
 authority  = system
 account    = system
+owns       = net.control
 needs      = log.main, devmgr.registry, timer.main
 maps       = true
 memory_kib = 8192
 restart    = always
+
+# The network adapter configurator (specs/net.md): the stand-in for NetConfig,
+# which is a command on C: that reads Sys:S/network.manifest and applies it from
+# Startup-Sequence. This service takes the real path -- it is a client of the
+# stack's control port, not a config file read by the stack -- and asks each
+# adapter for DHCP; the manifest's reader replaces the "ask DHCP" with the
+# manifest's own parameters when it lands.
+[netcfg]
+binary    = aegir-net-config
+authority = system
+account   = system
+needs     = log.main, net.control
+restart   = never
 
 # The FAT filesystem service: one instance per FAT partition, started by the
 # partition manager with the block device's port and a range grant rather than

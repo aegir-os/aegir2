@@ -1,6 +1,6 @@
 /*
  * aegir-net's link half: a netif and a receive thread for each bound Ethernet
- * link (specs/net.md). See interface.h for the shape.
+ * link, and the control over them (specs/net.md). See interface.h.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
@@ -11,15 +11,18 @@
 #include <aegir/debug.h>
 #include <aegir/ethernet.h>
 #include <aegir/ipc/port.h>
+#include <aegir/netcontrol.h>
 #include <aegir/registry.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
 extern "C" {
+#include <lwip/dhcp.h>
 #include <lwip/etharp.h>
 #include <lwip/mem.h>
 #include <lwip/netif.h>
 #include <lwip/pbuf.h>
+#include <lwip/timeouts.h>
 #include <lwip/tcpip.h>
 }
 
@@ -28,18 +31,68 @@ namespace {
 
 using ethernet::kFrameMax;
 
-/* One link's state: the port it is called through, the window it maps, and the
- * netif lwIP routes through. It comes out of lwIP's heap -- the same growable
- * region as everything else -- because a link is added once and lives for the
- * process. */
+/* One link's state: the port it is called through, the window it maps, the
+ * netif lwIP routes through, and what the control port describes -- the
+ * addresses cached when the tcpip thread learned them, so a reader on another
+ * thread does not race lwIP. It comes out of lwIP's heap -- the same growable
+ * region as everything else -- and the list grows with it: no fixed table. */
 struct Link {
+    Link *next;
+    unsigned index;
     ipc::Consumer port;
     uint8_t *window;
     uint64_t mac;
     uint16_t mtu;
     bool link_up;
+    uint32_t unit;
+    uint64_t name; /* "NE0" packed low byte first */
+    /* Cached for `describe`, written in the tcpip thread. */
+    uint64_t ipv4;
+    uint64_t netmask;
+    uint64_t gateway;
+    uint64_t flags;
     struct netif netif;
 };
+
+Link *g_links = nullptr;
+unsigned g_link_count = 0;
+
+Link *link_at(unsigned index) noexcept
+{
+    for (Link *link = g_links; link != nullptr; link = link->next) {
+        if (link->index == index) {
+            return link;
+        }
+    }
+    return nullptr;
+}
+
+/* "NE" and the link's unit, packed low byte first (the MAC's packing): the
+ * adapter's own name, `eth.virtio0` -> `NE0` (specs/net.md). */
+uint64_t pack_name(uint32_t unit) noexcept
+{
+    char text[8];
+    uint32_t length = 0;
+    text[length++] = 'N';
+    text[length++] = 'E';
+    char digits[10];
+    uint32_t count = 0;
+    if (unit == 0) {
+        digits[count++] = '0';
+    }
+    while (unit != 0 && count < 10) {
+        digits[count++] = static_cast<char>('0' + (unit % 10));
+        unit /= 10;
+    }
+    while (count > 0) {
+        text[length++] = digits[--count];
+    }
+    uint64_t packed = 0;
+    for (uint32_t i = 0; i < length; ++i) {
+        packed |= static_cast<uint64_t>(static_cast<uint8_t>(text[i])) << (8 * i);
+    }
+    return packed;
+}
 
 uint32_t bounded_length(char const *text, uint32_t maximum) noexcept
 {
@@ -112,7 +165,7 @@ err_t link_netif_init(struct netif *netif) noexcept
 
 /* One thread per link: call `receive` (a held reply, so the caller waits inside
  * the call until a frame arrives), copy the frame into a pbuf, and hand it to
- * lwIP through the netif's input. Starts on its own, after lwIP is up. */
+ * lwIP through the netif's input. */
 [[noreturn]] void link_receive(void *argument) noexcept
 {
     auto *const link = static_cast<Link *>(argument);
@@ -136,6 +189,77 @@ err_t link_netif_init(struct netif *netif) noexcept
         if (link->netif.input(frame_pbuf, &link->netif) != ERR_OK) {
             pbuf_free(frame_pbuf);
         }
+    }
+}
+
+/* The DHCP answer arrives asynchronously; lwIP has no bind callback, so a
+ * timeout poll checks for it and reports the numbers the network gave -- never
+ * a number from the build (specs/net.md). Runs in the tcpip thread. */
+void dhcp_poll(void *argument) noexcept
+{
+    auto *const link = static_cast<Link *>(argument);
+    struct netif *const netif = &link->netif;
+    if (!dhcp_supplied_address(netif)) {
+        sys_timeout(500, dhcp_poll, link);
+        return;
+    }
+    ip4_addr_t const *const address = netif_ip4_addr(netif);
+    ip4_addr_t const *const netmask = netif_ip4_netmask(netif);
+    ip4_addr_t const *const gateway = netif_ip4_gw(netif);
+    link->ipv4 = address->addr;
+    link->netmask = netmask->addr;
+    link->gateway = gateway->addr;
+    link->flags |= netcontrol::kStateUp | netcontrol::kStateDhcp;
+    aegir::debug_write("      net: NE");
+    aegir::debug_write_unsigned(link->unit);
+    aegir::debug_write(" ipv4 ");
+    aegir::debug_write(ip4addr_ntoa(address));
+    aegir::debug_write(" netmask ");
+    aegir::debug_write(ip4addr_ntoa(netmask));
+    aegir::debug_write(" gateway ");
+    aegir::debug_write(ip4addr_ntoa(gateway));
+    aegir::debug_write("\n");
+}
+
+struct Configure {
+    struct netif *netif;
+    uint32_t parameter;
+    uint64_t value;
+    bool taken;
+};
+
+/* A `set`, applied in the tcpip thread (every netif operation belongs there).
+ * lwIP's own timeout runs the DHCP poll, so the answer is reported when it
+ * arrives rather than the setter waiting for it. */
+void apply_configure(void *argument) noexcept
+{
+    auto *const job = static_cast<Configure *>(argument);
+    struct netif *const netif = job->netif;
+    switch (job->parameter) {
+    case netcontrol::kParamDhcp:
+        if (job->value != 0) {
+            netif_set_up(netif);
+            if (dhcp_start(netif) == ERR_OK) {
+                job->taken = true;
+                sys_timeout(500, dhcp_poll, netif->state);
+            }
+        } else {
+            dhcp_stop(netif);
+            netif_set_down(netif);
+            job->taken = true;
+        }
+        break;
+    case netcontrol::kParamUp:
+        if (job->value != 0) {
+            netif_set_up(netif);
+        } else {
+            netif_set_down(netif);
+        }
+        job->taken = true;
+        break;
+    default:
+        job->taken = false;
+        break;
     }
 }
 
@@ -229,11 +353,19 @@ unsigned add_links(Authority const &authority) noexcept
         /* lwIP's netif starts zeroed; the rest of the link is set field by
          * field (Link holds a Consumer, so it is not something to memset). */
         __builtin_memset(&link->netif, 0, sizeof(link->netif));
+        link->next = nullptr;
+        link->index = added;
         link->port = link_port;
         link->window = window;
         link->mac = raw[0];
         link->mtu = static_cast<uint16_t>(raw[1]);
         link->link_up = (raw[2] & ethernet::kInfoLinkUp) != 0;
+        link->unit = trailing_unit(row->instance, name_length);
+        link->name = pack_name(link->unit);
+        link->ipv4 = 0;
+        link->netmask = 0;
+        link->gateway = 0;
+        link->flags = link->link_up ? netcontrol::kStateLinkUp : 0;
 
         ip4_addr_t any;
         ip4_addr_set_zero(&any);
@@ -250,9 +382,12 @@ unsigned add_links(Authority const &authority) noexcept
             continue;
         }
 
-        uint32_t const unit = trailing_unit(row->instance, name_length);
+        link->next = g_links;
+        g_links = link;
+        ++g_link_count;
+
         aegir::debug_write("      net: NE");
-        aegir::debug_write_unsigned(unit);
+        aegir::debug_write_unsigned(link->unit);
         aegir::debug_write(" ");
         aegir::debug_write(row->instance, name_length);
         aegir::debug_write(" mac ");
@@ -270,6 +405,38 @@ unsigned add_links(Authority const &authority) noexcept
         ++added;
     }
     return added;
+}
+
+unsigned link_count() noexcept
+{
+    return g_link_count;
+}
+
+bool link_state(unsigned index, LinkState *state) noexcept
+{
+    Link *const link = link_at(index);
+    if (link == nullptr) {
+        return false;
+    }
+    state->name = link->name;
+    state->ipv4 = link->ipv4;
+    state->netmask = link->netmask;
+    state->gateway = link->gateway;
+    state->flags = link->flags;
+    return true;
+}
+
+bool link_configure(unsigned index, uint32_t parameter, uint64_t value) noexcept
+{
+    Link *const link = link_at(index);
+    if (link == nullptr) {
+        return false;
+    }
+    Configure job{&link->netif, parameter, value, false};
+    if (tcpip_callback_with_block(apply_configure, &job, 1) != ERR_OK) {
+        return false;
+    }
+    return job.taken;
 }
 
 }  // namespace aegir::net

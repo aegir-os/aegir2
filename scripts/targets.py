@@ -220,6 +220,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(r"net: NE0 eth\.virtio0 mac [0-9a-f]{2}(:[0-9a-f]{2}){5}, "
                     r"mtu \d+, link up, down"),
             QmpStep(r"net: ready: the stack is up"),
+            # The configurator (specs/net.md): the stand-in for NetConfig, a
+            # client of the control port. It asked each adapter for DHCP.
+            QmpStep(r"netcfg: \d+ of \d+ adapters asked for DHCP"),
+            # And the numbers DHCP gave: the address, netmask and gateway are
+            # the network's, obtained over the wire, never embedded in the
+            # build. slirp's lease is what a run sees.
+            QmpStep(r"net: NE0 ipv4 \d+\.\d+\.\d+\.\d+ netmask \d+\.\d+\.\d+\.\d+ "
+                    r"gateway \d+\.\d+\.\d+\.\d+"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no
