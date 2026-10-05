@@ -1675,6 +1675,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
     )
 
 
+# The development target (specs/development.md): the only one whose disk carries
+# the compiler and sysroot, so the only one that runs it -- at session start,
+# with its own lines as the cue.
+_AEGIR_8G_SMP4 = _aegir(8192, 4, "aegir-8g-smp4")
+
 TARGETS: dict[str, Target] = {
     # The floor of the envelope: the smallest machine Aegir supports, and where
     # capacity problems are meant to show up first.
@@ -1735,7 +1740,16 @@ TARGETS: dict[str, Target] = {
     # upper end of the expected range.
     "aegir-2g-smp2": _aegir(2048, 2, "aegir-2g-smp2"),
     "aegir-2g-smp4": _aegir(2048, 4, "aegir-2g-smp4"),
-    "aegir-8g-smp4": replace(_aegir(8192, 4, "aegir-8g-smp4"), development=True),
+    "aegir-8g-smp4": replace(
+        _AEGIR_8G_SMP4,
+        development=True,
+        qmp_steps=_AEGIR_8G_SMP4.qmp_steps + (
+            # The compiler runs at session start (specs/development.md); its own
+            # lines are the cue, so nothing is typed for it.
+            QmpStep(r"AEGIR_CC_READ_OK"),
+            QmpStep(r"AEGIR_CC_COMPILE_OK"),
+        ),
+    ),
     "sel4test": Target(
         name="sel4test",
         description="upstream seL4 test suite (acceptance test for the vendored kernel)",

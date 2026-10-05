@@ -510,7 +510,29 @@ def aegir_tree(commands, datatypes, development=()) -> list:
     tree.append(("dir", "Homes", [("dir", "rroland", home_children)]))
     if development:
         tree.append(("dir", "Development", list(development)))
+        # A target that carries the compiler runs it once at session start, so
+        # the acceptance cues on the compiler's own lines rather than an
+        # interactive step (specs/development.md).
+        tree = _with_startup(tree, b"Sys:Development/C/aegir-cc\n")
     return tree
+
+
+def _with_startup(tree: list, extra: bytes) -> list:
+    """A copy of `tree` whose `S/Shell-Startup` runs `extra` after its own
+    lines, without mutating the shared BFS tree."""
+    result = []
+    for node in tree:
+        if node[0] == "dir" and node[1] == "S":
+            children = []
+            for child in node[2]:
+                if child[0] == "file" and child[1] == "Shell-Startup":
+                    children.append(("file", child[1], child[2] + extra))
+                else:
+                    children.append(child)
+            result.append(("dir", node[1], children))
+        else:
+            result.append(node)
+    return result
 
 
 def development_tree(root) -> list:
