@@ -268,6 +268,184 @@ bool find_parameter(char const *name, uint32_t length, unsigned *parameter) noex
     return false;
 }
 
+/* The write side (specs/net.md): an open handle buffers a parameter's new
+ * text, and `close` applies it through the control port -- the same port the
+ * boot manifest's reader uses, so boot config and a live write are one act
+ * seen at two times. A handle is scoped to the caller's badge -- resolve
+ * minted the client's copy of this port with it -- and its serial is never
+ * reused. Only the system may write: reprogramming a system interface is
+ * authority, so a user badge's open is refused. The table is the declared
+ * memory grant's, the way fs-bfs's and fs-fat's handle pages are; a free row
+ * is one whose serial is zero. */
+uint8_t *g_memory = nullptr;
+uint32_t g_memory_bytes = 0;
+uint64_t g_next_handle = 1;
+
+struct Handle {
+    uint64_t serial;  /* zero means the row is free */
+    uint64_t badge;
+    unsigned adapter_index;
+    unsigned parameter;
+    uint32_t length;
+    char value[96];
+};
+
+uint32_t handle_capacity() noexcept
+{
+    return g_memory_bytes / static_cast<uint32_t>(sizeof(Handle));
+}
+
+Handle *handle_rows() noexcept
+{
+    return reinterpret_cast<Handle *>(g_memory);
+}
+
+Handle *handle_lookup(uint64_t serial, uint64_t badge) noexcept
+{
+    if (serial == 0 || g_memory == nullptr) {
+        return nullptr;
+    }
+    Handle *const rows = handle_rows();
+    for (uint32_t i = 0; i < handle_capacity(); ++i) {
+        if (rows[i].serial == serial && rows[i].badge == badge) {
+            return rows + i;
+        }
+    }
+    return nullptr;
+}
+
+Handle *handle_alloc(uint64_t badge, unsigned adapter_index, unsigned parameter) noexcept
+{
+    if (g_memory == nullptr) {
+        return nullptr;
+    }
+    Handle *const rows = handle_rows();
+    for (uint32_t i = 0; i < handle_capacity(); ++i) {
+        if (rows[i].serial == 0) {
+            rows[i].serial = g_next_handle++;
+            rows[i].badge = badge;
+            rows[i].adapter_index = adapter_index;
+            rows[i].parameter = parameter;
+            rows[i].length = 0;
+            return rows + i;
+        }
+    }
+    return nullptr;
+}
+
+/* The parameters a write may change. The rest are the stack's report -- the
+ * link, the state, the addresses it was given -- and reading them is the
+ * whole of their use. */
+bool writable(unsigned parameter) noexcept
+{
+    switch (parameter) {
+    case kAddress:
+    case kNetmask:
+    case kGateway:
+    case kDhcp:
+    case kHostname:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* A dotted-quad "a.b.c.d" to the stack's network-order word, or false. */
+bool parse_address(char const *text, uint32_t length, uint32_t *address) noexcept
+{
+    uint32_t octets[4] = {0, 0, 0, 0};
+    uint32_t part = 0;
+    uint32_t digits = 0;
+    for (uint32_t i = 0; i < length; ++i) {
+        char const c = text[i];
+        if (c == '.') {
+            if (digits == 0 || part >= 3) {
+                return false;
+            }
+            ++part;
+            digits = 0;
+        } else if (c >= '0' && c <= '9') {
+            octets[part] = octets[part] * 10 + static_cast<uint32_t>(c - '0');
+            if (octets[part] > 255 || digits >= 3) {
+                return false;
+            }
+            ++digits;
+        } else {
+            return false;
+        }
+    }
+    if (part != 3 || digits == 0) {
+        return false;
+    }
+    *address = octets[0] | (octets[1] << 8) | (octets[2] << 16) | (octets[3] << 24);
+    return true;
+}
+
+/* Apply the handle's buffered text to the stack. Answers whether the stack
+ * took it. */
+bool apply_handle(Handle const *handle) noexcept
+{
+    uint64_t answer[1] = {0};
+    if (handle->parameter == kHostname) {
+        uint64_t out[3 + sizeof(handle->value) / 8 + 1] = {0};
+        out[0] = handle->adapter_index;
+        out[1] = aegir::netcontrol::kParamHostname;
+        out[2] = handle->length;
+        for (uint32_t i = 0; i < handle->length; ++i) {
+            out[3 + i / 8] |= static_cast<uint64_t>(static_cast<uint8_t>(handle->value[i]))
+                              << (8 * (i % 8));
+        }
+        aegir::ipc::WordsReply const reply = g_control.call_words(
+            aegir::netcontrol::kMethodSetText, out, 3 + (handle->length + 7) / 8, answer, 1);
+        return reply.error == 0 && reply.count >= 1 && answer[0] == 1;
+    }
+    uint64_t parameter = 0;
+    uint64_t value = 0;
+    switch (handle->parameter) {
+    case kAddress: {
+        uint32_t word = 0;
+        if (!parse_address(handle->value, handle->length, &word)) {
+            return false;
+        }
+        parameter = aegir::netcontrol::kParamIpv4Address;
+        value = word;
+        break;
+    }
+    case kNetmask: {
+        uint32_t word = 0;
+        if (!parse_address(handle->value, handle->length, &word)) {
+            return false;
+        }
+        parameter = aegir::netcontrol::kParamIpv4Netmask;
+        value = word;
+        break;
+    }
+    case kGateway: {
+        uint32_t word = 0;
+        if (!parse_address(handle->value, handle->length, &word)) {
+            return false;
+        }
+        parameter = aegir::netcontrol::kParamIpv4Gateway;
+        value = word;
+        break;
+    }
+    case kDhcp:
+        if (handle->length != 1 ||
+            (handle->value[0] != '0' && handle->value[0] != '1')) {
+            return false;
+        }
+        parameter = aegir::netcontrol::kParamDhcp;
+        value = static_cast<uint64_t>(handle->value[0] - '0');
+        break;
+    default:
+        return false;
+    }
+    uint64_t out[aegir::netcontrol::kSetWords] = {handle->adapter_index, parameter, value};
+    aegir::ipc::WordsReply const reply = g_control.call_words(
+        aegir::netcontrol::kMethodSet, out, aegir::netcontrol::kSetWords, answer, 1);
+    return reply.error == 0 && reply.count >= 1 && answer[0] == 1;
+}
+
 /* Resolve a path to a parameter's value: false when it is not
  * `<adapter>/<parameter>`, or the adapter is one the stack does not serve. */
 bool lookup(char const *path, uint32_t length, char *value, uint32_t capacity,
@@ -309,6 +487,116 @@ bool path_of(uint64_t const *words, uint32_t count, char const **text, uint32_t 
 void reply_nothing(aegir::ipc::Owner &port) noexcept
 {
     port.reply_words(nullptr, 0);
+}
+
+/* open: a path and mode flags. A read handle is not served -- every read is a
+ * path read -- so kOpenRead answers zero and the caller keeps to kMethodRead.
+ * A write needs the system's authority, and a parameter the stack lets be
+ * changed; the answer is the handle, or zero. */
+void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                 uint64_t badge) noexcept
+{
+    char const *path = nullptr;
+    uint32_t path_length = 0;
+    uint32_t path_words = 0;
+    if (!path_of(words, count, &path, &path_length, &path_words) ||
+        count < path_words + 1) {
+        port.reply(0);
+        return;
+    }
+    uint64_t const flags = words[path_words];
+    if ((flags & aegir::volume::kOpenRead) != 0 || aegir::ipc::is_user_badge(badge)) {
+        port.reply(0);
+        return;
+    }
+    char const *adapter_name = nullptr;
+    uint32_t adapter_name_length = 0;
+    char const *parameter_name = nullptr;
+    uint32_t parameter_name_length = 0;
+    if (!split(path, path_length, adapter_name, adapter_name_length, parameter_name,
+               parameter_name_length)) {
+        port.reply(0);
+        return;
+    }
+    unsigned adapter_index = 0;
+    Adapter adapter{};
+    if (!find_adapter(adapter_name, adapter_name_length, &adapter_index, &adapter)) {
+        port.reply(0);
+        return;
+    }
+    unsigned parameter = 0;
+    if (!find_parameter(parameter_name, parameter_name_length, &parameter) ||
+        !writable(parameter)) {
+        port.reply(0);
+        return;
+    }
+    Handle *const handle = handle_alloc(badge, adapter_index, parameter);
+    port.reply(handle != nullptr ? handle->serial : 0);
+}
+
+/* write: a handle and bytes. The bytes append at the handle's cursor; the
+ * whole buffered text is applied at close. The answer is the count taken. */
+void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    if (count < 2) {
+        port.reply(0);
+        return;
+    }
+    uint32_t const length = static_cast<uint32_t>(words[1]);
+    Handle *const handle = handle_lookup(words[0], badge);
+    if (handle == nullptr || length > (count - 2) * 8 ||
+        length > sizeof(handle->value) - handle->length) {
+        port.reply(0);
+        return;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        handle->value[handle->length + i] =
+            static_cast<char>((words[2 + i / 8] >> (8 * (i % 8))) & 0xff);
+    }
+    handle->length += length;
+    port.reply(length);
+}
+
+/* close: a handle. The buffered text is applied to the stack, the row freed.
+ * The answer is 1 when the stack took it, 0 when the handle was not one or
+ * the value was refused. */
+void answer_close(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                  uint64_t badge) noexcept
+{
+    if (count < 1) {
+        port.reply(0);
+        return;
+    }
+    Handle *const handle = handle_lookup(words[0], badge);
+    if (handle == nullptr) {
+        port.reply(0);
+        return;
+    }
+    bool const applied = apply_handle(handle);
+    handle->serial = 0;
+    port.reply(applied ? 1 : 0);
+}
+
+/* reap: a badge. Every handle that badge holds is dropped as though closed,
+ * without applying -- the session teardown's mechanism. The answer is how
+ * many were dropped. */
+void answer_reap(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
+{
+    if (count < 1 || g_memory == nullptr) {
+        port.reply(0);
+        return;
+    }
+    uint64_t const badge = words[0];
+    uint64_t dropped = 0;
+    Handle *const rows = handle_rows();
+    for (uint32_t i = 0; i < handle_capacity(); ++i) {
+        if (rows[i].serial != 0 && rows[i].badge == badge) {
+            rows[i].serial = 0;
+            ++dropped;
+        }
+    }
+    port.reply(dropped);
 }
 
 /* A list answer: the entry's name as a string, then its size, kind and mtime. */
@@ -484,6 +772,21 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
+    /* The handle table's page, when the spawner gave one: zeroed before it is
+     * trusted, because a retyped frame holds whatever the last owner left and a
+     * nonzero serial would be a handle nobody opened. */
+    uint64_t memory_physical = 0;
+    uint32_t memory_bits = 0;
+    uint64_t memory_address = 0;
+    if (aegir::bootstrap::untyped(&memory_physical, &memory_bits, &memory_address) &&
+        memory_bits != 0 && memory_address != 0) {
+        g_memory = reinterpret_cast<uint8_t *>(memory_address);
+        g_memory_bytes = 1u << memory_bits;
+        for (uint32_t i = 0; i < g_memory_bytes; ++i) {
+            g_memory[i] = 0;
+        }
+    }
+
     /* The volume's caller half, minted unbadged: the VFS badges each
      * resolver's own copy. */
     uint64_t owner_slot = 0;
@@ -542,19 +845,13 @@ int main(int argc, char *argv[])
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords] = {0};
         uint32_t count = 0;
+        seL4_Word badge = 0;
         bool cap_arrived = false;
-        uint32_t const method =
-            port.receive_words(words, aegir::ipc::kMaxWords, &count, nullptr, &cap_arrived);
+        uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
+                                                   &badge, &cap_arrived);
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(port, words, count);
-            break;
-        case aegir::volume::kMethodReadHandle:
-        case aegir::volume::kMethodReadFrame:
-            /* No `open` is served, so there are no handles; a read-frame names
-             * one too. Both answer nothing, and a caller falls back to a path
-             * read (kMethodRead). */
-            reply_nothing(port);
             break;
         case aegir::volume::kMethodList:
             answer_list(port, words, count);
@@ -562,14 +859,29 @@ int main(int argc, char *argv[])
         case aegir::volume::kMethodStat:
             answer_stat(port, words, count);
             break;
+        case aegir::volume::kMethodOpen:
+            answer_open(port, words, count, badge);
+            break;
+        case aegir::volume::kMethodWrite:
+            answer_write(port, words, count, badge);
+            break;
+        case aegir::volume::kMethodClose:
+            answer_close(port, words, count, badge);
+            break;
+        case aegir::volume::kMethodReap:
+            answer_reap(port, words, count);
+            break;
+        case aegir::volume::kMethodReadHandle:
+        case aegir::volume::kMethodReadFrame:
+            /* No read handle is served -- a read is a path read -- so a
+             * read-frame, which names one, answers nothing and the caller
+             * falls back to kMethodRead. */
+            reply_nothing(port);
+            break;
         case aegir::volume::kMethodMkdir:
         case aegir::volume::kMethodRemove:
-        case aegir::volume::kMethodReap:
         case aegir::volume::kMethodRename:
         case aegir::volume::kMethodTruncate:
-        case aegir::volume::kMethodOpen:
-        case aegir::volume::kMethodWrite:
-        case aegir::volume::kMethodClose:
             answer_refuse(port);
             break;
         default:

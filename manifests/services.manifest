@@ -213,6 +213,10 @@ authority  = system
 account    = system
 owns       = vol.net
 needs      = log.main, vfs.namespace, net.control
+# The handle table's backing store: the page the write side's open handles
+# live in, sized from this grant rather than a number chosen in code (the way
+# fs-bfs's and fs-fat's handle pages are).
+memory_kib = 4
 restart    = never
 
 # The network is configured and proved from Startup-Sequence, not here

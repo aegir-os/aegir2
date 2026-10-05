@@ -107,6 +107,37 @@ uint32_t read_path(char const *path, uint32_t path_length, char *out,
     return total;
 }
 
+/* Write `value` to `path` through the namespace: resolve, open a write handle,
+ * write, close. The handle applies the value to the stack when it is closed,
+ * so the close is part of the write, not an afterthought. */
+bool write_path(char const *path, uint32_t path_length, char const *value,
+                uint32_t value_length) noexcept
+{
+    aegir::vfs::Namespace space = aegir::vfs::Namespace::find();
+    if (!space.valid()) {
+        return false;
+    }
+    seL4_CPtr const slot = first_free_slot();
+    if (slot == 0 || slot == aegir::bootstrap::kSlotReceiveCap) {
+        return false;
+    }
+    aegir::vfs::Namespace::Resolved resolved{};
+    if (!space.resolve(path, path_length, slot, resolved)) {
+        return false;
+    }
+    aegir::vfs::Volume volume(resolved.volume);
+    uint64_t const handle = volume.open(resolved.rest, resolved.rest_length, 0);
+    bool ok = false;
+    if (handle != 0) {
+        uint64_t written = 0;
+        ok = volume.write(handle, value, value_length, &written) &&
+             written == value_length;
+        (void)volume.close(handle);
+    }
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot, aegir::bootstrap::kCNodeBits);
+    return ok;
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -145,6 +176,17 @@ int main(int argc, char *argv[])
         path[kPrefixLength + i] = relative[i];
     }
     uint32_t const path_length = kPrefixLength + relative_length;
+
+    /* A second argument writes: `net NE0/hostname aegir-live` sets the
+     * parameter, and the read below shows what it became. */
+    if (argc >= 3 && argv[2] != nullptr) {
+        char const *const new_value = argv[2];
+        uint32_t const new_length = text_length(new_value);
+        if (!write_path(path, path_length, new_value, new_length)) {
+            write_line("FAIL", "net: the Net: path did not write");
+            finish(1);
+        }
+    }
 
     char value[kValueMax];
     uint32_t const n = read_path(path, path_length, value, sizeof(value));

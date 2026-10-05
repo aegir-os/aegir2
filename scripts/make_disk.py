@@ -300,11 +300,13 @@ AEGIR_BFS_TREE = [
         # stays hidden. EndCLI >NIL: is the Amiga's quiet close; it needs the
         # NIL: handler. `net NE0/ipv4_address` reads the address back through
         # the Net: volume -- the live half, exercised with the ordinary file
-        # protocol after DHCP has answered.
+        # protocol after DHCP has answered -- and the two hostname lines prove
+        # the write half: an open, a write, a close, then a read of what the
+        # stack now holds.
         ("file", "Startup-Sequence",
          b"; Aegir system startup: the network, then the quiet close.\n"
          b"netconfig\nping\nping localhost\ntftp aegir.txt\ntcpecho\n"
-         b"net NE0/ipv4_address\n"
+         b"net NE0/ipv4_address\nnet NE0/hostname\nnet NE0/hostname aegir-live\n"
          b"filenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
         # The interpreter's acceptance (specs/shell.md): a built-in changes the
         # shell, and the next line only runs if the script did -- the shell

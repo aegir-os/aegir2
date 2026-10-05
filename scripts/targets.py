@@ -274,6 +274,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # ordinary file protocol, so the cue is the DHCP number coming back
             # out of Net: the way it went into the stack.
             QmpStep(r"net: NE0/ipv4_address = \d+\.\d+\.\d+\.\d+"),
+            # The write half: `net NE0/hostname aegir-live` opens the parameter
+            # for writing, writes it, and closes -- which applies it to the
+            # stack through the control port -- and the read that follows shows
+            # the stack's own new value, so the cue is a write that landed.
+            QmpStep(r"net: NE0/hostname = aegir-live"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no
