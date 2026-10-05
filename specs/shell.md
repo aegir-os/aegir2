@@ -53,8 +53,8 @@ enough to state in one file.
   directory (`specs/dos.md`). The first two commands resolved
   from the flat initrd (`Initrd:<name>`, Phases 3–6) while `C:` did not exist;
   the DOS toolset drops that lookup for the real set (`specs/dos.md`). A
-  command's name is lowercased before it resolves, because a command is
-  `C:copy` and the filesystem is case-sensitive.
+  command's name is taken as typed; it is `C:copy` because that is the file's
+  name on a case-sensitive filesystem, and the shell rewrites nothing.
 - **Scripts live in `S:`.** The session's `S:` is a per-badge alias of the
   user's `Home:S`, made and bound by auth (`specs/auth.md`), and it is where
   the shell looks for its startup file (`specs/boot.md` for the boot
@@ -175,7 +175,7 @@ are the shell's.
 
 A bare command name is searched across the caller's `Path`, in order — today
 one entry, the `C:` alias (`Sys:C` then `Home:C`, `specs/dos.md`) — and its
-lowercased form is what is looked up. A name with an assign or volume
+form as typed is what is looked up. A name with an assign or volume
 (`Sys:Utilities/Hello`) resolves directly through the namespace, as typed. This is the Amiga's `/`-path rule, applied to Aegir's
 `Volume:rest` grammar (`specs/vfs.md`). A name that resolves to a directory
 rather than a file is the implicit directory change; a name that resolves to

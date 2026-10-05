@@ -84,14 +84,28 @@ bool adopt_memory()
     return ok;
 }
 
-std::string to_lower(std::string text)
+/* The shell's own words -- the built-ins and the `Run`/`Alias` keywords -- are
+ * matched case-insensitively, because they are the shell's vocabulary and not
+ * files: `EndCLI`, `EndCli` and `endcli` are one built-in, as on the Amiga.
+ * Nothing is rewritten or lowercased: a command word or a path is still taken
+ * as typed and resolved by the filesystem's own case (specs/dos.md). */
+bool equals_ci(std::string const &a, char const *b) noexcept
 {
-    for (char &c : text) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
+    std::size_t i = 0;
+    for (; i < a.size() && b[i] != '\0'; ++i) {
+        char ca = a[i];
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = static_cast<char>(ca - 'A' + 'a');
+        }
+        char cb = b[i];
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = static_cast<char>(cb - 'A' + 'a');
+        }
+        if (ca != cb) {
+            return false;
         }
     }
-    return text;
+    return i == a.size() && b[i] == '\0';
 }
 
 /* The words after `from`, joined with a space: a built-in that takes its
@@ -534,7 +548,7 @@ private:
         uint32_t count = 0;
         Builtin const *const table = builtin_table(count);
         for (uint32_t i = 0; i < count; ++i) {
-            if (name == table[i].name) {
+            if (equals_ci(name, table[i].name)) {
                 return true;
             }
         }
@@ -770,7 +784,6 @@ private:
             }
             return;
         }
-        name = to_lower(name);
         if (value.empty()) {
             for (auto const &alias : aliases_) {
                 if (alias.first == name) {
@@ -790,7 +803,7 @@ private:
             print("UnAlias: what alias?\n");
             return;
         }
-        std::string const name = to_lower(args[0]);
+        std::string const name = args[0];
         for (auto it = aliases_.begin(); it != aliases_.end(); ++it) {
             if (it->first == name) {
                 aliases_.erase(it);
@@ -888,10 +901,10 @@ private:
             line_status_ = 10;
             return;
         }
-        /* The command word is lowercased (the Amiga is case-blind and C: is
-         * not, specs/dos.md) and the words travel NUL-separated, so an
-         * argument a quote grouped reaches the command as one argument. */
-        std::string payload = to_lower(args[0]);
+        /* The command word is taken as typed (specs/dos.md) and the words
+         * travel NUL-separated, so an argument a quote grouped reaches the
+         * command as one argument. */
+        std::string payload = args[0];
         for (std::size_t i = 1; i < args.size(); ++i) {
             payload.push_back('\0');
             payload += args[i];
@@ -1056,7 +1069,7 @@ private:
                 line_status_ = 10;
                 return false;
             }
-            std::string const command = to_lower(redirect.words[0]);
+            std::string const command = redirect.words[0];
             if (is_builtin_name(command)) {
                 print("Pipe: " + redirect.words[0] + " is a built-in\n");
                 line_status_ = 10;
@@ -1125,7 +1138,7 @@ private:
         std::string first;
         std::string rest;
         split_word(expanded, first, rest);
-        if (to_lower(first) == "alias") {
+        if (equals_ci(first, "alias")) {
             command_alias(rest);
             return false;
         }
@@ -1157,7 +1170,11 @@ private:
         if (command_words.empty()) {
             return false;
         }
-        std::string const command = to_lower(command_words[0]);
+        /* The command word is taken as typed: the shell rewrites nothing. A
+         * volume name is case-insensitive (the VFS folds it, specs/vfs.md); a
+         * filename's case is the underlying filesystem's business -- FAT folds,
+         * BFS does not (specs/fat.md, specs/bfs.md). */
+        std::string const command = command_words[0];
         std::vector<std::string> const args(command_words.begin() + 1,
                                             command_words.end());
 
@@ -1165,7 +1182,7 @@ private:
          * words after it are the command, and the line's redirection belongs
          * to that command, not to `Run` itself, so this is handled before the
          * built-in redirect path. */
-        if (command == "run") {
+        if (equals_ci(command, "run")) {
             run_background(args, redirect);
             return false;
         }
@@ -1174,7 +1191,7 @@ private:
         Builtin const *const kBuiltins = builtin_table(builtin_count);
         for (uint32_t b = 0; b < builtin_count; ++b) {
             Builtin const &builtin = kBuiltins[b];
-            if (command == builtin.name) {
+            if (equals_ci(command, builtin.name)) {
                 /* A built-in's output is the shell's own, so its redirection is
                  * the shell's too: open the target and print into it. */
                 if (!redirect.out_path.empty()) {
@@ -1204,12 +1221,12 @@ private:
         }
         /* A program, launched on this shell's behalf (specs/launch.md): the
          * shell asks the session's launcher, which owns the spawn authority
-         * and starts the command with this stream. The command word is
-         * lowercased (the Amiga is case-blind and C: is not, specs/dos.md)
-         * and the words travel NUL-separated, so an argument a quote grouped
-         * reaches the command as one argument (specs/shell.md); the
-         * redirections already left the list. The launch carries the shell's
-         * own context, so `cd` and `Set` reach the command. */
+         * and starts the command with this stream. The command word travels as
+         * typed (specs/dos.md) and the words travel NUL-separated, so an
+         * argument a quote grouped reaches the command as one argument
+         * (specs/shell.md); the redirections already left the list. The launch
+         * carries the shell's own context, so `cd` and `Set` reach the
+         * command. */
         std::string payload = command;
         for (std::string const &arg : args) {
             payload.push_back('\0');

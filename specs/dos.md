@@ -34,14 +34,13 @@ and asks no more of a command than that the port be there.
   `BD1:Foo`) is used as typed; a path with `/` is resolved against the caller's
   current directory. The caller carries its `Path` in the launch request's
   `path` field (specs/launch.md).
-- **Names are lowercase and resolution is case-blind.** The Amiga is
-  case-insensitive; Aegir's filesystems are not (`specs/vfs.md`). The
-  convention that reconciles them: every command's binary is named in lowercase
-  (`copy`, `delete`, `makedir`), and the shell lowercases a **bare** first word
-  before it resolves anything. So `Copy`, `COPY` and `copy` are one command,
-  and `C:Copy` is spelled `C:copy`. A **path** is not a bare name: it is taken
-  as typed, case-sensitive like the filesystems behind it, so
-  `Sys:System/Terminal` reaches the file whose name is spelled that way.
+- **The shell rewrites nothing; case is the filesystem's.** Aegir's volume
+  names are case-insensitive -- the VFS folds them, so `Sys:` and `SYS:` are one
+  volume (`specs/vfs.md`) -- and a filename's case is the underlying
+  filesystem's: FAT folds it, BFS does not (`specs/fat.md`, `specs/bfs.md`). The
+  shell takes the command word and its arguments as typed and lowercases
+  nothing, so a command binary spelled `copy` is reached by `copy` on a BFS
+  `Sys:C`, and a path reaches exactly the file whose name is spelled that way.
 - **Built-ins are the shell's state; commands are programs.** The line editor,
   the implicit directory change, `CD`/`CurrentDir`, `Echo`, `Set`/`Get` and
   the environment family, `Alias`/`UnAlias`, `Prompt`, `Why`/`Fault`, `Eval`
@@ -140,7 +139,7 @@ are their own arcs or out of scope.
 
     C:copy      the alias resolved by the namespace, the bytes read by the
                 launcher, the image handed to the spawner
-    copy        what the shell sends the launcher, lowercased
+    copy        what the shell sends the launcher, as typed
 
 The launcher owns the spawn authority (`specs/launch.md`) and reads the
 command's image from `C:<name>` through the namespace, the way it read
