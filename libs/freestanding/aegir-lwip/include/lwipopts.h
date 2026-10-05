@@ -60,6 +60,12 @@
  * LWIP_HAVE_LOOPIF is derived from it. */
 #define LWIP_NETIF_LOOPBACK         1
 #define LWIP_HAVE_LOOPIF            1
+/* The tcpip mailbox holds more than one message: lwIP schedules internal work
+ * through it with a *try*post (netif_poll after a loopback send, callbacks), and
+ * a one-slot ring silently drops that work -- which is what kept `ping
+ * localhost` from ever being answered. This is lwIP's own queue depth, not a
+ * capacity of ours. */
+#define TCPIP_MBOX_SIZE             8
 
 /* No IP reassembly, no IGMP, no autoip for now: the first acceptance is DHCP,
  * ARP and ICMP echo. */
