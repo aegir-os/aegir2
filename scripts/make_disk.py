@@ -253,6 +253,20 @@ AEGIR_BFS_TREE = [
          b"# Sys:S/hosts -- names the resolver knows without DNS (specs/net.md).\n"
          b"# address name [aliases...], one per line; # starts a comment.\n"
          b"127.0.0.1 localhost\n"),
+        # What the machine's adapters should be at boot (specs/net.md), read by
+        # the `netconfig` command from Startup-Sequence and applied through the
+        # stack's control port -- the stack never reads it. `hostname` names the
+        # machine and rides DHCP option 12; each adapter section is DHCP or the
+        # static addresses, and an adapter with no section stays down. NE0 is the
+        # stack's own name for the virtio link (eth.virtio0), and dhcp is what
+        # QEMU's slirp answers -- the numbers are the network's, not the file's.
+        ("file", "network.manifest",
+         b"# Sys:S/network.manifest -- the adapters at boot (specs/net.md).\n"
+         b"format = 1\n"
+         b"hostname = aegir\n"
+         b"\n"
+         b"[NE0]\n"
+         b"dhcp = true\n"),
         # Resource limits, opt-in (specs/limits.md): the shipped file is
         # comments plus the commented-out default example, so out of the box
         # it restricts nothing. An operator edits it without reimaging.
@@ -267,15 +281,20 @@ AEGIR_BFS_TREE = [
          b"\n"
          b"[default]\n"
          b"# memory_log = 64M\n"),
-        # Run once by the system boot session, then closed. A sequence line is a
-        # command like any other's, so it starts a program -- the point of the
-        # boot session's launcher (specs/boot.md). `filenote` is quiet and no
-        # other acceptance step cues on it, so the boot window stays hidden and
-        # the start is a clean marker. EndCLI >NIL: is the Amiga's quiet close;
-        # it needs the NIL: handler (specs/boot.md).
+        # Run once by the system boot session, then closed (specs/boot.md). A
+        # sequence line is a command like any other's, so it starts a program --
+        # the point of the boot session's launcher. The network comes up here,
+        # not in a boot service (specs/net.md): `netconfig` reads
+        # Sys:S/network.manifest (Sys: is up by construction when the boot
+        # session runs this) and applies it through the stack's control port, and
+        # `ping` proves the path with an ICMP echo to the DHCP-supplied gateway
+        # (no argument: the command asks the stack for the gateway, so nothing
+        # names the machine). `filenote` is the marker no other acceptance step
+        # cues on, so the boot window stays hidden. EndCLI >NIL: is the Amiga's
+        # quiet close; it needs the NIL: handler.
         ("file", "Startup-Sequence",
-         b"; Aegir system startup: a command, then the quiet close.\n"
-         b"filenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
+         b"; Aegir system startup: the network, then the quiet close.\n"
+         b"netconfig\nping\nfilenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
         # The interpreter's acceptance (specs/shell.md): a built-in changes the
         # shell, and the next line only runs if the script did -- the shell
         # expands the alias x to date, so date starting is the proof.

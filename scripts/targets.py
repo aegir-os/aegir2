@@ -220,18 +220,26 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(r"net: NE0 eth\.virtio0 mac [0-9a-f]{2}(:[0-9a-f]{2}){5}, "
                     r"mtu \d+, link up, down"),
             QmpStep(r"net: ready: the stack is up"),
-            # The configurator (specs/net.md): the stand-in for NetConfig, a
-            # client of the control port. It asked each adapter for DHCP.
-            QmpStep(r"netcfg: \d+ of \d+ adapters asked for DHCP"),
+            # NetConfig (specs/net.md): the boot session's Startup-Sequence runs
+            # `netconfig`, and it read Sys:S/network.manifest through the VFS and
+            # applied it through the control port -- the stack never reads the
+            # file. The hostname is set first, so the stack prints it, and DHCP
+            # option 12 carries it; that it reached the netif before dhcp_start
+            # is why the name is the network's and not only ours.
+            QmpStep(r"launcher: command started netconfig"),
+            QmpStep(r"net: NE0 hostname aegir"),
+            QmpStep(r"netconfig: \d+ of \d+ adapters configured, hostname on \d+"),
             # And the numbers DHCP gave: the address, netmask and gateway are
             # the network's, obtained over the wire, never embedded in the
             # build. slirp's lease is what a run sees.
             QmpStep(r"net: NE0 ipv4 \d+\.\d+\.\d+\.\d+ netmask \d+\.\d+\.\d+\.\d+ "
                     r"gateway \d+\.\d+\.\d+\.\d+"),
             # The socket port's first client (specs/net.md): a raw ICMP echo to
-            # the DHCP-supplied gateway, which slirp answers. It is the plan's
-            # small landing -- the whole path (socket, send, held recv) end to
-            # end before TCP.
+            # the DHCP-supplied gateway, which slirp answers. The command, run
+            # from Startup-Sequence after netconfig, asks the stack for the
+            # gateway rather than naming it. It is the plan's small landing --
+            # the whole path (socket, send, held recv) end to end before TCP.
+            QmpStep(r"launcher: command started ping"),
             QmpStep(r"ping: reply from \d+\.\d+\.\d+\.\d+, type 0, \d+ bytes"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a

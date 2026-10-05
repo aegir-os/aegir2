@@ -273,6 +273,30 @@ void apply_configure(void *argument) noexcept
         }
         job->taken = true;
         break;
+    case netcontrol::kParamIpv4Address:
+    case netcontrol::kParamIpv4Netmask:
+    case netcontrol::kParamIpv4Gateway: {
+        /* A static address, set by hand rather than by DHCP (specs/net.md): the
+         * three addresses are the netif's together, so each `set` caches its own
+         * and reapplies the trio. The interface is raised by `up`, not here. */
+        auto *const link = static_cast<Link *>(netif->state);
+        if (job->parameter == netcontrol::kParamIpv4Address) {
+            link->ipv4 = job->value;
+        } else if (job->parameter == netcontrol::kParamIpv4Netmask) {
+            link->netmask = job->value;
+        } else {
+            link->gateway = job->value;
+        }
+        ip4_addr_t ip;
+        ip4_addr_t netmask;
+        ip4_addr_t gateway;
+        ip4_addr_set_u32(&ip, static_cast<u32_t>(link->ipv4));
+        ip4_addr_set_u32(&netmask, static_cast<u32_t>(link->netmask));
+        ip4_addr_set_u32(&gateway, static_cast<u32_t>(link->gateway));
+        netif_set_addr(netif, &ip, &netmask, &gateway);
+        job->taken = true;
+        break;
+    }
     case netcontrol::kParamHostname: {
         auto *const link = static_cast<Link *>(netif->state);
         uint32_t const length = job->text_length;

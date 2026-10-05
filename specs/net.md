@@ -238,10 +238,35 @@ configurations. Both reach the stack's control port.
 
 ### At boot: `Sys:S/network.manifest`
 
-A TOML file on the system volume, the `Sys:S/session.manifest` shape and
-location (`specs/session.md`). It says what each adapter should be at boot:
-DHCP or static, the address, netmask, gateway and DNS, the MTU, which link to
-bind, and the machine's `hostname`.
+A file on the system volume, the boot manifest's shape -- `key = value`,
+`[section]`, `#` comments, a `format` version, and unknown keys are errors rather
+than skips. It says what each adapter should be at boot -- DHCP or the static
+addresses -- and the machine's `hostname`:
+
+    format = 1
+    hostname = aegir
+
+    [NE0]
+    dhcp = true
+
+    [NE1]
+    ipv4_address = 10.0.2.15
+    ipv4_netmask = 255.255.255.0
+    ipv4_gateway = 10.0.2.2
+
+The section name is the adapter's **own** name -- `NE0`, the stack's name for
+`eth.virtio0` (`describe` answers it, and the live `Net:` volume uses it) -- so
+the manifest addresses interfaces without naming a machine. `hostname` is the
+machine's name and rides **DHCP option 12**, so it is what the network sees and
+not only a label kept here; it must come **before the first section**, because
+the netif has to hold the name when `dhcp_start` runs. An adapter with no section
+stays **down**. The MTU, `ipv4_dns`, and binding a link by name are the `Net:`
+volume's own parameters and land with it; the schema grows with them.
+
+The reader **streams**: a network manifest is read by a freestanding command,
+which has no heap, so the file is fed to the parser in chunks and each completed
+section is applied as it ends -- there is no table of adapters and so no capacity
+to guess.
 
 **It is applied by a command, not by the stack.** `NetConfig` (a command in
 `C:`) is run from `Sys:S/Startup-Sequence` (`specs/boot.md`); it reads the
@@ -301,7 +326,10 @@ is unusable, so it is the stack's own interface, not an extra.
 ### The control port
 
 A stack serves a **control port**, separate from the socket port: `list` the
-adapters it serves, `get` a parameter, `set` a parameter. The `Net:` service is
+adapters it serves, `get` a parameter, `set` a parameter. Text-valued parameters
+(the hostname) go through a `set-text`/`get-text` pair whose bytes ride the
+message registers packed low byte first, the way a DNS name does on the socket
+port; the word-valued parameters keep the three-word `set`. The `Net:` service is
 one client and the boot-manifest reader is another. Keeping it apart from
 `aegir/net.h` keeps "move bytes" and "reprogram the interface" as different
 protocols, the way the block driver's `caps` is not its `read`
@@ -320,7 +348,8 @@ in the stack:
   (`hostname`), set through the control port by `NetConfig` like every other
   parameter, and read or set live as `Net:<adapter>/hostname`. The stack puts it
   in DHCP option 12, so it is what the network sees and not only a label the
-  machine keeps to itself.
+  machine keeps to itself. Landed: the control port's text parameter, the
+  stack's per-link storage, and `netconfig` reading the manifest.
 - **`Sys:S/hosts`** is the resolver's first table, and it belongs to the client:
   a classic `address name [aliases]` file, `#` comments, consulted *before* DNS.
   A name it holds resolves with no network at all -- which an offline machine

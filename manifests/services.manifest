@@ -201,29 +201,12 @@ maps       = true
 memory_kib = 8192
 restart    = always
 
-# The network adapter configurator (specs/net.md): the stand-in for NetConfig,
-# which is a command on C: that reads Sys:S/network.manifest and applies it from
-# Startup-Sequence. This service takes the real path -- it is a client of the
-# stack's control port, not a config file read by the stack -- and asks each
-# adapter for DHCP; the manifest's reader replaces the "ask DHCP" with the
-# manifest's own parameters when it lands.
-[netcfg]
-binary    = aegir-net-config
-authority = system
-account   = system
-needs     = log.main, net.control
-restart   = never
-
-# The socket port's first client (specs/net.md): a raw ICMP echo. It waits for
-# DHCP's gateway through the control port and pings it -- the plan's small
-# landing before TCP carries a connection state machine. Names (Sys:S/hosts,
-# then DNS) and a command line follow; today it is the acceptance's last step.
-[ping]
-binary    = aegir-ping
-authority = system
-account   = system
-needs     = log.main, net.control, net.socket, timer.main
-restart   = never
+# The network is configured and proved from Startup-Sequence, not here
+# (specs/net.md): `netconfig` reads Sys:S/network.manifest and applies it through
+# the control port, and `ping` sends the ICMP echo. Neither can be a boot service
+# -- they read Sys:, which is up only once the session is -- so both are commands
+# on C: that the boot session runs, and the [net] stack they talk to is the only
+# network service that starts here.
 
 # The FAT filesystem service: one instance per FAT partition, started by the
 # partition manager with the block device's port and a range grant rather than
