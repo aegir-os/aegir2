@@ -97,9 +97,16 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    int const failed = aegir::clang_probe::read_file("Initrd:services.manifest");
-
+    int failed = aegir::clang_probe::read_file("Initrd:services.manifest");
     aegir::debug_write(failed == 0 ? "AEGIR_CC_READ_OK\n" : "AEGIR_CC_READ_FAIL\n");
+
+    /* The first real compile: clang's frontend and codegen, in this process,
+     * writing an object to the writable volume (specs/clang-on-aegir.md). */
+    int const compile_failed =
+        aegir::clang_probe::compile("SCRATCH:CC_PROBE.C", "SCRATCH:CC_PROBE.O");
+    aegir::debug_write(compile_failed == 0 ? "AEGIR_CC_COMPILE_OK\n"
+                                           : "AEGIR_CC_COMPILE_FAIL\n");
+    failed += compile_failed;
 
     /* The boot thread waits for this, so the marker can follow. */
     seL4_Signal(aegir::bootstrap::kSlotSupervision);

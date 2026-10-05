@@ -553,20 +553,6 @@ maps       = true
 memory_kib = 2048
 restart    = never
 
-# The on-device compiler's first measurement (specs/clang-on-aegir.md): a spawned
-# service that reads a file through llvm::MemoryBuffer, the way clang reads a
-# source. It needs the namespace port (the read resolves through the VFS) and the
-# log, and -- running the hosted runtime with the LLVM libraries -- the maps
-# grant and its own memory, which grows through mem.main.
-[aegircc]
-binary     = aegir-cc
-authority  = system
-account    = boot
-needs      = log.main, vfs.namespace, mem.main, clock.main
-maps       = true
-memory_kib = 4096
-restart    = never
-
 # The window manager's demonstration client (specs/window-manager.md) is no
 # longer a boot service: it is a command on Sys:C, started in the session by
 # `Run gui-demo` in Sys:S/Shell-Startup. It has to run as the caller to hold

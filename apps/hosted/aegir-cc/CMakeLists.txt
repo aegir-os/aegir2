@@ -24,7 +24,7 @@ if(AEGIR_HOSTED_CXX)
   # process's memory into musl's heap and answers the POSIX file calls through
   # aegir::vfs; aegir-llvm-support is the cross-built LLVM the driver links.
   target_link_libraries(
-    aegir-cc PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-llvm-support
+    aegir-cc PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-llvm
                      aegir-runtime aegir-bootstrap aegir-mem sel4 sel4runtime
   )
 else()

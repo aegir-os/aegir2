@@ -24,6 +24,13 @@ namespace aegir::clang_probe {
  *  does not yet answer shows up here. */
 int read_file(char const *path);
 
+/** Write a small freestanding source to `source_path`, compile it with clang's
+ *  frontend and codegen in this process into `object_path`, and report the
+ *  object's size on the console. Returns 0 on success, nonzero on failure. This
+ *  is the first real compile: the frontend half of the in-process driver
+ *  (specs/clang-on-aegir.md Phase 3). */
+int compile(char const *source_path, char const *object_path);
+
 }  // namespace aegir::clang_probe
 
 #endif  // AEGIR_CC_PROBE_H
