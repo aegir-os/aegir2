@@ -9,7 +9,9 @@
  * here is an seL4 **notification** retyped from the service's own untyped, and
  * waiting on one is `seL4_Wait`. lwIP's `sys_sem_new(count)` count is 0 or 1,
  * so a notification's coalescing is harmless; a mailbox is a pointer ring whose
- * post signals that notification and whose fetch waits on it.
+ * post nudges an **endpoint** and whose fetch receives on it -- an endpoint,
+ * not a notification, because the tcpip thread's bound timer tick wakes only an
+ * endpoint receive (see new_endpoint).
  *
  * The tcpip thread is the one thread lwIP starts, and the one place a timeout
  * matters: `sys_arch_mbox_fetch` waits on the mailbox *or* the timer tick, which
@@ -64,6 +66,22 @@ seL4_CPtr new_notification() noexcept
                                    *g_account, &error);
 }
 
+/* A mailbox wakes its waiter on an *endpoint*, not a notification. The tcpip
+ * thread also has the timer tick bound to it, and the kernel only delivers a
+ * bound notification to a thread blocked in an endpoint receive
+ * (ThreadState_BlockedOnReceive, kernel/src/object/notification.c:69); a
+ * thread waiting on another notification is ThreadState_BlockedOnNotification
+ * and would never see the tick. An endpoint wait is where the tick lands. */
+seL4_CPtr new_endpoint() noexcept
+{
+    if (g_objects == nullptr || g_account == nullptr) {
+        return 0;
+    }
+    seL4_Error error = seL4_NoError;
+    return g_objects->alloc_object(seL4_EndpointObject, seL4_EndpointBits, *g_account,
+                                   &error);
+}
+
 }  // namespace
 
 /* The opaque handles arch/sys_arch.h names. */
@@ -74,7 +92,8 @@ struct sys_mutex {
     seL4_CPtr notification;
 };
 struct sys_mbox {
-    seL4_CPtr notification;
+    seL4_CPtr wake; /* an endpoint: the waiter receives on it, and the bound
+                       timer tick can wake it (see new_endpoint) */
     void **ring;
     uint32_t size;
     volatile uint32_t count;
@@ -232,8 +251,8 @@ extern "C" err_t sys_mbox_new(sys_mbox_t *mbox, int size)
     }
     uint32_t const capacity = size > 0 ? static_cast<uint32_t>(size) : 1u;
     handle->ring = static_cast<void **>(mem_malloc(sizeof(void *) * capacity));
-    handle->notification = new_notification();
-    if (handle->ring == nullptr || handle->notification == 0) {
+    handle->wake = new_endpoint();
+    if (handle->ring == nullptr || handle->wake == 0) {
         mem_free(handle->ring);
         mem_free(handle);
         *mbox = nullptr;
@@ -260,7 +279,7 @@ extern "C" void sys_mbox_post(sys_mbox_t *mbox, void *msg)
     handle->tail = (handle->tail + 1) % handle->size;
     __sync_synchronize();
     handle->count = handle->count + 1;
-    seL4_Signal(handle->notification);
+    seL4_NBSend(handle->wake, seL4_MessageInfo_new(0, 0, 0, 0));
 }
 
 extern "C" err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg)
@@ -276,7 +295,7 @@ extern "C" err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg)
     handle->tail = (handle->tail + 1) % handle->size;
     __sync_synchronize();
     handle->count = handle->count + 1;
-    seL4_Signal(handle->notification);
+    seL4_NBSend(handle->wake, seL4_MessageInfo_new(0, 0, 0, 0));
     return ERR_OK;
 }
 
@@ -297,7 +316,7 @@ extern "C" u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout
     sys_mbox *const handle = *mbox;
     while (handle->count == 0) {
         seL4_Word badge = 0;
-        seL4_Wait(handle->notification, &badge);
+        seL4_Recv(handle->wake, &badge);
         if (badge != 0) {
             /* TEMP diagnostic: the first time the bound notification wakes us,
              * say with what badge -- the tick's badge must be exactly kTickBit. */
