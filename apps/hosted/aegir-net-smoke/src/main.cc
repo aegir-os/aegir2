@@ -12,12 +12,16 @@
  * and echoed back and compared. Loopback, so it needs no DHCP and touches no
  * wire.
  *
- * It stands the hosted runtime up like the env-smoke (the shim's fd table and
- * the stack's answers need the heap), and reports on the debug serial.
+ * It stands the hosted runtime up like the aegir-print command (the untyped,
+ * VSpace root and window the spawn kit gives a command), reports on the debug
+ * serial, and returns from main -- the runtime's exit carries the status and
+ * releases the command's memory, where a bare halt would leave the launcher
+ * waiting.
  */
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -30,8 +34,8 @@
 
 namespace {
 
-/* Static, like the env-smoke's: the allocator's untyped table is tens of
- * kilobytes and a service's stack is pages (specs/userland.md). */
+/* Static, like every hosted command's: the allocator's untyped table is tens
+ * of kilobytes and a command's stack is pages. */
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 
@@ -77,15 +81,14 @@ bool adopt_memory()
 char const kMessage[] = "Aegir libc sockets";
 uint32_t const kMessageLength = sizeof(kMessage) - 1;
 
-/* Report a failure and end the process. */
-void fail(char const *what) noexcept
+/* Report a failure and answer the status the command exits with. */
+int fail(char const *what)
 {
     aegir::debug_write("  net-smoke: FAIL ");
     aegir::debug_write(what);
     aegir::debug_write("\n");
     aegir::debug_write("NET_SMOKE_FAIL\n");
-    seL4_Signal(aegir::bootstrap::kSlotSupervision);
-    aegir::halt();
+    return 1;
 }
 
 }  // namespace
@@ -98,59 +101,64 @@ int main(int argc, char *argv[])
     aegir::debug_write("\nnet-smoke: sockets through libc\n");
 
     if (!adopt_memory()) {
-        fail("no untyped, vspace or window");
+        aegir::debug_write("  net-smoke: FAIL no untyped, vspace or window\n");
+        aegir::debug_write("NET_SMOKE_FAIL\n");
+        _Exit(127);
     }
 
     constexpr uint64_t kHeapBytes = 8ull << 20;
     if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
-        fail("the heap could not claim the window");
+        aegir::debug_write("  net-smoke: FAIL the heap could not claim the window\n");
+        aegir::debug_write("NET_SMOKE_FAIL\n");
+        _Exit(127);
     }
+
     int const listener = socket(AF_INET, SOCK_STREAM, 0);
     if (listener < 0) {
-        fail("socket (listener)");
+        return fail("socket (listener)");
     }
     struct sockaddr_in local = {};
     local.sin_family = AF_INET;
     local.sin_port = htons(4242);
     local.sin_addr.s_addr = htonl(0x7f000001); /* 127.0.0.1 */
     if (bind(listener, reinterpret_cast<struct sockaddr *>(&local), sizeof(local)) < 0) {
-        fail("bind");
+        return fail("bind");
     }
     if (listen(listener, 1) < 0) {
-        fail("listen");
+        return fail("listen");
     }
 
     int const client = socket(AF_INET, SOCK_STREAM, 0);
     if (client < 0) {
-        fail("socket (client)");
+        return fail("socket (client)");
     }
     if (connect(client, reinterpret_cast<struct sockaddr *>(&local), sizeof(local)) < 0) {
-        fail("connect");
+        return fail("connect");
     }
     int const server = accept(listener, nullptr, nullptr);
     if (server < 0) {
-        fail("accept");
+        return fail("accept");
     }
 
     if (send(client, kMessage, kMessageLength, 0) != static_cast<long>(kMessageLength)) {
-        fail("send");
+        return fail("send");
     }
     char received[64] = {};
     long const read_length = recv(server, received, sizeof(received), 0);
     if (read_length != static_cast<long>(kMessageLength)) {
-        fail("recv (accepted socket)");
+        return fail("recv (accepted socket)");
     }
     if (send(server, received, static_cast<size_t>(read_length), 0) != read_length) {
-        fail("send (echo)");
+        return fail("send (echo)");
     }
     char echoed[64] = {};
     long const back_length = recv(client, echoed, sizeof(echoed), 0);
     if (back_length != read_length) {
-        fail("recv (client)");
+        return fail("recv (client)");
     }
     for (uint32_t i = 0; i < kMessageLength; ++i) {
         if (echoed[i] != kMessage[i]) {
-            fail("the echo did not match");
+            return fail("the echo did not match");
         }
     }
 
@@ -165,6 +173,7 @@ int main(int argc, char *argv[])
     aegir::debug_write("\n");
     aegir::debug_write("NET_SMOKE_OK\n");
 
-    seL4_Signal(aegir::bootstrap::kSlotSupervision);
-    aegir::halt();
+    /* A plain return carries the status: the hosted runtime's exit reports it
+     * and releases the command's memory (specs/shell.md's Phase 4). */
+    return 0;
 }
