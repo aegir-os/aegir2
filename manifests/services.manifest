@@ -60,7 +60,7 @@ device_manager = true
 # device frames as capabilities -- and skips starting what this names. The
 # partition manager goes with it: the storage stack's composition belongs to the
 # service that owns the devices, not to director's port graph.
-spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, timer, partmgr, net
+spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, timer, partmgr
 # What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
 # framebuffers (megapages -- specs/services.md), the partition manager's
 # megabyte, the filesystem image, and the drivers' images, queues and windows.
@@ -182,17 +182,23 @@ restart   = always
 
 # The network stack (specs/net.md): one service over every Ethernet link, a netif
 # each, so routing and the socket namespace belong to the stack and not to one
-# NIC. The device manager starts it once the links answer, with an untyped its
-# objects and heap come out of, its own VSpace root to map the link windows it
-# opens, and the caller halves of the registry and the timer (the timer is where
-# its tcpip thread's tick comes from). It knows nothing about virtio: the MAC,
-# MTU and link state come from the link port, and its address from DHCP.
+# NIC. Director starts it -- like the VFS, it is a system service, not a driver
+# -- and it learns the links through the device manager's registry, opening each
+# bound eth.* row and adding a netif. It needs the registry to find them and the
+# timer for its tcpip thread's tick; it maps the link windows through the VSpace
+# root and the untyped it is given, and its heap grows from that untyped rather
+# than a fixed MEM_SIZE, so `memory_kib` is a starting pool and not a ceiling (a
+# later source is mem.main). Loopback is up from the first moment, before any
+# link; nothing about a machine is compiled in, the MAC, MTU, link state and
+# addresses all coming over the wire.
 [net]
-binary    = aegir-net
-authority = system
-account   = system
-needs     = log.main, devmgr.registry, timer.main
-restart   = always
+binary     = aegir-net
+authority  = system
+account    = system
+needs      = log.main, devmgr.registry, timer.main
+maps       = true
+memory_kib = 8192
+restart    = always
 
 # The FAT filesystem service: one instance per FAT partition, started by the
 # partition manager with the block device's port and a range grant rather than

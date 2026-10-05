@@ -203,12 +203,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # a used entry. It is what proves the second queue works, not just
             # the first.
             QmpStep(r"transmit: the device took the \d+-byte frame"),
-            # The network stack (specs/net.md): the device manager started it
-            # with an untyped, its own VSpace root and the timer's port, and it
-            # brought lwIP up -- lwip_init, the tcpip thread (where the sys_arch,
-            # the thread builder and the page-backed heap are all exercised) and
-            # the timer tick that drives lwIP's timers. The link and socket
-            # halves build on this cue.
+            # The network stack (specs/net.md): director started it as a system
+            # service, and it brought lwIP up -- lwip_init, the tcpip thread
+            # (where the sys_arch, the thread builder and the page-backed heap
+            # are all exercised) and the timer tick that drives lwIP's timers.
+            # Loopback is up from this first moment, before any link is bound:
+            # a host has an interface even with no NIC. The link and socket
+            # halves build on this.
+            QmpStep(r"net: loopback lo0 127\.0\.0\.1/8 up"),
             QmpStep(r"net: ready: the stack is up"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a

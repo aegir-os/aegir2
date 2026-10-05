@@ -45,6 +45,14 @@
 #define LWIP_SOCKET                 0
 #define LWIP_NETIF_API              0
 
+/* The loopback interface, always: a host has one before any NIC is bound, and
+ * the stack must be useful with nothing but it -- 127.0.0.1 is up from the
+ * first moment (lwIP's netif_init adds it when LWIP_HAVE_LOOPIF is set). The
+ * two options are a pair: loopback needs the loopback path, and the default
+ * LWIP_HAVE_LOOPIF is derived from it. */
+#define LWIP_NETIF_LOOPBACK         1
+#define LWIP_HAVE_LOOPIF            1
+
 /* No IP reassembly, no IGMP, no autoip for now: the first acceptance is DHCP,
  * ARP and ICMP echo. */
 #define LWIP_IP_FRAG                0

@@ -33,6 +33,7 @@
 #include <stdint.h>
 
 extern "C" {
+#include <lwip/netif.h>
 #include <lwip/tcpip.h>
 }
 
@@ -225,6 +226,14 @@ int main(int argc, char *argv[])
     if (tcpip == 0) {
         fail("the tcpip thread was not started");
     }
+    /* The loopback interface: lwIP's netif_init added it and brought it up, so
+     * the stack has one interface from the first moment, before any NIC is
+     * bound -- 127.0.0.1 is always reachable. It is read back, not assumed. */
+    struct netif *const loopback = netif_find("lo0");
+    if (loopback == nullptr || !netif_is_up(loopback) || !netif_is_link_up(loopback)) {
+        fail("the loopback interface is not up");
+    }
+    write_line("net", "loopback lo0 127.0.0.1/8 up");
     /* Bind the tick to the tcpip thread, so its timed mailbox fetch wakes on the
      * timer as well as on lwIP's mailbox. */
     if (seL4_TCB_BindNotification(tcpip, tick_cap) != seL4_NoError) {
