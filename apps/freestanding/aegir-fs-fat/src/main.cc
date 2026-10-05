@@ -1911,8 +1911,7 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     }
     uint64_t answer[aegir::ipc::kMaxWords];
     uint32_t const name_words = aegir::nmspace::pack_string(
-        answer, dirent.name, dirent.name_length, aegir::ipc::kMaxWords * 8 -
-                                                     aegir::volume::kListTailWords * 8);
+        answer, dirent.name, dirent.name_length, aegir::volume::kEntryNameMax);
     if (name_words == 0 ||
         name_words + aegir::volume::kListTailWords > aegir::ipc::kMaxWords) {
         port.reply_words(nullptr, 0);

@@ -288,14 +288,14 @@ uint64_t do_open(char const *path, uint32_t length, uint64_t flags, uint64_t bad
     uint32_t ffid = walk_path(dfid, name, name_length, nullptr);
     bool opened = false;
     if (ffid != aegir::p9::kNoFid) {
-        opened = g_client.open(ffid, aegir::p9::kOWrite);
+        opened = g_client.open(ffid, aegir::p9::kORdwr);
         if (opened && (flags & aegir::volume::kOpenTruncate) != 0) {
             opened = g_client.setattr_size(ffid, 0);
         }
     } else if ((flags & aegir::volume::kOpenCreate) != 0) {
         ffid = clone_fid(dfid);
         opened = ffid != aegir::p9::kNoFid &&
-                 g_client.create(ffid, name, name_length, aegir::p9::kOWrite, 0644, 0);
+                 g_client.create(ffid, name, name_length, aegir::p9::kORdwr, 0644, 0);
     }
     if (!opened) {
         if (ffid != aegir::p9::kNoFid) {
@@ -312,6 +312,51 @@ uint64_t do_open(char const *path, uint32_t length, uint64_t flags, uint64_t bad
     }
     handle->fid = ffid;
     return handle->serial;
+}
+
+/* Open `path` for reading: walk it, open it for read, and keep the fid in a
+ * handle, so a caller reading a file a window at a time walks the path once
+ * (specs/vfs.md's scaling path). Answers the handle, or zero. */
+uint64_t do_open_read(char const *path, uint32_t length, uint64_t badge) noexcept
+{
+    uint32_t const fid = walk_path(0, path, length, nullptr);
+    if (fid == aegir::p9::kNoFid) {
+        return 0;
+    }
+    if (!g_client.open(fid, aegir::p9::kORead)) {
+        (void)g_client.clunk(fid);
+        return 0;
+    }
+    Handle *handle = handle_alloc(badge);
+    if (handle == nullptr) {
+        (void)g_client.clunk(fid);
+        return 0;
+    }
+    handle->fid = fid;
+    return handle->serial;
+}
+
+/* Read `wanted` bytes at `offset` through a handle, into `out`: what the
+ * volume's read-handle answers. False when the handle is not one. */
+bool do_read_handle(uint64_t serial, uint64_t badge, uint64_t offset, uint32_t wanted,
+                    char *out, uint32_t *got, bool *eof) noexcept
+{
+    Handle *handle = handle_lookup(serial, badge);
+    if (handle == nullptr) {
+        return false;
+    }
+    uint8_t const *data = nullptr;
+    int32_t const n = g_client.read(handle->fid, offset, wanted, &data);
+    if (n < 0) {
+        return false;
+    }
+    uint32_t const count = static_cast<uint32_t>(n);
+    for (uint32_t i = 0; i < count; ++i) {
+        out[i] = static_cast<char>(data[i]);
+    }
+    *got = count;
+    *eof = count < wanted;
+    return true;
 }
 
 uint32_t do_write(uint64_t serial, uint64_t badge, uint8_t const *bytes,
@@ -482,9 +527,145 @@ void answer_read(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                                  static_cast<uint32_t>((got + 7) / 8));
 }
 
-/* list: a path and an index. A directory is opened and read chunk by chunk
- * until the index-th entry is found; the entry's own size and time are then a
- * walk and a getattr, because a 9P dirent carries neither. */
+/* read-handle: a handle from an open with kOpenRead, an offset, and how many
+ * bytes. The path was resolved at open, so the read walks nothing, and the
+ * caller's own cursor is the offset. */
+void answer_read_handle(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
+                        uint64_t badge) noexcept
+{
+    if (count < 3) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const handle = words[0];
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    if (wanted > aegir::volume::kReadMax) {
+        wanted = aegir::volume::kReadMax;
+    }
+    uint64_t answer[aegir::volume::kReadHeaderWords + aegir::volume::kReadMax / 8];
+    char *bytes = reinterpret_cast<char *>(answer + aegir::volume::kReadHeaderWords);
+    uint32_t got = 0;
+    bool eof = false;
+    if (!do_read_handle(handle, badge, offset, static_cast<uint32_t>(wanted), bytes, &got,
+                        &eof)) {
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    answer[0] = got;
+    answer[1] = eof ? 1 : 0;
+    port.reply_words(answer, aegir::volume::kReadHeaderWords +
+                                 static_cast<uint32_t>((got + 7) / 8));
+}
+
+/* One directory entry, as the list core finds it: the name (copied out of the
+ * readdir blob, which dies with the next message), its size, its kind and its
+ * last-write time. */
+struct ListEntry {
+    char name[256];
+    uint32_t name_length;
+    uint64_t size;
+    uint64_t kind;
+    uint64_t mtime;
+};
+
+/* Find the `index`-th entry of the directory `path`. A directory is opened and
+ * read chunk by chunk until the entry is reached; its own size and time are
+ * then a walk and a getattr, because a 9P dirent carries neither. The name may
+ * be as long as the filesystem allows -- here the 9P server's 255 -- and the
+ * wire carries whatever fits one answer (aegir/volume.h's kEntryNameMax). */
+bool do_list(char const *path, uint32_t path_length, uint64_t index,
+             ListEntry *out) noexcept
+{
+    bool found = false;
+    uint32_t const dfid = walk_path(0, path, path_length, nullptr);
+    if (dfid == aegir::p9::kNoFid) {
+        write("  9p: list-dbg: the walk failed\n");
+        return false;
+    }
+    if (!g_client.open(dfid, aegir::p9::kORead)) {
+        write("  9p: list-dbg: the open failed\n");
+        (void)g_client.clunk(dfid);
+        return false;
+    }
+    {
+        uint64_t offset = 0;
+        uint32_t seen = 0;
+        for (;;) {
+            uint8_t const *blob = nullptr;
+            uint32_t blob_length = 0;
+            if (!g_client.readdir(dfid, offset, 4096, &blob, &blob_length) ||
+                blob_length == 0) {
+                break;
+            }
+            aegir::p9::Reader reader = aegir::p9::Reader::body(blob, blob_length);
+            uint64_t last_offset = offset;
+            while (reader.remaining() >= aegir::p9::kQidBytes + 8 + 1) {
+                reader.get_bytes(aegir::p9::kQidBytes);
+                uint64_t const entry_offset = reader.get_u64();
+                uint8_t const entry_type = reader.get_u8();
+                uint8_t const *entry_name = nullptr;
+                uint32_t entry_name_length = 0;
+                reader.get_string(&entry_name, &entry_name_length);
+                if (!reader.ok()) {
+                    break;
+                }
+                last_offset = entry_offset;
+                if (seen == index) {
+                    uint32_t const n = entry_name_length < sizeof(out->name)
+                                           ? entry_name_length
+                                           : static_cast<uint32_t>(sizeof(out->name));
+                    for (uint32_t i = 0; i < n; ++i) {
+                        out->name[i] = static_cast<char>(entry_name[i]);
+                    }
+                    out->name_length = n;
+                    out->kind = (entry_type & aegir::p9::kQtdir) != 0
+                                    ? aegir::volume::kKindDir
+                                    : aegir::volume::kKindFile;
+                    found = true;
+                    break;
+                }
+                ++seen;
+            }
+            if (found || last_offset == offset) {
+                break;
+            }
+            offset = last_offset;
+        }
+        (void)g_client.clunk(dfid);
+    }
+    if (!found) {
+        return false;
+    }
+
+    /* The entry's size and time: build its path and getattr it. The name was
+     * copied out above because the readdir blob died with the walk. */
+    uint32_t at = 0;
+    for (uint32_t i = 0; i < path_length && at < sizeof(g_child) - 1; ++i) {
+        g_child[at++] = path[i];
+    }
+    if (path_length != 0 && at < sizeof(g_child) - 1) {
+        g_child[at++] = '/';
+    }
+    for (uint32_t i = 0; i < out->name_length && at < sizeof(g_child) - 1; ++i) {
+        g_child[at++] = out->name[i];
+    }
+    out->size = 0;
+    out->mtime = 0;
+    uint32_t const cfid = walk_path(0, g_child, at, nullptr);
+    if (cfid != aegir::p9::kNoFid) {
+        Client::Attr attr{};
+        if (g_client.getattr(cfid, &attr)) {
+            out->size = attr.size;
+            out->mtime = attr.mtime;
+            out->kind = attr.is_dir ? aegir::volume::kKindDir : aegir::volume::kKindFile;
+        }
+        (void)g_client.clunk(cfid);
+    }
+    return true;
+}
+
+/* list: a path and an index. */
 void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                  uint64_t badge) noexcept
 {
@@ -501,99 +682,22 @@ void answer_list(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const index = words[path_words];
-
-    char name[256];
-    uint32_t name_length = 0;
-    uint64_t kind = 0;
-    bool found = false;
-    uint32_t const dfid = walk_path(0, path, path_length, nullptr);
-    if (dfid != aegir::p9::kNoFid && g_client.open(dfid, aegir::p9::kORead)) {
-        uint64_t offset = 0;
-        uint32_t seen = 0;
-        for (;;) {
-            uint8_t const *blob = nullptr;
-            uint32_t blob_length = 0;
-            if (!g_client.readdir(dfid, offset, 4096, &blob, &blob_length) ||
-                blob_length == 0) {
-                break;
-            }
-            aegir::p9::Reader reader(blob, blob_length);
-            uint64_t last_offset = offset;
-            while (reader.remaining() >= aegir::p9::kQidBytes + 8 + 1) {
-                reader.get_bytes(aegir::p9::kQidBytes);
-                uint64_t const entry_offset = reader.get_u64();
-                uint8_t const entry_type = reader.get_u8();
-                uint8_t const *entry_name = nullptr;
-                uint32_t entry_name_length = 0;
-                reader.get_string(&entry_name, &entry_name_length);
-                if (!reader.ok()) {
-                    break;
-                }
-                last_offset = entry_offset;
-                if (seen == index) {
-                    uint32_t const n = entry_name_length < sizeof(name)
-                                           ? entry_name_length
-                                           : static_cast<uint32_t>(sizeof(name));
-                    for (uint32_t i = 0; i < n; ++i) {
-                        name[i] = static_cast<char>(entry_name[i]);
-                    }
-                    name_length = n;
-                    kind = (entry_type & aegir::p9::kQtdir) != 0 ? aegir::volume::kKindDir
-                                                                 : aegir::volume::kKindFile;
-                    found = true;
-                    break;
-                }
-                ++seen;
-            }
-            if (found || last_offset == offset) {
-                break;
-            }
-            offset = last_offset;
-        }
-        (void)g_client.clunk(dfid);
-    }
-    if (!found) {
+    ListEntry entry{};
+    if (!do_list(path, path_length, words[path_words], &entry)) {
         port.reply_words(nullptr, 0);
         return;
     }
-
-    /* The entry's size and time: build its path and getattr it. The name was
-     * copied out above because the readdir blob died with the walk. */
-    uint32_t at = 0;
-    for (uint32_t i = 0; i < path_length && at < sizeof(g_child) - 1; ++i) {
-        g_child[at++] = path[i];
-    }
-    if (path_length != 0 && at < sizeof(g_child) - 1) {
-        g_child[at++] = '/';
-    }
-    for (uint32_t i = 0; i < name_length && at < sizeof(g_child) - 1; ++i) {
-        g_child[at++] = name[i];
-    }
-    uint64_t size = 0;
-    uint64_t mtime = 0;
-    uint32_t const cfid = walk_path(0, g_child, at, nullptr);
-    if (cfid != aegir::p9::kNoFid) {
-        Client::Attr attr{};
-        if (g_client.getattr(cfid, &attr)) {
-            size = attr.size;
-            mtime = attr.mtime;
-            kind = attr.is_dir ? aegir::volume::kKindDir : aegir::volume::kKindFile;
-        }
-        (void)g_client.clunk(cfid);
-    }
-
     uint64_t answer[aegir::ipc::kMaxWords];
     uint32_t const name_words = aegir::nmspace::pack_string(
-        answer, name, name_length, aegir::nmspace::kNameMax);
+        answer, entry.name, entry.name_length, aegir::volume::kEntryNameMax);
     if (name_words == 0 ||
         name_words + aegir::volume::kListTailWords > aegir::ipc::kMaxWords) {
         port.reply_words(nullptr, 0);
         return;
     }
-    answer[name_words] = size;
-    answer[name_words + 1] = kind;
-    answer[name_words + 2] = mtime;
+    answer[name_words] = entry.size;
+    answer[name_words + 1] = entry.kind;
+    answer[name_words + 2] = entry.mtime;
     port.reply_words(answer, name_words + aegir::volume::kListTailWords);
 }
 
@@ -668,10 +772,9 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         return;
     }
     uint64_t const flags = words[path_words];
-    uint64_t handle = 0;
-    if ((flags & aegir::volume::kOpenRead) == 0) {
-        handle = do_open(path, path_length, flags, badge);
-    }
+    uint64_t const handle = (flags & aegir::volume::kOpenRead) != 0
+                                ? do_open_read(path, path_length, badge)
+                                : do_open(path, path_length, flags, badge);
     port.reply_words(&handle, 1);
 }
 
@@ -1054,6 +1157,68 @@ int main(int argc, char *argv[])
             write("  9p: FAIL the export would not read hello.txt\n");
         }
 
+        /* ...and once through a read handle, so the handle path -- walk and
+         * open kept, read by offset -- is proved too. */
+        {
+            char handle_content[256];
+            uint32_t handle_got = 0;
+            bool handle_eof = false;
+            uint64_t const read_handle = do_open_read(kIn, sizeof(kIn) - 1, 0);
+            bool const handle_ok =
+                read_handle != 0 &&
+                do_read_handle(read_handle, 0, 0, sizeof(handle_content), handle_content,
+                               &handle_got, &handle_eof);
+            if (read_handle != 0) {
+                (void)do_close(read_handle, 0);
+            }
+            if (!handle_ok || handle_got != got) {
+                write("  9p: FAIL the read handle did not answer the same bytes\n");
+            } else {
+                write("  9p: read-handle -> ");
+                write_unsigned(handle_got);
+                write(" bytes\n");
+            }
+        }
+
+        /* The list path, with a name longer than the namespace's name field.
+         * The runner leaves `a-filename-longer-than-twenty-four-bytes.txt` in
+         * the host directory, and the wire carries it: the entry name's ceiling
+         * is the answer's room, not kNameMax (aegir/volume.h's kEntryNameMax). */
+        {
+            static char const kLong[] = "a-filename-longer-than-twenty-four-bytes.txt";
+            bool saw_long = false;
+            uint32_t seen = 0;
+            uint32_t longest = 0;
+            for (uint64_t index = 0;; ++index) {
+                ListEntry entry{};
+                if (!do_list("", 0, index, &entry)) {
+                    break;
+                }
+                ++seen;
+                if (entry.name_length > longest) {
+                    longest = entry.name_length;
+                }
+                bool same = entry.name_length == sizeof(kLong) - 1;
+                for (uint32_t i = 0; i < entry.name_length && same; ++i) {
+                    same = entry.name[i] == kLong[i];
+                }
+                if (same) {
+                    saw_long = true;
+                }
+            }
+            if (saw_long) {
+                write("  9p: list carries a ");
+                write_unsigned(sizeof(kLong) - 1);
+                write("-byte name\n");
+            } else {
+                write("  9p: FAIL list did not carry the long name (saw ");
+                write_unsigned(seen);
+                write(" entries, longest name ");
+                write_unsigned(longest);
+                write(")\n");
+            }
+        }
+
         static char const kOut[] = "written.txt";
         static char const kText[] = "Aegir 9P: the machine wrote this through the volume.\n";
         uint32_t const text_length = sizeof(kText) - 1;
@@ -1149,6 +1314,9 @@ int main(int argc, char *argv[])
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(volume, words, count, badge);
+            break;
+        case aegir::volume::kMethodReadHandle:
+            answer_read_handle(volume, words, count, badge);
             break;
         case aegir::volume::kMethodList:
             answer_list(volume, words, count, badge);

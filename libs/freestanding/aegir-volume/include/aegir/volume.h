@@ -51,6 +51,7 @@
 
 #pragma once
 
+#include <aegir/ipc/port.h>
 #include <stdint.h>
 
 namespace aegir::volume {
@@ -178,6 +179,15 @@ constexpr uint32_t kReadHeaderWords = 2;
  *  list wants it for every row it shows and a stat per row is a call per row
  *  (specs/vfs.md, specs/trinket/file_requester.md). */
 constexpr uint32_t kListTailWords = 3;
+
+/** The most bytes a directory entry's name may carry in one list answer: the
+ *  envelope's words less the tail, in bytes. This is the *wire's* ceiling, not
+ *  a filesystem's -- FAT's long names reach 255 and 9P's names reach 255, and a
+ *  filesystem enforces its own; the protocol only has to say how much one
+ *  answer can hold, so a filesystem with longer names than another is not
+ *  capped by the namespace's name field (specs/vfs.md). */
+constexpr uint32_t kEntryNameMax =
+    aegir::ipc::kMaxWords * 8 - kListTailWords * 8;
 
 /** stat's answer after the path: the entry's kind and its size, then its
  *  last-write time as whole seconds since the Unix epoch (zero when the

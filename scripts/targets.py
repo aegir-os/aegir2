@@ -233,6 +233,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the file the runner put in the shared host directory -- walk,
             # open, read and clunk proved against the host's own bytes.
             QmpStep(r"9p: read \d+ bytes: Aegir 9P: this file lives on the host\."),
+            # ...and once through a read handle, so the read-open path (walk and
+            # open kept, read by offset) is proved alongside the write handle.
+            QmpStep(r"9p: read-handle -> \d+ bytes"),
+            # A directory entry whose name is longer than the namespace's name
+            # field: the list answer carries it, because the entry name's
+            # ceiling is the answer's room and not kNameMax (specs/9p.md).
+            QmpStep(r"9p: list carries a \d+-byte name"),
             # ...and it registered the export's own tag as a volume, so the host
             # directory is reachable by the ordinary file protocol.
             QmpStep(r"9p: host: registered, serving"),

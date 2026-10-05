@@ -526,6 +526,11 @@ def ensure_host(build_dir: Path) -> None:
         share.unlink()
     share.mkdir(parents=True, exist_ok=True)
     (share / "hello.txt").write_bytes(b"Aegir 9P: this file lives on the host.\n")
+    # A name longer than the namespace's name field: the list answer carries it
+    # because the wire's ceiling is the envelope, not kNameMax (specs/9p.md).
+    (share / "a-filename-longer-than-twenty-four-bytes.txt").write_bytes(
+        b"Aegir 9P: a long name crossed the wire.\n"
+    )
 
 
 def boot_interactive(target: Target, build_dir: Path) -> int:
@@ -829,15 +834,6 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             # never comes is the timeout's and the gate's to report.
             if seen and all(played > 0 for played in step_matches):
                 break
-        # A step whose cue never printed is a check that never ran: the run
-        # does not get to pass on evidence that was never taken.
-        for index, step in enumerate(target.qmp_steps):
-            if step_matches[index] == 0:
-                print(
-                    f"    runner: FAIL the cue never printed: {step.trigger}",
-                    flush=True,
-                )
-                failed = True
         # `hello` faults on purpose -- that is the supervision path's whole
         # test -- and the boot summary is where it is counted. Exactly one is
         # the design: zero would mean hello stopped walking the path it exists
@@ -871,6 +867,23 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     flush=True,
                 )
     finally:
+        # Whatever ended the run -- the loop's own timeout, a manual Ctrl-C as
+        # you watch it drift, or the all-steps-played exit -- a cue that never
+        # printed is a check that never ran, and the run does not get to pass on
+        # evidence that was never taken. Listed here, on every path out, because
+        # the console's last lines only ever name the last cue it *did* see; the
+        # cue that failed is the line that is not there, and pulling it out of a
+        # long log by eye is exactly what this saves (specs/testing.md).
+        never = [i for i, played in enumerate(step_matches) if played == 0]
+        if never:
+            print(
+                f"    runner: FAIL {len(never)} cue(s) never printed -- the run "
+                "stopped at the last cue it saw; these are the missing checks:",
+                flush=True,
+            )
+            for index in never:
+                print(f"      {target.qmp_steps[index].trigger}", flush=True)
+            failed = True
         # Take the whole process group down: QEMU is a child of the shell, and
         # neither notices that the target is finished.
         if process.poll() is None:

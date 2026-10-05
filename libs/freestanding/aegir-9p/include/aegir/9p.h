@@ -256,6 +256,17 @@ public:
         return true;
     }
 
+    /** A reader over a buffer with no message header -- a dirent blob from a
+     *  readdir answer, an xattr value -- positioned at its first byte. `head`
+     *  is for whole messages; this is for the payload inside one. */
+    static Reader body(uint8_t const *data, uint32_t length) noexcept
+    {
+        Reader reader(data, length);
+        reader.offset_ = 0;
+        reader.okay_ = true;
+        return reader;
+    }
+
     bool ok() const noexcept { return okay_; }
     uint32_t remaining() const noexcept
     {
