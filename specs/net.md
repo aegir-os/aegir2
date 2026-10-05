@@ -179,6 +179,16 @@ because a thread that ends is not rebuilt (`aegir/thread.h`), so a worker per
 connection would leak a TCB, a stack and a TLS block for every short-lived
 connection. There is no thread per client and none per call.
 
+A client that dies leaves its **sockets**, though, and a socket is a `tcp_pcb`,
+a `udp_pcb` or a `raw_pcb` in the stack's own heap -- the reply-cap rule does not
+reach it. So the port carries a `reap`: a badge in, every socket that badge owns
+closed, as though `close` had been called on each. It is the socket port's half
+of the teardown the volumes and the console already have (their `reap`, called by
+auth when a session ends), and the **launcher** is its caller: it already holds
+the socket port and mints each command's caller half from it, so when it buries a
+command -- exit or fault, the same path -- it names the command's badge and the
+stack drops what it left. `netsmoke` proves it by exiting with a socket open.
+
 ## The client port: BSD sockets
 
 **Clients see a BSD socket, not the raw API.** The port is shaped the way
@@ -186,7 +196,7 @@ connection. There is no thread per client and none per call.
 calls and never touches a `tcp_pcb`:
 
 - `socket` (domain, type, protocol) answers an id; `bind`, `listen`, `connect`,
-  `accept`, `send`, `recv`, `shutdown`, `close`, `resolve`;
+  `accept`, `send`, `recv`, `shutdown`, `close`, `resolve`, `reap`;
 - the calls that genuinely wait are **held replies**: `connect` until the
   connection is up or refused, `accept` until a connection arrives, `recv` until
   data or end-of-stream, `resolve` until DNS answers. `send` answers when the

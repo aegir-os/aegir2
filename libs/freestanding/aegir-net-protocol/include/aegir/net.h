@@ -115,6 +115,14 @@ constexpr uint32_t kMethodWrite = 12;
 /* A name's ceiling: DNS's own limit, not a number of ours. */
 constexpr uint32_t kMaxNameBytes = 255;
 
+/* reap: a badge. Every socket the badge owns is closed, as though `close` had
+ * been called on each -- the session teardown's mechanism, so a client that
+ * dies without closing leaves nothing behind (specs/net.md). The caller is
+ * whoever buries the badge -- the launcher, which already holds the socket port
+ * and mints each command its caller half from it. Answer: how many sockets were
+ * dropped. */
+constexpr uint32_t kMethodReap = 13;
+
 /* The payload ceiling the message registers allow: the kernel's message length
  * minus the method, the protocol's own words, and a little slack. An ICMP
  * message is far below it; this is the bound a caller is refused at. */

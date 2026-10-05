@@ -23,6 +23,6 @@ target_link_libraries(
   aegir-spawn-service PUBLIC aegir-cxx-policy-hosted aegir-spawn aegir-spawn-kit
                             aegir-bootstrap aegir-ipc aegir-mem aegir-environment
                             aegir-console-protocol aegir-log aegir-namespace
-                            aegir-memory-protocol aegir-clock aegir-timer-protocol
-                            aegir-heap sel4
+                            aegir-memory-protocol aegir-net-protocol aegir-clock
+                            aegir-timer-protocol aegir-heap sel4
 )

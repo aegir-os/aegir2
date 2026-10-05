@@ -197,6 +197,17 @@ int main(int argc, char *argv[])
     aegir::debug_write(" bytes echoed through libc: ");
     aegir::debug_write(echoed, kMessageLength);
     aegir::debug_write("\n");
+
+    /* Leave one socket open on purpose. A client that dies does not close its
+     * sockets, and they are the stack's objects, not its memory -- so the
+     * launcher reaps the command's badge and the stack drops them
+     * (aegir/net.h's kMethodReap). Exiting with this one open is the same path
+     * a crash takes, without the crash. */
+    int const abandoned = socket(AF_INET, SOCK_STREAM, 0);
+    if (abandoned < 0) {
+        return fail("socket (abandoned)");
+    }
+    aegir::debug_write("  net-smoke: leaving a socket open for the reap\n");
     aegir::debug_write("NET_SMOKE_OK\n");
 
     /* A plain return carries the status: the hosted runtime's exit reports it

@@ -287,6 +287,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # (reading /etc/hosts and a nameserver) cannot answer.
             QmpStep(r"net-smoke: getaddrinfo localhost:4242 -> 127\.0\.0\.1"),
             QmpStep(r"net-smoke: \d+ bytes echoed through libc: Aegir libc sockets"),
+            # The socket reap (specs/net.md): net-smoke exits with one socket
+            # still open, so the launcher reaps its badge and the stack drops
+            # what it left -- the cleanup a client that dies gets.
+            QmpStep(r"net: reaped \d+ socket\(s\) a client left open"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
             # program like any shell's line does. `filenote` is the marker -- no

@@ -21,6 +21,7 @@
 #include <aegir/log.h>
 #include <aegir/memory.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/net.h>
 #include <aegir/nmspace.h>
 
 #include <unistd.h>
@@ -544,6 +545,18 @@ void ServiceKit::reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner)
         uint64_t const word = badge;
         uint64_t released = 0;
         (void)service.call_words(aegir::memory::kMethodRelease, &word, 1, &released, 1);
+    }
+    /* The client's sockets are the stack's, not its memory: a client that died
+     * without closing leaves them in the stack's heap, where seL4 cannot reach
+     * them. The launcher already holds the socket port -- it mints each command
+     * its caller half from it -- so it names the badge and the stack drops what
+     * that badge owned (aegir/net.h's kMethodReap). A process given no socket
+     * port has nothing to reap. */
+    if (kit_.net_socket != 0) {
+        aegir::ipc::Consumer const stack(kit_.net_socket);
+        uint64_t const word = badge;
+        uint64_t dropped = 0;
+        (void)stack.call_words(aegir::net::kMethodReap, &word, 1, &dropped, 1);
     }
     if (cnode_l1_ != 0) {
         for (std::size_t i = 0; i < owner_cnodes_.size(); ++i) {

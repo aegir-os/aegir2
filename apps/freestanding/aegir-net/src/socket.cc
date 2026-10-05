@@ -79,6 +79,7 @@ struct Accepted {
 struct Socket {
     uint32_t id;
     uint32_t kind;
+    uint64_t owner; /* the badge that made it -- the reap key (aegir/net.h) */
     struct raw_pcb *raw;
     struct udp_pcb *udp;
     struct tcp_pcb *tcp;
@@ -493,13 +494,14 @@ void recv_timeout(void *argument) noexcept
 /* One socket's storage, with nothing behind it yet: the PCB is the caller's to
  * set (a fresh one for `socket`, the accepted one for a connection). Reaches
  * the socket list only when `list_add` gives it an id. */
-Socket *alloc_socket(uint32_t kind) noexcept
+Socket *alloc_socket(uint32_t kind, uint64_t owner) noexcept
 {
     auto *const socket = static_cast<Socket *>(mem_malloc(sizeof(Socket)));
     if (socket == nullptr) {
         return nullptr;
     }
     socket->kind = kind;
+    socket->owner = owner;
     socket->raw = nullptr;
     socket->udp = nullptr;
     socket->tcp = nullptr;
@@ -566,7 +568,7 @@ err_t tcp_on_accept(void *argument, struct tcp_pcb *new_pcb, err_t err) noexcept
     if (err != ERR_OK || new_pcb == nullptr) {
         return ERR_OK;
     }
-    auto *const child = alloc_socket(kStream);
+    auto *const child = alloc_socket(kStream, listener->owner);
     if (child == nullptr) {
         tcp_abort(new_pcb);
         return ERR_OK;
@@ -918,7 +920,8 @@ Socket *find_socket(uint32_t id) noexcept
     return found;
 }
 
-uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol) noexcept
+uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol,
+                     uint64_t owner) noexcept
 {
     uint32_t kind = kRaw;
     if (domain != kAfInet) {
@@ -933,7 +936,7 @@ uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol) noexcept
     } else {
         return 0;
     }
-    Socket *const socket = alloc_socket(kind);
+    Socket *const socket = alloc_socket(kind, owner);
     if (socket == nullptr) {
         return 0;
     }
@@ -944,6 +947,24 @@ uint32_t make_socket(uint64_t domain, uint64_t type, uint64_t protocol) noexcept
     }
     list_add(socket);
     return socket->id;
+}
+
+/* Tear one already-unlinked socket down: its lwIP state, its queued datagrams,
+ * and its storage. Runs on the serve thread; `do_close` runs in the tcpip
+ * thread. */
+void free_socket(Socket *socket) noexcept
+{
+    CloseArg close{socket};
+    (void)in_tcpip(do_close, &close);
+    Datagram *datagram = nullptr;
+    while ((datagram = queue_pop(socket)) != nullptr) {
+        mem_free(datagram);
+    }
+    /* Connections accepted but never taken are dropped: their pcbs go with the
+     * listener's close. Id 0 is never a socket. */
+    while (accept_pop(socket) != 0) {
+    }
+    mem_free(socket);
 }
 
 uint32_t close_socket(uint32_t id) noexcept
@@ -961,18 +982,44 @@ uint32_t close_socket(uint32_t id) noexcept
     if (socket == nullptr) {
         return 0;
     }
-    CloseArg close{socket};
-    (void)in_tcpip(do_close, &close);
-    Datagram *datagram = nullptr;
-    while ((datagram = queue_pop(socket)) != nullptr) {
-        mem_free(datagram);
-    }
-    /* Connections accepted but never taken are dropped: their pcbs go with the
-     * listener's close. Id 0 is never a socket. */
-    while (accept_pop(socket) != 0) {
-    }
-    mem_free(socket);
+    free_socket(socket);
     return 1;
+}
+
+/* Reap every socket the badge owns -- the client died without closing, so the
+ * launcher names its badge and this drops what it left. The sockets are unlinked
+ * under the list lock first, then torn down outside it, because `free_socket`
+ * reaches the tcpip thread and the accept/queue locks and must not hold the list
+ * lock. Returns how many were dropped. */
+uint32_t reap_owner(uint64_t owner) noexcept
+{
+    Socket *doomed = nullptr;
+    lock_list();
+    Socket **link = &g_sockets;
+    while (*link != nullptr) {
+        Socket *const socket = *link;
+        if (socket->owner == owner) {
+            *link = socket->next;
+            socket->next = doomed;
+            doomed = socket;
+        } else {
+            link = &socket->next;
+        }
+    }
+    unlock_list();
+    uint32_t count = 0;
+    while (doomed != nullptr) {
+        Socket *const socket = doomed;
+        doomed = socket->next;
+        free_socket(socket);
+        ++count;
+    }
+    if (count != 0) {
+        aegir::debug_write("      net: reaped ");
+        aegir::debug_write_unsigned(count);
+        aegir::debug_write(" socket(s) a client left open\n");
+    }
+    return count;
 }
 
 uint32_t send_on(uint32_t id, uint64_t const *words, uint32_t count) noexcept
@@ -1191,9 +1238,11 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
         seL4_Word badge = 0;
         uint32_t const method = port.receive_words(words, kMaxPayloadWords + 4, &count, &badge);
         if (method == aegir::net::kMethodSocket && count >= 3) {
-            port.reply(make_socket(words[0], words[1], words[2]));
+            port.reply(make_socket(words[0], words[1], words[2], badge));
         } else if (method == aegir::net::kMethodClose && count >= 1) {
             port.reply(close_socket(static_cast<uint32_t>(words[0])));
+        } else if (method == aegir::net::kMethodReap && count >= 1) {
+            port.reply(reap_owner(words[0]));
         } else if (method == aegir::net::kMethodSend && count >= 2) {
             port.reply(send_on(static_cast<uint32_t>(words[0]), words + 1, count - 1));
         } else if (method == aegir::net::kMethodSendTo && count >= 4) {
