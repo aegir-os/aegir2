@@ -26,6 +26,9 @@ constexpr uint32_t kHostsPathLength = sizeof(kHostsPath) - 1;
 constexpr uint32_t kLineMax = 256;
 /* How much of the file one read asks for; the volume clamps it. */
 constexpr uint32_t kReadChunk = 512;
+/* How long DNS is given before the lookup gives up; a name the server does not
+ * know may never be answered. */
+constexpr uint32_t kDnsTimeoutMs = 2000;
 
 /* The first slot past the ones the bootstrap block named: where a resolved
  * volume capability lands (its own slot, not the receive slot the transfer used
@@ -60,15 +63,18 @@ uint32_t dns_lookup(char const *name, uint32_t length) noexcept
     if (!sockets.valid() || length == 0 || length > aegir::net::kMaxNameBytes) {
         return 0;
     }
-    uint64_t request[1 + (aegir::net::kMaxNameBytes + 7) / 8] = {0};
+    /* The name is at word 2: the length, then a timeout for DNS (which may
+     * never answer an unknown name), then the bytes. */
+    uint64_t request[2 + (aegir::net::kMaxNameBytes + 7) / 8] = {0};
     request[0] = length;
+    request[1] = kDnsTimeoutMs;
     for (uint32_t i = 0; i < length; ++i) {
-        request[1 + i / 8] |= static_cast<uint64_t>(static_cast<uint8_t>(name[i]))
+        request[2 + i / 8] |= static_cast<uint64_t>(static_cast<uint8_t>(name[i]))
                               << (8 * (i % 8));
     }
     uint64_t answer[1] = {0};
     aegir::ipc::WordsReply const resolved = sockets.call_words(
-        aegir::net::kMethodResolve, request, 1 + (length + 7) / 8, answer, 1);
+        aegir::net::kMethodResolve, request, 2 + (length + 7) / 8, answer, 1);
     if (resolved.error != 0 || resolved.count < 1) {
         return 0;
     }

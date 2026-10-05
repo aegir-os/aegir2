@@ -93,6 +93,9 @@ void print_address(uint32_t address) noexcept
 
 constexpr uint32_t kEchoRequest = 8;
 constexpr uint32_t kEchoReply = 0;
+/* How long a `recv` waits before it gives up: a link that carries nothing (a
+ * loopback that does not answer, a lost reply) must not hang the client. */
+constexpr uint32_t kReplyTimeoutMs = 2000;
 constexpr uint32_t kMessageBytes = 64;
 
 }  // namespace
@@ -221,7 +224,7 @@ int main(int argc, char *argv[])
     /* The reply is held until it arrives. A raw ICMP socket sees every ICMP
      * message, so one that is not an echo reply -- the request itself, looped
      * back on 127.0.0.1 -- is skipped rather than printed. */
-    uint64_t identifier = socket_id;
+    uint64_t identifier[2] = {socket_id, kReplyTimeoutMs};
     uint8_t answered[(kMessageBytes + 7) / 8 * 8];
     uint32_t source = 0;
     uint32_t length = 0;
@@ -229,7 +232,7 @@ int main(int argc, char *argv[])
     for (unsigned attempt = 0; attempt < 8 && !got_reply; ++attempt) {
         uint64_t reply[2 + (kMessageBytes + 7) / 8] = {0};
         aegir::ipc::WordsReply const received = sockets.call_words(
-            aegir::net::kMethodRecv, &identifier, 1, reply, 2 + (kMessageBytes + 7) / 8);
+            aegir::net::kMethodRecv, identifier, 2, reply, 2 + (kMessageBytes + 7) / 8);
         if (received.error != 0) {
             break;
         }

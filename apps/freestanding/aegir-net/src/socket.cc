@@ -27,6 +27,7 @@ extern "C" {
 #include <lwip/raw.h>
 #include <lwip/sys.h>
 #include <lwip/tcpip.h>
+#include <lwip/timeouts.h>
 }
 
 namespace aegir::net {
@@ -249,6 +250,20 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
     return 1;
 }
 
+/* A `recv` no packet answered: answer the held reply with a zero length -- a
+ * timeout, which a client reads as end-of-stream -- and give the slot back. Runs
+ * in the tcpip thread from lwIP's timers. */
+void recv_timeout(void *argument) noexcept
+{
+    auto *const socket = static_cast<Socket *>(argument);
+    uintptr_t const held = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
+    if (held != 0) {
+        seL4_SetMR(0, 0);
+        seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 1));
+        slot_put(static_cast<seL4_CPtr>(held));
+    }
+}
+
 struct CreateArg {
     Socket *socket;
     bool ok;
@@ -320,6 +335,8 @@ void do_close(void *argument) noexcept
 struct ResolveArg {
     seL4_CPtr held;
     char *name;
+    uint32_t timeout;
+    volatile bool answered;
 };
 
 void resolve_finish(ResolveArg *resolve) noexcept
@@ -328,12 +345,26 @@ void resolve_finish(ResolveArg *resolve) noexcept
     mem_free(resolve);
 }
 
+/* One answer each: DNS's callback or the timeout, whichever comes first. Runs in
+ * the tcpip thread. */
+void resolve_answer(ResolveArg *resolve, uint64_t address) noexcept
+{
+    if (!__atomic_exchange_n(&resolve->answered, true, __ATOMIC_ACQ_REL)) {
+        answer_held(resolve->held, address);
+        resolve_finish(resolve);
+    }
+}
+
 void dns_found(char const *name, ip_addr_t const *address, void *argument) noexcept
 {
     static_cast<void>(name);
-    auto *const resolve = static_cast<ResolveArg *>(argument);
-    answer_held(resolve->held, address != nullptr ? ip_word(address) : 0);
-    resolve_finish(resolve);
+    resolve_answer(static_cast<ResolveArg *>(argument),
+                   address != nullptr ? ip_word(address) : 0);
+}
+
+void resolve_timeout(void *argument) noexcept
+{
+    resolve_answer(static_cast<ResolveArg *>(argument), 0);
 }
 
 void do_resolve(void *argument) noexcept
@@ -342,13 +373,13 @@ void do_resolve(void *argument) noexcept
     ip_addr_t address;
     err_t const result = dns_gethostbyname(resolve->name, &address, dns_found, resolve);
     if (result == ERR_OK) {
-        answer_held(resolve->held, ip_word(&address));
-        resolve_finish(resolve);
+        resolve_answer(resolve, ip_word(&address));
     } else if (result != ERR_INPROGRESS) {
-        answer_held(resolve->held, 0);
-        resolve_finish(resolve);
+        resolve_answer(resolve, 0);
+    } else if (resolve->timeout != 0) {
+        sys_timeout(resolve->timeout, resolve_timeout, resolve);
+        /* ERR_INPROGRESS: dns_found answers, or the timeout does. */
     }
-    /* ERR_INPROGRESS: dns_found answers later. */
 }
 
 Socket *find_socket(uint32_t id) noexcept
@@ -465,6 +496,7 @@ bool take_pending(Socket *socket, uint64_t *words, uint32_t *count) noexcept
             port.reply(send_on(static_cast<uint32_t>(words[0]), words + 1, count - 1));
         } else if (method == aegir::net::kMethodRecv && count >= 1) {
             Socket *const socket = find_socket(static_cast<uint32_t>(words[0]));
+            uint32_t const timeout = count >= 2 ? static_cast<uint32_t>(words[1]) : 0;
             if (socket == nullptr) {
                 port.reply(0);
             } else if (take_pending(socket, words, &count)) {
@@ -487,12 +519,18 @@ bool take_pending(Socket *socket, uint64_t *words, uint32_t *count) noexcept
                             slot_put(static_cast<seL4_CPtr>(taken));
                         }
                         port.reply_words(words, count);
+                    } else if (timeout != 0) {
+                        /* The client asked not to wait forever: lwIP's timers
+                         * answer the reply with a zero length if no packet
+                         * comes. */
+                        sys_timeout(timeout, recv_timeout, socket);
                     }
                     /* else: held; the link's receive path answers it. */
                 }
             }
-        } else if (method == aegir::net::kMethodResolve && count >= 1) {
+        } else if (method == aegir::net::kMethodResolve && count >= 2) {
             uint32_t const name_length = static_cast<uint32_t>(words[0]);
+            uint32_t const timeout = count >= 2 ? static_cast<uint32_t>(words[1]) : 0;
             seL4_CPtr const slot = slot_get();
             auto *const resolve = static_cast<ResolveArg *>(mem_malloc(sizeof(ResolveArg)));
             char *const name =
@@ -508,14 +546,15 @@ bool take_pending(Socket *socket, uint64_t *words, uint32_t *count) noexcept
                 mem_free(name);
                 port.reply(0);
             } else {
-                unpack_words(words + 1, count - 1, reinterpret_cast<uint8_t *>(name),
+                unpack_words(words + 2, count - 2, reinterpret_cast<uint8_t *>(name),
                              name_length);
                 name[name_length] = '\0';
                 resolve->held = slot;
                 resolve->name = name;
+                resolve->timeout = timeout;
+                resolve->answered = false;
                 if (!in_tcpip(do_resolve, resolve)) {
-                    answer_held(slot, 0);
-                    resolve_finish(resolve);
+                    resolve_answer(resolve, 0);
                 }
             }
         } else {
