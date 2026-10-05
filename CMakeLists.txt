@@ -200,6 +200,7 @@ set(aegir_commands
   aegir-tcpecho:tcpecho
   aegir-net-config:netconfig
   aegir-net-show:net
+  aegir-net-smoke:netsmoke
   aegir-assign:assign
   aegir-which:which
   aegir-version:version

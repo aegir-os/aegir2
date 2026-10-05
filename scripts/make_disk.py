@@ -307,6 +307,7 @@ AEGIR_BFS_TREE = [
          b"; Aegir system startup: the network, then the quiet close.\n"
          b"netconfig\nping\nping localhost\ntftp aegir.txt\ntcpecho\n"
          b"net NE0/ipv4_address\nnet NE0/hostname\nnet NE0/hostname aegir-live\n"
+         b"netsmoke\n"
          b"filenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),
         # The interpreter's acceptance (specs/shell.md): a built-in changes the
         # shell, and the next line only runs if the script did -- the shell
