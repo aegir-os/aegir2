@@ -52,6 +52,11 @@ struct Link {
     uint64_t netmask;
     uint64_t gateway;
     uint64_t flags;
+    /* One-line diagnostics, printed once each: whether the link has carried a
+     * frame in, a frame out, and whether lwIP's timers have run its poll. */
+    bool saw_frame;
+    bool saw_tx;
+    bool saw_poll;
     struct netif netif;
 };
 
@@ -141,6 +146,14 @@ err_t link_output(struct netif *netif, struct pbuf *frame) noexcept
         return ERR_VAL;
     }
     pbuf_copy_partial(frame, link->window, length, 0);
+    if (!link->saw_tx) {
+        link->saw_tx = true;
+        aegir::debug_write("      net: NE");
+        aegir::debug_write_unsigned(link->unit);
+        aegir::debug_write(" first frame out, ");
+        aegir::debug_write_unsigned(length);
+        aegir::debug_write(" bytes\n");
+    }
     ipc::Reply const sent = link->port.call(ethernet::kMethodSend, length);
     return sent.error == 0 && sent.word == length ? ERR_OK : ERR_IF;
 }
@@ -187,6 +200,14 @@ err_t link_netif_init(struct netif *netif) noexcept
         }
         pbuf_take(frame_pbuf, link->window + ethernet::kReceiveOffset,
                   static_cast<u16_t>(length));
+        if (!link->saw_frame) {
+            link->saw_frame = true;
+            aegir::debug_write("      net: NE");
+            aegir::debug_write_unsigned(link->unit);
+            aegir::debug_write(" first frame in, ");
+            aegir::debug_write_unsigned(length);
+            aegir::debug_write(" bytes\n");
+        }
         if (link->netif.input(frame_pbuf, &link->netif) != ERR_OK) {
             pbuf_free(frame_pbuf);
         }
@@ -200,6 +221,13 @@ void dhcp_poll(void *argument) noexcept
 {
     auto *const link = static_cast<Link *>(argument);
     struct netif *const netif = &link->netif;
+    if (!link->saw_poll) {
+        link->saw_poll = true;
+        aegir::debug_write("      net: NE");
+        aegir::debug_write_unsigned(link->unit);
+        aegir::debug_write(dhcp_supplied_address(netif) ? " dhcp poll: supplied\n"
+                                                        : " dhcp poll: not yet\n");
+    }
     if (!dhcp_supplied_address(netif)) {
         sys_timeout(500, dhcp_poll, link);
         return;
@@ -371,6 +399,9 @@ unsigned add_links(Authority const &authority) noexcept
         link->netmask = 0;
         link->gateway = 0;
         link->flags = link->link_up ? netcontrol::kStateLinkUp : 0;
+        link->saw_frame = false;
+        link->saw_tx = false;
+        link->saw_poll = false;
 
         ip4_addr_t any;
         ip4_addr_set_zero(&any);
