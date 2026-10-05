@@ -194,6 +194,9 @@ int main(int argc, char *argv[])
         kTcpipStackPages,
     };
     aegir::lwip::set_threading(builder, where);
+    /* The tick's period, so lwIP's timers advance: the sys_arch adds it to the
+     * clock each time the tick wakes the tcpip thread. */
+    aegir::lwip::set_tick_milliseconds(static_cast<uint32_t>(kTickPeriodNs / 1000000ull));
 
     /* The tick: a notification the timer signals each period. It is minted with
      * a high context bit so the tcpip thread's timed wait can tell a tick from

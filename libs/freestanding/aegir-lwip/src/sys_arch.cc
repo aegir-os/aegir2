@@ -42,6 +42,7 @@ aegir::thread::Builder *g_builder = nullptr;
 aegir::thread::Placement const *g_placement = nullptr;
 seL4_CPtr g_thread_tcb = 0;
 volatile uint32_t g_now_ms = 0;
+uint32_t g_tick_ms = 0;
 
 /* lwIP's short SYS_ARCH_PROTECT regions (pbuf reference counts; the heap has
  * its own mem_mutex). A recursive critical section, because lwIP documents that
@@ -101,6 +102,11 @@ void set_threading(aegir::thread::Builder &builder,
 void set_now(uint32_t milliseconds) noexcept
 {
     g_now_ms = milliseconds;
+}
+
+void set_tick_milliseconds(uint32_t milliseconds) noexcept
+{
+    g_tick_ms = milliseconds;
 }
 
 seL4_CPtr thread_tcb() noexcept
@@ -292,7 +298,11 @@ extern "C" u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout
         seL4_Word badge = 0;
         seL4_Wait(handle->notification, &badge);
         if (badge == aegir::lwip::kTickBit) {
-            return SYS_ARCH_TIMEOUT; /* the timer tick: run lwIP's timers */
+            /* The timer tick: advance the clock lwIP reads, then let it run its
+             * timers (a clock that never moves makes every timeout never
+             * fire). */
+            g_now_ms += g_tick_ms;
+            return SYS_ARCH_TIMEOUT;
         }
     }
     __sync_synchronize();

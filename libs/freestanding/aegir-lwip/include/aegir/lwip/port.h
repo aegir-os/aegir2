@@ -59,6 +59,12 @@ seL4_CPtr thread_tcb() noexcept;
  *  read. */
 void set_now(uint32_t milliseconds) noexcept;
 
+/** The tick's period in milliseconds. The sys_arch adds it to the cached
+ *  `sys_now` each time the timer tick wakes the tcpip thread, so lwIP's timers
+ *  -- which run on the tcpip thread and read `sys_now` -- actually advance. A
+ *  `sys_now` that never moves makes every timeout never fire (specs/net.md). */
+void set_tick_milliseconds(uint32_t milliseconds) noexcept;
+
 }  // namespace aegir::lwip
 
 #endif  // AEGIR_LWIP_PORT_H
