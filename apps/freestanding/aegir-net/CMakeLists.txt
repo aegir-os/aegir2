@@ -16,6 +16,6 @@ target_compile_options(aegir-net PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-net PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ethernet aegir-ipc
-                    aegir-log aegir-mem aegir-netcontrol aegir-registry aegir-thread
-                    aegir-timer-protocol lwip sel4 muslc sel4runtime
+                    aegir-log aegir-mem aegir-net-protocol aegir-netcontrol aegir-registry
+                    aegir-thread aegir-timer-protocol lwip sel4 muslc sel4runtime
 )

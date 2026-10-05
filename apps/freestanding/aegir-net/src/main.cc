@@ -26,6 +26,7 @@
 #include <aegir/lwip/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/net.h>
 #include <aegir/netcontrol.h>
 #include <aegir/registry.h>
 #include <aegir/thread.h>

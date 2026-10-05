@@ -197,6 +197,16 @@ calls and never touches a `tcp_pcb`:
 - unknown methods are refused, so the protocol is versioned like every other
   port.
 
+**The first slice is ping, and it is a raw ICMP socket.** `socket(AF_INET,
+SOCK_RAW, IPPROTO_ICMP)` answers an id, `send` puts an echo request on the wire,
+`recv` holds until an echo reply arrives, and `close` frees it; `resolve` turns a
+name into an address. The datagram rides the **message envelope** in this slice
+-- an ICMP message is small, and the envelope's registers hold it -- while the
+client's shared window, the bulk path, lands with TCP where the payloads stop
+fitting. TCP and the rest of `socket(2)` follow. Landing that first exercises
+the port's shape end to end with a real client before it carries a connection
+state machine -- the small landing `specs/direction.md` asks for.
+
 A **hosted application gets a musl shim**: `socket`, `connect`, `recv`,
 `send`, `getaddrinfo` and friends in `src/network/` are rerouted to the port,
 over an fd-to-connection table, the way the hosted runtime answers the clock
@@ -231,7 +241,7 @@ configurations. Both reach the stack's control port.
 A TOML file on the system volume, the `Sys:S/session.manifest` shape and
 location (`specs/session.md`). It says what each adapter should be at boot:
 DHCP or static, the address, netmask, gateway and DNS, the MTU, which link to
-bind.
+bind, and the machine's `hostname`.
 
 **It is applied by a command, not by the stack.** `NetConfig` (a command in
 `C:`) is run from `Sys:S/Startup-Sequence` (`specs/boot.md`); it reads the
@@ -300,6 +310,26 @@ protocols, the way the block driver's `caps` is not its `read`
 The control port is the stack's own interface -- an interface that starts down
 is useless without it -- so it lands with the stack (phase 3); the `Net:` volume
 in front of it is the last step.
+
+## Names and identity
+
+Three things give the machine a name and let it use one, and none of them lives
+in the stack:
+
+- **the host name** is declared at boot in `Sys:S/network.manifest`
+  (`hostname`), set through the control port by `NetConfig` like every other
+  parameter, and read or set live as `Net:<adapter>/hostname`. The stack puts it
+  in DHCP option 12, so it is what the network sees and not only a label the
+  machine keeps to itself.
+- **`Sys:S/hosts`** is the resolver's first table, and it belongs to the client:
+  a classic `address name [aliases]` file, `#` comments, consulted *before* DNS.
+  A name it holds resolves with no network at all -- which an offline machine
+  and the acceptance need -- and only names it lacks go to the DHCP-supplied DNS
+  server. The resolver lives in the client, which has the VFS; the stack never
+  reads the filesystem, the same rule that keeps the manifest out of it.
+- **`ping`** is the first client of the socket port and takes either an address
+  or a name: it resolves the name through `Sys:S/hosts` and then DNS, and sends
+  an ICMP echo. It is also the acceptance's last step.
 
 ## Acceptance
 
