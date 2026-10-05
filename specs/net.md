@@ -200,12 +200,31 @@ calls and never touches a `tcp_pcb`:
 **The first slice is ping, and it is a raw ICMP socket.** `socket(AF_INET,
 SOCK_RAW, IPPROTO_ICMP)` answers an id, `send` puts an echo request on the wire,
 `recv` holds until an echo reply arrives, and `close` frees it; `resolve` turns a
-name into an address. The datagram rides the **message envelope** in this slice
--- an ICMP message is small, and the envelope's registers hold it -- while the
-client's shared window, the bulk path, lands with TCP where the payloads stop
-fitting. TCP and the rest of `socket(2)` follow. Landing that first exercises
-the port's shape end to end with a real client before it carries a connection
-state machine -- the small landing `specs/direction.md` asks for.
+name into an address.
+
+**The datagram slice adds UDP.** `socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)` is a
+socket with no peer, so `sendto` carries the destination address and port and
+`recvfrom` answers a datagram with its peer's port as well as its source, length
+and bytes. `tftp` is its client and the acceptance: it reads a file from the
+TFTP server QEMU's user-mode network serves (the DHCP-supplied gateway, asked of
+the stack the way ping asks it), out and back with real bytes on the wire --
+the "client socket path end to end" test -- with nothing external reached.
+
+**The stream slice adds TCP, a lifecycle rather than a message.** A socket is a
+`tcp_pcb`; `bind` and `listen` ready a listener; `accept` is a held reply that
+answers **a new socket per connection**, so one listener serves many; `connect`
+is a held reply that answers when the handshake completes or fails; `write`
+sends a segment and `recv` (the same call, its answer a stream) returns data
+with a zero length as the peer's close. `tcpecho` is its acceptance and needs
+no concurrency: a TCP listener's backlog completes a connection whether or not
+`accept` has been called, so one process binds 127.0.0.1, connects to it,
+accepts, writes a string, reads the echo back and compares -- the whole
+lifecycle with nothing on the wire. **The datagram rides the message envelope**
+in these slices -- an ICMP message, a TFTP block, an echoed string are all small,
+and the envelope's registers hold them -- while the client's **shared window**,
+the bulk path, is the next piece: a TCP payload can outgrow the registers, and
+data then crosses the way block data does, a window the starter carves and the
+stack learns by badge.
 
 A **hosted application gets a musl shim**: `socket`, `connect`, `recv`,
 `send`, `getaddrinfo` and friends in `src/network/` are rerouted to the port,
@@ -371,11 +390,14 @@ and the test is deliberately **offline and deterministic**:
    `Sys:S/network.manifest` (DHCP), and the address, netmask and gateway are
    printed as cues: the numbers are the network's, obtained not embedded. Then
    ARP, then an **ICMP echo to the DHCP-supplied gateway**, which slirp answers.
-3. DNS is left to interactive use, not the gate: it forwards to the host
+3. **shapes left to interactive use**, not the gate: DNS forwards to the host
    resolver, and reverse lookup is a slirp limitation.
 
-A later test fetches a file from QEMU's built-in TFTP server: still fully
-offline, and it exercises the client socket path end to end.
+The client socket path end to end is the TFTP fetch: `tftp` reads a file from
+QEMU's built-in TFTP server, fully offline, out and back with real bytes on the
+wire. The stream lifecycle is `tcpecho`, a loopback round trip with nothing on
+the wire at all. Both are Startup-Sequence lines, run one at a time with the
+console idle.
 
 ## Phases
 
@@ -390,8 +412,10 @@ offline, and it exercises the client socket path end to end.
    `Sys:S/network.manifest` and its `Startup-Sequence` line. An interface starts
    down and the command brings it up; acceptance is DHCP, ARP and the echo
    through that path.
-4. **`aegir/net.h` and the socket shim** -- a `ping` client first, then the
-   musl BSD-socket rerouting, then TCP and DNS.
+4. **`aegir/net.h` and the socket shim** -- a `ping` client first (raw ICMP),
+   then the datagram slice (UDP, and `tftp` as the client-path test), then the
+   stream slice (TCP, and `tcpecho` as its lifecycle test), then the client's
+   shared window for bulk data, then the musl BSD-socket rerouting.
 5. **`Net:`, the filesystem view** -- the live half: the volume and its service,
    `Net:<adapter>/<parameter>`, so the running state can be read and set the way
    the boot manifest set it.

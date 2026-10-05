@@ -824,6 +824,14 @@ void do_close(void *argument) noexcept
 {
     auto *const close = static_cast<CloseArg *>(argument);
     Socket *const socket = close->socket;
+    /* Nothing may call back into a socket the caller is about to free. An armed
+     * timeout fires later, and a stream's pcb can live past its own close (a
+     * FIN_WAIT continues the handshake), so the timeouts are cancelled and the
+     * pcb's callbacks cleared before it is closed. Runs in the tcpip thread, so
+     * no callback for this socket can be in flight once this returns. */
+    sys_untimeout(recv_timeout, socket);
+    sys_untimeout(accept_timeout, socket);
+    sys_untimeout(connect_timeout, socket);
     if (socket->raw != nullptr) {
         raw_remove(socket->raw);
         socket->raw = nullptr;
@@ -833,6 +841,14 @@ void do_close(void *argument) noexcept
         socket->udp = nullptr;
     }
     if (socket->tcp != nullptr) {
+        tcp_arg(socket->tcp, nullptr);
+        tcp_accept(socket->tcp, nullptr);
+        /* A listener has no recv/err callback to clear, and lwIP refuses to set
+         * one on a LISTEN pcb. */
+        if (socket->tcp->state != LISTEN) {
+            tcp_recv(socket->tcp, nullptr);
+            tcp_err(socket->tcp, nullptr);
+        }
         (void)tcp_close(socket->tcp);
         socket->tcp = nullptr;
     }
