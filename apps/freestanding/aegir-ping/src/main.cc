@@ -102,8 +102,10 @@ constexpr uint32_t kMessageBytes = 64;
 
 int main(int argc, char *argv[])
 {
-    static_cast<void>(argc);
-    static_cast<void>(argv);
+    /* A command takes a target on its command line; the boot acceptance runs it
+     * with none and pings the adapter's gateway. It matters at the end: a command
+     * must return from main so its launcher reaps it, where a boot service parks. */
+    bool const has_argument = argc > 1 && argv[1] != nullptr && argv[1][0] != '\0';
 
     aegir::ipc::Consumer const log =
         aegir::ipc::Consumer::find(aegir::log::kPortName, aegir::log::kPortNameLength);
@@ -121,6 +123,9 @@ int main(int argc, char *argv[])
     if (!control.valid() || !sockets.valid()) {
         write_line("FAIL", "ping: no control or socket port was given to me");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        if (has_argument) {
+            return 0;
+        }
         aegir::halt();
     }
 
@@ -128,7 +133,6 @@ int main(int argc, char *argv[])
      * or -- with none, as the boot acceptance runs it -- the adapter's
      * DHCP-supplied gateway, which may not have answered yet. */
     uint64_t target = 0;
-    bool const has_argument = argc > 1 && argv[1] != nullptr && argv[1][0] != '\0';
     if (has_argument) {
         target = aegir::resolve::parse_ipv4(argv[1]);
         if (target == 0) {
@@ -144,7 +148,10 @@ int main(int argc, char *argv[])
         if (target == 0) {
             write_line("FAIL", "ping: the name would not resolve");
             seL4_Signal(aegir::bootstrap::kSlotSupervision);
-            aegir::halt();
+            if (has_argument) {
+            return 0;
+        }
+        aegir::halt();
         }
     } else {
         for (unsigned attempt = 0; attempt < 25 && target == 0; ++attempt) {
@@ -170,7 +177,10 @@ int main(int argc, char *argv[])
         if (target == 0) {
             write_line("FAIL", "ping: the adapter has no gateway yet");
             seL4_Signal(aegir::bootstrap::kSlotSupervision);
-            aegir::halt();
+            if (has_argument) {
+            return 0;
+        }
+        aegir::halt();
         }
     }
 
@@ -182,6 +192,9 @@ int main(int argc, char *argv[])
     if (made.error != 0 || made.count < 1 || opened[0] == 0) {
         write_line("FAIL", "ping: the stack refused a raw ICMP socket");
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        if (has_argument) {
+            return 0;
+        }
         aegir::halt();
     }
     uint32_t const socket_id = static_cast<uint32_t>(opened[0]);
@@ -218,6 +231,9 @@ int main(int argc, char *argv[])
         write_line("FAIL", "ping: the echo request would not go out");
         (void)sockets.call(aegir::net::kMethodClose, socket_id);
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        if (has_argument) {
+            return 0;
+        }
         aegir::halt();
     }
 
@@ -253,6 +269,9 @@ int main(int argc, char *argv[])
         write_line("FAIL", "ping: no echo reply arrived");
         (void)sockets.call(aegir::net::kMethodClose, socket_id);
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        if (has_argument) {
+            return 0;
+        }
         aegir::halt();
     }
 
@@ -267,5 +286,8 @@ int main(int argc, char *argv[])
 
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("ping", "ready");
-    aegir::halt();
+    if (has_argument) {
+            return 0;
+        }
+        aegir::halt();
 }
