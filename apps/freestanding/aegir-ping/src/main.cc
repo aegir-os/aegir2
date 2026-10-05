@@ -6,10 +6,12 @@
  *
  * It is the plan's small landing: before TCP carries a connection state
  * machine, ping exercises the whole path -- create a raw ICMP socket, put an
- * echo request on the wire, receive the reply -- end to end. This first version
- * takes no argument: it asks the stack's control port for the adapter's
- * DHCP-supplied gateway and pings that, which proves DHCP, ARP and ICMP
- * together. Names (Sys:S/hosts, then DNS) and a command line follow.
+ * echo request on the wire, receive the reply -- end to end. As a command it
+ * takes an address or a name; with no argument -- as the boot acceptance runs
+ * it -- it asks the stack's control port for the adapter's DHCP-supplied
+ * gateway and pings that, which proves DHCP, ARP and ICMP together. Names
+ * resolve through the stack's DNS today; Sys:S/hosts, the resolver's first
+ * table, lands with the shared client library.
  */
 
 #include <aegir/bootstrap.h>
@@ -88,6 +90,69 @@ void print_address(uint32_t address) noexcept
     }
 }
 
+/* "a.b.c.d" (dotted decimal) into the network-order word the socket port wants,
+ * or 0 when it is not an address -- then it is a name. */
+uint32_t parse_ipv4(char const *text) noexcept
+{
+    uint32_t value = 0;
+    uint32_t part = 0;
+    uint32_t parts = 0;
+    uint32_t digits = 0;
+    for (char const *p = text;; ++p) {
+        char const c = *p;
+        if (c >= '0' && c <= '9') {
+            part = part * 10 + static_cast<uint32_t>(c - '0');
+            if (part > 255 || ++digits > 3) {
+                return 0;
+            }
+        } else if (c == '.' || c == '\0') {
+            if (digits == 0 || parts > 3) {
+                return 0;
+            }
+            value |= part << (8 * parts);
+            ++parts;
+            part = 0;
+            digits = 0;
+            if (c == '\0') {
+                break;
+            }
+        } else {
+            return 0;
+        }
+    }
+    return parts == 4 ? value : 0;
+}
+
+uint32_t name_length(char const *text) noexcept
+{
+    uint32_t length = 0;
+    while (length <= aegir::net::kMaxNameBytes && text[length] != '\0') {
+        ++length;
+    }
+    return length;
+}
+
+/* Ask the stack to resolve a name (its DNS), answering the address or 0. The
+ * hosts file is the resolver's first table and belongs to the client; it lands
+ * with the shared client library, and this is the DNS fallback. */
+uint32_t resolve_name(aegir::ipc::Consumer const &sockets, char const *name) noexcept
+{
+    uint32_t const length = name_length(name);
+    if (length == 0 || length > aegir::net::kMaxNameBytes) {
+        return 0;
+    }
+    uint64_t request[1 + (aegir::net::kMaxNameBytes + 7) / 8] = {0};
+    request[0] = length;
+    pack(reinterpret_cast<uint8_t const *>(name), length, request + 1);
+    uint64_t answer[1] = {0};
+    aegir::ipc::WordsReply const resolved = sockets.call_words(
+        aegir::net::kMethodResolve, request, 1 + (length + 7) / 8, answer, 1);
+    if (resolved.error != 0 || resolved.count < 1) {
+        return 0;
+    }
+    return static_cast<uint32_t>(answer[0]);
+}
+
 constexpr uint32_t kEchoRequest = 8;
 constexpr uint32_t kMessageBytes = 64;
 
@@ -117,32 +182,47 @@ int main(int argc, char *argv[])
         aegir::halt();
     }
 
-    /* The gateway comes from DHCP (through the control port), which may not have
-     * answered yet; wait for it rather than ping nothing. */
-    uint64_t gateway = 0;
-    for (unsigned attempt = 0; attempt < 25 && gateway == 0; ++attempt) {
-        aegir::ipc::Reply const count =
-            control.call(aegir::netcontrol::kMethodList, 0);
-        for (uint64_t index = 0; count.error == 0 && index < count.word; ++index) {
-            uint64_t answer[aegir::netcontrol::kDescribeWords];
-            aegir::ipc::WordsReply const described = control.call_words(
-                aegir::netcontrol::kMethodDescribe, &index, 1, answer,
-                aegir::netcontrol::kDescribeWords);
-            if (described.error == 0 && described.count == aegir::netcontrol::kDescribeWords) {
-                gateway = answer[3]; /* the adapter's gateway */
-                if (gateway != 0) {
-                    break;
+    /* Where to ping: the command line's first argument (an address or a name),
+     * or -- with none, as the boot acceptance runs it -- the adapter's
+     * DHCP-supplied gateway, which may not have answered yet. */
+    uint64_t target = 0;
+    bool const has_argument = argc > 1 && argv[1] != nullptr && argv[1][0] != '\0';
+    if (has_argument) {
+        target = parse_ipv4(argv[1]);
+        if (target == 0) {
+            target = resolve_name(sockets, argv[1]);
+        }
+        if (target == 0) {
+            write_line("FAIL", "ping: the name would not resolve");
+            seL4_Signal(aegir::bootstrap::kSlotSupervision);
+            aegir::halt();
+        }
+    } else {
+        for (unsigned attempt = 0; attempt < 25 && target == 0; ++attempt) {
+            aegir::ipc::Reply const count =
+                control.call(aegir::netcontrol::kMethodList, 0);
+            for (uint64_t index = 0; count.error == 0 && index < count.word; ++index) {
+                uint64_t answer[aegir::netcontrol::kDescribeWords];
+                aegir::ipc::WordsReply const described = control.call_words(
+                    aegir::netcontrol::kMethodDescribe, &index, 1, answer,
+                    aegir::netcontrol::kDescribeWords);
+                if (described.error == 0 &&
+                    described.count == aegir::netcontrol::kDescribeWords) {
+                    target = answer[3]; /* the adapter's gateway */
+                    if (target != 0) {
+                        break;
+                    }
                 }
             }
+            if (target == 0 && timer.valid()) {
+                (void)timer.call(aegir::timer::kMethodSleep, 250ull * 1000ull * 1000ull);
+            }
         }
-        if (gateway == 0 && timer.valid()) {
-            (void)timer.call(aegir::timer::kMethodSleep, 250ull * 1000ull * 1000ull);
+        if (target == 0) {
+            write_line("FAIL", "ping: the adapter has no gateway yet");
+            seL4_Signal(aegir::bootstrap::kSlotSupervision);
+            aegir::halt();
         }
-    }
-    if (gateway == 0) {
-        write_line("FAIL", "ping: the adapter has no gateway yet");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        aegir::halt();
     }
 
     uint64_t const open[3] = {aegir::net::kAfInet, aegir::net::kSockRaw,
@@ -179,7 +259,7 @@ int main(int argc, char *argv[])
 
     uint64_t request[3 + (kMessageBytes + 7) / 8] = {0};
     request[0] = socket_id;
-    request[1] = gateway;
+    request[1] = target;
     request[2] = kMessageBytes;
     pack(message, kMessageBytes, request + 3);
     uint64_t sent[1] = {0};

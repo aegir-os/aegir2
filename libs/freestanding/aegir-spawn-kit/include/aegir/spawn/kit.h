@@ -67,6 +67,12 @@ struct Kit {
     seL4_CPtr asid_pool = 0;
     seL4_CPtr clock = 0; /* optional */
     seL4_CPtr timer = 0; /* optional */
+    /* The network, so a session command can use it (specs/net.md): a caller half
+     * of the socket port (data) and of the control port (what the adapter is).
+     * Optional like the rest -- a launcher handed none hands its commands none,
+     * and a command that wants the network says so and refuses without it. */
+    seL4_CPtr net_socket = 0;
+    seL4_CPtr net_control = 0;
     /* The session's namespace, badged for the session: copied to a child's own
      * slot, and (shell_nmspace) moved to the shell. Two caps, because the one a
      * shell takes is moved and a moved cap cannot also be copied. */

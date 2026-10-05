@@ -537,5 +537,5 @@ restart    = never
 binary    = aegir-session-smoke
 authority = user
 account   = user
-needs     = log.main, vfs.namespace, console.gui, font.main, clock.main, timer.main, mem.main
+needs     = log.main, vfs.namespace, console.gui, font.main, clock.main, timer.main, mem.main, net.socket, net.control
 restart   = never

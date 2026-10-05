@@ -67,6 +67,11 @@ seL4_CPtr g_spawn_mem = 0;
  * timer is the interval side (specs/timer.md): the shell's Wait sleeps on it. */
 seL4_CPtr g_spawn_clock = 0;
 seL4_CPtr g_spawn_timer = 0;
+/* The network's two ports (specs/net.md), optional like the timer's: a session
+ * command may use the stack, so director grants the unbadged sources when the
+ * session authority names them. */
+seL4_CPtr g_spawn_net_socket = 0;
+seL4_CPtr g_spawn_net_control = 0;
 
 /* The greeter's kit (specs/console.md's login arc): the delegatable copies
  * its spawn takes, and the console caller half that is auth's own -- a login
@@ -1222,6 +1227,20 @@ bool need_grant(aegir::manifest::View need, seL4_CPtr launch_port, uint64_t badg
         *cap_badge = 0;
         return g_spawn_timer != 0;
     }
+    /* The network (specs/net.md): a session service may name the socket and
+     * control ports, so a session command reaches the stack. */
+    if (aegir::manifest::equals(need, "net.socket")) {
+        *cap = g_spawn_net_socket;
+        *rights = seL4_CapRights_new(1, 0, 0, 1);
+        *cap_badge = badge;
+        return g_spawn_net_socket != 0;
+    }
+    if (aegir::manifest::equals(need, "net.control")) {
+        *cap = g_spawn_net_control;
+        *rights = seL4_CapRights_new(1, 0, 0, 1);
+        *cap_badge = badge;
+        return g_spawn_net_control != 0;
+    }
     if (aegir::manifest::equals(need, "mem.main")) {
         *cap = g_spawn_mem;
         *rights = seL4_CapRights_new(1, 1, 0, 1);
@@ -1462,6 +1481,8 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
         kit.asid_pool = g_asid_pool;
         kit.clock = g_spawn_clock;
         kit.timer = g_spawn_timer;
+        kit.net_socket = g_spawn_net_socket;
+        kit.net_control = g_spawn_net_control;
         kit.nmspace = g_kit_nmspace_slot;
         kit.font_main = g_spawn_font;
         aegir::spawn::Child child{};
@@ -1800,6 +1821,8 @@ void start_session(uint32_t user, bool bureau) noexcept
         launcher_kit.asid_pool = g_asid_pool;
         launcher_kit.clock = g_spawn_clock;
         launcher_kit.timer = g_spawn_timer;
+        launcher_kit.net_socket = g_spawn_net_socket;
+        launcher_kit.net_control = g_spawn_net_control;
         launcher_kit.nmspace = g_kit_nmspace_slot;
         static char const kHomeCwd[] = "Home:";
         char const *const launcher_environment[1] = {
@@ -1935,6 +1958,8 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     boot_kit.asid_pool = g_asid_pool;
     boot_kit.clock = g_spawn_clock;
     boot_kit.timer = g_spawn_timer;
+    boot_kit.net_socket = g_spawn_net_socket;
+    boot_kit.net_control = g_spawn_net_control;
     boot_kit.font_main = g_spawn_font;
 
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
@@ -2459,6 +2484,18 @@ int main(int argc, char *argv[])
     uint64_t spawn_timer_slot = 0;
     if (aegir::bootstrap::capability("spawn:timer.main", 16, &spawn_timer_slot)) {
         g_spawn_timer = static_cast<seL4_CPtr>(spawn_timer_slot);
+    }
+    /* The network, optional the same way (specs/net.md): a session command may
+     * use the stack, so the session authority names net.socket and net.control
+     * and director grants the unbadged sources. A session without them runs
+     * with no network, and a command that wants it says so. */
+    uint64_t spawn_net_socket_slot = 0;
+    if (aegir::bootstrap::capability("spawn:net.socket", 16, &spawn_net_socket_slot)) {
+        g_spawn_net_socket = static_cast<seL4_CPtr>(spawn_net_socket_slot);
+    }
+    uint64_t spawn_net_control_slot = 0;
+    if (aegir::bootstrap::capability("spawn:net.control", 17, &spawn_net_control_slot)) {
+        g_spawn_net_control = static_cast<seL4_CPtr>(spawn_net_control_slot);
     }
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);

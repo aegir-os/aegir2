@@ -195,6 +195,7 @@ set(aegir_commands
   aegir-protect:protect
   aegir-filenote:filenote
   aegir-info:info
+  aegir-ping:ping
   aegir-assign:assign
   aegir-which:which
   aegir-version:version
