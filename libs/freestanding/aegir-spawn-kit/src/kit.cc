@@ -68,6 +68,14 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
               aegir::console::kStreamPortNameLength, kit.stream,
               seL4_CapRights_new(1, 1, 0, 1), child.stream_badge, 0, false,
               child.stream_copy);
+    /* The logger, the serial's one writer (specs/console.md): a command that
+     * holds it hands its lines over whole, and the runtime falls back to
+     * writing the serial itself -- one character a syscall -- only without it,
+     * which is what lets a command's line splice into a service's. */
+    if (kit.log != 0) {
+        (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
+                  kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
+    }
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);
     /* The session's namespace, by copy: it already carries the session's
@@ -187,6 +195,12 @@ uint32_t serve_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_
         (void)put(out, capacity, n++, aegir::timer::kPortName,
                   aegir::timer::kPortNameLength, kit.timer, seL4_CapRights_new(1, 0, 0, 1),
                   0, 0, false, false);
+    }
+    /* The logger (specs/console.md), for the same reason a command gets it: a
+     * class that writes the serial directly splices into the logger's lines. */
+    if (kit.log != 0) {
+        (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
+                  kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
     }
     return n;
 }
