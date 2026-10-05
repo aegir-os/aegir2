@@ -121,34 +121,39 @@ One toolchain builds everything — kernel, `libsel4`, the seL4 libraries and
 Aegir's own userland — because a single CMake build is configured from the
 kernel's toolchain file and user targets inherit its flags.
 
-- Compiler: **Debian's `riscv64-unknown-elf-gcc` 14.2.0+19**, unpacked from its
-  packages into `third_party/toolchain/` (`manifests/toolchain.toml`), addressed
-  through `CROSS_COMPILER_PREFIX=riscv64-unknown-elf-`, which is **always set
-  explicitly** in `configs/`. Setting it explicitly means the build can never
-  silently pick up a different toolchain from `PATH` — including the Linux
-  multilib flavour, whose use with seL4's explicit `mabi` flags is a known link
-  failure ("can't link double-float modules with soft-float modules").
-- **Native TLS is a hard requirement of the toolchain.** User code is compiled
-  with `-ftls-model=local-exec` and seL4's runtime is built around native
-  `tp`-relative TLS (musl's thread pointer, `sel4runtime`'s `static_tls`). A
-  toolchain configured with `--disable-tls` makes GCC emit *emulated* TLS
-  (`__emutls_v.*`, `__emutls_get_address`) with no way to switch it off, and the
-  resulting root task dies at startup with `vm fault on code at address 0`. That
-  is why the toolchain is Debian's (built `--enable-tls`) and **not** xPack's
-  `riscv-none-elf` (built `--disable-tls`), which is otherwise the more
-  attractive package: newer GCC, one tarball, no unpacking. `make tools-check`
-  compiles a `__thread` probe and fails if a toolchain ever regresses to
-  emulated TLS, so this cannot silently come back.
-- The toolchain needs its own runtime libraries: Debian's `cc1` links
-  `libisl`/`libgmp`/`libmpfr`/`libmpc` shared, and a Fedora host has no
-  `libisl.so.23` at all. Those packages are pinned and extracted alongside the
-  compiler, and `scripts/fetch_toolchain.py` writes per-process shims
-  (`third_party/toolchain/shims/`, on `PATH` via `scripts/env.sh`) that put the
-  libraries on the compiler's own `LD_LIBRARY_PATH` — never exported, so the
-  host's qemu is not fed Debian's `libgmp`. CMake caches the absolute compiler
-  path at configure time: when the shims move or appear (a fresh machine, a
-  re-fetch), wipe `out/<target>` and let the build reconfigure, or it keeps
-  invoking the path it remembered.
+- Compiler: **clang 20.1.x and `lld`**, from an LLVM release tarball pinned in
+  `manifests/toolchain.toml` and unpacked into `third_party/toolchain/`. The
+  build selects it by setting `TRIPLE=riscv64-unknown-elf` in `configs/`:
+  `kernel/configs/seL4Config.cmake:244-248` then chooses seL4's `llvm.cmake`
+  instead of `gcc.cmake`, and `llvm.cmake` compiles and links with
+  `clang --target=${TRIPLE}` (`kernel/llvm.cmake`). 20.1 is the newest series
+  seL4 16.0.0 enables (`kernel/CHANGES.md`: *"Enable building with clang-18 and
+  clang-20"*), and the kernel's own `>=20` handling carries it
+  (`kernel/CMakeLists.txt:300-303`). Clang is one self-contained binary: there
+  is no `cc1` to feed `libisl`/`libgmp`/`libmpfr`/`libmpc`, so the shared-library
+  pinning and per-process shims the GCC path needed are gone.
+- **GNU is retained for exactly one thing: OpenSBI.** seL4's RISC-V image flow
+  builds OpenSBI with `${CROSS_COMPILER_PREFIX}gcc` and probes
+  `${CROSS_COMPILER_PREFIX}gcc -dumpversion`
+  (`tools/seL4/cmake-tool/helpers/rootserver.cmake:83-97,126`), and says in its
+  own comment that *"OpenSBI is (currently) always built with gcc"*. The pinned
+  Debian `riscv64-unknown-elf-gcc` 14.2.0+19 stays in `manifests/toolchain.toml`
+  for that one build, and `CROSS_COMPILER_PREFIX=riscv64-unknown-elf-` stays set
+  (`llvm.cmake` derives the same prefix from `TRIPLE`). Nothing Aegir ships is
+  built by it.
+- **The assembler, linker and binutils are LLVM's.** The image flow's
+  `objcopy`/`readelf` resolve to `llvm-objcopy`/`llvm-readelf` from the same
+  tarball, and `lld` links every target through clang; GNU binutils are not part
+  of the Aegir build.
+- **Native TLS is native by construction.** User code is compiled with
+  `-ftls-model=local-exec` and seL4's runtime is built around native
+  `tp`-relative TLS (musl's thread pointer, `sel4runtime`'s `static_tls`).
+  clang implements no emulated TLS: local-exec emits `tp`-relative access
+  directly, with no `__emutls_v.*` to detect, so the old hazard — a
+  `--disable-tls` toolchain emitting emulated TLS and the root task dying with
+  `vm fault on code at address 0` — cannot arise. `make tools-check`'s probe
+  changes with it: it checks that the compiler emits native TLS relocations,
+  not that a toolchain was configured `--enable-tls`.
 - C library: **not** from the toolchain. The freestanding path (director and the
   services) uses the vendored `projects/musllibc` (built by the same build) plus
   `projects/sel4runtime` for the entry point; the hosted path links the vendored
@@ -159,8 +164,8 @@ kernel's toolchain file and user targets inherit its flags.
   userland that opts in. Freestanding C++ (`-fno-exceptions -fno-rtti
   -fno-threadsafe-statics`, no standard library) is still what director and the
   services use; hosted targets link libc++ and compile `-O2`. The decision, and
-  the build policy behind the `-O2`, is `specs/cxx.md`. The compiler choice
-  below is unchanged.
+  the build policy behind the `-O2`, is `specs/cxx.md`. The compiler is clang
+  throughout, per *The compiler: clang* below.
 
   Establishing this cost four separate discoveries, all now encoded in the
   build rather than in anyone's memory:
@@ -187,34 +192,54 @@ kernel's toolchain file and user targets inherit its flags.
      gets a memory story. Until then, classes with virtual destructors cannot be
      destroyed — cheap to avoid, expensive to discover late.
 
-### Deferred: compiler choice
+### The compiler: clang (decided 2026-10)
 
-GCC is used for this milestone set. Modern LLVM was considered and deferred
-deliberately, decided after vendoring is validated. Facts recorded so the
-deferred decision is cheap:
+The host toolchain is clang. The decision deferred here is taken: everything
+Aegir builds — the kernel, `libsel4`, the seL4 libraries, musl, `sel4runtime`,
+the ELF loader and Aegir's own userland — is compiled and linked by **clang
+20.1.x and `lld`**, with the pinned GNU toolchain kept only to build OpenSBI
+(above). It is a migration with its own phases, not a switch:
 
-- seL4 16.0.0 ships `kernel/llvm.cmake`, a first-class LLVM toolchain file
-  (`LLVM_TOOLCHAIN ON`, `clang`/`clang++` with `--target=${TRIPLE}`), and the
-  kernel source contains clang-specific handling (including clang ≥ 20).
-- One CMake build cannot mix compilers per target, so "GCC for the kernel,
-  clang for Aegir's userland" is only realisable as a hybrid build (packaging
-  our clang-built ELFs into the image via the cmake-tool, which supports it:
-  `MakeCPIO` takes file paths and `DeclareRootserver` marks the root task) or as
-  two builds with a standalone kernel artifact.
-- Even a clang-everywhere build needs the GNU cross toolchain: the RISC-V image
-  flow builds OpenSBI with `${CROSS_COMPILER_PREFIX}gcc` and probes
-  `${CROSS_COMPILER_PREFIX}gcc -dumpversion`
-  (`cmake-tool/helpers/rootserver.cmake`), and GNU binutils supply
-  `objcopy`/`readelf`.
-- Our `lp64d` ABI already matches the container's existing clang `libgcc.a`
-  wiring (`rv64imafdc/lp64d`), so the clang path would need no extra plumbing.
-- The hosted C++ runtime (`specs/cxx.md`) gave the decision a concrete data
-  point. libc++'s `always_inline` containers make a 33 KiB stack frame under GCC
-  at `-O0`; Clang 22 compiles the same code cleanly and compactly at every
-  optimization level (224 bytes at `-O0`, 112 at `-O2`) and would not need the
-  `__chash` patch the GCC build carries. Switching still needs `lld` and a
-  build-system change, so it remains deferred — but now with a measured reason
-  to do it.
+1. **Pin and wire clang.** `manifests/toolchain.toml` gains the LLVM 20.1.x
+   release tarball (clang, lld, and the LLVM binutils) with a sha256;
+   `scripts/fetch_toolchain.py` unpacks it and `scripts/env.sh` puts it on
+   `PATH`. `configs/*.cmake` set `TRIPLE=riscv64-unknown-elf` — the switch that
+   selects `llvm.cmake` — and point CMake's `CMAKE_OBJCOPY`/`CMAKE_READELF` at
+   the LLVM tools. Acceptance: `make tools-check` passes and both compilers
+   report their versions.
+2. **Build the target with clang.** Configure and build the kernel, `libsel4`,
+   the seL4 libraries, musl, `sel4runtime`, the ELF loader and the userland.
+   This is where clang's diagnostics land; warnings are fixed, not suppressed
+   (`AGENTS.md`), and a warning from an unmodified upstream file is upstream's
+   business (the rules under *Commands* below).
+3. **The compiler runtime and the unwinder.** libgcc is replaced by compiler-rt:
+   the cross build yields `clang_rt.builtins-riscv64.a`, and
+   `scripts/build_libcxx.sh` flips `LIBCXXABI_USE_LLVM_UNWINDER=ON` so
+   libc++/libc++abi use `libunwind` rather than libgcc_eh. Acceptance: `make run`
+   boots director and `apps/aegir-cxx-smoke` prints its marker.
+4. **OpenSBI stays GNU.** No patch to seL4's helper; the pinned GCC remains for
+   that one step. Removing it is the tracked-patch arc named under *Rejected*
+   below.
+
+The measured reason to prefer clang, from the GCC path this replaces:
+libc++'s `always_inline` containers make a 33 KiB stack frame under GCC at
+`-O0`; clang compiles the same code cleanly at every optimization level (224
+bytes at `-O0`, 112 at `-O2`) and needs neither the `__chash` workaround the GCC
+build carries nor the emulated-TLS guard.
+
+#### Rejected
+
+- **GCC for the kernel, clang for userland.** One CMake build cannot mix
+  compilers per target, and the hybrid (packaging clang-built ELFs into the
+  image via the cmake-tool) buys nothing while the kernel must compile either
+  way.
+- **Patching seL4's OpenSBI helper to use clang now.** Real work with no present
+  payoff: OpenSBI is firmware we do not ship or touch, and GNU is already
+  pinned. It is the natural follow-up if "no GNU at all" is ever made a rule.
+- **Building host clang from the vendored `projects/llvm-project`.** A long host
+  build of LLVM for a tool that pins cleanly as a release tarball. The vendored
+  tree stays for libc++/libc++abi/libunwind and the on-device compiler
+  (`specs/clang-on-aegir.md`); the host compiler is a pin.
 
 ## Build environment
 
@@ -223,16 +248,17 @@ system-wide and no root is required.
 
 | Input | Pin | Where it lands |
 | --- | --- | --- |
-| RISC-V cross GCC (+ its runtime libs) | `manifests/toolchain.toml` (Debian `riscv64-unknown-elf-gcc` 14.2.0+19 and four library packages, sha256 from Debian's signed index) | `third_party/toolchain/` |
+| LLVM host toolchain (clang, lld, LLVM binutils) | `manifests/toolchain.toml` (LLVM 20.1.x x86_64 release tarball, sha256 from the release's checksum) | `third_party/toolchain/` |
+| RISC-V cross GCC (+ its runtime libs), **OpenSBI only** | `manifests/toolchain.toml` (Debian `riscv64-unknown-elf-gcc` 14.2.0+19 and four library packages, sha256 from Debian's signed index) | `third_party/toolchain/` |
 | `cmake`, `ninja`, and seL4's Python dependencies | `manifests/tools-declared.txt` (direct pins) → `manifests/requirements-tools.txt` (generated, version + sha256 per artifact, installed with `pip --require-hashes`) | `third_party/tools/venv/` |
 | `dtc` | `manifests/toolchain.toml` (kernel.org release tarball, sha256 from the project's signed `sha256sums.asc`) | `third_party/tools/bin/` |
 
 `make tools` fetches all of it; `make tools-check` re-verifies every pin
-offline. `. scripts/env.sh` puts them on `PATH` — the toolchain through
-`shims/` wrappers that give each tool its bundled runtime libraries for that
-process only, never via an exported `LD_LIBRARY_PATH` (those Debian library
-builds must not leak into host processes: qemu loading the toolchain's
-`libgmp` hung a configure on Fedora).
+offline. `. scripts/env.sh` puts them on `PATH`. The GNU cross GCC is still
+reached through `shims/` wrappers that give each tool its bundled runtime
+libraries for that process only, never via an exported `LD_LIBRARY_PATH` (those
+Debian library builds must not leak into host processes: qemu loading the
+toolchain's `libgmp` hung a configure on Fedora); clang needs no such wrapper.
 
 Two details worth knowing:
 
@@ -275,18 +301,19 @@ built and tested somewhere real — not before, since untested build
 configuration is worse than none.
 
 Consequence: the *toolchain revision* is pinned by us rather than inherited
-from the upstream image, and it is Debian's `riscv64-unknown-elf-gcc`
-14.2.0+19. Anything the image's own compiler carries — its patch level, its TLS
-configuration, the libraries it was linked against — is therefore not what we
-build with, which is exactly what the `sel4test` acceptance run in M3 is there
-to catch.
+from the upstream image, and it is LLVM's **clang 20.1.x** (with the pinned
+Debian GCC kept only for OpenSBI). Anything the image's own compiler carries —
+its patch level, its TLS configuration, the libraries it was linked against —
+is therefore not what we build with, which is exactly what the `sel4test`
+acceptance run in M3 is there to catch.
 
 ## Host prerequisites
 
 `git`, `make`, `python3`, `curl` or `wget`, plus a C toolchain for anything
 built from source. Everything else is fetched on demand:
 
-- Fetched and pinned by `make tools`: `cmake`, `ninja`, the RISC-V cross GCC,
+- Fetched and pinned by `make tools`: `cmake`, `ninja`, the LLVM host toolchain
+  (`clang`, `lld` and the LLVM binutils) and the RISC-V cross GCC (for OpenSBI),
   and `device-tree-compiler` (`dtc`) — required, not optional, since the
   platform flow calls it in both directions, and built from source because the
   host has neither `dtc` nor a way to install one.
@@ -342,10 +369,10 @@ shape of a seL4 application project, and three rules there are load-bearing:
   loader silently links `-lcpio` instead, then fails to compile.
 - **The ELF loader is imported before the user-mode environment is set up.**
   `musllibc_set_environment_flags()` rewrites the global link rule to inject the
-  user CRT objects (crt0.o, crti.o, GCC's crtbegin.o/crtend.o) into every target
-  created afterwards. The loader is not a user program — it has its own crt0.S
-  and a linker script that discards `.eh_frame` — so injected CRT objects break
-  it ("`__EH_FRAME_BEGIN__` ... defined in discarded section").
+  user CRT objects (crt0.o, crti.o, the compiler's crtbegin.o/crtend.o) into
+  every target created afterwards. The loader is not a user program — it has
+  its own crt0.S and a linker script that discards `.eh_frame` — so injected
+  CRT objects break it ("`__EH_FRAME_BEGIN__` ... defined in discarded section").
 - **The simulate script's `-m` must agree with the device tree.** The DTB is
   dumped from QEMU at *configure* time (`QEMU_MEMORY`, 3072 MB by default) and
   tells the kernel how much RAM it may use. Overriding the simulate script's

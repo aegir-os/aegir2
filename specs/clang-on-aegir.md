@@ -4,7 +4,8 @@ Status: plan, for review (2026-09). **Nothing below is implemented.** This file
 records the decisions a first implementation can start from, so that the plan is
 not carried in a conversation. It extends `specs/userland.md` (Aegir is not
 POSIX), `specs/cxx.md` (the hosted runtime and its completion program) and
-`specs/build.md` (the deferred compiler choice).
+`specs/build.md`, whose host build is now clang (*The compiler: clang*) — the
+host half of this effort, and this document's prerequisite.
 
 The goal is an **on-device native compiler**: `clang` and `lld` running as
 ordinary Aegir processes under the seL4 kernel, reading source through Aegir's
@@ -108,15 +109,17 @@ apps/aegir-clang-test/                   # the acceptance service
 
 This plan is the deliverable. Writing it also settles three housekeeping points:
 
-- `specs/cxx.md:231` says "Clang 22" of the host cross-compile; the on-device
-  compiler is the vendored **LLVM 18.1** (`manifests/aegir.xml:86`), and that
-  note should say so.
+- `specs/cxx.md` carried a "Clang 22" note of the host cross-compile; the host
+  compiler is now pinned at **clang 20.1.x** (`specs/build.md`), and the
+  on-device compiler is the vendored **LLVM 18.1.8** (`manifests/aegir.xml:87`).
+  That note is corrected.
 - `THIRD-PARTY.md` does not list `projects/llvm-project/` at all, though the
   manifest pins it and the hosted runtime builds libc++ from it. A row is owed
   (Apache-2.0 with LLVM-exception), and clang/lld's role belongs in it.
-- `specs/build.md`'s "Deferred: compiler choice" is about the *host* compiler;
-  this document is a different decision and should be cross-referenced, not
-  merged into it.
+- `specs/build.md`'s compiler choice is now decided — the host build is clang
+  20.1.x (*The compiler: clang*) — and this document is the next step from it,
+  not a merge into it: that document builds Aegir's ELFs with clang on the host;
+  this one runs clang on Aegir.
 
 ### Phase 1 — cross-build `clang` + `lld` (the first landed milestone)
 
@@ -134,15 +137,17 @@ cross-compiling against the already-built `musl_full` and exposed by a new
 | `LLVM_BUILD_LLVM_DYLIB` | `OFF` | everything static; there is no dynamic loader |
 | `LLVM_ENABLE_ZLIB/ZSTD/TERMINFO/LIBXML2/CURL/LIBEDIT` | `OFF` | no such dependencies on Aegir |
 | `CLANG_ENABLE_STATIC_ANALYZER`, `LLVM_INCLUDE_TESTS` | `OFF` | not shipped |
-| `LLVM_APPEND_VC_REV` | `OFF` | hermeticity: the same `GIT_CEILING_DIRECTORIES` concern as `dtc` (`specs/build.md:221`) |
+| `LLVM_APPEND_VC_REV` | `OFF` | hermeticity: the same `GIT_CEILING_DIRECTORIES` concern as `dtc` (`specs/build.md`, *Build environment*) |
 
 `compiler-rt`'s builtins for `riscv64` are built with the same cross toolchain;
-they are freestanding and need no libc. libc++abi is already built by
+they are freestanding and need no libc. This is the same recipe the host
+migration uses for Aegir's own links (`specs/build.md`, *The compiler: clang*
+step 3), so the two share it. libc++abi is already built by
 `scripts/build_libcxx.sh`.
 
-**Acceptance.** Both binaries exist, `readelf` reports a static `riscv64` ELF,
-sizes are measured against the 32 MiB disk (below), and any warning from our own
-patch is fixed (`AGENTS.md`).
+**Acceptance.** Both binaries exist, `llvm-readelf` reports a static `riscv64`
+ELF, sizes are measured against the 32 MiB disk (below), and any warning from
+our own patch is fixed (`AGENTS.md`).
 
 ### Phase 2 — the POSIX personality
 
@@ -250,5 +255,8 @@ sizes; it does not require them to run.
 - **Threads off, or on.** Building with `LLVM_ENABLE_THREADS=OFF` defers real
   threads to Phase 2.5. Whether Phase 3 should instead enable them depends on
   measured compile behavior under QEMU.
-- **The LLVM revision.** 18.1 is the pinned tree and the default here. A bump is
-  a `specs/third_party.md` upgrade exercise, not a subset of this plan.
+- **The LLVM revision, host and device.** The host build is clang 20.1.x
+  (`specs/build.md`); the vendored tree that builds libc++ and this on-device
+  compiler is **18.1.8**. Whether to bump the vendored tree to 20.1.x so host and
+  device share a revision is open, and is a `specs/third_party.md` upgrade
+  exercise, not a subset of this plan.

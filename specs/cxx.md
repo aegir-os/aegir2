@@ -242,11 +242,13 @@ The order:
      their policy at directory scope, so a target's policy is where it lives
      rather than a per-target flag, and `aegir-cxx-policy-freestanding` is
      gone.
-   - **libunwind is not linked.** The riscv64 bare-metal toolchain ships no
-     `libgcc_eh`, but its `libgcc.a` carries `_Unwind_*` and the frames are
-     registered by the `crtbegin.o` the link already has; libunwind's baremetal
-     build wants linker-provided `__eh_frame_*` symbols, so libgcc's unwinder
-     is the one used and libunwind is never reached.
+   - **libunwind is not linked.** Under the GCC toolchain the riscv64 bare-metal
+     toolchain ships no `libgcc_eh`, but its `libgcc.a` carries `_Unwind_*` and
+     the frames are registered by the `crtbegin.o` the link already has;
+     libunwind's baremetal build wants linker-provided `__eh_frame_*` symbols,
+     so libgcc's unwinder is the one used and libunwind is never reached. The
+     clang migration (item 7) reverses this: compiler-rt replaces libgcc, and
+     `LIBCXXABI_USE_LLVM_UNWINDER=ON` makes libunwind the unwinder.
    - **`aegir-cxxabi-shim`.** `__cxa_call_terminate` lives in GCC's libsupc++
      (libstdc++), which this toolchain omits and libc++abi does not define, so
      libc++'s `<string>` left a hosted link undefined; the shim is its ABI body.
@@ -408,12 +410,14 @@ The order:
    compiled data, and a gettext `.mo` parser reads a compiled catalogue, each
    proved on target by `aegir-gui-demo`; `specs/locale.md` lists what is
    deferred (non-gregorian calendars, time zones, system catalogues).
-7. **The compiler choice.** GCC builds everything today. Clang 22
-   cross-compiles the hosted code cleanly and compactly (224 bytes at `-O0`,
-   112 at `-O2`) and would not need the `__chash` patch at all, because libc++
-   is Clang's library. Switching is `specs/build.md`'s deferred decision and
-   its own arc; it needs `lld` and a build-system change (or the hybrid build
-   that document already describes).
+7. **The compiler choice.** Decided, in `specs/build.md` (*The compiler:
+   clang*): GCC is replaced by clang 20.1.x and `lld` for the whole build. GCC
+   builds everything until that arc lands. Clang cross-compiles the hosted code
+   cleanly and compactly (224 bytes at `-O0`, 112 at `-O2`) and does not need
+   the `__chash` patch at all, because libc++ is clang's library; the migration
+   carries the compiler runtime from libgcc to compiler-rt and the unwinder from
+   libgcc_eh to libunwind, so item 3's "libunwind is not linked" note changes
+   with it.
 
 ## Acceptance
 
