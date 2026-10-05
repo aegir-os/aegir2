@@ -247,7 +247,12 @@ u8_t raw_received(void *argument, struct raw_pcb *pcb, struct pbuf *packet,
             }
         }
     }
-    return 1;
+    /* Not consumed: lwIP's ICMP layer must still see the packet, or an echo
+     * request to a local address -- 127.0.0.1, looped back -- is never answered,
+     * because raw_input runs first and eating the packet stops the chain. The
+     * socket has its copy either way, so ping still sees the request and then
+     * the reply. */
+    return 0;
 }
 
 /* A `recv` no packet answered: answer the held reply with a zero length -- a
