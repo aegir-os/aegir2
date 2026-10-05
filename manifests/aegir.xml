@@ -83,8 +83,11 @@
   <!-- Protocol buffers, pulled in by the release manifest. Zlib. -->
   <project name="nanopb" path="tools/nanopb" remote="nanopb" revision="cad3c18ef15a663e30e3e43e3a752b66378adec1"/>
 
-  <!-- LLVM project: libc++, libcxxabi, libunwind. Apache-2.0 with LLVM-exception. -->
-  <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="3b5b5c1ec4a3095ab096dd780e84d7ab81f3d7ff"/>
+  <!-- LLVM project: libc++, libcxxabi, libunwind, and (later) the on-device
+       compiler (specs/clang-on-aegir.md). Apache-2.0 with LLVM-exception.
+       Pinned at llvmorg-20.1.8, the series the host clang is; the host build's
+       clang/lld is a release tarball (manifests/toolchain.toml), not this tree. -->
+  <project name="llvm-project" path="projects/llvm-project" remote="llvm" revision="87f0227cb60147a26a1eeb4fb06e3b505e9c7261"/>
 
   <!-- Terminus bitmap font (multiple sizes). OFL-1.1. -->
   <project name="terminus-font-4.49.1" path="projects/terminus-font" remote="mikebeaton" revision="8a2dd49b9a93d0b0a2c192c7961829ae3394a8d6"/>

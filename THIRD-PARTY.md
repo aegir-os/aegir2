@@ -23,6 +23,7 @@ upstream release manifest (`manifests/upstream-16.0.0.xml`, from
 | `projects/util_libs/` | [seL4/util_libs](https://github.com/seL4/util_libs) | `BSD-2-Clause` | Platform support libraries (`libplatsupport`, …) |
 | `projects/seL4_libs/` | [seL4/seL4_libs](https://github.com/seL4/seL4_libs) | `BSD-2-Clause` | libsel4* convenience libraries (see below) |
 | `projects/sel4_projects_libs/` | [seL4/sel4_projects_libs](https://github.com/seL4/sel4_projects_libs) | `BSD-2-Clause` | Additional project libraries |
+| `projects/llvm-project/` | [llvm/llvm-project](https://github.com/llvm/llvm-project) | `Apache-2.0 WITH LLVM-exception` | libc++, libc++abi and libunwind for the hosted runtime (`specs/cxx.md`), and the source of the on-device compiler (`specs/clang-on-aegir.md`) |
 | `projects/sel4test/` | [seL4/sel4test](https://github.com/seL4/sel4test) | `BSD-2-Clause` | Upstream kernel test suite (our end-to-end acceptance test) |
 | `tools/opensbi/` | [riscv/opensbi](https://github.com/riscv/opensbi) | `BSD-2-Clause` | RISC-V firmware, used by the RISC-V image flow |
 | `tools/nanopb/` | [nanopb](https://github.com/nanopb/nanopb) | `Zlib` | Protocol buffers, pulled in by the release manifest |
@@ -62,12 +63,14 @@ it is linked into or shipped with Aegir:
 
 | Tool | Pin | License |
 | --- | --- | --- |
-| `riscv64-unknown-elf-gcc` + binutils | `manifests/toolchain.toml` (Debian packages, sha256 from Debian's signed index) | GPL-3.0-or-later (compiler), GPL-2.0-or-later (binutils) |
+| `clang`, `lld` + LLVM binutils | `manifests/toolchain.toml` (LLVM release tarball, sha256 from the release's checksum) | Apache-2.0 WITH LLVM-exception |
+| `riscv64-unknown-elf-gcc` + binutils (OpenSBI only) | `manifests/toolchain.toml` (Debian packages, sha256 from Debian's signed index) | GPL-3.0-or-later (compiler), GPL-2.0-or-later (binutils) |
 | its runtime libs (libisl, libgmp, libmpfr, libmpc) | same file | LGPL/MIT-style per package |
 | `dtc` | `manifests/toolchain.toml` (kernel.org release, sha256 from the project's signed sums) | GPL-2.0-or-later OR BSD-2-Clause |
 | `cmake`, `ninja`, seL4's Python dependencies | `manifests/tools-declared.txt` → `manifests/requirements-tools.txt`, installed with `pip --require-hashes` | Apache-2.0 / Apache-2.0 / per package |
 | `repo` | `manifests/toolchain.toml` `[repo_tool]` (commit pin) | Apache-2.0 |
 
-Using GCC to compile Aegir's own code has no effect on Aegir's license: the GCC
-Runtime Library Exception covers `libgcc`, and the compiler is a tool, not a
-combined work.
+Using a toolchain to compile Aegir's own code has no effect on Aegir's license:
+the GCC Runtime Library Exception covered `libgcc` while we used GCC, the LLVM
+exception covers clang's compiler-rt builtins now, and a compiler is a tool, not
+a combined work.
