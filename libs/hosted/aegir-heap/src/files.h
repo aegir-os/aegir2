@@ -50,6 +50,12 @@ long open_for_read(char const *path) noexcept;
 long open_for_write(char const *path) noexcept;
 long read(int fd, void *buffer, size_t count) noexcept;
 long write(int fd, void const *buffer, size_t count) noexcept;
+/* Positional reads and writes (pread64/pwrite64): read or write at an explicit
+ * offset, leaving the fd's own cursor where it was. LLVM's MemoryBuffer reads a
+ * file it does not map through pread, so this is the first call the on-device
+ * compiler needed that the surface did not answer (specs/clang-on-aegir.md). */
+long pread(int fd, void *buffer, size_t count, long offset) noexcept;
+long pwrite(int fd, void const *buffer, size_t count, long offset) noexcept;
 long lseek(int fd, long offset, int whence) noexcept;
 long getdents(int fd, void *buffer, size_t count) noexcept;
 long mkdirat(int dfd, char const *path, int mode) noexcept;

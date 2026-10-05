@@ -58,6 +58,7 @@ if(AEGIR_HOSTED_CXX)
   include(libs/aegir-zlib/imported.cmake)
   include(libs/aegir-libpng/imported.cmake)
   include(libs/aegir-libjpeg/imported.cmake)
+  include(libs/aegir-llvm/imported.cmake)
 endif()
 
 sel4_import_kernel()

@@ -195,6 +195,7 @@ def build_runtimes(target: Target, timeout: int) -> None:
     bash(f"bash scripts/build_zlib.sh {target.name}", root, timeout)
     bash(f"bash scripts/build_libpng.sh {target.name}", root, timeout)
     bash(f"bash scripts/build_libjpeg.sh {target.name}", root, timeout)
+    bash(f"bash scripts/build_llvm.sh {target.name}", root, timeout)
 
 
 def configured_flags(build_dir: Path) -> str:

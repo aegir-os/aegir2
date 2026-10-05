@@ -1034,6 +1034,15 @@ long vsyscall(long sysnum, ...) noexcept
     case 63: /* SYS_read */
         ret = sys_read(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t));
         break;
+    case 67: /* SYS_pread64: musl's pread, and the call LLVM's MemoryBuffer
+              * reads a file it does not map through (specs/clang-on-aegir.md) */
+        ret = files::pread(va_arg(ap, int), va_arg(ap, void *), va_arg(ap, size_t),
+                           va_arg(ap, long));
+        break;
+    case 68: /* SYS_pwrite64 */
+        ret = files::pwrite(va_arg(ap, int), va_arg(ap, void const *), va_arg(ap, size_t),
+                            va_arg(ap, long));
+        break;
     case 79: /* SYS_newfstatat: the stat family on riscv64 (musl's kstat path) */
         ret = files::newfstatat(va_arg(ap, int), va_arg(ap, char const *),
                                 va_arg(ap, void *), va_arg(ap, int));

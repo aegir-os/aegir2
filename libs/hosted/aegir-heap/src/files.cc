@@ -719,6 +719,25 @@ long read(int fd, void *buffer, size_t count) noexcept
     return static_cast<long>(total);
 }
 
+/* pread64: read at an explicit offset without moving the fd's cursor, which is
+ * what `pread` promises. The cursor is saved and restored around the ordinary
+ * read. */
+long pread(int fd, void *buffer, size_t count, long offset) noexcept
+{
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr) {
+        return -EBADF;
+    }
+    if (offset < 0) {
+        return -EINVAL;
+    }
+    uint64_t const saved = entry->offset;
+    entry->offset = static_cast<uint64_t>(offset);
+    long const result = read(fd, buffer, count);
+    entry->offset = saved;
+    return result;
+}
+
 /* Read into a caller's frame (aegir/volume.h's read-frame): one call per 4 KiB
  * page rather than the several an inline read needs, and the bytes never cross
  * a message. The fd must carry a read handle -- the shape an open for reading
@@ -793,6 +812,23 @@ long write(int fd, void const *buffer, size_t count) noexcept
         total += written;
     }
     return static_cast<long>(total);
+}
+
+/* pwrite64: write at an explicit offset without moving the fd's cursor. */
+long pwrite(int fd, void const *buffer, size_t count, long offset) noexcept
+{
+    Entry *entry = entry_for(fd);
+    if (entry == nullptr) {
+        return -EBADF;
+    }
+    if (offset < 0) {
+        return -EINVAL;
+    }
+    uint64_t const saved = entry->offset;
+    entry->offset = static_cast<uint64_t>(offset);
+    long const result = write(fd, buffer, count);
+    entry->offset = saved;
+    return result;
 }
 
 long lseek(int fd, long offset, int whence) noexcept
