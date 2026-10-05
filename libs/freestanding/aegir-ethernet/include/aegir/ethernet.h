@@ -53,6 +53,12 @@ constexpr uint32_t kReceiveWords = 1;
  *  window a client provides must hold one. */
 constexpr uint32_t kFrameMax = 1518;
 
+/** Where a received frame lands in the window. Transmit uses the window's
+ *  start; receive its own offset, so a send cannot overwrite a frame the
+ *  receive thread has not read yet -- the two run on different threads
+ *  (specs/net.md). A client's window must hold `kReceiveOffset + kFrameMax`. */
+constexpr uint32_t kReceiveOffset = 1536;
+
 /** The MTU a device that does not report one is assumed to have -- the
  *  protocol's own number, not a machine's. */
 constexpr uint32_t kMtuDefault = 1500;

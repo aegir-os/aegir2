@@ -199,7 +199,7 @@ int main(int argc, char *argv[])
     uint32_t window_bytes = 0;
     uint64_t window_physical = 0;
     if (!aegir::bootstrap::shared_window(&window_address, &window_bytes, &window_physical) ||
-        window_bytes < aegir::ethernet::kFrameMax) {
+        window_bytes < aegir::ethernet::kReceiveOffset + aegir::ethernet::kFrameMax) {
         write_line("FAIL", "no shared window big enough for a frame");
         return 0;
     }
@@ -338,7 +338,7 @@ int main(int argc, char *argv[])
         volatile uint8_t const *const source =
             buffers + p.head * kRxBufferStride + aegir::virtio::net::kHeaderBytes;
         for (uint32_t i = 0; i < length; ++i) {
-            window[i] = source[i];
+            window[aegir::ethernet::kReceiveOffset + i] = source[i];
         }
         aegir::virtio::ChainBuf const buffer[] = {
             {buffers_physical + p.head * kRxBufferStride, kRxBufferStride, true},

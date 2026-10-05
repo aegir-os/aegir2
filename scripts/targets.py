@@ -211,6 +211,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # a host has an interface even with no NIC. The link and socket
             # halves build on this.
             QmpStep(r"net: loopback lo0 127\.0\.0\.1/8 up"),
+            # ...and the virtio link, which the stack learned through the device
+            # manager's registry: it opened the bound eth.* row, mapped the
+            # link's window, read the MAC/MTU/link state from the device, and
+            # added a netif (down, until a configuration brings it up). This is
+            # the seam that keeps the stack free of any machine: the numbers are
+            # the device's own.
+            QmpStep(r"net: NE0 eth\.virtio0 mac [0-9a-f]{2}(:[0-9a-f]{2}){5}, "
+                    r"mtu \d+, link up, down"),
             QmpStep(r"net: ready: the stack is up"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a

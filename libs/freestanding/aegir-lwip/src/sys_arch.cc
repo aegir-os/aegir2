@@ -43,6 +43,15 @@ aegir::thread::Placement const *g_placement = nullptr;
 seL4_CPtr g_thread_tcb = 0;
 volatile uint32_t g_now_ms = 0;
 
+/* lwIP's short SYS_ARCH_PROTECT regions (pbuf reference counts; the heap has
+ * its own mem_mutex). A recursive critical section, because lwIP documents that
+ * a protect may be called while already protected: the owner is the calling
+ * thread's IPC buffer -- seL4 gives every thread its own -- and a nested call
+ * by the same thread just deepens it. The regions are a handful of
+ * instructions, so the wait is a spin, not a sleep. */
+uintptr_t g_prot_owner = 0;
+uint32_t g_prot_depth = 0;
+
 seL4_CPtr new_notification() noexcept
 {
     if (g_objects == nullptr || g_account == nullptr) {
@@ -356,10 +365,24 @@ extern "C" u32_t sys_now(void)
 
 extern "C" sys_prot_t sys_arch_protect(void)
 {
-    return 0;
+    uintptr_t const self = reinterpret_cast<uintptr_t>(seL4_GetIPCBuffer());
+    if (__atomic_load_n(&g_prot_owner, __ATOMIC_RELAXED) == self) {
+        ++g_prot_depth;
+        return g_prot_depth;
+    }
+    uintptr_t expected = 0;
+    while (!__atomic_compare_exchange_n(&g_prot_owner, &expected, self, false,
+                                        __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+        expected = 0;
+    }
+    g_prot_depth = 1;
+    return 1;
 }
 
 extern "C" void sys_arch_unprotect(sys_prot_t pval)
 {
     (void)pval;
+    if (--g_prot_depth == 0) {
+        __atomic_store_n(&g_prot_owner, 0, __ATOMIC_RELEASE);
+    }
 }

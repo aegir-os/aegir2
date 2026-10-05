@@ -32,6 +32,8 @@
 #include <sel4/sel4.h>
 #include <stdint.h>
 
+#include "interface.h"
+
 extern "C" {
 #include <lwip/netif.h>
 #include <lwip/tcpip.h>
@@ -234,6 +236,18 @@ int main(int argc, char *argv[])
         fail("the loopback interface is not up");
     }
     write_line("net", "loopback lo0 127.0.0.1/8 up");
+
+    /* The links: every bound eth.* row the registry knows, each opened, its
+     * window mapped into ours, and a netif and a receive thread added. An
+     * interface starts down -- only a configuration brings it up (specs/net.md)
+     * -- with the device's own MAC, MTU and link state. */
+    aegir::net::Authority const authority{g_objects, g_scratch, g_account, builder,
+                                          where};
+    unsigned const links = aegir::net::add_links(authority);
+    aegir::debug_write("      net: ");
+    aegir::debug_write_unsigned(links);
+    aegir::debug_write(links == 1 ? " link\n" : " links\n");
+
     /* Bind the tick to the tcpip thread, so its timed mailbox fetch wakes on the
      * timer as well as on lwIP's mailbox. */
     if (seL4_TCB_BindNotification(tcpip, tick_cap) != seL4_NoError) {

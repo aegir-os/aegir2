@@ -1,0 +1,45 @@
+/*
+ * aegir-net's link half: a netif and a receive thread for each bound Ethernet
+ * link (specs/net.md).
+ *
+ * Copyright (c) 2026 Robert Roland
+ * SPDX-License-Identifier: MIT
+ *
+ * The stack knows nothing about virtio: it learns of links through the device
+ * manager's registry (each bound `eth.*` row), opens the link port, maps the
+ * window the port serves through, reads the MAC, MTU and link state from the
+ * link's own `info`, and adds a netif. A dedicated thread per link calls
+ * `receive` (a held reply) in a loop and hands each frame to lwIP through the
+ * netif's input; `linkoutput` copies an outgoing frame into the window and
+ * calls `send`. Nothing here names a machine.
+ */
+
+#ifndef AEGIR_NET_INTERFACE_H
+#define AEGIR_NET_INTERFACE_H
+
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
+#include <aegir/thread.h>
+
+namespace aegir::net {
+
+/** What the link half needs from the service: the allocator its per-link state
+ *  comes out of, the window it maps link windows through, and the thread
+ *  builder and placement a receive thread runs at. */
+struct Authority {
+    mem::Allocator &objects;
+    mem::Scratch &scratch;
+    mem::Account &account;
+    thread::Builder &builder;
+    thread::Placement const &placement;
+};
+
+/** Add a netif, and start a receive thread, for every bound `eth.*` link the
+ *  registry knows. Each starts **down** -- only a configuration brings it up
+ *  (specs/net.md) -- with the device's own MAC, MTU and link state. Returns how
+ *  many interfaces were added. */
+unsigned add_links(Authority const &authority) noexcept;
+
+}  // namespace aegir::net
+
+#endif  // AEGIR_NET_INTERFACE_H
