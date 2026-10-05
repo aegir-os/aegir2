@@ -209,10 +209,9 @@ bool read_parameter(unsigned index, Adapter const &adapter, unsigned parameter,
         return true;
     case kHostname: {
         uint64_t const request[2] = {index, aegir::netcontrol::kParamHostname};
-        uint64_t answer[1 + aegir::ipc::kMaxWords] = {0};
+        uint64_t answer[aegir::ipc::kMaxWords] = {0};
         aegir::ipc::WordsReply const reply = g_control.call_words(
-            aegir::netcontrol::kMethodGetText, request, 2, answer,
-            1 + aegir::ipc::kMaxWords);
+            aegir::netcontrol::kMethodGetText, request, 2, answer, aegir::ipc::kMaxWords);
         if (reply.error != 0 || reply.count < 1) {
             return false;
         }
