@@ -103,7 +103,9 @@ void slot_put(seL4_CPtr slot) noexcept
         for (uint32_t i = 0; i < g_free_count; ++i) {
             grown[i] = g_free_slots[i];
         }
-        mem_free(g_free_slots);
+        if (g_free_slots != nullptr) {
+            mem_free(g_free_slots);
+        }
         g_free_slots = grown;
         g_free_capacity = capacity;
     }

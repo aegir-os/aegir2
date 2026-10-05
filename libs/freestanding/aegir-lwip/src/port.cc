@@ -50,8 +50,10 @@ extern "C" void aegir_lwip_assert(const char *message, const char *file, int lin
     aegir::debug_write(":");
     aegir::debug_write_unsigned(static_cast<uint64_t>(line));
     aegir::debug_write("\n");
-    for (;;) {
-    }
+    /* Stop this thread without spinning: a throwing assertion that burns a core
+     * at a service's priority starves everything else on it, which looks like a
+     * wedged machine rather than the one thread that broke. */
+    aegir::halt();
 }
 
 /** Seed the random hook: the service calls this once, before lwIP starts, from
