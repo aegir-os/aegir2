@@ -240,9 +240,18 @@ a row in the shim's own fd table, kept apart from the file fds by range, and a
 process the session did not give `net.socket` has no sockets.
 `aegir-net-smoke` (the command `netsmoke`) is the acceptance: a hosted program
 that reaches the stack only through libc's calls, does a loopback echo, and
-says what came back. **`getaddrinfo`/`gethostbyname` over the port's `resolve`
-is the next piece**: musl's own reads `/etc/hosts` and `/etc/resolv.conf`,
-neither of which the VFS has, so an override is what a name lookup needs.
+says what came back.
+
+**Name lookup is landed too.** musl's own `getaddrinfo` reads `/etc/hosts` and
+`/etc/resolv.conf` and asks a nameserver itself -- none of which this machine
+has -- so `getaddrinfo`, `gethostbyname` and `freeaddrinfo` are replaced at link
+time (`libs/hosted/aegir-network/src/resolver.cc`, this archive before
+`musl_full`): Sys:S/hosts first, read through the runtime's own file layer, then
+the stack's DNS through the port's `resolve`, matching names by
+`aegir-resolver`'s `hosts_line` so a hosted and a freestanding client answer
+alike. `netsmoke` proves it -- `localhost`, a name only Sys:S/hosts holds --
+before it connects. **The client's shared window for bulk data is the last
+piece.**
 
 ## Memory: no fixed tables
 
@@ -441,7 +450,8 @@ console idle.
    stream slice (TCP, and `tcpecho` as its lifecycle test), then the client's
    shared window for bulk data, then the musl BSD-socket rerouting. Landed: the
    shim's syscalls and its acceptance (`netsmoke`, a loopback echo through
-   libc); remaining: `getaddrinfo` over `resolve`, and the shared window -- a
+   libc), and the libc name lookup (`getaddrinfo`/`gethostbyname` over
+   Sys:S/hosts and the port's `resolve`); remaining: the shared window -- a
    RAM carve-out the client owns and hands the stack by badge, the stack mapping
    the frames inside a call.
 5. **`Net:`, the filesystem view** -- the live half: the volume and its service,

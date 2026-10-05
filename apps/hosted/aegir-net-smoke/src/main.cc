@@ -20,6 +20,7 @@
  */
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -132,9 +133,34 @@ int main(int argc, char *argv[])
     if (client < 0) {
         return fail("socket (client)");
     }
-    if (connect(client, reinterpret_cast<struct sockaddr *>(&local), sizeof(local)) < 0) {
+
+    /* The peer's address comes from libc's own name lookup: `localhost` is a
+     * name only Sys:S/hosts knows -- musl's getaddrinfo reads /etc/hosts and a
+     * nameserver, neither of which this machine has -- so resolving it proves
+     * the shim's override is the one linked. */
+    struct addrinfo hints = {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *peer = nullptr;
+    if (getaddrinfo("localhost", "4242", &hints, &peer) != 0 || peer == nullptr) {
+        return fail("getaddrinfo");
+    }
+    auto const *peer_address = reinterpret_cast<struct sockaddr_in const *>(peer->ai_addr);
+    uint32_t const resolved = peer_address->sin_addr.s_addr; /* low byte first */
+    aegir::debug_write("  net-smoke: getaddrinfo localhost:4242 -> ");
+    aegir::debug_write_unsigned(resolved & 0xff);
+    aegir::debug_write(".");
+    aegir::debug_write_unsigned((resolved >> 8) & 0xff);
+    aegir::debug_write(".");
+    aegir::debug_write_unsigned((resolved >> 16) & 0xff);
+    aegir::debug_write(".");
+    aegir::debug_write_unsigned((resolved >> 24) & 0xff);
+    aegir::debug_write("\n");
+
+    if (connect(client, peer->ai_addr, peer->ai_addrlen) < 0) {
         return fail("connect");
     }
+    freeaddrinfo(peer);
     int const server = accept(listener, nullptr, nullptr);
     if (server < 0) {
         return fail("accept");

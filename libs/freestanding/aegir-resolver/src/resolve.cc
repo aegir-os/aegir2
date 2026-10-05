@@ -242,6 +242,14 @@ uint32_t parse_ipv4(char const *text) noexcept
     return parts == 4 ? value : 0;
 }
 
+bool hosts_line(char const *line, uint32_t length, char const *name,
+                uint32_t name_length, uint32_t *address) noexcept
+{
+    bool found = false;
+    consider_line(line, length, name, name_length, address, &found);
+    return found;
+}
+
 bool lookup(char const *name, uint32_t length, uint32_t *address) noexcept
 {
     if (name == nullptr || address == nullptr || length == 0) {

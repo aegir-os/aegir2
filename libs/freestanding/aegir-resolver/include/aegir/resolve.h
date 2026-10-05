@@ -33,6 +33,14 @@ bool lookup(char const *name, uint32_t length, uint32_t *address) noexcept;
  *  caller (ping) sorts an argument into "address or name" before resolving. */
 uint32_t parse_ipv4(char const *text) noexcept;
 
+/** Consider one hosts-file line -- `address name [aliases...]` -- against a
+ *  name. True, with `*address` set, when a name matches; `#` starts a comment,
+ *  blank lines are nothing, and anything that is not an address first is
+ *  ignored. Exposed so the hosted resolver, which streams the file through the
+ *  runtime's own file layer, matches names by the same grammar this one does. */
+bool hosts_line(char const *line, uint32_t length, char const *name,
+                uint32_t name_length, uint32_t *address) noexcept;
+
 }  // namespace aegir::resolve
 
 #endif  // AEGIR_RESOLVE_H

@@ -282,7 +282,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # The musl shim (specs/net.md): `net-smoke` is a hosted program
             # that reaches the stack only through libc's socket calls, does a
             # loopback echo, and prints what came back -- the rerouting the shim
-            # exists for, proved end to end.
+            # exists for, proved end to end. Its peer's address comes from
+            # libc's getaddrinfo over Sys:S/hosts, which musl's own resolver
+            # (reading /etc/hosts and a nameserver) cannot answer.
+            QmpStep(r"net-smoke: getaddrinfo localhost:4242 -> 127\.0\.0\.1"),
             QmpStep(r"net-smoke: \d+ bytes echoed through libc: Aegir libc sockets"),
             # The boot session's Startup-Sequence runs a command (specs/boot.md):
             # the boot session has a launcher now, so a sequence line starts a
