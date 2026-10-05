@@ -160,6 +160,18 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     if (aegir::bootstrap::capability("spawn:timer.main", 16, &command_timer_slot)) {
         command_timer_port_ = static_cast<seL4_CPtr>(command_timer_slot);
     }
+    /* The network's sources (specs/net.md): the terminal mints each command a
+     * caller half of the socket and control ports from them. Optional. */
+    seL4_CPtr command_net_socket = 0;
+    uint64_t command_net_socket_slot = 0;
+    if (aegir::bootstrap::capability("net.socket", 10, &command_net_socket_slot)) {
+        command_net_socket = static_cast<seL4_CPtr>(command_net_socket_slot);
+    }
+    seL4_CPtr command_net_control = 0;
+    uint64_t command_net_control_slot = 0;
+    if (aegir::bootstrap::capability("net.control", 11, &command_net_control_slot)) {
+        command_net_control = static_cast<seL4_CPtr>(command_net_control_slot);
+    }
 
     /* The boot session's status endpoint (specs/boot.md): auth grants it only
      * to the boot terminal, which passes it on to the shell. Its presence is
@@ -281,6 +293,8 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     kit_.asid_pool = asid_pool_;
     kit_.clock = command_clock_port_;
     kit_.timer = command_timer_port_;
+    kit_.net_socket = command_net_socket;
+    kit_.net_control = command_net_control;
     kit_.nmspace = command_nmspace_port_;
     kit_.shell_nmspace = nmspace_port_;
     kit_.stream = stream_endpoint_;

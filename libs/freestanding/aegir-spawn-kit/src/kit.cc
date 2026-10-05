@@ -228,6 +228,16 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
         (void)put(out, capacity, n++, "spawn:timer.main", 16, kit.timer,
                   seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
     }
+    /* The network's sources (specs/net.md): unbadged, so the launcher mints each
+     * command a caller half of the socket and control ports from them. */
+    if (kit.net_socket != 0) {
+        (void)put(out, capacity, n++, "net.socket", 10, kit.net_socket,
+                  seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
+    }
+    if (kit.net_control != 0) {
+        (void)put(out, capacity, n++, "net.control", 11, kit.net_control,
+                  seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
+    }
     /* A launcher is also given the unbadged console, so its own children can
      * mint their own attach. A plain launching child -- one that runs but does
      * not launch -- stops above. */
