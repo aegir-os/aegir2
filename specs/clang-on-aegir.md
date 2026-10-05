@@ -37,10 +37,10 @@ than heroic:
   routes *every* musl syscall through the `__sysinfo` function pointer, and
   `libs/aegir-heap/src/heap.cc` already owns that switch (`vsyscall`, `:310`).
   Adding a POSIX surface is adding handlers, not re-plumbing.
-- **LLVM's defaults already match Aegir's tier-1 runtime.** LLVM 18 defaults
+- **LLVM's defaults already match Aegir's tier-1 runtime.** LLVM 20 defaults
   `LLVM_ENABLE_EH=OFF` and `LLVM_ENABLE_RTTI=OFF`, exactly what
-  `scripts/build_libcxx.sh:91-92` builds libc++ with. Exceptions and RTTI are not
-  a prerequisite here, unlike so much else.
+  `scripts/build_libcxx.sh` builds libc++ with. Exceptions and RTTI are not a
+  prerequisite here, unlike so much else.
 
 The same fact cuts the other way: the current dispatcher answers eight calls —
 `brk`, `mmap`, `munmap`, `mremap`, `madvise`, `write`, `writev`, `exit`
@@ -111,7 +111,7 @@ This plan is the deliverable. Writing it also settles three housekeeping points:
 
 - `specs/cxx.md` carried a "Clang 22" note of the host cross-compile; the host
   compiler is now pinned at **clang 20.1.x** (`specs/build.md`), and the
-  on-device compiler is the vendored **LLVM 18.1.8** (`manifests/aegir.xml:87`).
+  on-device compiler is the vendored **LLVM 20.1.8** (`manifests/aegir.xml:87`).
   That note is corrected.
 - `THIRD-PARTY.md` does not list `projects/llvm-project/` at all, though the
   manifest pins it and the hosted runtime builds libc++ from it. A row is owed
@@ -255,8 +255,8 @@ sizes; it does not require them to run.
 - **Threads off, or on.** Building with `LLVM_ENABLE_THREADS=OFF` defers real
   threads to Phase 2.5. Whether Phase 3 should instead enable them depends on
   measured compile behavior under QEMU.
-- **The LLVM revision, host and device.** The host build is clang 20.1.x
-  (`specs/build.md`); the vendored tree that builds libc++ and this on-device
-  compiler is **18.1.8**. Whether to bump the vendored tree to 20.1.x so host and
-  device share a revision is open, and is a `specs/third_party.md` upgrade
+- **The LLVM revision, host and device.** Both are **20.1.8**: the host build is
+  clang 20.1.x (`specs/build.md`), and the vendored `projects/llvm-project` that
+  builds libc++ and this on-device compiler was bumped to `llvmorg-20.1.8`, so
+  they share a revision. A future bump is a `specs/third_party.md` upgrade
   exercise, not a subset of this plan.
