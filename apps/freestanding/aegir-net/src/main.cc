@@ -35,6 +35,7 @@
 #include <stdint.h>
 
 #include "interface.h"
+#include "socket.h"
 
 extern "C" {
 #include <lwip/netif.h>
@@ -237,12 +238,19 @@ int main(int argc, char *argv[])
      * window mapped into ours, and a netif and a receive thread added. An
      * interface starts down -- only a configuration brings it up (specs/net.md)
      * -- with the device's own MAC, MTU and link state. */
-    aegir::net::Authority const authority{g_objects, g_scratch, g_account, builder,
-                                          where};
+    aegir::net::Authority authority{g_objects, g_scratch, g_account, builder, where};
     unsigned const links = aegir::net::add_links(authority);
     aegir::debug_write("      net: ");
     aegir::debug_write_unsigned(links);
     aegir::debug_write(links == 1 ? " link\n" : " links\n");
+
+    /* The socket port (aegir/net.h): the BSD-shaped client API, served on its
+     * own thread so the control port keeps serving while a client waits inside
+     * a held `recv` or `resolve`. */
+    aegir::thread::Thread sockets{};
+    if (!builder.start(where, aegir::net::serve_sockets, &authority, sockets)) {
+        fail("the socket thread would not start");
+    }
 
     /* Bind the tick to the tcpip thread, so its timed mailbox fetch wakes on the
      * timer as well as on lwIP's mailbox. */

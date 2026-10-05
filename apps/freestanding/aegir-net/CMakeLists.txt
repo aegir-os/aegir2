@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-net CXX)
 
-add_executable(aegir-net src/main.cc src/interface.cc)
+add_executable(aegir-net src/main.cc src/interface.cc src/socket.cc)
 
 target_compile_options(aegir-net PRIVATE -Wall -Wextra -Werror)
 

@@ -42,20 +42,21 @@ constexpr uint32_t kSocketWords = 1;
 /* close: one request word, the id. The answer is one word, 1 when it is gone. */
 constexpr uint32_t kMethodClose = 2;
 
-/* send: the id, the destination address (network order), then the payload. For
- * a raw socket the payload is the whole IP payload -- the ICMP message -- and
- * the stack adds the IP header. The answer is the payload bytes the stack
- * took. */
+/* send: the id, the destination address (network order), the payload's length
+ * in bytes, then the payload words (low byte first). For a raw socket the
+ * payload is the whole IP payload -- the ICMP message -- and the stack adds the
+ * IP header. The answer is the payload bytes the stack took. */
 constexpr uint32_t kMethodSend = 3;
 
 /* recv: one request word, the id. The answer is *held* until a reply arrives,
- * then the source address (network order) followed by the payload words. A
- * reply with no payload words is end-of-stream. */
+ * then the source address (network order), the payload's length, and the
+ * payload words. A reply of length zero is end-of-stream. */
 constexpr uint32_t kMethodRecv = 4;
 
-/* resolve: the name's bytes as request words, low byte first, no NUL (a name is
- * at most kMaxNameBytes). The answer is *held* until the name resolves, then
- * one word, the address (network order), or 0 when it does not resolve. */
+/* resolve: the name's length in bytes, then the name's bytes as words, low byte
+ * first, no NUL (a name is at most kMaxNameBytes). The answer is *held* until
+ * the name resolves, then one word, the address (network order), or 0 when it
+ * does not resolve. */
 constexpr uint32_t kMethodResolve = 5;
 
 /* A name's ceiling: DNS's own limit, not a number of ours. */
