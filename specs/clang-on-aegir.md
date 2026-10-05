@@ -251,6 +251,15 @@ sizes; it does not require them to run.
 - **The exact triple spelling.** `riscv64-unknown-aegir-elf` is the intended
   normalization; whether the vendor field should be `unknown` or something
   Aegir-specific is a detail to fix with the patch.
+- **The hosted tier's build triple.** LLVM's Support library selects its Unix
+  implementation by macro and has no generic path (`Unix/Process.inc` `#error`s
+  without one). Aegir's hosted C runtime is musl and its syscall ABI is Linux's
+  — the `__sysinfo` dispatcher answers Linux riscv64 numbers — so the hosted
+  tier is built for `riscv64-unknown-linux-musl`, not the freestanding tier's
+  `riscv64-unknown-elf`. Whether to convert the whole hosted tier (musl, libc++,
+  the hosted apps) to that triple, so libc++ inline header code cannot differ
+  between translation units, is open; today only `scripts/build_llvm.sh` uses
+  it. The compiler's *output* triple (above) is a separate thing again.
 - **Where the compiler lives and how it is reached.** Phase 3 runs it from a
   manifest service. A user reaching it interactively needs a shell or a session
   command, and neither exists yet (`specs/services.md`'s session row is a
