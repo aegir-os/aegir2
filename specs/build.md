@@ -131,7 +131,10 @@ kernel's toolchain file and user targets inherit its flags.
   clang-20"*), and the kernel's own `>=20` handling carries it
   (`kernel/CMakeLists.txt:300-303`). Clang is one self-contained binary: there
   is no `cc1` to feed `libisl`/`libgmp`/`libmpfr`/`libmpc`, so the shared-library
-  pinning and per-process shims the GCC path needed are gone.
+  pinning and per-process shims the GCC path needed are gone. The vendored
+  libraries the hosted runtime links — full musl, zlib, libpng, libjpeg-turbo
+  and FreeType — are built by the same clang, each through its own
+  `scripts/build_*.sh`.
 - **GNU is retained for exactly one thing: OpenSBI.** seL4's RISC-V image flow
   builds OpenSBI with `${CROSS_COMPILER_PREFIX}gcc` and probes
   `${CROSS_COMPILER_PREFIX}gcc -dumpversion`
@@ -213,10 +216,12 @@ the ELF loader and Aegir's own userland — is compiled and linked by **clang
    (`AGENTS.md`), and a warning from an unmodified upstream file is upstream's
    business (the rules under *Commands* below).
 3. **The compiler runtime and the unwinder.** libgcc is replaced by compiler-rt:
-   the cross build yields `clang_rt.builtins-riscv64.a`, and
-   `scripts/build_libcxx.sh` flips `LIBCXXABI_USE_LLVM_UNWINDER=ON` so
-   libc++/libc++abi use `libunwind` rather than libgcc_eh. Acceptance: `make run`
-   boots director and `apps/aegir-cxx-smoke` prints its marker.
+   a new `scripts/build_compiler_rt.sh` builds the riscv64 builtins (the LLVM
+   release tarball ships only the host's), `libs/aegir-libcxx/imported.cmake`
+   imports them and libunwind, and `scripts/build_libcxx.sh` flips
+   `LIBCXXABI_USE_LLVM_UNWINDER=ON` so libc++/libc++abi use `libunwind` rather
+   than libgcc_eh. Acceptance: `make run` boots director and
+   `apps/aegir-cxx-smoke` prints its marker.
 4. **OpenSBI stays GNU.** No patch to seL4's helper; the pinned GCC remains for
    that one step. Removing it is the tracked-patch arc named under *Rejected*
    below.

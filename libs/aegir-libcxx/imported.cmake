@@ -17,13 +17,10 @@ foreach(library libunwind.a libc++abi.a libc++.a)
   endif()
 endforeach()
 
-# Stack unwinding is libgcc's, not libunwind's. The riscv64 bare-metal
-# toolchain ships no libgcc_eh, but its libgcc.a carries _Unwind_* and the
-# frames are registered by the crtbegin.o the link already includes. libunwind
-# is built (specs/cxx.md) but its baremetal configuration wants the
-# linker-provided __eh_frame_* symbols this link does not have, and whichever
-# archive the linker reaches first wins -- so libunwind is deliberately not
-# linked, and never gets the chance.
+# Stack unwinding is libunwind's now, not libgcc's: the clang migration
+# replaced libgcc with compiler-rt, and libc++abi is built with
+# LIBCXXABI_USE_LLVM_UNWINDER=ON (specs/build.md). libunwind and the
+# compiler-rt builtins are imported below and linked.
 
 # libc++abi - low-level C++ ABI
 add_library(cxxabi STATIC IMPORTED GLOBAL)
@@ -44,3 +41,16 @@ set_target_properties(
                "${AEGIR_CXX_INSTALL_DIR}/include/c++/v1;${AEGIR_CXX_INSTALL_DIR}/include"
              INTERFACE_LINK_LIBRARIES cxxabi
 )
+
+# libunwind - the unwinder libc++abi's personality and _Unwind_* calls resolve
+# against now that libgcc_eh is gone.
+add_library(unwind STATIC IMPORTED GLOBAL)
+set_target_properties(
+  unwind PROPERTIES IMPORTED_LOCATION "${AEGIR_CXX_INSTALL_DIR}/lib/libunwind.a"
+)
+
+# compiler-rt's builtins are not imported here: scripts/build_compiler_rt.sh
+# publishes them as `libgcc.a` (with `crtbegin.o`/`crtend.o`) in clang's runtime
+# directory, which is where seL4's user-mode link rule's `-lgcc` resolves them
+# (projects/musllibc/Findmusllibc.cmake). libunwind is imported because
+# `-lgcc_eh` is not found and the personality's `_Unwind_*` calls need it.

@@ -82,7 +82,7 @@ public:
     static std::unique_ptr<Locale> load(std::string_view path);
 
 private:
-    class Impl;
+    struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 

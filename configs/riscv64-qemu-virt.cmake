@@ -17,10 +17,42 @@ set(KernelSel4Arch "riscv64" CACHE STRING "seL4 architecture")
 # every binary -- so it is recorded here and in specs/build.md.
 set(KernelRiscvExtD ON CACHE BOOL "RISC-V double-precision floating point")
 
-# The toolchain prefix is set explicitly rather than probed. seL4's gcc.cmake
-# probes a list of known prefixes, and relying on that would let an unrelated
-# toolchain on PATH (a Linux multilib one, say) silently become our compiler.
-set(CROSS_COMPILER_PREFIX "riscv64-unknown-elf-" CACHE STRING "Cross compiler prefix")
+# The clang target triple. Setting TRIPLE is what makes seL4's seL4Config.cmake
+# choose kernel/llvm.cmake over gcc.cmake
+# (kernel/configs/seL4Config.cmake:244-248), so this one value switches the
+# build from GCC to clang (specs/build.md). The host clang is the pinned LLVM
+# release in manifests/toolchain.toml's `[llvm]` section.
+set(TRIPLE "riscv64-unknown-elf" CACHE STRING "clang --target triple; selects seL4's llvm.cmake")
+
+# The GNU cross prefix, kept for OpenSBI only: seL4's RISC-V image flow builds
+# OpenSBI with `${CROSS_COMPILER_PREFIX}gcc` and probes its version
+# (tools/seL4/cmake-tool/helpers/rootserver.cmake:83-97,126), and nothing else
+# in Aegir uses GCC. llvm.cmake derives the same prefix from TRIPLE, so the two
+# agree.
+set(CROSS_COMPILER_PREFIX "riscv64-unknown-elf-" CACHE STRING "GNU cross prefix (OpenSBI only)")
+
+# The image flow's binutils resolve to LLVM's, not the host's x86 GNU ones: with
+# a clang toolchain CMake would otherwise fall back to the host `objcopy`/
+# `readelf`. They come from the same pinned LLVM release, on PATH via
+# scripts/env.sh; `find_program` records absolute paths in the cache.
+find_program(CMAKE_OBJCOPY llvm-objcopy REQUIRED)
+find_program(CMAKE_READELF llvm-readelf REQUIRED)
+find_program(CMAKE_AR llvm-ar REQUIRED)
+find_program(CMAKE_RANLIB llvm-ranlib REQUIRED)
+find_program(CMAKE_NM llvm-nm REQUIRED)
+find_program(CMAKE_STRIP llvm-strip REQUIRED)
+
+# The RISC-V ISA and ABI flags every object needs. GCC's Debian multilib made
+# rv64imafdc/lp64d the *default* for riscv64-unknown-elf, so seL4's user-mode
+# build never had to state it; clang's default is soft-float, so an object
+# compiled without these -- libsel4's, for one -- will not link against the
+# double-float crt ("cannot link object files with different floating-point
+# ABI"). Stated in the base flags, the kernel, libsel4, muslc and every Aegir
+# target agree. FORCE, because the ABI is a whole-system property (specs/build.md)
+# and a stale cache value silently produced a soft-float build.
+set(CMAKE_C_FLAGS "-march=rv64imafdc_zicsr_zifencei -mabi=lp64d" CACHE STRING "RISC-V ISA and ABI" FORCE)
+set(CMAKE_CXX_FLAGS "-march=rv64imafdc_zicsr_zifencei -mabi=lp64d" CACHE STRING "RISC-V ISA and ABI" FORCE)
+set(CMAKE_ASM_FLAGS "-march=rv64imafdc_zicsr_zifencei -mabi=lp64d" CACHE STRING "RISC-V ISA and ABI" FORCE)
 
 # Simulation build. The image QEMU is handed is not the bare ELF loader: the
 # RISC-V image flow builds the vendored OpenSBI with the loader as its payload

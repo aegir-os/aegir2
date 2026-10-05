@@ -22,7 +22,6 @@ constexpr uint32_t kTokenBeginNode = 1;
 constexpr uint32_t kTokenEndNode = 2;
 constexpr uint32_t kTokenProp = 3;
 constexpr uint32_t kTokenNop = 4;
-constexpr uint32_t kTokenEnd = 9;
 
 constexpr uint32_t kMagic = 0xd00dfeedu;
 /* The property layout this reader assumes; version 16 introduced it and later

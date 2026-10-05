@@ -68,7 +68,7 @@ public:
     // under `prefix` (specs/testing.md): `<prefix>.title.<n>` and
     // `<prefix>.item.<n>`, both one-based, so the acceptance clicks a title or
     // an item by name wherever the titles' measured widths put it.
-    void report_parts(char const *prefix) const;
+    void report_parts(char const *prefix) const override;
 
 protected:
     void on_paint(aegir::trinket::Canvas& canvas,

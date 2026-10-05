@@ -22,9 +22,8 @@
 # Unwind tables are what make a throw walk frames: libc++'s CFLAGS do not carry
 # the environment's -fno-asynchronous-unwind-tables, so the library has
 # .eh_frame; the user-code policy re-enables it for the same reason. libc++abi
-# uses libgcc's unwinder (LIBCXXABI_USE_LLVM_UNWINDER=OFF) -- libunwind is
-# built and linked, but the GCC toolchain's crt/libgcc_eh pair is what the
-# personality and _Unwind_* calls resolve against.
+# uses libunwind (LIBCXXABI_USE_LLVM_UNWINDER=ON): the clang migration replaced
+# libgcc's unwinder with the LLVM one (specs/build.md).
 #
 # Usage: scripts/build_libcxx.sh [TARGET]     (default: aegir)
 #
@@ -73,28 +72,23 @@ mkdir -p "${BUILD_DIR}" "${INSTALL_DIR}"
 # (scripts/env.sh).
 source "${ROOT_DIR}/scripts/env.sh"
 
-CC="$(command -v riscv64-unknown-elf-gcc)"
-CXX="$(command -v riscv64-unknown-elf-g++)"
-AR="$(command -v riscv64-unknown-elf-ar)"
-RANLIB="$(command -v riscv64-unknown-elf-ranlib)"
+CC="$(command -v clang)"
+CXX="$(command -v clang++)"
+AR="$(command -v llvm-ar)"
+RANLIB="$(command -v llvm-ranlib)"
 
 # The pinned ABI (specs/build.md): hard-float rv64imafdc/lp64d. musl's headers
 # are where libc++'s C dependencies come from, and -D_GNU_SOURCE is what makes
 # them declare the POSIX surface libc++ uses (nanosleep, syscall, ...): the
 # strict -std=c++17 hides it otherwise.
 #
-# _LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS forces the library traits for
-# add_pointer/remove_pointer instead of the compiler builtins. GCC 14 reports
-# __has_builtin(__remove_pointer) but rejects the builtin in the signature
-# libc++ uses it in (__filesystem/path.h), so the builtin path does not compile.
-#
 # _LIBCPP_AEGIR turns on the tracked Aegir path grammar patch
 # (third_party/patches/projects/llvm-project/0002): path's root name is a
 # volume -- "Volume:rest" -- and such a path is absolute (specs/cxx.md step 5).
 # The user-code policy defines it too, because path's grammar predicates are
 # inline in the header and must agree with this library.
-CFLAGS="-march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2 -D_GNU_SOURCE -D_LIBCPP_AEGIR -isystem ${MUSL_INSTALL}/include"
-CXXFLAGS="${CFLAGS} -D_LIBCPP_WORKAROUND_OBJCXX_COMPILER_INTRINSICS"
+CFLAGS="--target=riscv64-unknown-elf -march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2 -D_GNU_SOURCE -D_LIBCPP_AEGIR -isystem ${MUSL_INSTALL}/include"
+CXXFLAGS="${CFLAGS}"
 
 cd "${BUILD_DIR}"
 cmake "${LLVM_PROJECT}/runtimes" \
@@ -102,6 +96,9 @@ cmake "${LLVM_PROJECT}/runtimes" \
     -DCMAKE_C_COMPILER="${CC}" \
     -DCMAKE_CXX_COMPILER="${CXX}" \
     -DCMAKE_ASM_COMPILER="${CC}" \
+    -DCMAKE_C_COMPILER_TARGET="riscv64-unknown-elf" \
+    -DCMAKE_CXX_COMPILER_TARGET="riscv64-unknown-elf" \
+    -DCMAKE_ASM_COMPILER_TARGET="riscv64-unknown-elf" \
     -DCMAKE_AR="${AR}" \
     -DCMAKE_RANLIB="${RANLIB}" \
     -DCMAKE_C_FLAGS="${CFLAGS}" \
@@ -137,7 +134,7 @@ cmake "${LLVM_PROJECT}/runtimes" \
     -DLIBCXXABI_ENABLE_EXCEPTIONS=ON \
     -DLIBCXXABI_ENABLE_THREADS=ON \
     -DLIBCXXABI_USE_COMPILER_RT=OFF \
-    -DLIBCXXABI_USE_LLVM_UNWINDER=OFF \
+    -DLIBCXXABI_USE_LLVM_UNWINDER=ON \
     -DLIBCXXABI_TARGET_TRIPLE="riscv64-unknown-elf" \
     -DLIBCXXABI_INCLUDE_TESTS=OFF \
     -DLIBUNWIND_ENABLE_SHARED=OFF \

@@ -50,19 +50,18 @@ fi
 rm -rf "${BUILD_DIR}" "${INSTALL_DIR}"
 mkdir -p "${BUILD_DIR}" "${INSTALL_DIR}"
 
-# The pinned toolchain, through the shims that carry its own runtime libraries
-# (scripts/env.sh).
+# The pinned clang toolchain and LLVM binutils (scripts/env.sh).
 source "${ROOT_DIR}/scripts/env.sh"
 
-CC="$(command -v riscv64-unknown-elf-gcc)"
-AR="$(command -v riscv64-unknown-elf-ar)"
-RANLIB="$(command -v riscv64-unknown-elf-ranlib)"
+CC="$(command -v clang)"
+AR="$(command -v llvm-ar)"
+RANLIB="$(command -v llvm-ranlib)"
 
 # The pinned ABI (specs/build.md): hard-float rv64imafdc/lp64d. libpng is C and
 # needs no C++ surface; -isystem pulls musl's headers in behind its own so the
 # compile sees a real <stdlib.h>/<string.h>. zlib's install is on the include
 # path because <png.h> includes <zlib.h>.
-CFLAGS="-march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2 -isystem ${MUSL_INSTALL}/include -isystem ${ZLIB_INSTALL}/include"
+CFLAGS="--target=riscv64-unknown-elf -march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2 -isystem ${MUSL_INSTALL}/include -isystem ${ZLIB_INSTALL}/include"
 
 cmake \
     -G Ninja \
@@ -70,6 +69,7 @@ cmake \
     -B "${BUILD_DIR}" \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
     -DCMAKE_C_COMPILER="${CC}" \
+    -DCMAKE_C_COMPILER_TARGET="riscv64-unknown-elf" \
     -DCMAKE_AR="${AR}" \
     -DCMAKE_RANLIB="${RANLIB}" \
     -DCMAKE_C_FLAGS="${CFLAGS}" \

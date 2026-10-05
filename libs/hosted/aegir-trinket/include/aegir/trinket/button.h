@@ -67,7 +67,6 @@ private:
     bool hovered_ = false;
     bool auto_repeat_ = false;
     int repeat_interval_ = 100;
-    uint64_t repeat_timer_ = 0;
 };
 
 } // namespace aegir::trinket

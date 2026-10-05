@@ -39,7 +39,7 @@ public:
 
 protected:
     void on_paint(Canvas& canvas, const PaintEvent& event) override;
-    Size preferred_size() const;
+    Size preferred_size() const override;
 
 private:
     std::u32string text_;

@@ -63,7 +63,7 @@ public:
     static std::string ntr(std::string_view msgid, std::string_view msgid_plural, uint64_t n);
 
 private:
-    class Impl;
+    struct Impl;
     std::unique_ptr<Impl> impl_;
 };
 

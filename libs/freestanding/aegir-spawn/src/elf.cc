@@ -15,7 +15,6 @@ namespace aegir::spawn {
 
 namespace {
 
-constexpr uint64_t kIdentSize = 16;
 constexpr uint8_t kClass64 = 2;
 constexpr uint8_t kDataLittleEndian = 1;
 constexpr uint16_t kTypeExecutable = 2;

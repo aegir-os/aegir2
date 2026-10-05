@@ -29,11 +29,11 @@ public:
     explicit WorkerPool(int num_threads = 2);
     ~WorkerPool();
 
-    // Non-copyable, movable
+    // Non-copyable and non-movable: the mutex member is not movable.
     WorkerPool(const WorkerPool&) = delete;
     WorkerPool& operator=(const WorkerPool&) = delete;
-    WorkerPool(WorkerPool&&) noexcept = default;
-    WorkerPool& operator=(WorkerPool&&) noexcept = default;
+    WorkerPool(WorkerPool&&) = delete;
+    WorkerPool& operator=(WorkerPool&&) = delete;
 
     // Submit work to thread pool
     // Returns a future that will be fulfilled on the worker thread

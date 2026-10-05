@@ -11,7 +11,6 @@ namespace aegir::gpt {
 
 namespace {
 
-constexpr uint32_t kSectorBytes = 512;
 constexpr uint32_t kMbrSignature = 510;   /* 0x55, 0xAA */
 constexpr uint32_t kMbrFirstEntry = 446;  /* the first of four 16-byte entries */
 constexpr uint8_t kMbrGptType = 0xee;

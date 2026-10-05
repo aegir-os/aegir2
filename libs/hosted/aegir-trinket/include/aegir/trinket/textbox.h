@@ -87,8 +87,6 @@ private:
     Font* font_ = nullptr;
     int h_scroll_ = 0;
     int v_scroll_ = 0;
-    uint64_t blink_timer_ = 0;
-    bool cursor_visible_ = true;
 };
 
 } // namespace aegir::trinket

@@ -58,7 +58,6 @@ void write_line(char const *label, char const *text) noexcept
  * own line. */
 constexpr uint32_t kStatusQueueOffset = aegir::virtio::kQueueBytes;
 constexpr uint32_t kBuffersOffset = 2 * aegir::virtio::kQueueBytes;
-constexpr uint32_t kEventBytes = 8;
 constexpr uint32_t kBufferStride = 16;
 
 }  // namespace

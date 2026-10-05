@@ -41,9 +41,6 @@ constexpr int kAfInet = 2;
 constexpr int kSockStream = 1;
 constexpr int kSockDgram = 2;
 constexpr int kSockRaw = 3;
-constexpr int kIpprotoTcp = 6;
-constexpr int kIpprotoUdp = 17;
-constexpr int kIpprotoIcmp = 1;
 
 /* The stack's payload ceiling, in words, plus the protocol's own words. */
 constexpr uint32_t kAnswerWords = aegir::ipc::kMaxWords;

@@ -58,8 +58,6 @@ constexpr uint32_t kTimeHigh = 0x04;
 constexpr uint32_t kAlarmLow = 0x08;
 constexpr uint32_t kAlarmHigh = 0x0c;
 constexpr uint32_t kIrqEnabled = 0x10;
-constexpr uint32_t kClearAlarm = 0x14;
-constexpr uint32_t kAlarmStatus = 0x18;
 constexpr uint32_t kClearInterrupt = 0x1c;
 constexpr uint64_t kNanosecondsPerSecond = 1000000000ull;
 

@@ -62,12 +62,12 @@ RECT_CUE = re.compile(r"\brect (\S+) (\d+) (\d+) (\d+) (\d+)")
 def preflight(target: Target) -> list[str]:
     """What this machine still needs before the target can build or boot, as a
     list of "what (which make command fixes it)". Checked here because the
-    failure otherwise surfaces as `bash returned exit status 1`: the vendored
-    tree's absence is a missing init-build.sh -- it is placed by `make deps`
-    and gitignored -- and a missing toolchain is cmake's least readable
-    error."""
+    failure otherwise surfaces as `bash returned exit status 1`: a missing
+    vendored tree or toolchain is cmake's least readable error."""
     missing: list[str] = []
-    if not (pins.ROOT / "init-build.sh").is_file() or not (pins.ROOT / "kernel").is_dir():
+    if not (pins.ROOT / "kernel" / "CMakeLists.txt").is_file() or not (
+        pins.ROOT / "tools/seL4/cmake-tool"
+    ).is_dir():
         missing.append("the vendored seL4 tree (make deps)")
     if not (pins.ROOT / "third_party/tools/venv/bin/cmake").is_file():
         missing.append("the pinned host tools (make tools)")
@@ -113,16 +113,17 @@ def configure(target: Target, build_dir: Path, timeout: int, extra_flags: str = 
     if extra_flags:
         flags = f"{flags} {extra_flags}".strip()
     root = ENV_SCRIPT.parent.parent
-    if target.source_dir == ".":
-        relative = os.path.relpath(root, build_dir)
-        bash(f"{relative}/init-build.sh {flags}".strip(), build_dir, timeout)
-        return
-
-    # A project inside the tree: the root's init-build.sh decides which project to
-    # configure by looking for a CMakeLists.txt next to itself
-    # (tools/seL4/cmake-tool/init-build.sh:41-54), and next to *our* root there is
-    # one -- so it would configure Aegir instead. Name the project directly, with
-    # the command init-build.sh's easy-settings path uses.
+    # Configure directly, not through the root init-build.sh: that script pins
+    # kernel/gcc.cmake, and seL4 keeps a toolchain file it is handed instead of
+    # choosing one from TRIPLE (kernel/configs/seL4Config.cmake:244-267), so the
+    # pinned file would win and TRIPLE in configs/ would be ignored. The command
+    # below is what init-build.sh itself runs, so TRIPLE selects
+    # kernel/llvm.cmake and the build is clang (specs/build.md).
+    #
+    # It is also what an in-tree project needs: the root init-build.sh decides
+    # which project to configure by looking for a CMakeLists.txt next to itself
+    # (tools/seL4/cmake-tool/init-build.sh:41-54), and next to *our* root there
+    # is one, so it would configure Aegir instead.
     source = os.path.relpath(root / target.source_dir, build_dir)
     cache = os.path.relpath(root / ".sel4_cache", build_dir)
     bash(
@@ -162,6 +163,18 @@ def toolkit() -> bool:
         return False
     value = os.environ.get("AEGIR_TOOLKIT", "").strip().lower()
     return value not in ("0", "off", "no", "false")
+
+
+def build_builtins(target: Target, timeout: int) -> None:
+    """Build compiler-rt's builtins and publish them where clang finds them.
+
+    Every link needs these, freestanding or hosted: seL4's user-mode link rule
+    injects `-lgcc` and the crt objects (projects/musllibc/Findmusllibc.cmake),
+    and with libgcc gone those names must resolve to compiler-rt
+    (scripts/build_compiler_rt.sh). Idempotent.
+    """
+    root = ENV_SCRIPT.parent.parent
+    bash(f"bash scripts/build_compiler_rt.sh {target.name}", root, timeout)
 
 
 def build_runtimes(target: Target, timeout: int) -> None:
@@ -942,6 +955,7 @@ def main(argv: list[str]) -> int:
     )
     wanted_flags = f"{wanted_flags} {extra_flags}".strip()
     try:
+        build_builtins(target, arguments.timeout)
         if hosted:
             build_runtimes(target, arguments.timeout)
         stamp = configured_flags(build_dir)

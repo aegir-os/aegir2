@@ -11,7 +11,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-runtime CXX)
 
-add_library(aegir-runtime STATIC src/assert.cc src/debug.cc)
+add_library(aegir-runtime STATIC src/assert.cc src/cxxabi.cc src/debug.cc)
 
 target_include_directories(aegir-runtime PUBLIC include)
 # sel4runtime brings the kernel's generated config headers (it links

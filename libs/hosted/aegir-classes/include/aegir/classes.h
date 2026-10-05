@@ -18,7 +18,7 @@ namespace aegir::classes {
 
 // Forward declaration
 class Object;
-class Message;
+struct Message;
 
 // Method IDs (like Amiga BOOPSI)
 enum class MethodID : uint32_t {
@@ -100,7 +100,7 @@ public:
     template<typename T>
     T get_attr(uint32_t tag) const {
         TagItem tags[2] = {{tag, 0}, {0, 0}};
-        GetMessage msg{MethodID::OM_GET, tags};
+        GetMessage msg{{MethodID::OM_GET}, tags};
         const_cast<Object*>(this)->dispatch(reinterpret_cast<Message*>(&msg));
         return static_cast<T>(tags[0].data);
     }
@@ -108,7 +108,7 @@ public:
     template<typename T>
     void set_attr(uint32_t tag, T value) {
         TagItem tags[2] = {{tag, reinterpret_cast<uintptr_t>(value)}, {0, 0}};
-        SetMessage msg{MethodID::OM_SET, tags};
+        SetMessage msg{{MethodID::OM_SET}, tags};
         dispatch(reinterpret_cast<Message*>(&msg));
     }
 };
@@ -132,7 +132,7 @@ public:
         // Allocate object
         Object* obj = new Object();
         // Call OM_NEW
-        NewMessage msg{MethodID::OM_NEW, tags};
+        NewMessage msg{{MethodID::OM_NEW}, tags};
         obj->dispatch(reinterpret_cast<Message*>(&msg));
         return obj;
     }

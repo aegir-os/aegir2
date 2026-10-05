@@ -53,13 +53,15 @@ mkdir -p "${BUILD_DIR}/src" "${INSTALL_DIR}"
 cp -a "${MUSL_SOURCE}/." "${BUILD_DIR}/src/"
 rm -rf "${BUILD_DIR}/src/.git"
 
-# The pinned toolchain, through the shims that carry its own runtime libraries
-# (scripts/env.sh).
+# The pinned clang toolchain and LLVM binutils (scripts/env.sh).
 source "${ROOT_DIR}/scripts/env.sh"
 
 # The pinned ABI (specs/build.md): hard-float rv64imafdc/lp64d.
 CFLAGS="-march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2"
 
+# musl's configure takes CC as a command string, so the target goes in it:
+# clang is one binary for every triple. CROSS_COMPILE is left empty -- there is
+# no prefixed binutils -- and the LLVM tools are named on the make lines.
 cd "${BUILD_DIR}"
 ./src/configure \
     --srcdir=src \
@@ -68,15 +70,16 @@ cd "${BUILD_DIR}"
     --target=riscv64 \
     --enable-static \
     --disable-shared \
-    CC="riscv64-unknown-elf-gcc" \
-    CROSS_COMPILE="riscv64-unknown-elf-" \
+    CC="clang --target=riscv64-unknown-elf" \
     CFLAGS="${CFLAGS}"
 
-make -j"$(nproc)"
+make -j"$(nproc)" AR="$(command -v llvm-ar)" RANLIB="$(command -v llvm-ranlib)" \
+    STRIP="$(command -v llvm-strip)"
 # install-libs and install-headers, not install: the latter also installs the
 # dynamic linker and the musl-gcc wrapper, neither of which a static Aegir
 # binary uses (sel4runtime is the entry point, specs/build.md).
-make install-libs install-headers
+make install-libs install-headers AR="$(command -v llvm-ar)" \
+    RANLIB="$(command -v llvm-ranlib)" STRIP="$(command -v llvm-strip)"
 
 echo "musl built for ${TARGET}: ${INSTALL_DIR}"
 ls -la "${INSTALL_DIR}/lib/"

@@ -138,7 +138,6 @@ protected:
 private:
     // BDF parse state: ENCODING and BBX arrive before the BITMAP lines that
     // belong to them, so they are carried between lines.
-    uint32_t current_encoding_ = 0;
     Glyph current_glyph_{};
 
     static int hex_val(char c) noexcept;
