@@ -264,6 +264,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # accept, write, recv, the whole lifecycle, all on the loopback with
             # nothing on the wire.
             QmpStep(r"tcpecho: \d+ bytes echoed over loopback: Aegir TCP echo"),
+            # The bulk path (specs/net.md): `tcpbulk` carries a payload past the
+            # message registers through a window it carves and hands the stack by
+            # capability -- write-window out, recv-window back, compared.
+            QmpStep(r"tcpbulk: \d+ bytes crossed the window"),
             # The live half (specs/net.md): the Net: filesystem view registers
             # itself with the VFS as a synthetic volume -- one directory per
             # adapter, one file per parameter -- that reads and reprograms the

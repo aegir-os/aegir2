@@ -185,6 +185,16 @@ Rights rights_for(PortGraph::Name name) noexcept
          * and writes it, and needs no grant of its own. */
         return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "net.socket", 10)) {
+        /* A client hands the stack its bulk window's frame capability on a
+         * write-window/recv-window call (specs/net.md), and nothing transfers
+         * unless the cap the sender invokes carries Grant (kernel/src/kernel/
+         * thread.c:212-218). The owner receives the cap and maps it, so Read is
+         * its half. A session's launcher is given this as a *source* and mints
+         * each command a caller half, so the right has to begin at the caller
+         * half here -- a mint keeps only what its source holds. */
+        return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 

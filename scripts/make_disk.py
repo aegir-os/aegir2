@@ -305,7 +305,7 @@ AEGIR_BFS_TREE = [
         # stack now holds.
         ("file", "Startup-Sequence",
          b"; Aegir system startup: the network, then the quiet close.\n"
-         b"netconfig\nping\nping localhost\ntftp aegir.txt\ntcpecho\n"
+         b"netconfig\nping\nping localhost\ntftp aegir.txt\ntcpecho\ntcpbulk\n"
          b"net NE0/ipv4_address\nnet NE0/hostname\nnet NE0/hostname aegir-live\n"
          b"netsmoke\n"
          b"filenote Sys:VER.TXT aegir\nEndCLI >NIL:\n"),

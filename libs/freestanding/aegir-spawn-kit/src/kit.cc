@@ -141,12 +141,14 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
                   0, 0, false, false);
     }
     /* The network (specs/net.md): a caller half of the socket port and of the
-     * control port, so a command can ping or use the stack. Write and
-     * GrantReply, the call-only grant; the stack carries the caller's badge
-     * and refuses methods it does not speak. Optional. */
+     * control port, so a command can ping or use the stack. Write, GrantReply
+     * and Grant -- the call-only grant plus what a bulk window needs, because a
+     * write-window/recv-window call hands the stack a frame capability; the
+     * stack carries the caller's badge and refuses methods it does not speak.
+     * Optional. */
     if (kit.net_socket != 0) {
         (void)put(out, capacity, n++, "net.socket", 10, kit.net_socket,
-                  seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
     if (kit.net_control != 0) {
         (void)put(out, capacity, n++, "net.control", 11, kit.net_control,
@@ -229,10 +231,12 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
                   seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
     }
     /* The network's sources (specs/net.md): unbadged, so the launcher mints each
-     * command a caller half of the socket and control ports from them. */
+     * command a caller half of the socket and control ports from them. Grant is
+     * on the socket source because a command's bulk window call transfers a
+     * frame capability, and a mint keeps only what its source holds. */
     if (kit.net_socket != 0) {
         (void)put(out, capacity, n++, "net.socket", 10, kit.net_socket,
-                  seL4_CapRights_new(1, 0, 0, 1), 0, 0, false, false);
+                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, false);
     }
     if (kit.net_control != 0) {
         (void)put(out, capacity, n++, "net.control", 11, kit.net_control,

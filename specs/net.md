@@ -231,10 +231,16 @@ no concurrency: a TCP listener's backlog completes a connection whether or not
 accepts, writes a string, reads the echo back and compares -- the whole
 lifecycle with nothing on the wire. **The datagram rides the message envelope**
 in these slices -- an ICMP message, a TFTP block, an echoed string are all small,
-and the envelope's registers hold them -- while the client's **shared window**,
-the bulk path, is the next piece: a TCP payload can outgrow the registers, and
-data then crosses the way block data does, a window the starter carves and the
-stack learns by badge.
+and the envelope's registers hold them -- while a TCP payload can outgrow the
+registers. That is the **bulk window** (landed): the client carves a frame of its
+own, mints a pristine copy, and hands the copy to the stack on a
+`write-window`/`recv-window` call, the capability riding each call. The stack maps
+the frame at one reserved address for the moment of the copy and unmaps it,
+keeping nothing between calls -- so a client that dies leaves no window state, and
+the frames come from the client's own memory, which its own teardown revokes.
+`tcpbulk` is its acceptance: a payload past the envelope crosses the window out
+and back over the loopback and is compared. (The window is a frame the client
+carves, not the starter: only a client that does bulk pays for one.)
 
 A **hosted application gets a musl shim**: `socket`, `connect`, `recv`,
 `send`, `getaddrinfo` and friends are rerouted to the port, over an
@@ -260,8 +266,11 @@ time (`libs/hosted/aegir-network/src/resolver.cc`, this archive before
 the stack's DNS through the port's `resolve`, matching names by
 `aegir-resolver`'s `hosts_line` so a hosted and a freestanding client answer
 alike. `netsmoke` proves it -- `localhost`, a name only Sys:S/hosts holds --
-before it connects. **The client's shared window for bulk data is the last
-piece.**
+before it connects. And the **bulk window** is landed: `write-window` and
+`recv-window` carry the bytes in a frame the client owns, its capability riding
+the call, and `tcpbulk` proves a payload past the envelope crosses and returns.
+The hosted shim using that window for its own large `send`/`recv` is the last
+step.
 
 ## Memory: no fixed tables
 
@@ -460,10 +469,10 @@ console idle.
    stream slice (TCP, and `tcpecho` as its lifecycle test), then the client's
    shared window for bulk data, then the musl BSD-socket rerouting. Landed: the
    shim's syscalls and its acceptance (`netsmoke`, a loopback echo through
-   libc), and the libc name lookup (`getaddrinfo`/`gethostbyname` over
-   Sys:S/hosts and the port's `resolve`); remaining: the shared window -- a
-   RAM carve-out the client owns and hands the stack by badge, the stack mapping
-   the frames inside a call.
+   libc), the libc name lookup (`getaddrinfo`/`gethostbyname` over Sys:S/hosts
+   and the port's `resolve`), and the bulk window (`write-window`/`recv-window`,
+   `tcpbulk`). Remaining: the hosted shim sending and receiving through the
+   window for payloads past the envelope.
 5. **`Net:`, the filesystem view** -- the live half: the volume and its service,
    `Net:<adapter>/<parameter>`, so the running state can be read and set the way
    the boot manifest set it. Landed: the service registers with the VFS and

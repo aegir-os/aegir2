@@ -198,6 +198,7 @@ set(aegir_commands
   aegir-ping:ping
   aegir-tftp:tftp
   aegir-tcpecho:tcpecho
+  aegir-tcpbulk:tcpbulk
   aegir-net-config:netconfig
   aegir-net-show:net
   aegir-net-smoke:netsmoke

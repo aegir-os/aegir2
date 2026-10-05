@@ -85,6 +85,12 @@ struct Socket {
     struct tcp_pcb *tcp;
     volatile uintptr_t held;
     volatile uint32_t held_kind;
+    /* A `recv-window`'s waiting window cap (its slot in our CSpace) and that
+     * window's byte capacity; zero when the held read is an envelope `recv`.
+     * Written by the serve thread before held_kind, read by the tcpip thread
+     * after it, like held itself. */
+    volatile uintptr_t held_window;
+    volatile uint32_t held_capacity;
     /* Datagrams that arrived with no waiter, oldest first. A raw ICMP socket
      * sees more than one message per exchange -- the looped request and its
      * reply -- so one slot would drop all but the first. */
@@ -99,6 +105,14 @@ Socket *g_sockets = nullptr;
 uint32_t g_next_id = 1;
 aegir::mem::Allocator *g_objects = nullptr;
 aegir::mem::Account *g_account = nullptr;
+aegir::mem::Scratch *g_scratch = nullptr;
+
+/* The one window-copy address: where a client's window frame is mapped for the
+ * moment a bulk copy takes (specs/net.md). Reserved once at startup and its page
+ * table made then, so mapping a client's frame at runtime never reaches the
+ * allocator -- the copy runs in the tcpip thread, and the allocator is the serve
+ * thread's alone. */
+uintptr_t g_window_copy = 0;
 
 /* The socket list and its id counter cross this thread and the tcpip thread -- a
  * listener's accept callback adds a connection -- so a short spinlock guards
@@ -155,6 +169,26 @@ Datagram *queue_pop(Socket *socket) noexcept
 {
     lock_queue();
     Datagram *const datagram = socket->pending_head;
+    if (datagram != nullptr) {
+        socket->pending_head = datagram->next;
+        if (socket->pending_head == nullptr) {
+            socket->pending_tail = nullptr;
+        }
+    }
+    unlock_queue();
+    return datagram;
+}
+
+/* Pop the head datagram only when it fits wholly in `room`; otherwise leave it
+ * queued. A bulk `recv-window` copies whole datagrams and stops at one that
+ * would overflow the window, so nothing is lost or split. */
+Datagram *queue_pop_fitting(Socket *socket, uint32_t room) noexcept
+{
+    lock_queue();
+    Datagram *datagram = socket->pending_head;
+    if (datagram != nullptr && datagram->length > room) {
+        datagram = nullptr;
+    }
     if (datagram != nullptr) {
         socket->pending_head = datagram->next;
         if (socket->pending_head == nullptr) {
@@ -260,6 +294,18 @@ void slot_put(seL4_CPtr slot) noexcept
     unlock_slots();
 }
 
+/* Drop a window cap the stack is done with: empty its slot and give the slot
+ * back. Zero is nothing. */
+void drop_window(seL4_CPtr window) noexcept
+{
+    if (window == 0) {
+        return;
+    }
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, window,
+                      aegir::bootstrap::kCNodeBits);
+    slot_put(window);
+}
+
 /* Words and bytes: a payload's bytes ride the message registers low byte first.
  * The length is carried separately, so trailing zeros in the last word are not
  * part of the datagram. */
@@ -350,6 +396,26 @@ uint32_t ip_payload_offset(struct pbuf *packet) noexcept
     return header <= packet->tot_len ? header : 0;
 }
 
+/* Map a client's window frame at the reserved copy address and copy a pbuf into
+ * it: what a bulk `recv` does. The frame cap is pristine and the address's page
+ * table is made at startup, so this touches no allocator and can run in the
+ * tcpip thread. Runs in the tcpip thread. */
+bool window_from_pbuf(seL4_CPtr window, struct pbuf *packet, uint32_t offset,
+                      uint32_t length) noexcept
+{
+    if (g_window_copy == 0 || g_scratch == nullptr ||
+        !g_scratch->map_at(g_window_copy, window)) {
+        return false;
+    }
+    auto *const at = reinterpret_cast<uint8_t *>(g_window_copy);
+    if (length != 0) {
+        pbuf_copy_partial(packet, at, static_cast<u16_t>(length),
+                          static_cast<u16_t>(offset));
+    }
+    seL4_RISCV_Page_Unmap(window);
+    return true;
+}
+
 /* Hand a received message to a waiting `recv`/`recvfrom`, or queue it. Runs in
  * the tcpip thread. The answer's shape follows the socket's kind: a datagram
  * carries its peer's port, an ICMP message does not, a stream carries neither.
@@ -362,6 +428,28 @@ void deliver(Socket *socket, uint32_t source, uint32_t source_port,
     if (__atomic_load_n(&socket->held_kind, __ATOMIC_ACQUIRE) == kHoldRecv) {
         uintptr_t const held = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
         if (held != 0) {
+            uintptr_t const window =
+                __atomic_exchange_n(&socket->held_window, 0, __ATOMIC_ACQ_REL);
+            if (window != 0) {
+                /* A bulk read: the bytes go into the client's own window, and the
+                 * answer is only their length (specs/net.md). */
+                uint32_t take = length;
+                if (take > socket->held_capacity) {
+                    take = socket->held_capacity;
+                }
+                if (take != 0) {
+                    (void)window_from_pbuf(static_cast<seL4_CPtr>(window), packet, offset,
+                                           take);
+                }
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                                  static_cast<seL4_CPtr>(window),
+                                  aegir::bootstrap::kCNodeBits);
+                slot_put(static_cast<seL4_CPtr>(window));
+                seL4_SetMR(0, take);
+                seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 1));
+                slot_put(static_cast<seL4_CPtr>(held));
+                return;
+            }
             seL4_Word *const message = seL4_GetIPCBuffer()->msg;
             uint32_t at = 2;
             message[0] = source;
@@ -464,9 +552,10 @@ void udp_received(void *argument, struct udp_pcb *pcb, struct pbuf *packet,
     pbuf_free(packet);
 }
 
-/* A `recv` no packet answered: answer the held reply with a zero length -- a
- * timeout, which a client reads as end-of-stream -- and give the slot back. Runs
- * in the tcpip thread from lwIP's timers. */
+/* A `recv`/`recv-window` no packet answered: answer the held reply with a zero
+ * length -- a timeout, which a client reads as end-of-stream -- give the reply
+ * slot back, and drop a held window. Runs in the tcpip thread from lwIP's
+ * timers. */
 void recv_timeout(void *argument) noexcept
 {
     auto *const socket = static_cast<Socket *>(argument);
@@ -477,9 +566,16 @@ void recv_timeout(void *argument) noexcept
     if (held == 0) {
         return;
     }
+    uintptr_t const window = __atomic_exchange_n(&socket->held_window, 0, __ATOMIC_ACQ_REL);
     seL4_SetMR(0, 0);
     uint32_t words = 1;
-    if (socket->kind == kUdp) {
+    if (window != 0) {
+        /* A window recv: end-of-stream, so the window is dropped and the answer
+         * is the one word a bulk read expects. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, static_cast<seL4_CPtr>(window),
+                          aegir::bootstrap::kCNodeBits);
+        slot_put(static_cast<seL4_CPtr>(window));
+    } else if (socket->kind == kUdp) {
         seL4_SetMR(1, 0);
         seL4_SetMR(2, 0);
         words = 3;
@@ -507,6 +603,8 @@ Socket *alloc_socket(uint32_t kind, uint64_t owner) noexcept
     socket->tcp = nullptr;
     socket->held = 0;
     socket->held_kind = kHoldNone;
+    socket->held_window = 0;
+    socket->held_capacity = 0;
     socket->pending_head = nullptr;
     socket->pending_tail = nullptr;
     socket->accept_head = nullptr;
@@ -834,6 +932,14 @@ void do_close(void *argument) noexcept
     sys_untimeout(recv_timeout, socket);
     sys_untimeout(accept_timeout, socket);
     sys_untimeout(connect_timeout, socket);
+    /* A bulk read may have been waiting with the client's window cap in hand;
+     * drop it, or the frame stays alive in our CSpace after the socket is gone. */
+    uintptr_t const window = __atomic_exchange_n(&socket->held_window, 0, __ATOMIC_ACQ_REL);
+    if (window != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, static_cast<seL4_CPtr>(window),
+                          aegir::bootstrap::kCNodeBits);
+        slot_put(static_cast<seL4_CPtr>(window));
+    }
     if (socket->raw != nullptr) {
         raw_remove(socket->raw);
         socket->raw = nullptr;
@@ -1074,6 +1180,49 @@ uint32_t listen_on(uint32_t id) noexcept
     return listen.ok ? 1 : 0;
 }
 
+/* ---- the bulk window (specs/net.md) ---- */
+
+/* A `write-window`: the payload is in the client's window. Map it, hand the
+ * bytes to lwIP (which copies them), unmap. Runs in the tcpip thread. */
+struct WriteWindowArg {
+    Socket *socket;
+    seL4_CPtr window;
+    uint32_t length;
+    uint32_t written;
+};
+
+void do_write_window(void *argument) noexcept
+{
+    auto *const write = static_cast<WriteWindowArg *>(argument);
+    write->written = 0;
+    if (write->socket->tcp == nullptr || write->length == 0 || g_window_copy == 0 ||
+        g_scratch == nullptr || !g_scratch->map_at(g_window_copy, write->window)) {
+        aegir::debug_write("      net: window write: the client frame would not map\n");
+        return;
+    }
+    auto *const at = reinterpret_cast<uint8_t *>(g_window_copy);
+    err_t const err = tcp_write(write->socket->tcp, at, static_cast<u16_t>(write->length),
+                                TCP_WRITE_FLAG_COPY);
+    seL4_RISCV_Page_Unmap(write->window);
+    if (err == ERR_OK) {
+        write->written = write->length;
+        (void)tcp_output(write->socket->tcp);
+    }
+}
+
+uint32_t write_window_on(uint32_t id, seL4_CPtr window, uint32_t length) noexcept
+{
+    Socket *const socket = find_socket(id);
+    if (socket == nullptr || socket->tcp == nullptr) {
+        return 0;
+    }
+    WriteWindowArg write{socket, window, length, 0};
+    if (!in_tcpip(do_write_window, &write)) {
+        return 0;
+    }
+    return write.written;
+}
+
 uint32_t write_on(uint32_t id, uint8_t const *bytes, uint32_t length) noexcept
 {
     Socket *const socket = find_socket(id);
@@ -1108,6 +1257,72 @@ bool take_pending(Socket *socket, uint64_t *words, uint32_t *count, bool with_po
     }
     mem_free(datagram);
     return true;
+}
+
+/* Copy queued datagrams into the client's window, whole ones only, up to
+ * `capacity`; return how many bytes. Runs on the serve thread. */
+uint32_t drain_pending_window(Socket *socket, seL4_CPtr window, uint32_t capacity) noexcept
+{
+    if (g_window_copy == 0 || g_scratch == nullptr ||
+        !g_scratch->map_at(g_window_copy, window)) {
+        return 0;
+    }
+    auto *const at = reinterpret_cast<uint8_t *>(g_window_copy);
+    uint32_t total = 0;
+    Datagram *datagram = nullptr;
+    while ((datagram = queue_pop_fitting(socket, capacity - total)) != nullptr) {
+        for (uint32_t i = 0; i < datagram->length; ++i) {
+            at[total + i] = datagram->payload[i];
+        }
+        total += datagram->length;
+        mem_free(datagram);
+    }
+    seL4_RISCV_Page_Unmap(window);
+    return total;
+}
+
+/* A `recv-window`: copy what is already queued into the client's window, or hold
+ * the reply and the window until data arrives (or the timeout passes). The
+ * window cap is kept in the socket so the tcpip thread can answer the read;
+ * `recv_timeout` drops it, and `do_close` drops it if the socket goes first
+ * (specs/net.md). */
+void serve_recv_window(ipc::Owner &port, Socket *socket, seL4_CPtr window,
+                       uint32_t capacity, uint32_t timeout) noexcept
+{
+    uint32_t const ready = drain_pending_window(socket, window, capacity);
+    if (ready != 0) {
+        drop_window(window);
+        port.reply(ready);
+        return;
+    }
+    seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
+    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    seL4_CPtr const slot = slot_get();
+    if (slot == 0 || seL4_CNode_SaveCaller(root, slot, depth) != seL4_NoError) {
+        if (slot != 0) {
+            slot_put(slot);
+        }
+        drop_window(window);
+        port.reply(0);
+        return;
+    }
+    socket->held_capacity = capacity;
+    socket->held_window = static_cast<uintptr_t>(window);
+    __atomic_store_n(&socket->held_kind, kHoldRecv, __ATOMIC_RELEASE);
+    __atomic_store_n(&socket->held, static_cast<uintptr_t>(slot), __ATOMIC_RELEASE);
+    /* A datagram may have arrived in the gap; take it back. */
+    uint32_t const late = drain_pending_window(socket, window, capacity);
+    if (late != 0) {
+        uintptr_t const taken = __atomic_exchange_n(&socket->held, 0, __ATOMIC_ACQ_REL);
+        if (taken != 0) {
+            slot_put(static_cast<seL4_CPtr>(taken));
+        }
+        socket->held_window = 0;
+        port.reply(late);
+    } else if (timeout != 0) {
+        sys_timeout(timeout, recv_timeout, socket);
+    }
+    /* else: held; the receive path answers it, or the timeout does. */
 }
 
 /* A `recv`/`recvfrom`: answer with a datagram already waiting, or hold the
@@ -1222,6 +1437,25 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
     auto const *const auth = static_cast<Authority const *>(authority);
     g_objects = &auth->objects;
     g_account = &auth->account;
+    g_scratch = &auth->scratch;
+
+    /* The window-copy page: reserve one window address for the bulk path and
+     * make its page table now, so a client's frame can be mapped there at
+     * runtime without reaching the allocator -- the copy runs in the tcpip
+     * thread, and the allocator is the serve thread's. A throwaway frame makes
+     * the table, then unmaps; the address stays reserved (specs/net.md). */
+    uintptr_t const reserved = g_scratch->reserve(1);
+    if (reserved != 0) {
+        seL4_Error error = seL4_NoError;
+        seL4_CPtr const frame = g_objects->alloc_page(*g_account, &error);
+        if (frame != 0 && g_scratch->map_at(reserved, frame)) {
+            seL4_RISCV_Page_Unmap(frame);
+            g_window_copy = reserved;
+        }
+    }
+    if (g_window_copy == 0) {
+        aegir::debug_write("      net: no window-copy page; bulk is refused\n");
+    }
 
     ipc::Owner port =
         ipc::Owner::find(aegir::net::kPortName, aegir::net::kPortNameLength);
@@ -1236,7 +1470,9 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
         uint64_t words[kMaxPayloadWords + 4] = {0};
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method = port.receive_words(words, kMaxPayloadWords + 4, &count, &badge);
+        bool cap_arrived = false;
+        uint32_t const method =
+            port.receive_words(words, kMaxPayloadWords + 4, &count, &badge, &cap_arrived);
         if (method == aegir::net::kMethodSocket && count >= 3) {
             port.reply(make_socket(words[0], words[1], words[2], badge));
         } else if (method == aegir::net::kMethodClose && count >= 1) {
@@ -1255,6 +1491,35 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
                 uint8_t bytes[kEnvelopeBytes];
                 unpack_words(words + 2, count - 2, bytes, length);
                 port.reply(write_on(static_cast<uint32_t>(words[0]), bytes, length));
+            }
+        } else if (method == aegir::net::kMethodWriteWindow && count >= 2) {
+            /* The bulk write: the payload is in the client's window, whose cap
+             * arrived with the call. Move it out of the receive slot and hand it
+             * to the tcpip thread, then drop it (specs/net.md). */
+            uint32_t const length = static_cast<uint32_t>(words[1]);
+            seL4_CPtr const window = slot_get();
+            if (!cap_arrived || window == 0 ||
+                !aegir::ipc::take_received_cap(window)) {
+                aegir::debug_write("      net: window write: no window cap arrived\n");
+                drop_window(window);
+                port.reply(0);
+            } else {
+                uint32_t const taken =
+                    write_window_on(static_cast<uint32_t>(words[0]), window, length);
+                drop_window(window);
+                port.reply(taken);
+            }
+        } else if (method == aegir::net::kMethodRecvWindow && count >= 3) {
+            Socket *const socket = find_socket(static_cast<uint32_t>(words[0]));
+            uint32_t const timeout = static_cast<uint32_t>(words[1]);
+            uint32_t const capacity = static_cast<uint32_t>(words[2]);
+            seL4_CPtr const window = slot_get();
+            if (socket == nullptr || !cap_arrived || window == 0 ||
+                !aegir::ipc::take_received_cap(window)) {
+                drop_window(window);
+                port.reply(0);
+            } else {
+                serve_recv_window(port, socket, window, capacity, timeout);
             }
         } else if (method == aegir::net::kMethodBind && count >= 3) {
             port.reply(bind_on(static_cast<uint32_t>(words[0]),

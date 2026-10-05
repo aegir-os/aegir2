@@ -123,6 +123,24 @@ constexpr uint32_t kMaxNameBytes = 255;
  * dropped. */
 constexpr uint32_t kMethodReap = 13;
 
+/* The bulk path: a TCP payload can outgrow the message registers, so its bytes
+ * cross in a **window the caller owns** -- one frame whose capability rides the
+ * call. The stack maps the frame for the duration of the copy and unmaps it,
+ * keeping nothing between calls, so a client that dies leaves no window state
+ * (specs/net.md). */
+
+/* write-window: the id and the payload's length in bytes; the cap the call
+ * transfers is the caller's window, holding that many bytes from offset 0. The
+ * answer is the bytes the stack took (zero when the send buffer is full). */
+constexpr uint32_t kMethodWriteWindow = 14;
+
+/* recv-window: the id, a timeout in milliseconds (0 waits forever), and the
+ * window's capacity in bytes; the cap is the caller's window. The answer is
+ * *held* until data arrives or the timeout passes, then the length now in the
+ * window (zero is end-of-stream or a timeout). The caller reads the bytes from
+ * its own window. */
+constexpr uint32_t kMethodRecvWindow = 15;
+
 /* The payload ceiling the message registers allow: the kernel's message length
  * minus the method, the protocol's own words, and a little slack. An ICMP
  * message is far below it; this is the bound a caller is refused at. */
