@@ -14,7 +14,7 @@ add_executable(aegir-ping src/main.cc)
 target_compile_options(aegir-ping PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
-  aegir-ping PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
-                     aegir-net-protocol aegir-netcontrol aegir-resolver aegir-timer-protocol
-                     sel4 muslc sel4runtime
+  aegir-ping PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-console-protocol
+                     aegir-ipc aegir-log aegir-net-protocol aegir-netcontrol aegir-resolver
+                     aegir-timer-protocol sel4 muslc sel4runtime
 )

@@ -15,6 +15,7 @@
  */
 
 #include <aegir/bootstrap.h>
+#include <aegir/console.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
@@ -120,13 +121,24 @@ int main(int argc, char *argv[])
         aegir::ipc::Consumer::find(aegir::net::kPortName, aegir::net::kPortNameLength);
     aegir::ipc::Consumer const timer =
         aegir::ipc::Consumer::find(aegir::timer::kPortName, aegir::timer::kPortNameLength);
-    if (!control.valid() || !sockets.valid()) {
-        write_line("FAIL", "ping: no control or socket port was given to me");
+    /* The console stream every command is handed: a launched command reports its
+     * exit through it, and a command that only halts leaves the shell waiting so
+     * the launcher never reaps it (aegir-echo's shape). A boot service has none,
+     * and parks. */
+    aegir::ipc::Consumer const stream = aegir::ipc::Consumer::find(
+        aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength);
+    auto finish = [&](uint64_t status) {
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        if (has_argument) {
-            return 0;
+        if (stream.valid()) {
+            uint64_t badge = 0;
+            (void)aegir::bootstrap::badge(&badge);
+            (void)aegir::console::stream_exit(stream, status, badge);
         }
         aegir::halt();
+    };
+    if (!control.valid() || !sockets.valid()) {
+        write_line("FAIL", "ping: no control or socket port was given to me");
+        finish(1);
     }
 
     /* Where to ping: the command line's first argument (an address or a name),
@@ -147,11 +159,7 @@ int main(int argc, char *argv[])
         }
         if (target == 0) {
             write_line("FAIL", "ping: the name would not resolve");
-            seL4_Signal(aegir::bootstrap::kSlotSupervision);
-            if (has_argument) {
-            return 0;
-        }
-        aegir::halt();
+            finish(1);
         }
     } else {
         for (unsigned attempt = 0; attempt < 25 && target == 0; ++attempt) {
@@ -176,11 +184,7 @@ int main(int argc, char *argv[])
         }
         if (target == 0) {
             write_line("FAIL", "ping: the adapter has no gateway yet");
-            seL4_Signal(aegir::bootstrap::kSlotSupervision);
-            if (has_argument) {
-            return 0;
-        }
-        aegir::halt();
+            finish(1);
         }
     }
 
@@ -191,11 +195,7 @@ int main(int argc, char *argv[])
         sockets.call_words(aegir::net::kMethodSocket, open, 3, opened, 1);
     if (made.error != 0 || made.count < 1 || opened[0] == 0) {
         write_line("FAIL", "ping: the stack refused a raw ICMP socket");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        if (has_argument) {
-            return 0;
-        }
-        aegir::halt();
+        finish(1);
     }
     uint32_t const socket_id = static_cast<uint32_t>(opened[0]);
 
@@ -230,11 +230,7 @@ int main(int argc, char *argv[])
     if (transmitted.error != 0 || sent[0] != kMessageBytes) {
         write_line("FAIL", "ping: the echo request would not go out");
         (void)sockets.call(aegir::net::kMethodClose, socket_id);
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        if (has_argument) {
-            return 0;
-        }
-        aegir::halt();
+        finish(1);
     }
 
     /* The reply is held until it arrives. A raw ICMP socket sees every ICMP
@@ -268,11 +264,7 @@ int main(int argc, char *argv[])
     if (!got_reply) {
         write_line("FAIL", "ping: no echo reply arrived");
         (void)sockets.call(aegir::net::kMethodClose, socket_id);
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        if (has_argument) {
-            return 0;
-        }
-        aegir::halt();
+        finish(1);
     }
 
     aegir::debug_write("      ping: reply from ");
@@ -284,10 +276,6 @@ int main(int argc, char *argv[])
     aegir::debug_write(" bytes\n");
     (void)sockets.call(aegir::net::kMethodClose, socket_id);
 
-    seL4_Signal(aegir::bootstrap::kSlotSupervision);
     write_line("ping", "ready");
-    if (has_argument) {
-            return 0;
-        }
-        aegir::halt();
+    finish(0);
 }
