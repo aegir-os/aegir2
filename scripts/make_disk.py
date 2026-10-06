@@ -512,8 +512,10 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         tree.append(("dir", "Development", list(development)))
         # A target that carries the compiler runs it once at session start, so
         # the acceptance cues on the compiler's own lines rather than an
-        # interactive step (specs/development.md).
-        tree = _with_startup(tree, b"Sys:Development/C/aegir-cc\n")
+        # interactive step (specs/development.md). The scale acceptance's huge
+        # command runs after it, the same way (specs/memory.md).
+        tree = _with_startup(tree, b"Sys:Development/C/aegir-cc\n"
+                                   b"Sys:Development/C/aegir-big\n")
     return tree
 
 

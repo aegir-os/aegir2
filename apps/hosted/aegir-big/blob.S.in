@@ -1,0 +1,24 @@
+/*
+ * aegir-big's blob, embedded whole (scripts/gen_blob.py).
+ *
+ * Copyright (c) 2026 Robert Roland
+ * SPDX-License-Identifier: MIT
+ *
+ * `.incbin` rather than a C++ array: the same bytes spelled as initializers
+ * would be a source of hundreds of megabytes, minutes to compile and gigabytes
+ * for the compiler to hold, where the assembler reads the file straight into
+ * the object. @AEGIR_BIG_BLOB@ is filled in by CMake, and the generator writes
+ * that file before this is assembled.
+ *
+ * 4096-aligned so the blob's start is page-aligned and its own segment's bulk
+ * can map as mega pages -- which is part of what the command measures.
+ */
+
+    .section .rodata
+    .balign 4096
+    .globl aegir_big_blob_start
+aegir_big_blob_start:
+    .incbin "@AEGIR_BIG_BLOB@"
+    .globl aegir_big_blob_end
+aegir_big_blob_end:
+    .balign 4096

@@ -512,10 +512,11 @@ def ensure_disk(target: Target, build_dir: Path) -> None:
 
 def development_tree(build_dir: Path) -> Path:
     """Lay out `Sys:Development` for make_disk (specs/development.md): the
-    compiler under C, the sysroot under Include and Libs. The compiler is this
-    build's `aegir-cc`; the sysroot is the next increment -- the first compile is
-    freestanding (`specs/clang-on-aegir.md`), so Include and Libs are the tree's
-    shape and not yet its content."""
+    compiler and the scale acceptance's huge command under C, the sysroot under
+    Include and Libs. The compiler is this build's `aegir-cc`; the sysroot is
+    the next increment -- the first compile is freestanding
+    (`specs/clang-on-aegir.md`), so Include and Libs are the tree's shape and not
+    yet its content."""
     root = build_dir / "development"
     shutil.rmtree(root, ignore_errors=True)
     (root / "C").mkdir(parents=True)
@@ -524,6 +525,12 @@ def development_tree(build_dir: Path) -> Path:
     compiler = build_dir / "apps/hosted/aegir-cc/aegir-cc"
     if compiler.is_file():
         shutil.copy2(compiler, root / "C" / "aegir-cc")
+    # The scale acceptance's deliberately huge command (specs/memory.md) travels
+    # beside the compiler: it runs at session start, and a spawn-path cap that
+    # creeps back fails on it by name.
+    big = build_dir / "apps/hosted/aegir-big/aegir-big"
+    if big.is_file():
+        shutil.copy2(big, root / "C" / "aegir-big")
     return root
 
 

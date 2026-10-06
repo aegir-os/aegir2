@@ -1748,6 +1748,11 @@ TARGETS: dict[str, Target] = {
             # lines are the cue, so nothing is typed for it.
             QmpStep(r"AEGIR_CC_READ_OK"),
             QmpStep(r"AEGIR_CC_COMPILE_OK"),
+            # The scale acceptance's deliberately huge command runs after it
+            # (specs/memory.md): its line is the proof that a program tens of
+            # megabytes long came up through the whole spawn path with every
+            # byte in place, so a cap that creeps back fails here by name.
+            QmpStep(r"AEGIR_BIG_OK \d+ bytes, every byte the pattern"),
         ),
     ),
     "sel4test": Target(

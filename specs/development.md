@@ -61,6 +61,14 @@ The acceptance boots the dedicated target, runs the compiler from the session on
 a known source, spawns the result, and checks a marker — the shape
 `specs/clang-on-aegir.md` states once.
 
+Beside the compiler, the same session runs `aegir-big`: a command whose loaded
+segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
+is the scale acceptance for the spawn path (`specs/memory.md`) — a program
+chosen to break the caps that have bounded one before (the retype fan-out, a
+single-CNode pool, one frame mapped per 4 KiB page) — and its line is checked by
+name, so a cap that creeps back fails the run rather than waiting to be found
+when something larger is tried.
+
 ## Open
 
 - **The partition's size.** `Sys:`'s size is computed from its tree
