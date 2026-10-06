@@ -121,8 +121,11 @@ need -- so director hands auth the unbadged `spawn:process.registry` copy, and
 auth passes it to the launcher. A child never needs a registry capability of its
 own unless it is itself a spawner.
 
-The break source (below) is the one part that must be the child's own; it is
-handled where it lands (Phase 2).
+The break source is the one part that must be the child's own, and the spawner
+makes it too (Phase 2): it creates a notification, binds it to the child's TCB,
+mints the registry's `Context` capability, grants the child its notification
+capability, and passes the source capability in the `register` call -- so the
+metadata and the source land together, in the one place that knows the child.
 
 ## Delivery: the flag, and the halt
 
@@ -132,12 +135,12 @@ flag is delivered as **a source the process is waiting on, and the ultimate
 halt is enforced**:
 
 - **The source.** The registry signals the process's break `Context`
-  (`Transmitter`, `specs/signal.md`). A process in its main wait — waiting on
-  its stream *and* its break context together, which the model allows — wakes,
-  sees its flags, and exits (C) or acts (D). This is the cooperative half, and
-  it is what lets a program clean up. **The runtime includes the break context
-  in every wait**, so "all commands are breakable" holds without each program
-  asking.
+  (`Transmitter`, `specs/signal.md`). A thread has one blocked receive, so a
+  process blocked in a single stream call cannot also take the signal; what the
+  break reaches is the process's **idle wait** -- the runtime waits on its
+  notification there, wakes on C, and exits. This is the cooperative half, and
+  it is what lets a program clean up at a point it chooses. A program that never
+  returns to that wait is the halt's (below).
 - **The halt.** A process blocked in a *single service call* — `ping` sitting
   in the resolver — is not waiting on its break context and cannot be woken
   this way. For **C**, the abort flag, the process is *also* torn down: the
@@ -224,9 +227,12 @@ one-shot system process, not an inherited right).
    over it, and every spawner registering the children it starts. No interruption
    yet: a row is visible, and `describe`/`count` answer (which is what `Break
    NAME` walks). This is `Status`'s ground too.
-2. **The break source.** The runtime registers a break `Context` and includes it
-   in its waits; `break` signals it; a command exits on C. This is the
-   cooperative half, and it is what the terminal's Ctrl-C needs.
+2. **The break source.** The spawner makes each child a notification bound to
+   its TCB, mints the registry's `Context` capability, grants the child the
+   notification, and passes the source at registration; the registry stores it
+   and signals it on `break`; the child's runtime waits on it in its idle wait
+   and exits on C. This is the cooperative half, and it is what the terminal's
+   Ctrl-C needs.
 3. **The enforced halt.** `break` C also asks the TCB's owner to take the
    process back, so a program blocked in a single call dies.
 4. **The key.** The `line` method carries the line's pids; the terminal sets C
