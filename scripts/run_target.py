@@ -346,6 +346,9 @@ _PRESS_KEYS = {
     # A screen shortcut (specs/workbench.md): a chord, so the modifier is held
     # with the key in one send-key. Super+Space is the bureau's Execute.
     "win-space": ("meta_l", "spc"),
+    # The console's Break (specs/process.md): Ctrl-C, held with the key, so the
+    # terminal sees the control modifier and sets **C** on the foreground line.
+    "ctrl-c": ("ctrl", "c"),
 }
 
 

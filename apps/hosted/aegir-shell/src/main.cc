@@ -401,7 +401,14 @@ public:
                 if (aegir::console::stream_command_status(port_, &status)) {
                     busy_ = false;
                     last_status_ = status;
-                    if (status != 0) {
+                    if (status == aegir::console::kBreakStatus) {
+                        /* A Break aborted it (specs/process.md): the Amiga's
+                         * `***BREAK` in place of a return-code line, and a
+                         * failing status like any other. The serial line is the
+                         * acceptance's cue that the shell rendered it. */
+                        aegir::debug_write("  shell: ***BREAK\n");
+                        print("***BREAK\n");
+                    } else if (status != 0) {
                         print("return code " + std::to_string(status) + "\n");
                     }
                     /* FailAt (specs/shell.md): a return code at or above the
@@ -1090,7 +1097,18 @@ private:
                             ins[i].data(), static_cast<uint32_t>(ins[i].size()),
                             outs[i].data(), static_cast<uint32_t>(outs[i].size())});
         }
-        if (aegir::launch::pipeline(wire.data(), static_cast<uint32_t>(wire.size()))) {
+        /* The stages' pids come back in the answer (specs/launch.md): the shell
+         * announces them on its stream so the terminal's Ctrl-C can set **C**
+         * on every stage, not one (specs/process.md). */
+        std::vector<uint64_t> pids(stages.size(), 0);
+        uint32_t pid_count = 0;
+        if (aegir::launch::pipeline(wire.data(), static_cast<uint32_t>(wire.size()),
+                                    pids.data(), static_cast<uint32_t>(pids.size()),
+                                    &pid_count)) {
+            if (pid_count == pids.size()) {
+                aegir::console::stream_line(port_, static_cast<uint32_t>(pids.size()),
+                                            pids.data());
+            }
             busy_ = true;
             return true;
         }
@@ -1238,12 +1256,18 @@ private:
          * and when the completion cue is due. A `Run` does not announce: it
          * keeps the shell's line editor while it runs. */
         aegir::console::stream_line(port_, 1);
+        uint64_t badge = 0;
         if (aegir::launch::command(
                 payload.data(), static_cast<uint32_t>(payload.size()),
                 redirect.in_path.data(),
                 static_cast<uint32_t>(redirect.in_path.size()),
                 redirect.out_path.data(),
-                static_cast<uint32_t>(redirect.out_path.size()), false)) {
+                static_cast<uint32_t>(redirect.out_path.size()), false, &badge)) {
+            /* The command's pid, from the launch answer (specs/launch.md): the
+             * terminal's Ctrl-C sets **C** on it (specs/process.md). */
+            if (badge != 0) {
+                aegir::console::stream_line(port_, 1, &badge);
+            }
             busy_ = true;
             return true;
         }

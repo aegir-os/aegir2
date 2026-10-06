@@ -60,14 +60,21 @@ struct Stage {
 /** Start a command (kind 1) that shares the launcher's console stream.
  *  `argv` is the command words NUL-separated, program first; `std_in` and
  *  `std_out` are VFS paths, empty for the console. With `background` the
- *  caller does not wait (the shell's `Run`). True when it started. */
+ *  caller does not wait (the shell's `Run`). `badge_out`, when given, receives
+ *  the started command's pid -- the shell announces it on its stream so the
+ *  terminal's Ctrl-C can set **C** on it (specs/process.md). True when it
+ *  started. */
 bool command(char const *argv, uint32_t argv_length, char const *std_in,
              uint32_t std_in_length, char const *std_out, uint32_t std_out_length,
-             bool background);
+             bool background, uint64_t *badge_out = nullptr);
 
 /** Start a pipeline (specs/pipe.md): every stage at once, connected by pipes
- *  the launcher names. True when it started. */
-bool pipeline(Stage const *stages, uint32_t count);
+ *  the launcher names. `badges`/`badge_capacity`, when given, receive the
+ *  started stages' pids (up to the capacity), with `badge_count` set to how
+ *  many -- the shell announces them so Ctrl-C breaks every stage
+ *  (specs/process.md). True when it started. */
+bool pipeline(Stage const *stages, uint32_t count, uint64_t *badges = nullptr,
+              uint32_t badge_capacity = 0, uint32_t *badge_count = nullptr);
 
 /** Start one program of any kind (specs/launch.md's kinds). `window` is an
  *  Amiga window specification, empty for none. Kind 1 is `command`; kinds 2
@@ -91,6 +98,14 @@ extern "C" {
  *  started, 0 refused, and -1 when the process has no launcher or the call
  *  itself was refused. `aegir::launch` builds its words and calls this. */
 int aegir_launch_request(uint32_t method, uint64_t const *words, uint32_t count) noexcept;
+
+/** As `aegir_launch_request`, and it also takes the started pids the launcher
+ *  answers with (specs/launch.md): `badges` receives up to `badge_capacity` of
+ *  them and `badge_count` how many, so a caller can name what it started
+ *  (specs/process.md). Either out-parameter may be null. */
+int aegir_launch_request_badges(uint32_t method, uint64_t const *words, uint32_t count,
+                                uint64_t *badges, uint32_t badge_capacity,
+                                uint32_t *badge_count) noexcept;
 
 /** The ergonomic C face of a launch: `argv` is a null-terminated argument
  *  vector, argv[0] the program's name, and the caller's context is inherited.

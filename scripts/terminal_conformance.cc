@@ -484,6 +484,23 @@ void check_stream_command()
     answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
     expect_int(answer == 1 && reply[0] == 4 ? 1 : 0, 1,
                "command: the status is due once the whole line reported");
+
+    /* The line's foreground pids (specs/process.md): the shell announces the
+     * stage count first, then the pids once its launch answer has them, so the
+     * terminal's Ctrl-C knows what to set **C** on. */
+    uint64_t line_pids_words[3] = {2, 0x1234, 0x5678};
+    static_cast<void>(
+        server.handle(aegir::console::kStreamMethodLine, line_pids_words, 3, 13, reply, 1));
+    std::vector<uint64_t> const pids = server.line_pids(13);
+    expect_int(pids.size() == 2 && pids[0] == 0x1234 && pids[1] == 0x5678 ? 1 : 0, 1,
+               "command: line carries the foreground pids");
+
+    /* A Break (specs/process.md): the enforced halt takes the command back, so
+     * the terminal hands the shell the break status itself, ending the line. */
+    server.finish_break(13);
+    answer = server.handle(aegir::console::kStreamMethodCommandStatus, nullptr, 0, 13, reply, 1);
+    expect_int(answer == 1 && reply[0] == aegir::console::kBreakStatus ? 1 : 0, 1,
+               "command: a broken line reports the break status");
 }
 
 } // namespace

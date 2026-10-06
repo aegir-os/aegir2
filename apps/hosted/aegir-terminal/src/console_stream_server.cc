@@ -154,6 +154,30 @@ void ConsoleStreamServer::clear_command(uint64_t caller)
     }
 }
 
+std::vector<uint64_t> ConsoleStreamServer::line_pids(uint64_t caller) const
+{
+    Stream const* s = find(caller);
+    return s != nullptr ? s->pids : std::vector<uint64_t>();
+}
+
+void ConsoleStreamServer::finish_break(uint64_t caller)
+{
+    Stream* s = find(caller);
+    if (s == nullptr || !s->command) {
+        return;
+    }
+    /* The enforced halt took the command back (specs/process.md), so no stream
+     * exit is coming: the whole line is done with the break's status, and the
+     * shell is woken to render it. */
+    s->status = console::kBreakStatus;
+    s->done = s->stages;
+    s->finished = true;
+    s->command = false;
+    if (on_wake) {
+        on_wake(caller);
+    }
+}
+
 void ConsoleStreamServer::queue_input(uint64_t caller, std::string_view bytes)
 {
     Stream* s = find(caller);
@@ -461,12 +485,24 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
          * has -- for the cue the terminal reports when it ends, and for the
          * status, which waits for the whole line -- and the command bracket,
          * which routes keys to the command's input queue rather than the idle
-         * editor while it runs. */
+         * editor while it runs. The pids follow, when the launch answer has
+         * them (specs/process.md): Ctrl-C sets **C** on the foreground line.
+         *
+         * The count is announced before the command starts, so it begins the
+         * line; the pids arrive on a second call for the same line. A further
+         * count is a new line, and resets the bracket and the exit count. */
         Stream* s = find(caller);
         if (s != nullptr && count >= 1 && words[0] >= 1) {
-            s->stages = static_cast<uint32_t>(words[0]);
-            s->done = 0;
-            s->command = true;
+            uint32_t const stages = static_cast<uint32_t>(words[0]);
+            if (!s->command || s->stages != stages) {
+                s->stages = stages;
+                s->done = 0;
+                s->command = true;
+                s->pids.clear();
+            }
+            if (count >= 1 + stages) {
+                s->pids.assign(words + 1, words + 1 + stages);
+            }
         }
         return 0;
     }

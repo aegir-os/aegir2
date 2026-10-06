@@ -26,6 +26,7 @@
 #include <aegir/log.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
+#include <aegir/process.h>
 #include <aegir/signal.h>
 #include <aegir/spawn/process.h>
 #include <aegir/spawn/service_kit.h>
@@ -201,6 +202,38 @@ int main(int argc, char *argv[])
      * so the view that draws it must repaint. */
     server.on_change = [terminal]() { terminal->damage(); };
 
+    /* The process registry's caller half (specs/process.md): Ctrl-C sets **C**
+     * on the foreground line's pids through it. Auth hands the terminal the
+     * port when the session manifest names `process.registry` in its needs, so
+     * a session with none just has no interrupt. */
+    aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+        aegir::process::kPortName, aegir::process::kPortNameLength);
+
+    /* Ctrl-C: the Amiga's Break at the console (specs/process.md). Set **C** on
+     * every pid the shell announced for the running line -- a pipeline's every
+     * stage, not one -- and hand the shell the break's status, because the
+     * enforced halt takes the command back and no stream exit will come. */
+    auto break_foreground = [&server, &registry, shell_badge]() {
+        std::vector<uint64_t> const pids = server.line_pids(shell_badge);
+        for (uint64_t const pid : pids) {
+            if (pid == 0) {
+                continue;
+            }
+            uint64_t words[2] = {pid, aegir::process::kAttnC};
+            uint64_t reply[1] = {0};
+            (void)registry.call_words(aegir::process::kMethodBreak, words, 2, reply, 1);
+            write("  terminal: break ");
+            write_unsigned(pid);
+            write("\n");
+        }
+        /* The enforced halt took the command back, so a read it had waiting can
+         * never be answered -- its reply capability was revoked with the
+         * command's TCB. Forget the held read rather than reply into a dead
+         * slot (which the kernel logs as a null-cap invocation). */
+        g_held_reads.erase(shell_badge);
+        server.finish_break(shell_badge);
+    };
+
     /* The terminal's keys, routed by the handler: the shell's editor while it
      * is idle, the stream's input queue while a command runs (specs/shell.md's
      * Phase 4). The shell is its own process and opens the stream a moment
@@ -213,9 +246,19 @@ int main(int argc, char *argv[])
      * cued by it sees the view rather than the frame before it. */
     bool read_only = false;
     bool announce_view = false;
-    terminal->on_key = [&server, &pending_keys, &read_only, shell_badge](KeyEvent const &event) {
+    terminal->on_key = [&server, &pending_keys, &read_only, &registry, &break_foreground,
+                        shell_badge](KeyEvent const &event) {
         if (read_only) {
             return false;
+        }
+        /* Ctrl-C while a command runs (specs/process.md): not a byte on the
+         * command's input, but the **C** attention flag on the foreground line.
+         * An idle cooked stream, or a session with no registry to break
+         * through, keeps the byte for its editor. */
+        if (event.pressed && (event.modifiers & kModControl) != 0 &&
+            event.text == U'c' && server.in_command(shell_badge) && registry.valid()) {
+            break_foreground();
+            return true;
         }
         LineEditor *const editor = server.editor(shell_badge);
         bool const ready =

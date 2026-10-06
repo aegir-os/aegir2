@@ -81,14 +81,25 @@ inline uint32_t stream_read_line(aegir::ipc::Consumer const &port, char *out,
     return length;
 }
 
-/** Announce a line and its stage count before its first command is launched
- *  (specs/signal.md). The shell owns the line, so the shell says how many
- *  stages it has; the terminal reports `pipeline exited` from it rather than
- *  from a spawn it did not perform. */
-inline void stream_line(aegir::ipc::Consumer const &port, uint32_t stages) noexcept
+/** Announce a line, its stage count, and -- when the shell has them -- the pid
+ *  of each stage (specs/signal.md, specs/process.md). The shell owns the line,
+ *  so the shell says how many stages it has; the terminal reports `pipeline
+ *  exited` from it rather than from a spawn it did not perform. The count goes
+ *  before the first command starts (the command bracket the terminal keeps),
+ *  and the pids after the launch answer, so the terminal's Ctrl-C sets **C** on
+ *  the foreground command. `pids` must name exactly `stages` of them. */
+inline void stream_line(aegir::ipc::Consumer const &port, uint32_t stages,
+                        uint64_t const *pids = nullptr) noexcept
 {
-    uint64_t out[1] = {stages};
-    (void)port.call_words(kStreamMethodLine, out, 1, nullptr, 0);
+    uint64_t out[aegir::ipc::kMaxWords];
+    out[0] = stages;
+    uint32_t words = 1;
+    if (pids != nullptr) {
+        for (uint32_t i = 0; i < stages && words < aegir::ipc::kMaxWords; ++i) {
+            out[words++] = pids[i];
+        }
+    }
+    (void)port.call_words(kStreamMethodLine, out, words, nullptr, 0);
 }
 
 /** Read bytes into `out`, at most `capacity`. The capacity travels as the

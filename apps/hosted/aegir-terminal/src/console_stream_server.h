@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace aegir::terminal {
 
@@ -110,6 +111,17 @@ public:
     uint64_t exit_status(uint64_t caller) const;
     void clear_command(uint64_t caller);
 
+    /* The foreground pids the shell announced for the line running now
+     * (specs/process.md): what the terminal's Ctrl-C sets **C** on. Empty for a
+     * line whose launch answer has not arrived, or a `Run` that announced none. */
+    std::vector<uint64_t> line_pids(uint64_t caller) const;
+
+    /* The line is done, aborted by a Break (specs/process.md): the terminal
+     * initiated it and the enforced halt took the command back, so no stream
+     * exit will come and the shell is handed the break status here. A no-op when
+     * no command is running. */
+    void finish_break(uint64_t caller);
+
 private:
     struct Stream {
         uint32_t mode = 0;
@@ -125,6 +137,10 @@ private:
          * (specs/signal.md): the status waits for the whole line. */
         uint32_t done = 0;
         uint64_t status = 0;
+        /* The line's foreground pids (specs/process.md): what Ctrl-C sets **C**
+         * on. Filled by a second `line` call once the shell's launch answer has
+         * them. */
+        std::vector<uint64_t> pids;
     };
 
     Stream* find(uint64_t caller);

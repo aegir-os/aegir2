@@ -101,11 +101,20 @@ constexpr uint32_t kStreamMethodSize = 10;
  *  terminal shows the window and takes no more input. */
 constexpr uint32_t kStreamMethodBootFail = 11;
 
-/** Announce a line and its stage count (specs/signal.md). In: the number of
- *  stages the line has. The shell owns the line, so the shell says how many;
- *  the terminal reports `pipeline exited` from it rather than from a spawn it
- *  may no longer perform. Answer: nothing. */
+/** Announce a line: its stage count, and the pid of each stage (specs/signal.md,
+ *  specs/process.md). In: the stage count, then -- when the shell has them --
+ *  one pid per stage. The shell owns the line, so the shell says how many; the
+ *  terminal reports `pipeline exited` from it rather than from a spawn it may
+ *  no longer perform. The shell announces the count before its first command
+ *  starts (the command bracket and the completion cue need it), and the pids
+ *  once the launch answer has them, so the terminal's Ctrl-C knows which
+ *  foreground pids to set **C** on. Answer: nothing. */
 constexpr uint32_t kStreamMethodLine = 12;
+
+/** The status a command aborted by a Break **C** reports (specs/process.md
+ *  decision 3): a distinguished nonzero code, so the shell renders `***BREAK`
+ *  in place of a return-code line. 20 is the Amiga's `ERROR_BREAK`. */
+constexpr uint64_t kBreakStatus = 20;
 
 /** A stream's discipline. Cooked owns the line editor; raw delivers keys as
  *  bytes, and a program that wants an editor's control reads raw and draws

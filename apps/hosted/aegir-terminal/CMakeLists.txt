@@ -20,6 +20,11 @@ if(AEGIR_TOOLKIT)
 
   target_compile_options(aegir-terminal-app PRIVATE -Wall -Wextra -Werror)
 
+  # The process registry's wire (specs/process.md), by include alone: Ctrl-C
+  # sets **C** through it, and the header is freestanding while this is hosted.
+  target_include_directories(aegir-terminal-app PRIVATE
+      ${CMAKE_SOURCE_DIR}/libs/freestanding/aegir-process/include)
+
   # The bureau's link shape: the hosted policy (libc++), the toolkit, the
   # runtime, and the console window protocol it speaks. aegir-heap is the
   # hosted runtime's file layer, which std::filesystem and the shell's Dir and

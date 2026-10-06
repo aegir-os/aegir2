@@ -96,9 +96,14 @@ Context caller_context()
     return context;
 }
 
-extern "C" int aegir_launch_request(uint32_t method, uint64_t const *words,
-                                    uint32_t count) noexcept
+extern "C" int aegir_launch_request_badges(uint32_t method, uint64_t const *words,
+                                           uint32_t count, uint64_t *badges,
+                                           uint32_t badge_capacity,
+                                           uint32_t *badge_count) noexcept
 {
+    if (badge_count != nullptr) {
+        *badge_count = 0;
+    }
     aegir::ipc::Consumer const port = launcher();
     if (!port.valid()) {
         return -1;
@@ -110,13 +115,31 @@ extern "C" int aegir_launch_request(uint32_t method, uint64_t const *words,
      * its own. */
     aegir::ipc::Consumer const stream = aegir::ipc::Consumer::find(
         aegir::console::kStreamPortName, aegir::console::kStreamPortNameLength);
-    uint64_t answer[1] = {};
+    /* The answer is the started word, then one pid per started command
+     * (specs/launch.md); the width is the envelope's, so the reply takes the
+     * whole of it. */
+    uint64_t answer[aegir::ipc::kMaxWords] = {};
     aegir::ipc::WordsReply const reply = port.call_transfer(
-        method, words, count, stream.capability(), answer, 1, nullptr);
-    if (reply.error != 0 || reply.count != 1) {
+        method, words, count, stream.capability(), answer, aegir::ipc::kMaxWords,
+        nullptr);
+    if (reply.error != 0 || reply.count < 1) {
         return -1;
     }
+    if (badges != nullptr && badge_count != nullptr) {
+        uint32_t const have = reply.count > 1 ? reply.count - 1 : 0;
+        uint32_t const take = have < badge_capacity ? have : badge_capacity;
+        for (uint32_t i = 0; i < take; ++i) {
+            badges[i] = answer[1 + i];
+        }
+        *badge_count = take;
+    }
     return answer[0] == 1 ? 1 : 0;
+}
+
+extern "C" int aegir_launch_request(uint32_t method, uint64_t const *words,
+                                    uint32_t count) noexcept
+{
+    return aegir_launch_request_badges(method, words, count, nullptr, 0, nullptr);
 }
 
 bool spawn(char const *argv, uint32_t argv_length, uint64_t kind, char const *window,
@@ -172,7 +195,7 @@ bool spawn_serve(char const *argv, uint32_t argv_length, seL4_CPtr endpoint,
 
 bool command(char const *argv, uint32_t argv_length, char const *std_in,
              uint32_t std_in_length, char const *std_out, uint32_t std_out_length,
-             bool background)
+             bool background, uint64_t *badge_out)
 {
     Context const context = caller_context();
     uint64_t out[aegir::ipc::kMaxWords];
@@ -187,10 +210,16 @@ bool command(char const *argv, uint32_t argv_length, char const *std_in,
         !put_stack(out, words, context)) {
         return false;
     }
-    return aegir_launch_request(kMethodSpawn, out, words) == 1;
+    if (badge_out != nullptr) {
+        *badge_out = 0;
+    }
+    uint32_t count = 0;
+    return aegir_launch_request_badges(kMethodSpawn, out, words, badge_out,
+                                       badge_out != nullptr ? 1 : 0, &count) == 1;
 }
 
-bool pipeline(Stage const *stages, uint32_t count)
+bool pipeline(Stage const *stages, uint32_t count, uint64_t *badges,
+              uint32_t badge_capacity, uint32_t *badge_count)
 {
     if (count == 0) {
         return false;
@@ -211,7 +240,8 @@ bool pipeline(Stage const *stages, uint32_t count)
     if (!put_context(out, words, context) || !put_stack(out, words, context)) {
         return false;
     }
-    return aegir_launch_request(kMethodPipeline, out, words) == 1;
+    return aegir_launch_request_badges(kMethodPipeline, out, words, badges,
+                                       badge_capacity, badge_count) == 1;
 }
 
 extern "C" int aegir_spawn(char *const argv[], char const *std_in, char const *std_out,

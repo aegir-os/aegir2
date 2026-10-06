@@ -861,12 +861,21 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"launcher: command started more",
                 events=TERMINAL_CLICK,
-                # q is the key more waits for; the rename line queued behind it
-                # runs once more exits -- the terminal hands it to the shell.
-                # The rename is same-directory: the volume protocol has no
-                # cross-directory rename yet (specs/vfs.md).
-                press="qrename Home:DosTest/AEGIR.TXT Home:DosTest/MOVED.TXT\n",
+                # more waits on a key read, so Ctrl-C is the console's Break
+                # (specs/process.md Phase 4): the terminal sets **C** on more's
+                # pid and the enforced halt takes it back, and the rename line
+                # queued behind runs once the shell reports the break -- the
+                # terminal hands it to the shell. The rename is same-directory:
+                # the volume protocol has no cross-directory rename yet
+                # (specs/vfs.md).
+                press="<ctrl-c>rename Home:DosTest/AEGIR.TXT Home:DosTest/MOVED.TXT\n",
             ),
+            # The terminal set **C** on the foreground pid (its cue), and the
+            # shell saw the break status and rendered `***BREAK` in place of a
+            # return-code line (its own serial cue). No press -- the next cue
+            # follows when the queued rename starts.
+            QmpStep(r"terminal: break \d+"),
+            QmpStep(r"shell: \*\*\*BREAK"),
             QmpStep(
                 r"launcher: command started rename",
                 dumps=("gpu0",),
