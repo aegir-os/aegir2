@@ -1749,9 +1749,19 @@ void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t 
     uint64_t const offset = words[1];
     uint64_t wanted = words[2];
     uint64_t const frame_offset = words[3];
+    uint32_t const frame_bits =
+        count >= 5 ? static_cast<uint32_t>(words[4]) : aegir::volume::kFrameBitsMin;
+    if (frame_bits < aegir::volume::kFrameBitsMin ||
+        frame_bits > aegir::volume::kFrameBitsMax) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        port.reply_words(nullptr, 0);
+        return;
+    }
+    uint64_t const frame_size = 1ull << frame_bits;
     if (handle == nullptr ||
         (handle->kind != kHandleRead && handle->kind != kHandleFile) ||
-        frame_offset >= aegir::volume::kFrameBytes ||
+        frame_offset >= frame_size ||
         !read(handle->dirent_sector, 1)) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
@@ -1766,7 +1776,7 @@ void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t 
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const room = aegir::volume::kFrameBytes - frame_offset;
+    uint64_t const room = frame_size - frame_offset;
     if (wanted > room) {
         wanted = room;
     }
@@ -1774,14 +1784,24 @@ void answer_read_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t 
      * through a slot of our own -- the map is what names it, and a move first
      * would be one more kernel call per page. The slot is emptied after. */
     seL4_CPtr const frame = aegir::bootstrap::kSlotReceiveCap;
-    if (!g_map_window.map_at(g_map_base, frame)) {
+    uintptr_t address = g_map_base;
+    if (frame_bits > aegir::volume::kFrameBitsMin) {
+        void *const window = g_map_window.map_large(frame);
+        if (window == nullptr) {
+            seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
+                              aegir::bootstrap::kCNodeBits);
+            port.reply_words(nullptr, 0);
+            return;
+        }
+        address = reinterpret_cast<uintptr_t>(window);
+    } else if (!g_map_window.map_at(g_map_base, frame)) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
                           aegir::bootstrap::kCNodeBits);
         port.reply_words(nullptr, 0);
         return;
     }
     uint64_t const filled =
-        read_into(dirent, offset, wanted, reinterpret_cast<char *>(g_map_base) + frame_offset);
+        read_into(dirent, offset, wanted, reinterpret_cast<char *>(address) + frame_offset);
     g_map_window.unmap(frame);
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
     uint64_t const answer[aegir::volume::kReadHeaderWords] = {
