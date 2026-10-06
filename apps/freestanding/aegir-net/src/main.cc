@@ -188,10 +188,15 @@ int main(int argc, char *argv[])
     aegir::lwip::set_heap_source(heap_source, nullptr);
     aegir::lwip::set_objects(g_objects, g_account);
     static aegir::thread::Builder builder(g_objects, g_scratch, g_account);
+    /* The tcpip thread faults to the same endpoint as this service's own thread
+     * (`kSlotFaultEndpoint`, the one our spawner installed, badged with our
+     * badge): a thread fault is then *reported* to our supervisor exactly as the
+     * process's own fault is, instead of dying silently where no one hears it
+     * (specs/services.md's lifecycle, specs/userland.md's threading). */
     aegir::thread::Placement const where{
         aegir::bootstrap::kSlotOwnCNode,
         static_cast<seL4_CPtr>(vspace_slot),
-        seL4_CapNull,
+        aegir::bootstrap::kSlotFaultEndpoint,
         seL4_MaxPrio - 1,
         kTcpipStackPages,
     };

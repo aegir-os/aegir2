@@ -42,9 +42,12 @@ struct Placement {
      *  seL4_CapInitThreadVSpace; a service was granted it under the name
      *  `vspace` (specs/services.md). */
     seL4_CPtr vspace_root;
-    /** Where the thread's faults are delivered, in the caller's CSpace, or
-     *  seL4_CapNull for none: a service has no fault endpoint of its own, and
-     *  a fault is then not reported anywhere. */
+    /** Where the thread's faults are delivered, in the caller's CSpace. A
+     *  service passes its own fault endpoint (`bootstrap::kSlotFaultEndpoint`,
+     *  the one its spawner installed, badged with its badge), so a thread it
+     *  starts faults to the same supervisor the process itself does -- a thread
+     *  is not a process, and a fault in one still has to be reported. Null only
+     *  for a caller with no fault endpoint to share. */
     seL4_CPtr fault_endpoint;
     /** The priority the thread runs at. A fresh TCB has zero, so this must be
      *  set for the thread to be scheduled at all among its peers; it may not

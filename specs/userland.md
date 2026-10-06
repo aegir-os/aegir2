@@ -100,6 +100,13 @@ gets for free, and the symptoms of missing them point somewhere else entirely:
   is *not* how either of these reaches the thread's context -- see below.
 - **A stack that does not overlap the TLS block**: the block sits at the top of the
   thread's stack pages and the stack pointer starts below it.
+- **The process's fault endpoint.** A thread is not a process, but a fault in one
+  still has to be *reported*: pass `bootstrap::kSlotFaultEndpoint` -- the endpoint
+  the spawner installed, badged with the process's badge -- as the thread's
+  `fault_endpoint`, so its fault reaches the same supervisor the process's own
+  thread does. With null the fault goes nowhere: the kernel prints a double-fault
+  dump and the thread stops, which is a *silent* death for a service whose work
+  runs in that thread (specs/net.md's tcpip thread faulted exactly this way).
 
 **Set `tp` and `gp` in the user context, not beside it.** `seL4_TCB_WriteRegisters`
 writes the *whole* user context. Calling `seL4_TCB_SetTLSBase` first and then

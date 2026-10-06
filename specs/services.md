@@ -436,7 +436,9 @@ registration. The names are different because the mechanisms are.
   in the order the manifest's `needs` graph gives.
 - **Ready** is the service's own report, sent when it has what it needs.
 - **Fault** goes to the fault endpoint its spawner installed, badged with the
-  offender.
+  offender -- and a fault in a *thread* the service started comes the same way,
+  because that thread is given the process's own fault endpoint (`aegir/thread.h`),
+  so the supervisor names the service the thread belongs to, not the thread.
 - **Restart** is the manifest's policy, applied by that spawner: `always`,
   `on-fault` or `never`, with backoff.
 - **Failure propagates along `needs`.** The graph that fixes creation order is
