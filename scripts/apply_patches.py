@@ -93,13 +93,47 @@ def apply_all(check_only: bool) -> int:
     return 1 if failures else 0
 
 
+def revert_all() -> int:
+    """Undo the Aegir patches this tree carries, so a vendored tree is clean at
+    its pin again.
+
+    An applied patch is a local change, and `repo sync` refuses to check out a
+    pinned revision over one -- so `make deps` re-runs by reversing the patches
+    first and re-applying them after the sync (they are Aegir's, not the
+    vendored projects'). A patch that is not applied, or a project that is not
+    there yet, is skipped."""
+    failures = 0
+    for component, patch in pins.patches():
+        repository = pins.ROOT / component
+        relative = patch.relative_to(pins.ROOT)
+        if not repository.is_dir() or not is_applied(component, patch):
+            continue
+        result = pins.git(
+            pins.ROOT, "apply", "--reverse", "--directory", component, str(patch),
+            check=False,
+        )
+        if result.returncode != 0:
+            pins.report(False, f"{relative} could not be reversed", component)
+            failures += 1
+        else:
+            pins.report(True, f"reversed {relative}", component)
+    return 1 if failures else 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--check", action="store_true", help="verify patches are applied, change nothing"
     )
+    parser.add_argument(
+        "--reverse",
+        action="store_true",
+        help="undo the patches this tree carries, so `repo sync` can re-run",
+    )
     arguments = parser.parse_args(argv)
     try:
+        if arguments.reverse:
+            return revert_all()
         return apply_all(arguments.check)
     except pins.PinError as exc:
         pins.report(False, "patch application failed", str(exc))

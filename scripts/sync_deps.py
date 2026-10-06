@@ -124,6 +124,12 @@ def main(argv: list[str]) -> int:
     try:
         if not arguments.record_only:
             init(arguments.force)
+            # A tree carrying Aegir's patches is dirty by design, and `repo sync`
+            # will not check out a pinned revision over a local change. Reverse
+            # them first -- they are re-applied below -- so `make deps` is
+            # re-runnable. A tree with none applied (or none fetched yet) is
+            # left alone.
+            run([sys.executable, str(PATCH_SCRIPT), "--reverse"])
             sync(arguments.force)
         record()
         if not arguments.record_only:
