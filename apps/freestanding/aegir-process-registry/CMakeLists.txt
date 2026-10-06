@@ -16,5 +16,6 @@ target_compile_options(aegir-process-registry PRIVATE -Wall -Wextra -Werror)
 
 target_link_libraries(
   aegir-process-registry PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc
-                                 aegir-mem aegir-process sel4 muslc sel4runtime
+                                 aegir-launch-protocol aegir-mem aegir-process sel4 muslc
+                                 sel4runtime
 )

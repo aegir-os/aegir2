@@ -52,6 +52,15 @@ constexpr uint32_t kMethodRegister = 4;
  *  A process leaves when it is gone, so its exit is what sends this. */
 constexpr uint32_t kMethodUnregister = 5;
 
+/** Name the release port of a spawner's children (specs/process.md's Phase 3
+ *  halt). In: the spawner's own badge -- the `parent` a registration records;
+ *  the call's one capability is the spawner's `launch.session` caller half. The
+ *  registry keeps one such port per spawner and calls it (`kMethodHalt`) when a
+ *  `break` C must take a process the cooperative source cannot reach back; a
+ *  spawner that names none forgoes the enforced halt, and C is a flag alone.
+ *  Answer: one word, 1 named and 0 refused. */
+constexpr uint32_t kMethodOwner = 6;
+
 /** The attention flags (specs/process.md). C is the default: the flag Ctrl-C
  *  sets, and the one that aborts. D halts a running script file. E and F are
  *  reserved. */
@@ -73,6 +82,10 @@ constexpr uint64_t kBreakSet = 1;
 /** What `register` and `unregister` answer. */
 constexpr uint64_t kProcessRefused = 0;
 constexpr uint64_t kProcessAdded = 1;
+
+/** What `owner` answers. */
+constexpr uint64_t kOwnerRefused = 0;
+constexpr uint64_t kOwnerNamed = 1;
 
 /** How much of a name and a path a Row holds, NUL-terminated within its field.
  *  The envelope's room, not a name bound: a longer one is truncated for the

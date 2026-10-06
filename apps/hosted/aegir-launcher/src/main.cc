@@ -319,6 +319,21 @@ void handle_release(aegir::spawn::ServiceKit &service, uint64_t const *words, ui
     reply[0] = static_cast<uint64_t>(service.release(words[0]));
 }
 
+/* Halt a command the registry is breaking (kMethodHalt): the same teardown as
+ * release, but the registry removes the row, so this side does not unregister --
+ * a synchronous unregister here would call back into the registry while it waits
+ * on this call (specs/process.md Phase 3). */
+void handle_halt(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
+                 uint64_t *reply, uint32_t *reply_count)
+{
+    reply[0] = 0;
+    *reply_count = 1;
+    if (count < 1) {
+        return;
+    }
+    reply[0] = static_cast<uint64_t>(service.halt(words[0]));
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -451,6 +466,8 @@ int main(int argc, char *argv[])
             handle_pipeline(service, words, count, cap_arrived, reply, &reply_count);
         } else if (method == aegir::launch::kMethodRelease) {
             handle_release(service, words, count, reply, &reply_count);
+        } else if (method == aegir::launch::kMethodHalt) {
+            handle_halt(service, words, count, reply, &reply_count);
         } else {
             reply[0] = 0;
             reply_count = 1;

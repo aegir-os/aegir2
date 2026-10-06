@@ -272,6 +272,11 @@ public:
      * carries, 1 for a command that held the caller's line, 2 for a background
      * `Run` -- so the stream that saw the exit can report it apart. */
     int release(uint64_t badge);
+    /* The same teardown without the unregister (specs/process.md Phase 3): what
+     * the registry's `break` C asks for. The registry removes the row itself, so
+     * a synchronous unregister here would call back into the registry while it
+     * waits on this call and deadlock. Answers as `release` does. */
+    int halt(uint64_t badge);
     bool live() const { return !live_.empty(); }
 
     /* A launcher's commands write to a stream it was handed, not to one it
@@ -341,6 +346,10 @@ private:
                       std::string const *cwd);
 
     uint64_t own_badge_ = 0;
+    /* Whether this spawner has named its release port to the registry (its
+     * Phase 3 halt; specs/process.md). Named once, lazily, the first time it
+     * registers a child, so a break C can take a stuck child back. */
+    bool owner_named_ = false;
     /* The shell's own badge, reserved once by reserve_shell_badge
      * (specs/process.md). */
     uint64_t shell_badge_ = 0;

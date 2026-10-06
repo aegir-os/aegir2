@@ -331,6 +331,13 @@ void ServiceKit::register_child(uint64_t badge, std::string const &name,
         return;
     }
     aegir::ipc::Consumer const registry(kit_.process_registry);
+    /* Name this spawner's release port once (specs/process.md's Phase 3): the
+     * registry calls it to halt a process a Break C cannot reach through its
+     * source. A launcher with no caller half -- a boot session's terminal --
+     * names none, and C stops at the flag. */
+    if (!owner_named_ && kit_.launch != 0) {
+        owner_named_ = aegir::process::name_owner(registry, own_badge_, kit_.launch);
+    }
     (void)aegir::process::register_process(registry, badge, own_badge_, name.c_str(),
                                            static_cast<uint32_t>(name.size()), path.c_str(),
                                            static_cast<uint32_t>(path.size()), source);

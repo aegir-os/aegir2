@@ -195,6 +195,17 @@ Rights rights_for(PortGraph::Name name) noexcept
          * half here -- a mint keeps only what its source holds. */
         return Rights{seL4_CanRead, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "process.registry", 16)) {
+        /* A registration transfers the child's break source (specs/process.md's
+         * Phase 2), and a spawner transfers its release port (Phase 3), on the
+         * call -- and nothing transfers unless the cap the sender invokes
+         * carries Grant (kernel/src/kernel/thread.c:212-218). A mint keeps only
+         * what its source holds, so the right has to begin at the caller half
+         * director hands a spawner. The owner answers in words, but holds
+         * everything a caller's mint derives (the bureau.menu reason): a
+         * spawner's own half is minted from this one by its delegator. */
+        return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 

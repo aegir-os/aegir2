@@ -111,6 +111,18 @@ constexpr uint32_t kMethodPipeline = 21;
  *  report the exit as the line's own or apart from it (specs/terminal.md). */
 constexpr uint32_t kMethodRelease = 22;
 
+/** Halt one command the registry is breaking (specs/process.md's Phase 3). The
+ *  owner takes it back exactly as `release` does -- suspend it, release its
+ *  memory, return its pool slots -- but **without** unregistering it, because
+ *  the registry, which is breaking it, removes the row itself: a synchronous
+ *  unregister here would call back into the registry while the registry waits
+ *  on this very call, and the two would deadlock. Fields after the method:
+ *
+ *    badge         one word: the command's pid
+ *
+ *  Answer: one word -- as `release`'s, 0 for a badge no live command carries. */
+constexpr uint32_t kMethodHalt = 23;
+
 }  // namespace aegir::launch
 
 #endif  // AEGIR_LAUNCH_H

@@ -113,6 +113,31 @@ inline bool unregister_process(aegir::ipc::Consumer const &registry, uint64_t pi
     return answer.error == 0 && answer.count >= 1 && reply[0] == kProcessAdded;
 }
 
+/** Name the release port a spawner's children can be halted through
+ *  (specs/process.md's Phase 3): `owner_badge` is the spawner's own badge (the
+ *  `parent` it records), and `port` is its `launch.session` caller half. One
+ *  call per spawner; the registry keeps the capability and calls it to take a
+ *  stuck process back on `break` C. False when there is no registry, no port, or
+ *  it refused. */
+inline bool name_owner(aegir::ipc::Consumer const &registry, uint64_t owner_badge,
+                       seL4_CPtr port) noexcept
+{
+    if (!registry.valid() || port == 0) {
+        return false;
+    }
+    uint64_t request[1] = {owner_badge};
+    uint64_t reply[1] = {0};
+    bool cap_received = false;
+    aegir::ipc::WordsReply const answer = registry.call_transfer(
+        kMethodOwner, request, 1, port, reply, 1, &cap_received);
+    if (cap_received) {
+        /* The registry does not answer with a capability; clear anything that
+         * arrived so the next transfer is not refused an occupied slot. */
+        aegir::ipc::drop_received_cap();
+    }
+    return answer.error == 0 && answer.count >= 1 && reply[0] == kOwnerNamed;
+}
+
 }  // namespace aegir::process
 
 #endif  // AEGIR_PROCESS_CLIENT_H

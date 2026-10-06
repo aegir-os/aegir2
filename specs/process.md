@@ -247,8 +247,18 @@ one-shot system process, not an inherited right).
    is inert until a freestanding idle wait exists, and Phase 3's halt reaches
    them by TCB owner instead; and the status is not yet what the shell renders
    `***BREAK` for (Phase 4).
-3. **The enforced halt.** `break` C also asks the TCB's owner to take the
-   process back, so a program blocked in a single call dies.
+3. **The enforced halt.** Landed. A spawner names its release port once -- its
+   `launch.session` caller half, keyed by its own badge (`kMethodOwner`) -- and
+   the registry keeps it. On `break` C, besides signalling the source, the
+   registry calls `kMethodHalt` on that port; the owner takes the process back --
+   suspend, release its memory by badge, return its slots -- **without**
+   unregistering, because a synchronous unregister would call back into the
+   registry while it waits on the halt, and the registry removes the row itself.
+   A spawner that named no port (the boot spawners) forgoes it, and C stays the
+   flag. The owner's caller half must carry **Grant**, or the port never crosses
+   the call -- the same right Phase 2's source transfer needs, and the reason the
+   default `process.registry` rights (GrantReply+Write, no Grant) had silently
+   dropped every registration's capability until the halt exposed it.
 4. **The key.** The `line` method carries the line's pids; the terminal sets C
    on Ctrl-C; the shell prints `***BREAK`; D halts a frame.
 
@@ -258,10 +268,11 @@ one-shot system process, not an inherited right).
   small `aegir-process` of its own, or an existing one (the fault supervisor,
   or `auth`, which already mints identity)? Proposed: its own service, declared
   in the manifest, started by director, so nothing existing grows a second job.
-- **The enforced halt's road to the TCB.** The registry holds no TCB; the
-  launcher and the boot supervisor do. Whether the registry asks the TCB's
-  owner by a call, or is handed a "take back" capability at registration, is
-  the one mechanism this spec leaves open.
+- **The enforced halt's road to the TCB.** Decided (Phase 3): the owner names
+  its release port once, keyed by its badge, and the registry calls it
+  (`kMethodHalt`). The "take-back capability per registration" alternative was
+  not taken -- the pid travels as a word, so one port per spawner serves every
+  child it starts, with no second call and no per-row capability.
 - **Registration of a freestanding service's metadata.** The kit registers it,
   but the kit's register call carries the process's own source as its one
   capability; a process with no source registers metadata alone, which needs a
