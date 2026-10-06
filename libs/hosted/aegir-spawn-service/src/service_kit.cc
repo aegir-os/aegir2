@@ -336,11 +336,15 @@ void ServiceKit::register_child(uint64_t badge, std::string const &name, std::st
 }
 
 bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
-                             uint32_t cwd_length, uint64_t badge,
-                             char const *const *arguments, uint32_t argument_count)
+                             uint32_t cwd_length, char const *const *arguments,
+                             uint32_t argument_count)
 {
     if (!ready_ || shell_pool_ == 0 || allocator_ == nullptr) {
         aegir::debug_write("  spawn: shell spawn: not ready\n");
+        return false;
+    }
+    if (shell_badge_ == 0 && reserve_shell_badge() == 0) {
+        aegir::debug_write("  spawn: shell spawn: no badge for the shell\n");
         return false;
     }
     /* The shell's pool is its own runtime untyped: dedicated, so it is handed
@@ -354,7 +358,7 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
                                   static_cast<seL4_CPtr>(aegir::bootstrap::kSlotOwnCNode),
                                   endpoint_depth());
     aegir::spawn::Child child{};
-    child.badge = badge;
+    child.badge = shell_badge_;
     child.runtime = shell_pool_;
     child.runtime_bits = shell_pool_bits_;
     aegir::spawn::PortGrant ports[6];
@@ -395,7 +399,7 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
     request.ports = ports;
     request.port_count = port_count;
     request.fault_endpoint = fault_endpoint_;
-    request.badge = badge;
+    request.badge = shell_badge_;
     request.give_vspace = true;
     /* The pool's physical is not known to us, and only a driver needs it; zero
      * is the "not given" the block and the allocator accept. */
@@ -416,7 +420,7 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
     }
     /* The shell is in the live set (specs/process.md): this process is its
      * spawner, and the last image load's path is where its binary came from. */
-    register_child(badge, std::string(kName), image_path_);
+    register_child(shell_badge_, std::string(kName), image_path_);
     return true;
 }
 

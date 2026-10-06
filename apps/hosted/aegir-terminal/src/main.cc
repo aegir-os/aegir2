@@ -65,11 +65,9 @@ static bool g_hold_requested = false;
 
 namespace {
 
-/* The shell's stream, keyed by this number: the shell's con.stream copy is
- * badged with it, and so is every command's, so all of them share one stream
- * (specs/terminal.md). Not a badge the kernel minted, just a key inside the
- * handler. */
-constexpr uint64_t kShellStream = 1;
+/* The shell's stream is keyed by the badge it was given -- `shell_badge`,
+ * reserved below from this terminal's delegated range (specs/process.md) -- so
+ * the shell is a process of its own and not a key shared with another. */
 
 /* Clear of the test bed's windows, the demo, and the screen bar's samples. */
 constexpr int kWindowX = 40;
@@ -113,6 +111,20 @@ int main(int argc, char *argv[])
     } else {
         write("  terminal: no spawn kit -- no shell, no commands\n");
     }
+
+    /* The identity and range the session delegated (specs/launch.md): the
+     * terminal is a launcher-shaped service, so its shell is a process of the
+     * session's class and the shell's own badge comes from that range. */
+    uint64_t own_badge = 0;
+    if (!aegir::bootstrap::badge(&own_badge)) {
+        own_badge = 0;
+    }
+    spawn_kit.adopt_identity(own_badge);
+
+    /* The shell's own badge (specs/process.md): reserved from that range,
+     * before any key can arrive, so the stream server below keys the shell by
+     * it. */
+    uint64_t const shell_badge = kit ? spawn_kit.reserve_shell_badge() : 0;
 
     aegir::ipc::Consumer const gui = aegir::ipc::Consumer::find(
         aegir::console::kPortName, aegir::console::kPortNameLength);
@@ -201,13 +213,13 @@ int main(int argc, char *argv[])
      * cued by it sees the view rather than the frame before it. */
     bool read_only = false;
     bool announce_view = false;
-    terminal->on_key = [&server, &pending_keys, &read_only](KeyEvent const &event) {
+    terminal->on_key = [&server, &pending_keys, &read_only, shell_badge](KeyEvent const &event) {
         if (read_only) {
             return false;
         }
-        LineEditor *const editor = server.editor(kShellStream);
+        LineEditor *const editor = server.editor(shell_badge);
         bool const ready =
-            editor != nullptr && (editor->editing() || server.in_command(kShellStream));
+            editor != nullptr && (editor->editing() || server.in_command(shell_badge));
         /* Hold the key when the shell has not begun its prompt yet (or is
          * between commands), and also when earlier keys are still held: a key
          * fed straight to the editor would otherwise overtake one on_poll has
@@ -216,11 +228,11 @@ int main(int argc, char *argv[])
         if (!ready || !pending_keys.empty()) {
             pending_keys.push_back(event);
             if (server.on_wake) {
-                server.on_wake(kShellStream);
+                server.on_wake(shell_badge);
             }
             return true;
         }
-        return server.on_key(kShellStream, event);
+        return server.on_key(shell_badge, event);
     };
 
     /* One buffer for every image the terminal reads, kept across commands: its
@@ -461,14 +473,14 @@ int main(int argc, char *argv[])
          * reaches. So the replay stops at the end of the line it fed and
          * resumes on the next poll, once the shell has begun the next prompt. */
         while (!pending_keys.empty()) {
-            LineEditor *const editor = server.editor(kShellStream);
-            bool const command = server.in_command(kShellStream);
+            LineEditor *const editor = server.editor(shell_badge);
+            bool const command = server.in_command(shell_badge);
             if (editor == nullptr || (!editor->editing() && !command)) {
                 return;
             }
             KeyEvent const event = pending_keys.front();
             pending_keys.erase(pending_keys.begin());
-            (void)server.on_key(kShellStream, event);
+            (void)server.on_key(shell_badge, event);
             if (!command && !editor->editing()) {
                 return;
             }
@@ -513,7 +525,7 @@ int main(int argc, char *argv[])
                     argument_count = 1;
                 }
                 if (!spawn_kit.spawn_shell(image.data(), image.size(), cwd.c_str(),
-                                           static_cast<uint32_t>(cwd.size()), kShellStream,
+                                           static_cast<uint32_t>(cwd.size()),
                                            arguments, argument_count)) {
                     write("  terminal: FAIL the shell would not start\n");
                 } else {

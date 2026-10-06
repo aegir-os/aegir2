@@ -115,6 +115,12 @@ constexpr uint64_t kBootBadge = 769;
  * namespace *copy* is minted for kBootBadge, the principal whose Sys:/C: it and
  * its commands resolve. */
 constexpr uint64_t kBootLauncherBadge = 770;
+/* The boot terminal's serial range (specs/process.md, specs/launch.md): the
+ * shell it starts is a process of its own, and its badge comes from here --
+ * past the boot launcher's command serials (0x1000+), so the two do not collide
+ * in the registry. */
+constexpr uint64_t kBootShellBase = 0x2000;
+constexpr uint64_t kBootShellCount = 0x400;
 
 /* The namespace as auth speaks it, and the slot a home resolve's capability
  * lands in -- one slot, deleted after each use, so a login does not spend
@@ -1831,12 +1837,16 @@ void start_session(uint32_t user, bool bureau) noexcept
          * (i = 0) is already counted by the `1` when there are no services. */
         direct_badges = service_count + 1;
 
-        /* The launcher's badge and the range it hands its children
-         * (specs/launch.md): the serials past the session's own children, so no
-         * two of a session's processes share one. */
+        /* The launcher's badge and the serial ranges the session hands out
+         * (specs/launch.md, specs/process.md): the serials past the session's
+         * own children. A launcher-shaped service (a terminal that starts its
+         * shell) takes one serial each from the low end -- `range_base + i`,
+         * where its shell's badge comes from -- and the launcher's own range
+         * starts past those, so a shell and a command never share a badge. */
         uint64_t const launcher_badge =
             aegir::ipc::make_user_badge(user, serial + service_count);
         uint32_t const range_base = serial + service_count + 1;
+        uint32_t const launcher_range_base = range_base + service_count + 1;
 
         for (uint32_t i = 0; i < service_count; ++i) {
             uint64_t const service_badge = aegir::ipc::make_user_badge(user, serial + i);
@@ -1844,7 +1854,7 @@ void start_session(uint32_t user, bool bureau) noexcept
             /* The namespace is the session's (`badge`), not the service's own:
              * every program of the session resolves through one badged copy
              * (specs/session.md), so only the session's aliases exist. */
-            if (spawn_service(services[i], user, range_base, service_badge, badge,
+            if (spawn_service(services[i], user, range_base + i, service_badge, badge,
                               launch_port, spawner, session_account, &supervision)) {
                 write("      auth: session.");
                 write(services[i].name);
@@ -1874,7 +1884,7 @@ void start_session(uint32_t user, bool bureau) noexcept
         launcher_kit.nmspace = g_kit_nmspace_slot;
         static char const kHomeCwd[] = "Home:";
         char const *const launcher_environment[1] = {
-            badge_range_env(range_base, aegir::ipc::kSessionSerialStride - 3)};
+            badge_range_env(launcher_range_base, aegir::ipc::kSessionSerialStride - 3)};
         LauncherSpec launcher_spec{};
         launcher_spec.badge = launcher_badge;
         launcher_spec.namespace_badge = badge;
@@ -2079,7 +2089,6 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
      * itself would succeed, which is how the failure path is exercised
      * (specs/boot.md). */
     static char const kEnvFail[] = "AEGIR_BOOTARGS=aegir.fail";
-    static char const *const kBootEnvironment[] = {kEnvFail};
     uint32_t flags_length = 0;
     char const *const flags = aegir::bootstrap::boot_flags(&flags_length);
     bool force_fail = false;
@@ -2093,10 +2102,17 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
         }
         force_fail = same;
     }
+    /* The boot terminal's serial range, always (specs/process.md): its shell
+     * takes a badge of its own from it. The firmware's `aegir.fail` rides
+     * beside it when set. */
+    char const *boot_environment[2] = {badge_range_env(kBootShellBase, kBootShellCount),
+                                       nullptr};
+    uint32_t boot_environment_count = 1;
     if (force_fail) {
-        request.environment = kBootEnvironment;
-        request.environment_count = 1;
+        boot_environment[boot_environment_count++] = kEnvFail;
     }
+    request.environment = boot_environment;
+    request.environment_count = boot_environment_count;
     request.priority = seL4_MaxPrio - 2;
     request.ports = ports;
     request.port_count = port_count;

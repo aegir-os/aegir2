@@ -315,6 +315,27 @@ uint64_t ServiceKit::take_badge()
     return 0x1000 + command_serial_++;
 }
 
+uint64_t ServiceKit::reserve_shell_badge()
+{
+    if (shell_badge_ != 0) {
+        return shell_badge_;
+    }
+    if (have_range()) {
+        /* A serial of this process's own range: a user badge for a session's
+         * terminal, a plain system serial for the boot terminal's, which auth
+         * gave a range past the boot launcher's command serials so the two do
+         * not collide in the registry (specs/process.md). */
+        uint64_t const serial = next_badge_++;
+        shell_badge_ =
+            aegir::ipc::is_user_badge(own_badge_)
+                ? aegir::ipc::make_user_badge(aegir::ipc::user_index(own_badge_), serial)
+                : serial;
+    } else {
+        shell_badge_ = take_badge();
+    }
+    return shell_badge_;
+}
+
 uint32_t ServiceKit::take_owner()
 {
     return static_cast<uint32_t>(++owner_serial_);

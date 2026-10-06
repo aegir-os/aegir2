@@ -120,14 +120,21 @@ public:
     /* Where a command's faults arrive. Tier 1 does not read it. */
     seL4_CPtr fault_endpoint() const { return fault_endpoint_; }
 
+    /* The shell's own badge (specs/process.md): reserved once, from the range
+     * this process was delegated, so the shell is a process the registry names
+     * and a Break can reach -- not a stream key shared with another. The
+     * terminal keys its stream server by it, so it must reserve it before the
+     * shell starts. Zero when there is no range and no free badge. */
+    uint64_t reserve_shell_badge();
+
     /* The shell process: spawned once from auth's `shell-pool`, not pooled and
      * reclaimed like a command, because it lives as long as its terminal. It
-     * runs on `badge` -- the stream key its con.stream copy carries -- and the
-     * terminal serves it like any other client. `arguments` are what follow
-     * argv[0] (specs/environment.md): for the boot session, the command file
-     * the shell is to run. */
+     * runs on the badge reserve_shell_badge returned -- the key its con.stream
+     * copy carries -- and the terminal serves it like any other client.
+     * `arguments` are what follow argv[0] (specs/environment.md): for the boot
+     * session, the command file the shell is to run. */
     bool spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
-                     uint32_t cwd_length, uint64_t badge, char const *const *arguments,
+                     uint32_t cwd_length, char const *const *arguments,
                      uint32_t argument_count);
 
     /* The launcher kit a child is built from: true when an unbadged console.gui
@@ -314,6 +321,9 @@ private:
                       std::string const *cwd);
 
     uint64_t own_badge_ = 0;
+    /* The shell's own badge, reserved once by reserve_shell_badge
+     * (specs/process.md). */
+    uint64_t shell_badge_ = 0;
     uint64_t badge_base_ = 0;
     uint64_t badge_size_ = 0;
     uint64_t next_badge_ = 0;
