@@ -37,6 +37,25 @@ bounded only by the machine, and an operator adds a rule when they want one
 (`specs/auth.md`); the rules live in `Sys:S/limits.manifest`; the authority
 model (`specs/authority.md`) is why there is no cap until one is asked for.
 
+### A program's size is never bounded by the process that starts it
+
+The starter's own pools are **floors, never ceilings**: a spawner needs memory
+enough to *ask*, never enough to *hold* its child. Three walls have already
+shown the shape of getting this wrong -- a run of frames laid down in one
+`seL4_Untyped_Retype` met the kernel's 256-object fan-out limit; a command's
+capabilities lived in a single L2 CNode and stopped at 4096; a C++ program's
+global constructors allocated before its heap existed. Each is "the child's
+size leaked into its starter", and the reflex -- enlarge a constant -- is the
+one `AGENTS.md` forbids.
+
+So no constant on a spawn path is a ceiling. A command's pool is sized from its
+image (`ServiceKit::command_cnode_count`), not a fixed bracket; the allocator
+lays a run down in chunks at the kernel's fan-out limit; the loader maps a large
+segment's bulk as mega pages so the count of capabilities does not grow with
+`size / 4 KiB` either. The only ceiling is `mem.main`, which is the machine. A
+number may be a *floor* -- a seed, a default, a reserved minimum -- and
+`specs/limits.md` is the one place a deliberate cap belongs.
+
 ## The service
 
 A service, `memory`, owns one large untyped covering most of the machine and
