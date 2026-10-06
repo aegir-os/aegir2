@@ -6,8 +6,16 @@
 # into an ordinary Aegir hosted program -- the in-process driver of Phase 3 --
 # so only the static libraries are needed, not the stock clang/lld executables.
 # That also sidesteps teaching LLVM's own CMake to link Aegir hosted programs:
-# no executable is produced here, and the driver is linked by Aegir's CMake,
-# which already knows the sel4runtime crt and the runtime's libraries.
+# the driver is linked by Aegir's CMake, which already knows the sel4runtime crt
+# and the runtime's libraries.
+#
+# clang's and lld's libraries live under tools/ (tools/clang/lib, tools/lld/lib),
+# so LLVM_INCLUDE_TOOLS must stay ON or there is no clangFrontend at all --
+# LLVM_BUILD_TOOLS=OFF and CLANG_BUILD_TOOLS=OFF are what keep the *executables*
+# out of `all`, which is the part that matters. A tree built with
+# LLVM_INCLUDE_TOOLS=OFF configures happily, names no clang library, and fails
+# only at the install check below -- and a stale llvm-install hides even that,
+# so only a from-scratch build finds it.
 #
 # Only the RISCV backend is built, against the already-built full musl and
 # libc++ (scripts/build_musl.sh, scripts/build_libcxx.sh). Host tablegen comes
@@ -100,10 +108,10 @@ cmake "${LLVM_PROJECT}/llvm" \
     -DCMAKE_ASM_FLAGS="${CFLAGS}" \
     -DCMAKE_CROSSCOMPILING=ON \
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-    -DCMAKE_EXE_LINKER_FLAGS="" \
+    -DCMAKE_EXE_LINKER_FLAGS="-nostdlib -L${MUSL_INSTALL}/lib -Wl,--unresolved-symbols=ignore-all" \
     -DLLVM_ENABLE_PROJECTS="clang;lld" \
     -DLLVM_TARGETS_TO_BUILD="RISCV" \
-    -DLLVM_INCLUDE_TOOLS=OFF \
+    -DLLVM_INCLUDE_TOOLS=ON \
     -DLLVM_INCLUDE_UTILS=OFF \
     -DLLVM_BUILD_UTILS=OFF \
     -DLLVM_BUILD_TOOLS=OFF \
@@ -133,13 +141,29 @@ cmake "${LLVM_PROJECT}/llvm" \
     -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_APPEND_VC_REV=OFF
 
-# Every link uses the pinned lld (LLVM_USE_LINKER above). The system GNU ld
-# cannot link RISC-V at all, and the one executable `all` carries -- the
-# target-side `llvm-tblgen`, which add_tablegen adds unconditionally even with
-# LLVM_BUILD_TOOLS=OFF -- would otherwise fail to link and block every archive
-# that waits on it (a fresh tree did exactly that: "cannot make progress", and
-# libclangFrontend.a never built). With lld it links, as a RISC-V binary that
-# is never run: generation uses the host's llvm-tblgen through LLVM_TABLEGEN.
+# The one executable `all` carries is the target-side `llvm-tblgen`, which
+# utils/TableGen adds unconditionally and registers `EXPORT LLVM`, so not even
+# LLVM_BUILD_UTILS=OFF excludes it. It is never run -- generation uses the
+# host's llvm-tblgen through LLVM_TABLEGEN -- but it is linked, and a
+# riscv64-unknown-linux-musl link wants the target's crt and its
+# libstdc++/libgcc, which no such sysroot provides: the errors are `cannot open
+# crtbeginS.o` and `unable to find library -lstdc++`, `-lgcc_s`, `-lgcc`.
+#
+# CMAKE_EXE_LINKER_FLAGS above is three things, each for a wall a fresh tree hit
+# in turn:
+#   -nostdlib      drop the crt and the -lstdc++/-lgcc* clang adds for the
+#                  triple; an unresolved symbol is fine, the binary never runs
+#   -L${MUSL_INSTALL}/lib
+#                  LLVM's LLVM_SYSTEM_LIBS still names -lrt/-ldl/-lm, and clang
+#                  searches the *host* library directories first, so lld reads
+#                  an x86-64 libm and refuses the RISC-V objects ("incompatible
+#                  with elf64-x86-64"). musl installs those three as empty
+#                  archives, so the target's own lib directory must come first
+#                  and they resolve to RISC-V
+#   --unresolved-symbols=ignore-all
+#                  let the objects' remaining C++/libc symbols stand
+# No *tool* executable is built: LLVM_BUILD_TOOLS and CLANG_BUILD_TOOLS are off,
+# so the only executable `all` links is the target-side llvm-tblgen above.
 # `-k 0` stays as a belt -- the archives are what the driver links, and it
 # builds everything else even if one step will not.
 cmake --build . -- -k 0 -j"$(nproc)" || true
