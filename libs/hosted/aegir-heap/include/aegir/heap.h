@@ -65,6 +65,13 @@ long vsyscall(long sysnum, ...) noexcept;
 bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
           uint64_t bytes) noexcept;
 
+/** The attention flags a pending Break set on this process, or zero when none
+ *  (specs/process.md). The process's own break source carries the flags as its
+ *  signal badge; the runtime polls it before it blocks on input, and a program
+ *  that acts on a flag -- the shell on **D** -- takes them here between its own
+ *  operations. Taking them clears them; the runtime itself only aborts on C. */
+uint64_t take_break_flags() noexcept;
+
 /** The file layer's syscalls (files.cc). read-frame has no libc shape -- it
  *  hands a page capability to the volume -- so it is named here rather than
  *  reached through musl; everything else a caller needs is a libc call. */

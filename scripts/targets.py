@@ -971,17 +971,23 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"terminal: command exited 42",
                 events=TERMINAL_CLICK,
-                # Newshell (specs/launch.md): the shell asks the launcher for a
-                # nested terminal -- a kind-3 launch. The launcher mints it its
-                # own console.gui (so it has its own window and slice), hands it
-                # the session's namespace and the unbadged kit it needs, carves
-                # its runtime and shell pool from the memory service under the
-                # terminal's badge, and gives it a reserved badge range, so it
-                # stands up as a peer with its own shell. The arguments exercise
-                # the Amiga words: WINDOW= is the new window's own specification,
-                # and FROM names the startup file its shell runs in place of
-                # Shell-Startup. It is the last thing typed here, because the
-                # new window takes the focus.
+                # **D** halts a frame (specs/process.md Phase 4): CtrlD-Test's
+                # first line breaks the shell itself with D, and the shell --
+                # which the registry signals with the flag -- drops the frame
+                # between its operations, so the file's second line never runs.
+                press="execute Sys:S/CtrlD-Test\n",
+            ),
+            # The shell halted the frame (its cue). Then Newshell
+            # (specs/launch.md): the shell asks the launcher for a nested
+            # terminal -- a kind-3 launch -- with its own console.gui and window,
+            # the session's namespace, the unbadged kit, and a reserved badge
+            # range, so it stands up as a peer with its own shell. `WINDOW=` is
+            # the new window's own specification and `FROM` names the startup
+            # file its shell runs in place of Shell-Startup. It is the last
+            # thing typed here, because the new window takes the focus.
+            QmpStep(
+                r"shell: D, halting the frame",
+                events=TERMINAL_CLICK,
                 press="newshell WINDOW=CON:32/32/560/360/Nested FROM Sys:S/Nested-Startup\n",
             ),
             QmpStep(r"terminal: nested window"),

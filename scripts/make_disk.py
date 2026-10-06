@@ -201,6 +201,12 @@ AEGIR_BFS_TREE = [
         # the bureau before registering its menus, so starting it here -- beside
         # the terminal, synchronously with the interactive loop -- is safe.
         ("file", "Shell-Startup", b"alias l list\nRun gui-demo\n"),
+        # The **D** flag (specs/process.md Phase 4): the frame's first line breaks
+        # the shell itself with D, so the shell halts the frame and the second
+        # line never runs.
+        ("file", "CtrlD-Test",
+         b"break x name session.shell d\naegir-echo CtrlD-not-reached\n"),
+        
         # The session's services, as data (specs/session.md): auth reads the
         # user's Home:S/session.manifest first, then this. `authority` is always
         # user -- a session service runs as the session's user class, never the

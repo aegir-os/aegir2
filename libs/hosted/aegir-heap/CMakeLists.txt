@@ -26,4 +26,9 @@ project(aegir-heap CXX)
 add_library(aegir-heap STATIC src/heap.cc src/files.cc src/time.cc)
 
 target_include_directories(aegir-heap PUBLIC include)
+# The process registry's wire (specs/process.md), by include alone: the break
+# flags the runtime reads are the attention flags. The public header names none
+# of them, so this is private.
+target_include_directories(aegir-heap PRIVATE
+    ${CMAKE_SOURCE_DIR}/libs/freestanding/aegir-process/include)
 target_link_libraries(aegir-heap PUBLIC aegir-cxx-policy aegir-mem aegir-runtime aegir-thread aegir-vfs-client aegir-clock aegir-timer-protocol aegir-console-protocol aegir-memory-protocol aegir-network musl_full)

@@ -56,6 +56,7 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/network.h>
+#include <aegir/process.h>
 #include <aegir/thread.h>
 #include <errno.h>
 #include <sched.h>
@@ -629,33 +630,37 @@ seL4_CPtr break_source() noexcept
     return source;
 }
 
-/* The status a process aborted by C exits with (specs/process.md): a
- * distinguished nonzero code, so the shell can render `***BREAK` in place of a
- * return-code line. 20 is the Amiga's ERROR_BREAK; the shell learns the code in
- * Phase 4. */
-constexpr int kBreakStatus = 20;
-
 void report_exit(int status) noexcept;
 
-/* Whether a break is pending on this process's source: one non-blocking poll
- * (seL4_NBRecv), made before the runtime blocks on input -- the idle wait, where
- * a program is about to wait for the world (specs/process.md Phase 2). It is one
- * syscall per input read and none per output write, so a command that only
- * prints is never polled. A thread already blocked inside a call is not reached,
- * and the source is not bound to the TCB (a process has one bound notification,
- * and the console event channel owns it) -- that case is the halt's, Phase 3. */
-bool break_pending() noexcept
+/* The attention flags a break has signalled since the program last took them
+ * (specs/process.md). The signal's badge lands in `sender` and *is* the flags --
+ * the registry mints the source with them -- so a poll reads them and clears the
+ * notification; they are latched here until the program takes them, so a poll
+ * the runtime makes does not swallow a flag only the program can act on. */
+static uint64_t g_break_flags = 0;
+
+/* Poll the process's own break source, latching any flags it carries. One
+ * non-blocking syscall (seL4_NBRecv); a process with no source polls nothing.
+ * This is the idle wait's check (specs/process.md Phase 2): the runtime makes it
+ * before it blocks on input, and a program that acts on a flag makes it between
+ * its own operations. */
+static void refresh_break() noexcept
 {
     seL4_CPtr const source = break_source();
     if (source == 0) {
-        return false;
+        return;
     }
-    /* The signal's badge lands in `sender`; the registry mints the source with a
-     * nonzero badge, so a zero badge is an empty poll (notifications.tex,
-     * "Notification Badges"). */
     seL4_Word badge = 0;
     (void)seL4_Poll(source, &badge);
-    return badge != 0;
+    g_break_flags |= badge;
+}
+
+uint64_t take_break_flags() noexcept
+{
+    refresh_break();
+    uint64_t const flags = g_break_flags;
+    g_break_flags = 0;
+    return flags;
 }
 
 /* A redirected standard stream (specs/shell.md): the spawner put a path in the
@@ -741,10 +746,12 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
  * has no stdin. Any other fd is a file. */
 long sys_read(int fd, void *buffer, size_t length) noexcept
 {
-    /* A pending break aborts at the stream boundary before the read blocks in
-     * its call (specs/process.md Phase 2). */
-    if (break_pending()) {
-        report_exit(kBreakStatus);
+    /* The idle wait's check (specs/process.md): a **C** aborts the process where
+     * it is about to block on input. D, E and F are latched for the program to
+     * act on (take_break_flags) -- the shell halts its frame on D. */
+    refresh_break();
+    if ((g_break_flags & aegir::process::kAttnC) != 0) {
+        report_exit(static_cast<int>(aegir::console::kBreakStatus));
     }
     if (network::owns(fd)) {
         return network::recvfrom(fd, buffer, length, 0, nullptr, nullptr);

@@ -365,13 +365,16 @@ ServiceKit::BreakSource ServiceKit::make_break_source(aegir::mem::Allocator &obj
     if (made.notification == 0) {
         return made;
     }
-    /* The badge is what the child's poll reads: an unbadged signal would read as
-     * an empty poll, so the registry's copy is minted with a nonzero one. */
+    /* The registry's copy is minted **unbadged**: the registry re-badges it
+     * with the attention flags when it signals (specs/process.md), and the
+     * kernel refuses to re-badge a notification cap whose badge is already set
+     * (kernel/src/object/objecttype.c:409-414). Write only -- a signal is all
+     * the registry needs. */
     seL4_CPtr const slot = objects.alloc_slot();
     if (slot != 0 &&
         seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot, endpoint_depth(),
                         aegir::bootstrap::kSlotOwnCNode, made.notification,
-                        endpoint_depth(), seL4_CapRights_new(0, 0, 0, 1), 1) ==
+                        endpoint_depth(), seL4_CapRights_new(0, 0, 0, 1), 0) ==
             seL4_NoError) {
         made.source = slot;
     }

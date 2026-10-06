@@ -23,6 +23,7 @@
 #include <aegir/launch_client.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/process.h>
 #include <aegir/script/condition.h>
 #include <aegir/script/interpreter.h>
 #include <sel4/sel4.h>
@@ -396,6 +397,19 @@ public:
     void loop()
     {
         for (;;) {
+            /* A Break's attention flags (specs/process.md), taken between the
+             * shell's own operations -- where a program acts on a flag. **D**
+             * halts the running frame, the same act `Quit` is; **C** aborts the
+             * shell itself. */
+            uint64_t const flags = aegir::heap::take_break_flags();
+            if ((flags & aegir::process::kAttnC) != 0) {
+                aegir::debug_write("  shell: C, exiting\n");
+                std::_Exit(static_cast<int>(aegir::console::kBreakStatus));
+            }
+            if ((flags & aegir::process::kAttnD) != 0 && !frames_.empty()) {
+                aegir::debug_write("  shell: D, halting the frame\n");
+                frames_.abort();
+            }
             if (busy_) {
                 uint64_t status = 0;
                 if (aegir::console::stream_command_status(port_, &status)) {

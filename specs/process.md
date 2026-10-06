@@ -245,8 +245,7 @@ one-shot system process, not an inherited right).
    deleted capability. Still to come: the boot spawners (director, auth), whose
    children are freestanding and have no runtime wait to poll -- a source there
    is inert until a freestanding idle wait exists, and Phase 3's halt reaches
-   them by TCB owner instead; and the status is not yet what the shell renders
-   `***BREAK` for (Phase 4).
+   them by TCB owner instead.
 3. **The enforced halt.** Landed. A spawner names its release port once -- its
    `launch.session` caller half, keyed by its own badge (`kMethodOwner`) -- and
    the registry keeps it. On `break` C, besides signalling the source, the
@@ -259,19 +258,20 @@ one-shot system process, not an inherited right).
    the call -- the same right Phase 2's source transfer needs, and the reason the
    default `process.registry` rights (GrantReply+Write, no Grant) had silently
    dropped every registration's capability until the halt exposed it.
-4. **The key.** Landed for **C**. The `line` method carries the line's pids
-   (the shell announces them once the launcher's answer has them); the terminal
-   sets **C** on the foreground pids on Ctrl-C, through its own
-   `process.registry` caller half; and the shell renders **`***BREAK`** in place
-   of a return-code line for the break status. A background `Run` announced no
-   line, so it is untouched, and a pipeline's every stage is broken, not one.
-   The enforced halt takes the command back, so no stream exit reaches the shell
-   -- the terminal, which holds the line's pids, hands it the break status
-   itself. **D** (a process halting the shell's own frame) is not landed: the
-   break source carries no flag, because the registry signals the one capability
-   whatever the flag, so a process cannot yet tell C from D. That wants a
-   flag-carrying signal -- the registry minting a flag-badged copy to signal, and
-   the runtime surfacing the flag rather than exiting on any of them.
+4. **The key.** Landed. The `line` method carries the line's pids (the shell
+   announces them once the launcher's answer has them); the terminal sets **C**
+   on the foreground pids on Ctrl-C, through its own `process.registry` caller
+   half; and the shell renders **`***BREAK`** in place of a return-code line.
+   A background `Run` announced no line, so it is untouched, and a pipeline's
+   every stage is broken, not one. The enforced halt takes the command back, so
+   no stream exit reaches the shell -- the terminal, which holds the pids, hands
+   it the break status itself. **D** is the shell's: the registry signals the
+   break source with the **attention flags as the badge** (a notification's
+   message identifier is what a poll reads, so the registry mints a flag-badged
+   copy, signals it, and drops it), the runtime latches the flags and aborts only
+   on **C**, and the shell -- taking them between its own operations, which is
+   where a program acts on a flag -- halts its running frame on D, the same act
+   `Quit` is. E and F are reserved, and only the shell acts on D.
 
 ## Open, for review
 

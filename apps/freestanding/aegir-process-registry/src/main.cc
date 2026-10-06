@@ -82,6 +82,31 @@ bool set_owner(Owner *owners, uint32_t *count, uint32_t capacity, uint64_t badge
     return true;
 }
 
+/* Signal a process's break source with the attention flags as its badge
+ * (specs/process.md): a notification's message identifier is what the process's
+ * poll reads, so the flag has to ride the capability's badge. The registry
+ * mints a flag-badged copy, signals it, and drops it -- the notification
+ * outlives the capability, and the flag stays set on it until the process
+ * polls. A signal already pending is ORed with the new one, so C then D reads
+ * as both. The stored source is unbadged, which is what lets it be re-badged
+ * (kernel/src/object/objecttype.c:409-414). */
+void signal_flags(seL4_CPtr source, uint64_t flags) noexcept
+{
+    seL4_CPtr const slot = g_slots.alloc_slot();
+    if (slot == 0) {
+        return;
+    }
+    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot,
+                        aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
+                        source, aegir::bootstrap::cnode_bits(),
+                        seL4_CapRights_new(0, 0, 0, 1), flags) != seL4_NoError) {
+        return;
+    }
+    seL4_Signal(slot);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                      aegir::bootstrap::cnode_bits());
+}
+
 /* Ask the owner of `owner_badge` to take `pid` back (specs/process.md's Phase
  * 3); false when no port was named, so C is a flag alone. Calling out is safe:
  * the owner's halt does not call back into this service. */
@@ -289,34 +314,37 @@ int main(int argc, char *argv[])
 
         if (method == aegir::process::kMethodBreak && written >= 1 &&
             reply[0] == aegir::process::kBreakSet && count >= 2) {
-            /* C is the abort: signal the process's break source, which its
-             * runtime waits on and exits on (specs/process.md's cooperative
-             * half), and -- for a process that never returns to that wait -- ask
-             * its owner to take it back (the halt). D, E and F are flags only.
-             * Say what was broken, the way a registration is said. */
+            /* Signal the process's break source with the flags, which its
+             * runtime reads and acts on (specs/process.md's cooperative half):
+             * C aborts it, D is the shell halting its frame, E and F are
+             * reserved. For C -- a process that never returns to its wait -- ask
+             * its owner to take it back (the halt). Say what was broken, the way
+             * a registration is said. */
             uint64_t const pid = words[0];
             uint64_t const flags = words[1] & aegir::process::kAttnAll;
             aegir::process::Row const *const row = table.find(pid);
-            if (row != nullptr && (flags & aegir::process::kAttnC) != 0) {
+            if (row != nullptr && flags != 0) {
                 seL4_CPtr const source = sources[static_cast<uint32_t>(row - rows)];
                 if (source != 0) {
-                    seL4_Signal(source);
+                    signal_flags(source, flags);
                 }
-                bool const halted = halt_owner(owners, owner_count, row->parent, pid);
-                if (halted) {
-                    /* The process is taken back, so say it: a run can see the
-                     * enforced halt land, and it is the cue a Break of a stuck
-                     * process leaves. */
-                    write("  process: halted ");
-                    write_word(pid);
-                    write("\n");
-                    /* The owner's halt does not unregister -- a synchronous
-                     * unregister would call back into this service while it
-                     * waits on the halt call -- so the registry removes the row.
-                     * With no owner named, C is only the flag and the source
-                     * (and the spawner's own release will unregister), so the
-                     * row stays until then. */
-                    drop_row(table, rows, sources, pid);
+                if ((flags & aegir::process::kAttnC) != 0) {
+                    bool const halted = halt_owner(owners, owner_count, row->parent, pid);
+                    if (halted) {
+                        /* The process is taken back, so say it: a run can see the
+                         * enforced halt land, and it is the cue a Break of a
+                         * stuck process leaves. */
+                        write("  process: halted ");
+                        write_word(pid);
+                        write("\n");
+                        /* The owner's halt does not unregister -- a synchronous
+                         * unregister would call back into this service while it
+                         * waits on the halt call -- so the registry removes the
+                         * row. With no owner named, C is only the flag and the
+                         * source (and the spawner's own release will
+                         * unregister), so the row stays until then. */
+                        drop_row(table, rows, sources, pid);
+                    }
                 }
             }
             write("  process: break ");

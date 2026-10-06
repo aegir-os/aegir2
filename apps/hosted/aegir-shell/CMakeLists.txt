@@ -18,6 +18,11 @@ if(AEGIR_HOSTED_CXX)
 
   target_compile_options(aegir-shell PRIVATE -Wall -Wextra -Werror)
 
+  # The process registry's wire (specs/process.md), by include alone: the shell
+  # acts on the D and C attention flags its break source carries.
+  target_include_directories(aegir-shell PRIVATE
+      ${CMAKE_SOURCE_DIR}/libs/freestanding/aegir-process/include)
+
   target_link_libraries(
     aegir-shell PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap aegir-runtime
                         aegir-bootstrap aegir-console-protocol aegir-launch aegir-environment
