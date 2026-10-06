@@ -66,6 +66,37 @@ inline bool register_process(aegir::ipc::Consumer const &registry, uint64_t pid,
     return answer.error == 0 && answer.count >= 1 && reply[0] == kProcessAdded;
 }
 
+/** Register one process and hand the registry its **break source** as the
+ *  call's one capability (specs/process.md): the spawner minted it from the
+ *  child's notification, so `break` can wake the child. `source` of zero
+ *  registers metadata alone -- a process the caller gives no way to wake, which
+ *  the enforced halt (Phase 3) still reaches. */
+inline bool register_process(aegir::ipc::Consumer const &registry, uint64_t pid,
+                             uint64_t parent, char const *name, uint32_t name_length,
+                             char const *path, uint32_t path_length,
+                             seL4_CPtr source) noexcept
+{
+    if (!registry.valid()) {
+        return false;
+    }
+    Row row{};
+    row.pid = pid;
+    row.parent = parent;
+    detail::set_field(row.name, sizeof(row.name), name, name_length);
+    detail::set_field(row.path, sizeof(row.path), path, path_length);
+    uint64_t reply[1] = {0};
+    bool cap_received = false;
+    aegir::ipc::WordsReply const answer = registry.call_transfer(
+        kMethodRegister, reinterpret_cast<uint64_t const *>(&row), kRowWords, source,
+        reply, 1, &cap_received);
+    if (cap_received) {
+        /* The registry does not answer with a capability; clear anything that
+         * arrived so the next transfer is not refused an occupied slot. */
+        aegir::ipc::drop_received_cap();
+    }
+    return answer.error == 0 && answer.count >= 1 && reply[0] == kProcessAdded;
+}
+
 }  // namespace aegir::process
 
 #endif  // AEGIR_PROCESS_CLIENT_H

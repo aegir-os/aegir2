@@ -78,8 +78,16 @@ int main(int argc, char *argv[])
         uint64_t words[aegir::ipc::kMaxWords];
         uint32_t count = 0;
         seL4_Word badge = 0;
-        uint32_t const method =
-            port.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+        bool cap_arrived = false;
+        uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
+                                                   &badge, &cap_arrived);
+        /* A registration may carry the process's break source as the call's one
+         * capability (specs/process.md). Phase 2 stores and signals it; until
+         * that lands it is accepted and dropped, so a caller that sends one is
+         * never left with an occupied scratch slot. */
+        if (cap_arrived) {
+            aegir::ipc::drop_received_cap();
+        }
         uint64_t reply[aegir::ipc::kMaxWords];
         uint32_t const written =
             table.handle(method, words, count, badge, reply, aegir::ipc::kMaxWords);
