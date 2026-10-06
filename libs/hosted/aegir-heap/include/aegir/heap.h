@@ -40,6 +40,7 @@
 
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/volume.h>
 #include <stdint.h>
 
 namespace aegir::heap {
@@ -78,7 +79,8 @@ namespace files {
  *  number of bytes read, or a negative errno -- EIO when the volume refuses,
  *  EBADF when the fd is not a readable file with a handle. */
 long read_frame(int fd, uint64_t offset, uint64_t frame_offset, uint64_t length,
-                seL4_CPtr frame) noexcept;
+                seL4_CPtr frame,
+                uint32_t frame_bits = aegir::volume::kFrameBitsMin) noexcept;
 
 }  // namespace files
 

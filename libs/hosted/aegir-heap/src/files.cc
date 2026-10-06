@@ -743,7 +743,7 @@ long pread(int fd, void *buffer, size_t count, long offset) noexcept
  * a message. The fd must carry a read handle -- the shape an open for reading
  * takes -- because the method names one. */
 long read_frame(int fd, uint64_t offset, uint64_t frame_offset, uint64_t length,
-                seL4_CPtr frame) noexcept
+                seL4_CPtr frame, uint32_t frame_bits) noexcept
 {
     Entry *entry = entry_for(fd);
     if (entry == nullptr || !entry->readable || entry->directory || entry->handle == 0 ||
@@ -753,7 +753,8 @@ long read_frame(int fd, uint64_t offset, uint64_t frame_offset, uint64_t length,
     uint64_t count = 0;
     bool eof = false;
     if (!aegir::vfs::Volume(entry->volume)
-             .read_frame(entry->handle, offset, length, frame_offset, frame, count, eof)) {
+             .read_frame(entry->handle, offset, length, frame_offset, frame, frame_bits,
+                         count, eof)) {
         return -EIO;
     }
     return static_cast<long>(count);
@@ -1514,7 +1515,7 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
                 uint64_t got = 0;
                 bool eof = false;
                 if (!source.read_frame(in->handle, position, aegir::volume::kFrameBytes, 0,
-                                       frame, got, eof) ||
+                                       frame, aegir::volume::kFrameBitsMin, got, eof) ||
                     got == 0) {
                     break;
                 }

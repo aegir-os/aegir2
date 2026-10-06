@@ -122,25 +122,36 @@ constexpr uint32_t kMethodReadHandle = 23; /* in: handle, offset, max; answer: c
 constexpr uint32_t kMethodSpace = 24;
 
 /* read-frame: the bulk form of a read (specs/vfs.md's recorded scaling path).
- * Words: a handle, the offset in the file, how many bytes to read, and how far
- * into the frame they land. One capability rides beside the words: a 4 KiB
- * frame of the caller's own, which the filesystem maps, writes `min(length,
- * kFrameBytes - frame_offset)` bytes of the file into at `frame_offset`,
- * unmaps, and answers with read's header alone -- count and eof, no bytes.
+ * Words: a handle, the offset in the file, how many bytes to read, how far into
+ * the frame they land, and the frame's size in bits. One capability rides
+ * beside the words: a frame of the caller's own, which the filesystem maps at
+ * that size, writes `min(length, frame_size - frame_offset)` bytes of the file
+ * into at `frame_offset`, unmaps, and answers with read's header alone -- count
+ * and eof, no bytes.
  *
- * A 4 KiB read is one call here against five of the inline `read` it replaces,
- * and the bytes never cross the message. The frame is the caller's, mapped
- * transiently by the filesystem inside the one synchronous call, so no window
- * is shared between clients and the block layer's "the window belongs to the
- * most recent call" caveat does not apply. `frame_offset` exists because an
- * ELF segment need not start on a page boundary: the loader maps the page the
- * segment is in and puts the bytes at the offset within it. Answer: count,
- * eof (kReadHeaderWords words). */
-constexpr uint32_t kMethodReadFrame = 25; /* in: handle, offset, count, frame offset; + 1 frame cap */
+ * The frame is usually one 4 KiB page (`kFrameBitsMin`), but a loader mapping a
+ * large segment's aligned bulk names a 2 MiB mega page (`kFrameBitsMax`): one
+ * call then brings in 2 MiB where 512 calls brought in 512 pages, and the child
+ * holds one capability where it held 512. The size is the caller's word, so a
+ * filesystem that only knows 4 KiB is asked only for 4 KiB -- the extra word
+ * is backward-compatible, and a four-word request means `kFrameBitsMin`.
+ *
+ * The frame is the caller's, mapped transiently by the filesystem inside the
+ * one synchronous call, so no window is shared between clients and the block
+ * layer's "the window belongs to the most recent call" caveat does not apply.
+ * `frame_offset` exists because an ELF segment need not start on a page
+ * boundary: the loader maps the page the segment is in and puts the bytes at
+ * the offset within it. Answer: count, eof (kReadHeaderWords words). */
+constexpr uint32_t kMethodReadFrame = 25; /* in: handle, offset, count, frame offset, frame bits; + 1 frame cap */
 
-/** The frame a read-frame call fills: one 4 KiB page, the same size the window
- *  path's unit is built on (specs/vfs.md). */
+/** The frame a read-frame call fills unless it names a bigger one: one 4 KiB
+ *  page, the same size the window path's unit is built on (specs/vfs.md). */
 constexpr uint32_t kFrameBytes = 1u << 12;
+
+/** The frame sizes a read-frame call may name: a 4 KiB page up to a 2 MiB mega
+ *  page. The smaller is the default a four-word request implies. */
+constexpr uint32_t kFrameBitsMin = 12;
+constexpr uint32_t kFrameBitsMax = 21;
 
 /* write-frame: read-frame's mirror. Words: a handle, how many bytes to write,
  * and how far into the frame they start. One capability rides beside the words:

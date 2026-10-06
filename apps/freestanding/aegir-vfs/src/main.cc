@@ -1713,10 +1713,14 @@ void union_read_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t 
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const payload[4] = {row->member_handle, words[1], words[2], words[3]};
+    /* Carry the frame size through too, so a mega-page call survives the union:
+     * a four-word request (an older caller) means the 4 KiB default. */
+    uint64_t const payload[5] = {
+        row->member_handle, words[1], words[2], words[3],
+        count >= 5 ? words[4] : aegir::volume::kFrameBitsMin};
     uint64_t answer[aegir::ipc::kMaxWords];
     uint32_t const reply_count =
-        member_transfer_call(member, badge, aegir::volume::kMethodReadFrame, payload, 4,
+        member_transfer_call(member, badge, aegir::volume::kMethodReadFrame, payload, 5,
                              g_carry_slot, answer, aegir::ipc::kMaxWords);
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_carry_slot,
                       aegir::bootstrap::kCNodeBits);

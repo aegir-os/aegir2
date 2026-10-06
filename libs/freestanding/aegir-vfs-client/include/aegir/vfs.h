@@ -158,15 +158,17 @@ public:
      * instead of into this Volume (volume::kMethodReadFrame): the bulk form of
      * a read, one call per page where `read`/`read_handle` need several. Up to
      * `capacity` bytes of the file at `offset` land in the frame starting
-     * `frame_offset` bytes in; the filesystem maps the frame for the one call
-     * and unmaps it before answering, so the bytes never cross a message and
-     * nothing of the caller's outlives the call. False when the volume refuses
-     * or has no window (a filesystem that does not serve read-frame). `count`
-     * is how many bytes were read and `eof` whether the file ends there.
+     * `frame_offset` bytes in; the frame is `frame_bits` wide (a 4 KiB page, or
+     * a 2 MiB mega page for a loader mapping a large segment's bulk). The
+     * filesystem maps the frame for the one call and unmaps it before
+     * answering, so the bytes never cross a message and nothing of the caller's
+     * outlives the call. False when the volume refuses or has no window (a
+     * filesystem that does not serve read-frame). `count` is how many bytes
+     * were read and `eof` whether the file ends there.
      */
     bool read_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
-                    uint64_t frame_offset, seL4_CPtr frame, uint64_t &count,
-                    bool &eof) noexcept;
+                    uint64_t frame_offset, seL4_CPtr frame, uint32_t frame_bits,
+                    uint64_t &count, bool &eof) noexcept;
 
     /** read-frame's mirror: write up to `capacity` bytes of `frame` at the
      *  handle's cursor (volume::kMethodWriteFrame). */

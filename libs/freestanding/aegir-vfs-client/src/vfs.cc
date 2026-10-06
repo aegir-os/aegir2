@@ -320,13 +320,17 @@ bool Volume::read_handle(uint64_t handle, uint64_t offset, uint64_t capacity,
 }
 
 bool Volume::read_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
-                        uint64_t frame_offset, seL4_CPtr frame, uint64_t &count,
-                        bool &eof) noexcept
+                        uint64_t frame_offset, seL4_CPtr frame, uint32_t frame_bits,
+                        uint64_t &count, bool &eof) noexcept
 {
-    uint64_t const wanted = capacity < volume::kFrameBytes ? capacity : volume::kFrameBytes;
-    uint64_t request[4] = {handle, offset, wanted, frame_offset};
+    if (frame_bits < volume::kFrameBitsMin || frame_bits > volume::kFrameBitsMax) {
+        return false;
+    }
+    uint64_t const frame_size = 1ull << frame_bits;
+    uint64_t const wanted = capacity < frame_size ? capacity : frame_size;
+    uint64_t request[5] = {handle, offset, wanted, frame_offset, frame_bits};
     aegir::ipc::WordsReply const reply =
-        port_.call_transfer(volume::kMethodReadFrame, request, 4, frame, reply_,
+        port_.call_transfer(volume::kMethodReadFrame, request, 5, frame, reply_,
                             aegir::ipc::kMaxWords, nullptr);
     if (reply.error != 0 || reply.count < volume::kReadHeaderWords) {
         return false;
