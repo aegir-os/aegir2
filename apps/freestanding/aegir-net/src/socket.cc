@@ -967,6 +967,12 @@ struct ResolveArg {
     char *name;
     uint32_t timeout;
     volatile bool answered;
+    /* How many answers are still expected: lwIP's DNS callback, and our own
+     * timeout. lwIP's callback cannot be cancelled (only `sys_untimeout` can
+     * cancel ours), so the struct must outlive *both* -- freeing it when the
+     * first answer arrives leaves the second to fire on freed memory, whose
+     * `held` is then whatever reused it and `seL4_Send` faults (specs/net.md). */
+    volatile int pending;
 };
 
 void resolve_finish(ResolveArg *resolve) noexcept
@@ -979,8 +985,15 @@ void resolve_finish(ResolveArg *resolve) noexcept
  * the tcpip thread. */
 void resolve_answer(ResolveArg *resolve, uint64_t address) noexcept
 {
-    if (!__atomic_exchange_n(&resolve->answered, true, __ATOMIC_ACQ_REL)) {
+    bool const first = !__atomic_exchange_n(&resolve->answered, true, __ATOMIC_ACQ_REL);
+    if (first) {
         answer_held(resolve->held, address);
+    }
+    /* Each source reports once. The struct is freed only when every source that
+     * can still fire has -- the DNS callback and the timeout are independent, and
+     * a `resolve_answer` the other source makes later must find the struct alive
+     * (it answers nothing, but it must not read freed memory). */
+    if (__atomic_sub_fetch(&resolve->pending, 1, __ATOMIC_ACQ_REL) == 0) {
         resolve_finish(resolve);
     }
 }
@@ -1003,12 +1016,18 @@ void do_resolve(void *argument) noexcept
     ip_addr_t address;
     err_t const result = dns_gethostbyname(resolve->name, &address, dns_found, resolve);
     if (result == ERR_OK) {
+        resolve->pending = 1; /* answered here; no callback, no timeout */
         resolve_answer(resolve, ip_word(&address));
     } else if (result != ERR_INPROGRESS) {
+        resolve->pending = 1;
         resolve_answer(resolve, 0);
-    } else if (resolve->timeout != 0) {
-        sys_timeout(resolve->timeout, resolve_timeout, resolve);
-        /* ERR_INPROGRESS: dns_found answers, or the timeout does. */
+    } else {
+        /* ERR_INPROGRESS: lwIP's callback answers, and our timeout does too when
+         * one was asked for; each reports once (resolve_answer). */
+        resolve->pending = resolve->timeout != 0 ? 2 : 1;
+        if (resolve->timeout != 0) {
+            sys_timeout(resolve->timeout, resolve_timeout, resolve);
+        }
     }
 }
 
@@ -1580,6 +1599,9 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
                 resolve->name = name;
                 resolve->timeout = timeout;
                 resolve->answered = false;
+                /* `do_resolve` sets the real count before any callback can fire;
+                 * this is what the failure path below answers with. */
+                resolve->pending = 1;
                 if (!in_tcpip(do_resolve, resolve)) {
                     resolve_answer(resolve, 0);
                 }

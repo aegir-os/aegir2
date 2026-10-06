@@ -212,6 +212,14 @@ SOCK_RAW, IPPROTO_ICMP)` answers an id, `send` puts an echo request on the wire,
 `recv` holds until an echo reply arrives, and `close` frees it; `resolve` turns a
 name into an address.
 
+`resolve` is a held reply with **two** possible answerers -- lwIP's DNS callback
+and our own timeout -- and the memory carrying the saved reply slot must outlive
+*both*. Only our timeout can be cancelled (`sys_untimeout`); lwIP's DNS callback
+cannot, so a service that frees on the first answer leaves the second to fire on
+freed memory, whose saved slot is then whatever reused it and **`send` faults**.
+The argument is refcounted and freed only when both have reported
+(`socket.cc`'s `resolve_answer`).
+
 **The datagram slice adds UDP.** `socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)` is a
 socket with no peer, so `sendto` carries the destination address and port and
 `recvfrom` answers a datagram with its peer's port as well as its source, length
