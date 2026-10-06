@@ -324,7 +324,8 @@ aegir::mem::Allocator& ServiceKit::memory()
     return g_command_mem;
 }
 
-void ServiceKit::register_child(uint64_t badge, std::string const &name, std::string const &path)
+void ServiceKit::register_child(uint64_t badge, std::string const &name,
+                                std::string const &path, seL4_CPtr source)
 {
     if (kit_.process_registry == 0) {
         return;
@@ -332,7 +333,7 @@ void ServiceKit::register_child(uint64_t badge, std::string const &name, std::st
     aegir::ipc::Consumer const registry(kit_.process_registry);
     (void)aegir::process::register_process(registry, badge, own_badge_, name.c_str(),
                                            static_cast<uint32_t>(name.size()), path.c_str(),
-                                           static_cast<uint32_t>(path.size()));
+                                           static_cast<uint32_t>(path.size()), source);
 }
 
 void ServiceKit::unregister_child(uint64_t badge)

@@ -22,8 +22,9 @@ restart   = always
 
 # The process registry (specs/process.md): the live set, by pid. It has no
 # needs -- it answers about processes, not through one -- and its granted memory
-# is the row storage itself, so `memory_kib` is how many rows it holds at once,
-# a starting pool rather than a ceiling (specs/memory.md).
+# holds both a Row and a break-source slot per process, so `memory_kib` is how
+# many processes it holds at once, a starting pool rather than a ceiling
+# (specs/memory.md).
 [process]
 binary     = aegir-process-registry
 authority  = system

@@ -451,6 +451,23 @@ bool ServiceKit::start_command(Command const &command, Started *out)
         return false;
     }
 
+    /* The command's break source (specs/process.md): the launcher makes a
+     * notification out of the command's own memory, so it is freed with the
+     * command; hands the command a copy through its ports; and keeps a badged
+     * copy for the registry. The badge is how the command's runtime tells a
+     * break from an empty poll. It is not bound to the command's TCB -- a
+     * process has one bound notification, and the console's event channel owns
+     * it -- so the runtime polls the source instead. Zero when the launcher has
+     * no registry to register with, or no memory for it: the command then runs
+     * with no way to be woken. */
+    seL4_CPtr break_notification = 0;
+    seL4_CPtr break_source = 0;
+    if (kit_.process_registry != 0) {
+        seL4_Error ntfn_error = seL4_NoError;
+        break_notification = memory().alloc_object(
+            seL4_NotificationObject, seL4_NotificationBits, account, &ntfn_error);
+    }
+
     /* `Request.arguments` is what follows argv[0]: the spawner writes
      * `request.name` as argv[0] itself (specs/environment.md). */
     std::vector<char const *> argument_pointers;
@@ -480,7 +497,7 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * need: a builder counts a port it could not write (kit.cc's `put` advances
      * its index either way), so a too-small array makes the count name a slot
      * past the array and the spawner reads uninitialized memory. */
-    aegir::spawn::PortGrant ports[16];
+    aegir::spawn::PortGrant ports[17];
     uint32_t port_count = 0;
     if (command.output_view) {
         port_count = aegir::spawn::output_ports(kit_, child, ports, 16);
@@ -490,6 +507,16 @@ bool ServiceKit::start_command(Command const &command, Started *out)
         port_count = aegir::spawn::command_ports(kit_, child, ports, 16);
     }
     kit_.stream = saved_stream;
+    /* The command's own copy of its break source, named so its runtime finds
+     * it (specs/process.md): the runtime polls it before it blocks on input.
+     * Appended after the builders, which take slots from kSlotFirstDeclared
+     * upward. */
+    if (break_notification != 0) {
+        ports[port_count] = {"break.source", 12,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             break_notification, seL4_AllRights, 0, 0};
+        ++port_count;
+    }
 
     aegir::spawn::Request request{};
     request.name = name.c_str();
@@ -557,9 +584,33 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * which is what lets a background `Run` and the foreground line coexist
      * (specs/memory.md Phase 5). */
     end_staging();
+    /* A badged copy of the source for the registry (specs/process.md): the
+     * signal it sends carries this badge, which is what the command's poll sees
+     * -- an unbadged signal would read as an empty poll. Best-effort: a mint
+     * that fails leaves the command registered with no way to be woken. */
+    if (break_notification != 0) {
+        seL4_CPtr const mint = memory().alloc_slot();
+        if (mint != 0 &&
+            seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint, endpoint_depth(),
+                            aegir::bootstrap::kSlotOwnCNode, break_notification,
+                            endpoint_depth(), seL4_CapRights_new(0, 0, 0, 1),
+                            1) == seL4_NoError) {
+            break_source = mint;
+        }
+    }
     /* The command is in the live set (specs/process.md): the launcher is its
-     * spawner, so the launcher registers it. */
-    register_child(badge, name, image_path_);
+     * spawner, so the launcher registers it, handing the registry the source. */
+    register_child(badge, name, image_path_, break_source);
+    /* Our copies are staging: the child and the registry each hold their own, so
+     * the notification stays alive until the row is unregistered (release). */
+    if (break_source != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, break_source,
+                          endpoint_depth());
+    }
+    if (break_notification != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, break_notification,
+                          endpoint_depth());
+    }
     live_.push_back(Started{process, badge, owner, command.background});
     if (out != nullptr) {
         *out = live_.back();

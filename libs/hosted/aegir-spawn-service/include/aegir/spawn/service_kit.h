@@ -306,7 +306,8 @@ private:
      * its path. One call, so every path this kit starts -- a command, a nested
      * terminal, a shell -- joins the live set the same way. Best-effort: a kit
      * handed no registry half registers nothing. */
-    void register_child(uint64_t badge, std::string const &name, std::string const &path);
+    void register_child(uint64_t badge, std::string const &name, std::string const &path,
+                        seL4_CPtr source = 0);
     /* Tell the registry a child is gone (specs/process.md), before its memory is
      * taken back, so the registry drops the row and its break-source slot while
      * the source capability is still valid. Best-effort like register. */

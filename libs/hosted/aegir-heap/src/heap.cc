@@ -612,6 +612,52 @@ aegir::ipc::Consumer &console_stream() noexcept
     return const_cast<aegir::ipc::Consumer &>(stream);
 }
 
+/* The break source the spawner bound to this TCB (specs/process.md): a
+ * notification it also handed the registry, which signals it to abort us. The
+ * spawner names it `break.source` in the block; a process the spawner gave none
+ * -- a boot service -- has no source and polls nothing. Found once, on first
+ * use. */
+seL4_CPtr break_source() noexcept
+{
+    static seL4_CPtr const source = [] {
+        uint64_t slot = 0;
+        if (aegir::bootstrap::capability("break.source", 12, &slot)) {
+            return static_cast<seL4_CPtr>(slot);
+        }
+        return static_cast<seL4_CPtr>(0);
+    }();
+    return source;
+}
+
+/* The status a process aborted by C exits with (specs/process.md): a
+ * distinguished nonzero code, so the shell can render `***BREAK` in place of a
+ * return-code line. 20 is the Amiga's ERROR_BREAK; the shell learns the code in
+ * Phase 4. */
+constexpr int kBreakStatus = 20;
+
+void report_exit(int status) noexcept;
+
+/* Whether a break is pending on this process's source: one non-blocking poll
+ * (seL4_NBRecv), made before the runtime blocks on input -- the idle wait, where
+ * a program is about to wait for the world (specs/process.md Phase 2). It is one
+ * syscall per input read and none per output write, so a command that only
+ * prints is never polled. A thread already blocked inside a call is not reached,
+ * and the source is not bound to the TCB (a process has one bound notification,
+ * and the console event channel owns it) -- that case is the halt's, Phase 3. */
+bool break_pending() noexcept
+{
+    seL4_CPtr const source = break_source();
+    if (source == 0) {
+        return false;
+    }
+    /* The signal's badge lands in `sender`; the registry mints the source with a
+     * nonzero badge, so a zero badge is an empty poll (notifications.tex,
+     * "Notification Badges"). */
+    seL4_Word badge = 0;
+    (void)seL4_Poll(source, &badge);
+    return badge != 0;
+}
+
 /* A redirected standard stream (specs/shell.md): the spawner put a path in the
  * bootstrap block, and the first use opens it. -1 is "no redirection" and
  * leaves the stream the console's; a failed open returns its errno. The path is
@@ -695,6 +741,11 @@ long sys_write(int fd, void const *buffer, size_t length) noexcept
  * has no stdin. Any other fd is a file. */
 long sys_read(int fd, void *buffer, size_t length) noexcept
 {
+    /* A pending break aborts at the stream boundary before the read blocks in
+     * its call (specs/process.md Phase 2). */
+    if (break_pending()) {
+        report_exit(kBreakStatus);
+    }
     if (network::owns(fd)) {
         return network::recvfrom(fd, buffer, length, 0, nullptr, nullptr);
     }
