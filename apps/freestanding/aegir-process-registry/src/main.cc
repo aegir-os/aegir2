@@ -97,6 +97,16 @@ int main(int argc, char *argv[])
             write(" ");
             write(row != nullptr ? row->name : "?");
             write("\n");
+        } else if (method == aegir::process::kMethodBreak && written >= 1 &&
+                   reply[0] == aegir::process::kBreakSet && count >= 2) {
+            /* Say what was broken, the way a registration is said, so a Break
+             * is visible on the console (specs/process.md's delivery lands
+             * later; the flags are what is set here). */
+            write("  process: break ");
+            write_word(words[0]);
+            write(" ");
+            write_word(words[1]);
+            write("\n");
         }
         port.reply_words(reply, written);
     }

@@ -237,6 +237,7 @@ set(aegir_commands
   aegir-assign:assign
   aegir-which:which
   aegir-version:version
+  aegir-break:break
   aegir-view:view
   aegir-editor:edit
   aegir-output:output

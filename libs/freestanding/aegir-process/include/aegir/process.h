@@ -42,7 +42,7 @@ constexpr uint32_t kMethodDescribe = 2;
  *  may not break (specs/process.md's authority). */
 constexpr uint32_t kMethodBreak = 3;
 
-/** Add a process to the live set. In: a Row's words, of which `pid`, `owner`,
+/** Add a process to the live set. In: a Row's words, of which `pid`, `parent`,
  *  `name` and `path` are read and `flags`/`state` are the registry's own;
  *  answer: one word, 1 registered and 0 refused (a duplicate pid, or a full
  *  table). The spawn kit registers the metadata (specs/process.md). */

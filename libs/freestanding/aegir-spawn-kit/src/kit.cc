@@ -77,6 +77,16 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
         (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
                   kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
     }
+    /* The process registry's caller half (specs/process.md): a command that
+     * breaks a process is a client of process.registry, so it is handed its own
+     * badged half -- the badge the registry's authority check reads. Minted from
+     * the launcher's source, so it carries the command's own badge. Optional,
+     * like the logger above. */
+    if (kit.process_registry != 0) {
+        (void)put(out, capacity, n++, aegir::process::kPortName,
+                  aegir::process::kPortNameLength, kit.process_registry,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
+    }
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);
     /* The session's namespace, by copy: it already carries the session's

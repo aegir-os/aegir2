@@ -220,9 +220,10 @@ one-shot system process, not an inherited right).
 
 ## Phases
 
-1. **The registry.** The port, the wire, the row, and the `Break` command over
-   it, with the metadata registered by the spawn kit. No interruption yet: a
-   row is visible, and `describe` answers. This is `Status`'s ground too.
+1. **The registry.** Landed. The port, the wire, the row, the `Break` command
+   over it, and every spawner registering the children it starts. No interruption
+   yet: a row is visible, and `describe`/`count` answer (which is what `Break
+   NAME` walks). This is `Status`'s ground too.
 2. **The break source.** The runtime registers a break `Context` and includes it
    in its waits; `break` signals it; a command exits on C. This is the
    cooperative half, and it is what the terminal's Ctrl-C needs.
