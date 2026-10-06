@@ -2164,7 +2164,7 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
  * staging through the scratch window ratchets the same way. */
 void start_greeter(aegir::mem::Arena &arena) noexcept
 {
-    if (g_spawn_gui == 0 || g_spawn_login == 0 || !g_gui.valid()) {
+    if (g_spawn_gui == 0 || g_spawn_login == 0 || g_spawn_log == 0 || !g_gui.valid()) {
         write("      auth: no kit for the greeter -- the screen stays dark\n");
         return;
     }
@@ -2196,10 +2196,17 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
          seL4_CapRights_new(1, 0, 0, 1), kGreeterBadge, 0},
         {"untyped", 7, aegir::bootstrap::kSlotFirstDeclared + 2, untyped,
          seL4_AllRights, 0, kGreeterUntypedBits},
+        /* The logger (specs/console.md): the greeter is a boot service, so it
+         * writes through the logger like one. Without this it holds no log.main
+         * and writes the serial itself, where a line can splice another
+         * service's -- the boot clients' `needs = log.main` does not reach it
+         * because this kit is built here, not from the manifest. */
+        {"log.main", 8, aegir::bootstrap::kSlotFirstDeclared + 3, g_spawn_log,
+         seL4_CapRights_new(1, 0, 0, 1), kGreeterBadge, 0},
         /* The font service (specs/fonts.md): the greeter draws its form in a
          * Sys:Fonts face. Absent when the director made no such port, and the
          * count keeps it out. */
-        {"font.main", 9, aegir::bootstrap::kSlotFirstDeclared + 3, g_spawn_font,
+        {"font.main", 9, aegir::bootstrap::kSlotFirstDeclared + 4, g_spawn_font,
          seL4_CapRights_new(1, 1, 0, 1), kGreeterBadge, 0},
     };
     static char const kGreeterName[] = "greeter";
@@ -2220,7 +2227,7 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
      * priority costs the boot nothing. */
     request.priority = seL4_MaxPrio - 1;
     request.ports = ports;
-    request.port_count = g_spawn_font != 0 ? 4 : 3;
+    request.port_count = g_spawn_font != 0 ? 5 : 4;
     request.fault_endpoint = fault;
     request.badge = kGreeterBadge;
     request.give_vspace = true;

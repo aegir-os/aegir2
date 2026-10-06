@@ -7,6 +7,7 @@
 
 #include "services.h"
 
+#include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/process.h>
 #include <aegir/process_client.h>
@@ -200,6 +201,17 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
     boot.declared = manifest.size();
     boot.started = 0;
     boot.problem = "";
+
+    /* The root task is the one process that cannot find the logger port in a
+     * bootstrap block -- it has none, because it created the machine's ports
+     * rather than being handed one. Once the `log.main` owner is running it
+     * mints a caller copy for itself and writes through the logger like every
+     * service, so the logger is the serial's only writer and director's lines
+     * cannot splice a service's. Before that, its lines go straight to the
+     * serial, where nothing else is running to splice them. */
+    static char const kLogPortName[] = "log.main";
+    static uint32_t const kLogPortNameLength = sizeof(kLogPortName) - 1;
+    bool console_override_set = false;
 
     /* Validate before creating anything (specs/services.md). The check that can
      * be made today is the one that matters most: nothing may name a binary the
@@ -813,6 +825,48 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             return;
         }
         ++boot.started;
+
+        /* The `log.main` owner is the first entry in the creation order, so its
+         * grant is the first chance director has to take a caller copy of the
+         * port. After this every line director writes goes through the logger
+         * (aegir::set_console_port), and no line of its can splice a service's. */
+        if (!console_override_set) {
+            for (uint32_t g = 0; g < grant_count; ++g) {
+                if (grants[g].name_length != kLogPortNameLength) {
+                    continue;
+                }
+                bool same = true;
+                for (uint32_t c = 0; c < kLogPortNameLength && same; ++c) {
+                    if (grants[g].name[c] != kLogPortName[c]) {
+                        same = false;
+                    }
+                }
+                if (!same) {
+                    continue;
+                }
+                seL4_CPtr const port_slot = allocator_.alloc_slot();
+                if (port_slot == 0) {
+                    break;
+                }
+                seL4_Error const copied = seL4_CNode_Copy(
+                    seL4_CapInitThreadCNode, port_slot, seL4_WordBits,
+                    seL4_CapInitThreadCNode, grants[g].capability, seL4_WordBits,
+                    seL4_AllRights);
+                if (copied != seL4_NoError) {
+                    /* The slot is left behind, as copy_device_frame's failure
+                     * does: a used slot is not freed one at a time, and a
+                     * logger port that could not be copied means the boot is
+                     * about to fail anyway. */
+                    aegir::debug_write("  FAIL could not copy the logger port (seL4 error ");
+                    aegir::debug_write_unsigned(static_cast<uint64_t>(copied));
+                    aegir::debug_write(")\n");
+                    break;
+                }
+                aegir::set_console_port(static_cast<uint64_t>(port_slot));
+                console_override_set = true;
+                break;
+            }
+        }
     }
 
     /* Register the boot set with the process registry (specs/process.md):

@@ -36,6 +36,16 @@ void debug_write_unsigned(uint64_t value) noexcept;
 /** Write a number in hexadecimal, prefixed with `0x`. */
 void debug_write_hex(uint64_t value) noexcept;
 
+/** Name the logger port this process writes through.
+
+ *  A process given `log.main` finds it by name in its bootstrap block. The root
+ *  task has no such block and still creates the port, so it mints itself a
+ *  caller cap and hands it here: the logger is then the serial's one writer for
+ *  the root task too, and a line it wrote cannot be spliced by a service that
+ *  became runnable in the middle of it (specs/console.md). A zero port clears
+ *  the override. */
+void set_console_port(uint64_t port) noexcept;
+
 /** Halt this thread forever. Never returns. */
 [[noreturn]] void halt() noexcept;
 

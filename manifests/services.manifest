@@ -487,8 +487,10 @@ authority = system
 account   = system
 # font.main is the font service (specs/fonts.md): the greeter's form is drawn in
 # a Sys:Fonts face, and this need is also what makes auth's spawn kit carry the
-# delegatable copy its windows are handed.
-needs     = console.gui, auth.login, font.main
+# delegatable copy its windows are handed. log.main is the same reason the boot
+# smoke clients need it: without the logger's port a client writes the serial
+# itself, a character at a time.
+needs     = log.main, console.gui, auth.login, font.main
 restart   = never
 
 # The boot session (specs/boot.md): the system's Startup-Sequence, run once
@@ -533,7 +535,11 @@ restart   = never
 binary    = aegir-cxx-smoke
 authority = system
 account   = boot
-needs     = mem.main
+# log.main: without it the runtime's debug fallback writes the serial one
+# character at a time and this client's lines interleave with the logger's
+# (and envsmoke's), splitting cues the acceptance reads by line (specs/
+# testing.md, the console-split note in specs/memory.md).
+needs     = log.main, mem.main
 maps      = true
 memory_kib = 256
 restart   = never
@@ -546,6 +552,9 @@ restart   = never
 binary      = aegir-env-smoke
 authority   = system
 account     = boot
+# log.main, for the same reason as cxxsmoke: the direct-serial fallback is
+# character-at-a-time, so a client without the logger's port interleaves.
+needs       = log.main
 args        = alpha, beta
 environment = AEGIR=smoke, TWO=2
 maps        = true

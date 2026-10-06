@@ -85,6 +85,12 @@ constexpr uint32_t kLineBytes =
 thread_local char g_line[kLineBytes];
 thread_local uint32_t g_line_at = 0;
 
+/* The root task's own logger port, once it has one (aegir::set_console_port).
+ * Global, not per thread: both of the root task's threads write through it, and
+ * the override has to reach a thread whose first resolution already found no
+ * port. Volatile because a second thread reads it without a syscall between. */
+volatile seL4_CPtr g_console_override = 0;
+
 bool same_text(char const *text, uint32_t length, char const *other,
                uint32_t other_length) noexcept
 {
@@ -105,6 +111,11 @@ bool same_text(char const *text, uint32_t length, char const *other,
  * port. */
 seL4_CPtr console_port() noexcept
 {
+    /* The root task's override first: it may have resolved "no port" before it
+     * minted one, so this cannot sit behind the per-thread `resolved` flag. */
+    if (g_console_override != 0) {
+        return g_console_override;
+    }
     /* Per thread as well, so the two threads' first resolutions are not a race
      * on shared flags (both would compute the same port, but it is still a
      * race). */
@@ -183,6 +194,11 @@ __attribute__((constructor(201))) void install_exit_bridge() noexcept
 }
 
 namespace aegir {
+
+void set_console_port(uint64_t port) noexcept
+{
+    g_console_override = static_cast<seL4_CPtr>(port);
+}
 
 void debug_write(char const *text) noexcept
 {
