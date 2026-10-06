@@ -947,8 +947,18 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # If/Else/EndIf and Skip are the next cue. It is typed here, not
                 # in the big opening press, because a press longer than the
                 # keyboard's queue drops keys and mangles a line.
-                press="execute Sys:S/Control-Test\n",
+                #
+                # Before it, a background `wait` -- a long timer, so it never
+                # returns and never polls its break source -- is Broken. It is the
+                # enforced halt's subject: only the halt can take a process back
+                # that the cooperative source cannot reach (specs/process.md
+                # Phase 3). `x` is a placeholder process argument; NAME matches.
+                press="run wait 99999\nbreak x name wait\nexecute Sys:S/Control-Test\n",
             ),
+            # The halt landed: the registry signalled nothing the `wait` would
+            # see and asked the launcher to suspend and reap it. No press -- the
+            # next cue follows when Control-Test starts.
+            QmpStep(r"process: halted \d+"),
             QmpStep(
                 r"terminal: command exited 42",
                 events=TERMINAL_CLICK,
