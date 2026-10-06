@@ -271,10 +271,13 @@ Two boundaries are recorded rather than solved:
   logger writes the serial itself: `debug_write` finds `log.main` in the
   bootstrap block, coalesces a line, and hands it over as `kMethodConsole`
   (`libs/aegir-runtime/src/debug.cc`), and the logger — single-threaded —
-  writes it whole (`apps/aegir-logger/src/main.cc`). A process with no
-  `log.main` (the root task, the logger itself) still writes
-  `seL4_DebugPutChar` directly; the logger is excluded by name because it holds
-  the owning half of its own port.
+  writes it whole (`apps/aegir-logger/src/main.cc`). The logger itself is the
+  one writer excluded from this: it holds the owning half of its own port, so
+  `debug_write` writes `seL4_DebugPutChar` directly for it. The root task has
+  no bootstrap block to find a port in — it created them — so once the owner
+  is started it mints itself a caller copy and names it with
+  `set_console_port` (`debug.cc`); after that its lines go through the logger
+  too, and the serial has exactly one writer for the whole boot.
 
 ## Boot report
 
