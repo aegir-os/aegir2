@@ -116,6 +116,7 @@ cmake "${LLVM_PROJECT}/llvm" \
     -DLLVM_ENABLE_RTTI=OFF \
     -DLLVM_BUILD_LLVM_DYLIB=OFF \
     -DLLVM_ENABLE_PIC=OFF \
+    -DLLVM_USE_LINKER=lld \
     -DLIBCLANG_BUILD_STATIC=ON \
     -DLLVM_ENABLE_ZLIB=OFF \
     -DLLVM_ENABLE_ZSTD=OFF \
@@ -132,12 +133,15 @@ cmake "${LLVM_PROJECT}/llvm" \
     -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_APPEND_VC_REV=OFF
 
-# The `all` target includes the target-side `llvm-tblgen` executable
-# (utils/TableGen is added unconditionally and add_tablegen puts it in `all`).
-# It cannot be linked for Aegir -- it is a host tool, and we provide the host's
-# through LLVM_TABLEGEN -- so its link is the one expected failure. `-k 0`
-# builds everything else; the archives, which do not depend on that executable,
-# are what the driver links.
+# Every link uses the pinned lld (LLVM_USE_LINKER above). The system GNU ld
+# cannot link RISC-V at all, and the one executable `all` carries -- the
+# target-side `llvm-tblgen`, which add_tablegen adds unconditionally even with
+# LLVM_BUILD_TOOLS=OFF -- would otherwise fail to link and block every archive
+# that waits on it (a fresh tree did exactly that: "cannot make progress", and
+# libclangFrontend.a never built). With lld it links, as a RISC-V binary that
+# is never run: generation uses the host's llvm-tblgen through LLVM_TABLEGEN.
+# `-k 0` stays as a belt -- the archives are what the driver links, and it
+# builds everything else even if one step will not.
 cmake --build . -- -k 0 -j"$(nproc)" || true
 for required in libLLVMSupport.a libclangFrontend.a libclangCodeGen.a liblldCommon.a liblldELF.a; do
     if [[ ! -f "lib/${required}" ]]; then
