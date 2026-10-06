@@ -49,7 +49,11 @@ if [[ -z "${CC}" || -z "${AR}" || -z "${RANLIB}" ]]; then
     exit 1
 fi
 
-ARCHIVE="$(find "${INSTALL_DIR}" -name 'libclang_rt.builtins*.a' -print -quit 2>/dev/null)"
+# `find` on a directory that does not exist yet (a fresh tree, before the first
+# build) exits non-zero, and with `set -e` that kills the script silently: the
+# `2>/dev/null` hides the message but not the status. `|| true` turns the empty
+# install into "not built yet, build it below" rather than a death before it.
+ARCHIVE="$(find "${INSTALL_DIR}" -name 'libclang_rt.builtins*.a' -print -quit 2>/dev/null || true)"
 if [[ -z "${ARCHIVE}" ]]; then
     if [[ ! -d "${LLVM_PROJECT}/compiler-rt/lib/builtins" ]]; then
         echo "ERROR: ${LLVM_PROJECT}/compiler-rt is not fetched; run 'make deps'" >&2
