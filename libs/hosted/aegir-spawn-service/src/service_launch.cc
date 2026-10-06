@@ -201,7 +201,8 @@ bool ServiceKit::fetch_image(void *context, uint64_t offset, uint64_t length,
 }
 
 bool ServiceKit::fetch_image_frame(void *context, uint64_t offset, uint64_t length,
-                                   uint64_t frame_offset, seL4_CPtr frame) noexcept
+                                   uint64_t frame_offset, seL4_CPtr frame,
+                                   uint32_t frame_bits) noexcept
 {
     auto *const kit = static_cast<ServiceKit *>(context);
     if (kit == nullptr || kit->image_fd_ < 0) {
@@ -212,11 +213,13 @@ bool ServiceKit::fetch_image_frame(void *context, uint64_t offset, uint64_t leng
      * does not serve read-frame refuses it, and the frame is filled through our
      * own window instead -- the inline read this stands in for, so a volume
      * that has not learned read-frame still loads. */
-    if (aegir::heap::files::read_frame(kit->image_fd_, offset, frame_offset, length,
-                                       frame) == static_cast<long>(length)) {
+    if (aegir::heap::files::read_frame(kit->image_fd_, offset, frame_offset, length, frame,
+                                       frame_bits) == static_cast<long>(length)) {
         return true;
     }
-    if (kit->scratch_ == nullptr) {
+    if (kit->scratch_ == nullptr || frame_bits > seL4_PageBits) {
+        /* The window path fills a 4 KiB page; a mega page has no window here,
+         * so a filesystem that cannot serve it is a hard failure. */
         return false;
     }
     void *window = kit->scratch_->map(frame);

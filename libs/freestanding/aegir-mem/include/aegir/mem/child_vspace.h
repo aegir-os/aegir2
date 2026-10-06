@@ -39,11 +39,14 @@ using ByteSource = bool (*)(void *context, uint64_t offset, uint64_t length,
 /** The same, for a source that writes into a frame of ours rather than into a
  *  buffer: the source fills `frame` -- a page capability -- with `length` bytes
  *  read at `offset`, starting `frame_offset` bytes in, returning false when it
- *  cannot. A filesystem that maps a caller's frame
- *  (aegir/volume.h's read-frame) is written this way, so the spawner neither
- *  maps the frame nor copies it (specs/vfs.md's scaling path). */
+ *  cannot. `frame_bits` is the frame's size, and the source must map it so:
+ *  a 4 KiB page (kFrameBitsMin) or a 2 MiB mega page (kFrameBitsMax), which a
+ *  loader uses for a large segment's aligned bulk. A filesystem that maps a
+ *  caller's frame (aegir/volume.h's read-frame) is written this way, so the
+ *  spawner neither maps the frame nor copies it (specs/vfs.md's scaling path). */
 using FrameSource = bool (*)(void *context, uint64_t offset, uint64_t length,
-                             uint64_t frame_offset, seL4_CPtr frame);
+                             uint64_t frame_offset, seL4_CPtr frame,
+                             uint32_t frame_bits);
 
 class ChildVSpace {
 public:

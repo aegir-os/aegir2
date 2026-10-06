@@ -259,87 +259,141 @@ bool ChildVSpace::populate_frames(uintptr_t address, unsigned pages, uint64_t fi
         return false;
     }
 
-    uint64_t remaining = bytes;
-    uint64_t read_at = file_offset;
-    uint64_t skip = leading;
-    unsigned page = 0;
-    while (page < pages) {
-        /* Retype the largest power-of-two run the remaining pages allow in one
-         * kernel call (alloc_pages_run): a run whose whole piece the allocator
-         * cannot find halves until one fits, so a fragmentary allocator just
-         * gives smaller runs rather than failing. */
-        unsigned run = 1;
-        while (run * 2 <= pages - page) {
-            run *= 2;
-        }
-        seL4_Error error = seL4_NoError;
-        seL4_CPtr run_base = 0;
-        while (run > 0) {
-            run_base = allocator_.alloc_pages_run(run, account, &error);
-            if (run_base != 0) {
-                break;
+    /* The 4 KiB pages [first, last), read from the file starting at `read_at`
+     * with `skip` bytes of the first page already accounted for. Retype the
+     * largest power-of-two run the remaining pages allow in one kernel call
+     * (alloc_pages_run): a run whose whole piece the allocator cannot find
+     * halves until one fits, so a fragmentary allocator just gives smaller runs
+     * rather than failing. */
+    auto populate_4k = [&](unsigned first, unsigned last, uint64_t read_at, uint64_t skip,
+                           uint64_t remaining) -> bool {
+        unsigned page = first;
+        while (page < last) {
+            unsigned run = 1;
+            while (run * 2 <= last - page) {
+                run *= 2;
             }
-            run >>= 1;
-        }
-        if (run_base == 0) {
-            if (why != nullptr) {
-                *why = "no memory for a frame";
+            seL4_Error error = seL4_NoError;
+            seL4_CPtr run_base = 0;
+            while (run > 0) {
+                run_base = allocator_.alloc_pages_run(run, account, &error);
+                if (run_base != 0) {
+                    break;
+                }
+                run >>= 1;
             }
-            return false;
-        }
-        for (unsigned k = 0; k < run; ++k, ++page) {
-            seL4_CPtr const frame = run_base + k;
-            if (page == 0 && first_frame != nullptr) {
-                *first_frame = frame;
+            if (run_base == 0) {
+                if (why != nullptr) {
+                    *why = "no memory for a frame";
+                }
+                return false;
             }
-            if (frames_out != nullptr) {
-                frames_out[page] = frame;
-            }
+            for (unsigned k = 0; k < run; ++k, ++page) {
+                seL4_CPtr const frame = run_base + k;
+                if (page == 0 && first_frame != nullptr) {
+                    *first_frame = frame;
+                }
+                if (frames_out != nullptr) {
+                    frames_out[page] = frame;
+                }
 
-            uint64_t const room = kPage - skip;
-            uint64_t const chunk = remaining < room ? remaining : room;
-            /* A page the source fills whole needs nothing more. A boundary page
-             * -- the first, only partly covered because a segment need not start
-             * on a page boundary, or the last -- has bytes the segment does not
-             * reach, and those must be zero. A retyped frame cannot be relied on
-             * to be zero (the BFS zeroes its own handle page for exactly this
-             * reason, aegir-fs-bfs/src/main.cc), so the gap is zeroed through
-             * our own window first, the same map-write-unmap rhythm populate
-             * keeps. The source then writes the segment's bytes at `skip`. */
-            if (skip != 0 || chunk < room) {
-                void *window = scratch_.map(frame);
-                if (window == nullptr) {
+                uint64_t const room = kPage - skip;
+                uint64_t const chunk = remaining < room ? remaining : room;
+                /* A page the source fills whole needs nothing more. A boundary
+                 * page -- the first, only partly covered because a segment need
+                 * not start on a page boundary, or the last -- has bytes the
+                 * segment does not reach, and those must be zero. A retyped
+                 * frame cannot be relied on to be zero (the BFS zeroes its own
+                 * handle page for exactly this reason, aegir-fs-bfs/src/
+                 * main.cc), so the gap is zeroed through our own window first,
+                 * the same map-write-unmap rhythm populate keeps. The source
+                 * then writes the segment's bytes at `skip`. */
+                if (skip != 0 || chunk < room) {
+                    void *window = scratch_.map(frame);
+                    if (window == nullptr) {
+                        if (why != nullptr) {
+                            *why = "the window the frame is zeroed through is full";
+                        }
+                        return false;
+                    }
+                    auto *zeroed = static_cast<unsigned char *>(window);
+                    for (uint64_t i = 0; i < kPage; ++i) {
+                        zeroed[i] = 0;
+                    }
+                    scratch_.unmap(frame);
+                }
+                if (chunk != 0 &&
+                    !fill(fill_context, read_at, chunk, skip, frame, seL4_PageBits)) {
                     if (why != nullptr) {
-                        *why = "the window the frame is zeroed through is full";
+                        *why = "a segment's bytes could not be read";
                     }
                     return false;
                 }
-                auto *zeroed = static_cast<unsigned char *>(window);
-                for (uint64_t i = 0; i < kPage; ++i) {
-                    zeroed[i] = 0;
+                skip = 0;
+
+                if (!map_page(address + static_cast<uintptr_t>(page) * kPage, frame, writable,
+                              account)) {
+                    if (why != nullptr) {
+                        *why = "a page could not be mapped into the child";
+                    }
+                    return false;
                 }
-                scratch_.unmap(frame);
+                read_at += chunk;
+                remaining -= chunk;
             }
-            if (chunk != 0 && !fill(fill_context, read_at, chunk, skip, frame)) {
+        }
+        return true;
+    };
+
+    /* The 2 MiB-aligned blocks every byte of which is the segment's own loaded
+     * bytes become mega pages: one mapping where 512 4 KiB pages were, and one
+     * filesystem call where 512 were. A block the segment fills only partly --
+     * its head, its tail, or a .bss gap -- stays 4 KiB, because a 2 MiB frame
+     * cannot be zeroed through the small scratch window. The first page is kept
+     * 4 KiB so `first_frame` stays a page the IPC buffer can be handed. */
+    constexpr uint64_t kMega = 1ull << seL4_LargePageBits;
+    uintptr_t const file_low = address + leading;
+    uintptr_t const file_high = file_low + bytes;
+    uintptr_t mega_low = (file_low + kMega - 1) & ~(kMega - 1);
+    uintptr_t const mega_high = file_high & ~(kMega - 1);
+    if (mega_low < address + kPage) {
+        mega_low = address + kPage;
+    }
+    if (mega_low < mega_high) {
+        unsigned const head_end = static_cast<unsigned>((mega_low - address) / kPage);
+        unsigned const tail_first = static_cast<unsigned>((mega_high - address) / kPage);
+        if (!populate_4k(0, head_end, file_offset, leading, bytes)) {
+            return false;
+        }
+        for (uintptr_t block = mega_low; block < mega_high; block += kMega) {
+            seL4_Error error = seL4_NoError;
+            seL4_CPtr const frame = allocator_.alloc_object(seL4_RISCV_Mega_Page,
+                                                            seL4_LargePageBits, account, &error);
+            if (frame == 0) {
+                if (why != nullptr) {
+                    *why = "no memory for a mega page";
+                }
+                return false;
+            }
+            if (!fill(fill_context, file_offset + (block - file_low), kMega, 0, frame,
+                      seL4_LargePageBits)) {
                 if (why != nullptr) {
                     *why = "a segment's bytes could not be read";
                 }
                 return false;
             }
-            skip = 0;
-
-            if (!map_page(address + static_cast<uintptr_t>(page) * kPage, frame, writable,
-                          account)) {
+            if (!map_page(block, frame, writable, account, nullptr, seL4_LargePageBits)) {
                 if (why != nullptr) {
-                    *why = "a page could not be mapped into the child";
+                    *why = "a mega page could not be mapped into the child";
                 }
                 return false;
             }
-            read_at += chunk;
-            remaining -= chunk;
         }
+        uintptr_t const tail_at = address + static_cast<uintptr_t>(tail_first) * kPage;
+        return populate_4k(tail_first, pages, file_offset + (tail_at - file_low), 0,
+                           file_high - tail_at);
     }
-    return true;
+    return populate_4k(0, pages, file_offset, leading, bytes);
 }
 
 }  // namespace aegir::mem
