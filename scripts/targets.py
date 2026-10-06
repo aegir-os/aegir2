@@ -209,6 +209,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # through the __funcs_on_exit bridge and prints the second marker.
             QmpStep(r"CXX_SMOKE_OK"),
             QmpStep(r"CXX_ATEXIT_OK"),
+            # The process registry (specs/process.md): a command's runtime
+            # registers itself as it stands up, so the live set forms before
+            # anything can Break it. The pid is the process's own badge.
+            QmpStep(r"process: registered \d+ \w+"),
             # `hello` faults on purpose -- the one boot service whose job is to
             # fail, so the supervision path is walked every run (specs/
             # director.md). This is its last line before the fault, and the run

@@ -11,6 +11,7 @@
 #include <aegir/spawn/kit.h>
 #include <aegir/bootstrap.h>
 #include <aegir/datatypes.h>
+#include <aegir/process.h>
 
 namespace aegir::spawn {
 
@@ -75,6 +76,14 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     if (kit.log != 0) {
         (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
                   kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
+    }
+    /* The process registry (specs/process.md): the command's own caller half,
+     * minted with its badge, so its runtime registers itself under its pid --
+     * what a Break names. Optional, like the logger above. */
+    if (kit.process_registry != 0) {
+        (void)put(out, capacity, n++, aegir::process::kPortName,
+                  aegir::process::kPortNameLength, kit.process_registry,
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);

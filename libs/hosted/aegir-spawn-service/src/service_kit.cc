@@ -23,6 +23,7 @@
 #include <aegir/mem/vspace.h>
 #include <aegir/net.h>
 #include <aegir/nmspace.h>
+#include <aegir/process.h>
 
 #include <unistd.h>
 
@@ -250,6 +251,18 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
         font_main_holder = static_cast<seL4_CPtr>(font_main_slot);
     }
 
+    /* The unbadged process.registry source (specs/process.md): the launcher
+     * mints each command a caller half from it, so the command's runtime
+     * registers itself under its pid. Optional -- without it a command runs
+     * unregistered, and a Break cannot name it. */
+    uint64_t process_registry_slot = 0;
+    seL4_CPtr process_registry_holder = 0;
+    if (aegir::bootstrap::capability(aegir::process::kPortName,
+                                     aegir::process::kPortNameLength,
+                                     &process_registry_slot)) {
+        process_registry_holder = static_cast<seL4_CPtr>(process_registry_slot);
+    }
+
     /* The unbadged datatypes.main source (specs/datatypes.md): the session's
      * broker, so the launcher mints each command a caller half from it and a
      * launched program asks the broker to open a file. Optional -- without it a
@@ -288,6 +301,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
     kit_.console_gui = spawn_console_gui;
     kit_.bureau_menu = bureau_menu_holder;
     kit_.font_main = font_main_holder;
+    kit_.process_registry = process_registry_holder;
     kit_.datatypes = datatypes_holder;
     kit_.mem_main = mem_port_;
     kit_.asid_pool = asid_pool_;

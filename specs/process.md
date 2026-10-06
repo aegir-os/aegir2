@@ -83,8 +83,8 @@ registry.h`): a port that answers questions, in the multi-word envelope of
 A `Row` is what names a process:
 
     pid          the process's badge, as the kernel reports it
-    owner        the badge of whoever started it (its class, for the authority
-                 check)
+    owner        the badge whose class the process runs as -- the authority
+                 check's subject (its own, as the runtime registers it)
     name         the program name, excluding its path
     path         the program's full path, when the launcher knew it
     flags        the attention flags currently set
@@ -97,16 +97,23 @@ caller may not touch, is the refusal.
 
 ### Who registers
 
-The **spawn kit** registers the metadata — pid, owner, name and path — because
-it is the one place every process is built (`specs/launch.md`: "the launcher
-builds its commands and a nested terminal, the terminal only its own shell, all
-with the same builders auth uses, so no spawner reassembles the list"). The
-**process's runtime** registers the break source, because the source is the
-process's own `Context` and can be minted by no one else; it is the call's one
-capability (`specs/signal.md`: a message carries one capability). The registry
-joins the two by pid. A process with no runtime — a freestanding boot service —
-may register its metadata and no source: it has flags, and only the enforced
-halt (below) applies to it.
+The **process's runtime** registers, in one place: its pid (its own badge), the
+badge whose class it runs as, its name and its path -- and, when the break
+source lands, that source as the call's one capability (`specs/signal.md`: a
+message carries one capability). "Every command is breakable" is then a property
+of standing the runtime up, not something a spawner does on a command's behalf.
+
+The capability reaches it from its **spawner**: a command is handed a
+`process.registry` caller half among its grants, minted from an unbadged source
+the launcher holds, which auth delegates. `[session.authority]` names
+`process.registry`, so director hands auth the unbadged `spawn:process.registry`
+copy, and auth passes it to the launcher (`aegir-spawn-kit`'s
+`Kit::process_registry`), which mints each command's from it. A command whose
+spawner handed it none runs unregistered, and a Break cannot name it.
+
+A process with no runtime -- a freestanding boot service -- registers nothing
+yet: it has no row, and only the enforced halt (below), which needs no source,
+would apply to it.
 
 ## Delivery: the flag, and the halt
 

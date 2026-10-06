@@ -10,8 +10,10 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/heap.h>
+#include <aegir/ipc/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/process.h>
 #include <sel4/sel4.h>
 
 namespace aegir::command {
@@ -62,6 +64,64 @@ bool adopt_memory() noexcept
     return ok;
 }
 
+/* The row's path: the program's directory, then its name, so it is the full
+ * path when the spawner knew one (specs/process.md). Bounded by the field and
+ * NUL-terminated. */
+void compose_path(aegir::process::Row *row, char const *name) noexcept
+{
+    uint32_t dir_length = 0;
+    char const *const dir = aegir::bootstrap::program_dir(&dir_length);
+    uint32_t at = 0;
+    if (dir != nullptr && dir_length > 0) {
+        for (uint32_t i = 0; i < dir_length && at + 1 < aegir::process::kPathMax; ++i) {
+            row->path[at++] = dir[i];
+        }
+        if (at > 0 && row->path[at - 1] != '/' && at + 1 < aegir::process::kPathMax) {
+            row->path[at++] = '/';
+        }
+    }
+    if (name != nullptr) {
+        for (uint32_t i = 0; name[i] != '\0' && at + 1 < aegir::process::kPathMax; ++i) {
+            row->path[at++] = name[i];
+        }
+    }
+    row->path[at] = '\0';
+}
+
+/* Register this process with the process registry (specs/process.md), if the
+ * command was handed a caller half: its pid (its own badge), the badge whose
+ * class it runs as, its name and its path. Best-effort -- a command with no
+ * registry capability runs unregistered, and a Break cannot name it. */
+void register_self(char const *name) noexcept
+{
+    aegir::ipc::Consumer const registry = aegir::ipc::Consumer::find(
+        aegir::process::kPortName, aegir::process::kPortNameLength);
+    if (!registry.valid()) {
+        return;
+    }
+    uint64_t badge = 0;
+    if (!aegir::bootstrap::badge(&badge)) {
+        return;
+    }
+    aegir::process::Row row{};
+    row.pid = badge;
+    /* The class is the check's subject (specs/process.md): the process's own
+     * badge carries it, and the runtime knows no other. */
+    row.owner = badge;
+    compose_path(&row, name);
+    if (name != nullptr) {
+        uint32_t n = 0;
+        for (; name[n] != '\0' && n + 1 < aegir::process::kNameMax; ++n) {
+            row.name[n] = name[n];
+        }
+        row.name[n] = '\0';
+    }
+    uint64_t reply[1] = {0};
+    (void)registry.call_words(aegir::process::kMethodRegister,
+                              reinterpret_cast<uint64_t const *>(&row),
+                              aegir::process::kRowWords, reply, 1);
+}
+
 }  // namespace
 
 bool start(char const *name) noexcept
@@ -78,6 +138,9 @@ bool start(char const *name) noexcept
         aegir::debug_write(": FAIL the heap would not claim the window\n");
         return false;
     }
+    /* The runtime's one registration (specs/process.md): every command that
+     * stood up here is in the live set, so a Break can name it. */
+    register_self(name);
     return true;
 }
 

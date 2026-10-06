@@ -19,5 +19,5 @@ target_link_libraries(
   aegir-spawn-kit PUBLIC aegir-cxx-policy aegir-spawn aegir-bootstrap
                          aegir-console-protocol aegir-clock aegir-timer-protocol
                          aegir-log aegir-namespace aegir-memory-protocol
-                         aegir-launch-protocol aegir-datatypes-protocol sel4
+                         aegir-launch-protocol aegir-datatypes-protocol aegir-process sel4
 )

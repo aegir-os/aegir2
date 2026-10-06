@@ -15,6 +15,10 @@ project(aegir-spawn-service CXX)
 add_library(aegir-spawn-service STATIC src/service_kit.cc src/service_launch.cc)
 
 target_include_directories(aegir-spawn-service PUBLIC include)
+# The process registry's wire (specs/process.md), by include alone: aegir-process
+# carries the freestanding C++ policy and this library is hosted.
+target_include_directories(aegir-spawn-service PRIVATE
+    ${CMAKE_SOURCE_DIR}/libs/freestanding/aegir-process/include)
 # aegir-heap: the runtime's file layer, for the read-frame call that reads a
 # program segment straight into a child's frame (specs/director.md's spawn
 # path). The spawning process already runs the hosted runtime, so this is not a

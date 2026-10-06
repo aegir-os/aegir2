@@ -25,6 +25,6 @@ target_compile_options(aegir-auth PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(
   aegir-auth PRIVATE aegir-cxx-policy aegir-runtime aegir-bootstrap aegir-ipc aegir-log
                      aegir-authdb aegir-console-protocol aegir-mem aegir-manifest
-                     aegir-memory-protocol aegir-metadata aegir-namespace aegir-spawn
-                     aegir-spawn-kit aegir-volume sel4 muslc sel4runtime
+                     aegir-memory-protocol aegir-metadata aegir-namespace aegir-process
+                     aegir-spawn aegir-spawn-kit aegir-volume sel4 muslc sel4runtime
 )

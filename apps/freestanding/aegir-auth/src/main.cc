@@ -36,6 +36,7 @@
 #include <aegir/memory.h>
 #include <aegir/metadata.h>
 #include <aegir/nmspace.h>
+#include <aegir/process.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/kit.h>
 #include <aegir/spawn/process.h>
@@ -92,6 +93,9 @@ seL4_CPtr g_spawn_datatypes = 0;
 /* The font service's caller half (specs/fonts.md): the session's windows draw a
  * Sys:Fonts face through it, an OpenType one the toolkit cannot parse itself. */
 seL4_CPtr g_spawn_font = 0;
+/* The unbadged process registry (specs/process.md): the source auth hands the
+ * launcher, which mints each command a caller half from it. */
+seL4_CPtr g_spawn_process = 0;
 aegir::ipc::Consumer g_gui;
 constexpr uint64_t kGreeterBadge = 768;
 bool g_greeter_up = false;
@@ -866,6 +870,16 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
                         seL4_AllRights, 0, 0};
         ++count;
     }
+    /* The process.registry source, unbadged (specs/process.md): the launcher
+     * mints each command a caller half from it, so the command's runtime
+     * registers itself. Named `process.registry`, the name its commands' caps
+     * carry, so the launcher finds it the way it finds font.main. */
+    if (g_spawn_process != 0) {
+        ports[count] = {aegir::process::kPortName, aegir::process::kPortNameLength,
+                        aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_process,
+                        seL4_AllRights, 0, 0};
+        ++count;
+    }
     /* The unbadged datatypes.main source (specs/datatypes.md): the launcher
      * mints each of its commands a caller half from it, so a launched program
      * asks the session's broker to open a file. Absent when the session declares
@@ -1214,6 +1228,12 @@ bool need_grant(aegir::manifest::View need, seL4_CPtr launch_port, uint64_t badg
         *rights = seL4_CapRights_new(1, 1, 0, 1);
         *cap_badge = badge;
         return g_spawn_font != 0;
+    }
+    if (aegir::manifest::equals(need, "process.registry")) {
+        *cap = g_spawn_process;
+        *rights = seL4_CapRights_new(1, 1, 0, 1);
+        *cap_badge = badge;
+        return g_spawn_process != 0;
     }
     if (aegir::manifest::equals(need, "clock.main")) {
         *cap = g_spawn_clock;
@@ -2463,6 +2483,14 @@ int main(int argc, char *argv[])
     uint64_t spawn_font_slot = 0;
     if (aegir::bootstrap::capability("spawn:font.main", 15, &spawn_font_slot)) {
         g_spawn_font = static_cast<seL4_CPtr>(spawn_font_slot);
+    }
+    /* The process registry (specs/process.md): director grants the delegatable
+     * copy because the session's terminal names process.registry, and auth
+     * hands the launcher the source it mints each command's caller half from --
+     * so a command's runtime registers itself and a Break can name it. */
+    uint64_t spawn_process_slot = 0;
+    if (aegir::bootstrap::capability("spawn:process.registry", 22, &spawn_process_slot)) {
+        g_spawn_process = static_cast<seL4_CPtr>(spawn_process_slot);
     }
     /* The memory service, for the terminals to hand their commands
      * (specs/memory.md Phase 3). Director grants it because the terminal

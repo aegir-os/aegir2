@@ -83,6 +83,21 @@ int main(int argc, char *argv[])
         uint64_t reply[aegir::ipc::kMaxWords];
         uint32_t const written =
             table.handle(method, words, count, badge, reply, aegir::ipc::kMaxWords);
+        if (method == aegir::process::kMethodRegister && written >= 1 &&
+            reply[0] == aegir::process::kProcessAdded &&
+            count >= aegir::process::kRowWords) {
+            /* Say what joined, so a boot shows the live set forming (and the
+             * acceptance has a line to cue on). The stored row's name is the
+             * NUL-terminated one, not the raw request's. */
+            uint64_t const pid =
+                reinterpret_cast<aegir::process::Row const *>(words)->pid;
+            aegir::process::Row const *const row = table.find(pid);
+            write("  process: registered ");
+            write_word(pid);
+            write(" ");
+            write(row != nullptr ? row->name : "?");
+            write("\n");
+        }
         port.reply_words(reply, written);
     }
 }

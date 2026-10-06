@@ -46,6 +46,11 @@ struct Kit {
     /* Unbadged delegates. */
     seL4_CPtr log = 0;
     seL4_CPtr console_gui = 0;
+    /* The unbadged process.registry source (specs/process.md): a launcher mints
+     * each command a caller half from it, so the command's runtime registers
+     * itself -- its pid, name and path -- and a Break can name it. Optional: a
+     * launcher handed none hands its commands none, and they run unregistered. */
+    seL4_CPtr process_registry = 0;
     /* The caller half of the bureau.menu port (specs/workbench.md), so a
      * *launched* program can register the menus the screen bar shows while it
      * is active -- the Workbench model, where the demo, a boot service, was
