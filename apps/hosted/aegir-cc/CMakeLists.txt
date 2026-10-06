@@ -3,12 +3,13 @@
 #
 # A spawned boot service that stands the hosted runtime up and reads a file
 # through llvm::MemoryBuffer -- the way clang reads a source -- so the on-device
-# compiler is measured against what Aegir actually answers. It is the seed of
-# the in-process clang+lld driver (Phase 3).
+# compiler is measured against what Aegir actually answers. It is the first
+# measurement; the stock `clang` and `lld` of Phase 3 supersede it.
 #
-# It is packed into director's initrd under the flat name `aegir-cc`; when
-# AEGIR_HOSTED_CXX is OFF a freestanding placeholder keeps the manifest
-# validation satisfied, as the other smokes do.
+# The build artifact is `aegir-cc`; scripts/run_target.py deploys it as `cc`
+# under Sys:Development/C on the development target (specs/development.md). When
+# AEGIR_HOSTED_CXX is OFF a freestanding placeholder keeps the build satisfied,
+# as the other smokes do.
 #
 
 cmake_minimum_required(VERSION 3.16.0)

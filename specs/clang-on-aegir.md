@@ -61,8 +61,9 @@ only, `heap.cc:513`) — and a small tail (signals, threads, process).
 | Non-POSIX gap | A POSIX personality behind `__sysinfo`; LLVM unpatched except tracked patches |
 | Target triple | A first-class `riscv64-unknown-aegir-elf` (a tracked clang patch) |
 | Components | clang + lld + LLVM core, `RISCV` target only; compiler-rt builtins / libc++abi; tooling **last** |
-| Driver model | Single process: `-fintegrated-cc1` / integrated-as + lld linked in-process |
-| First compile | Freestanding (`-ffreestanding -nostdinc`, a tiny crt); a full sysroot later |
+| Driver model | Stock `clang` and `lld`, each a child process, with `cc` a name for the driver; the driver starts `cc1` and the linker |
+| Process surface | `posix_spawn` + `wait4` over Aegir's spawn (`specs/launch.md`); `fork` explicitly absent |
+| First compile | A real program against the `Sys:Development` sysroot (musl + libc++ headers, libs and crt) |
 | Acceptance driver | A dedicated manifest service that compiles at boot and prints the marker |
 | Machine | `aegir-8g-smp4` (8 GiB, 4 cores) |
 | First milestone | `specs/compiler.md`'s successor: this plan plus clang/lld cross-built (not yet running), sizes measured |
@@ -91,7 +92,7 @@ Verified in the tree. Each row is a prerequisite arc.
 | --- | --- | --- |
 | File I/O | `open/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir` | **done** — the dispatcher answers all of these over `aegir::vfs` (`libs/hosted/aegir-heap/src/heap.cc`) |
 | Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | anonymous `mmap` only (`sys_mmap`, `heap.cc:513`); `munmap`/`mremap` exist, `mprotect` absent. **The one load-bearing gap.** |
-| Process | `posix_spawn`/`fork`/`execve` for cc1 + ld | none; the in-process driver (Phase 3) avoids them, so deferred |
+| Process | `posix_spawn` + `wait4` for cc1 + ld; `fork` not needed | none; the POSIX process sub-arc is load-bearing (`specs/posix.md`) |
 | Threads | `pthread_create`, mutex, atomics | `LLVM_ENABLE_THREADS=OFF` avoids them; a `clone` route exists (musl patch 0002) but is not on this path |
 | Signals | `sigaction` (crash handlers) | none; disable or stub |
 | Time/env | `clock_gettime`, `nanosleep`, `getenv`, `uname`, `getcwd` | `clock_gettime`/`nanosleep`/`getcwd` done; `environ`/`getenv` on `aegir::environment`; `uname`/`sysconf` a stub |
@@ -107,7 +108,7 @@ libs/aegir-llvm/imported.cmake           # Phase 1: expose clang/lld to CMake
 third_party/patches/projects/llvm-project/0002-riscv64-aegir-triple.patch  # the one new LLVM patch
 libs/aegir-posix/                        # Phase 2: the personality (files, mem, env, time)
 libs/hosted/aegir-heap/src/heap.cc       # shrinks: the file handlers move to libs/aegir-posix
-apps/aegir-cc/                           # Phase 3: libclang + liblld single-process driver
+apps/aegir-cc/                           # Phase 3: the sysroot's clang, lld and cc (stock programs)
 apps/aegir-clang-test/                   # the acceptance service
 ```
 
@@ -131,7 +132,11 @@ This plan is the deliverable. Writing it also settles three housekeeping points:
 
 New `scripts/build_llvm.sh`, modelled on `scripts/build_libcxx.sh`,
 cross-compiling against the already-built `musl_full` and exposed by a new
-`libs/aegir-llvm/imported.cmake`. The configuration, and why:
+`libs/aegir-llvm/imported.cmake`. The deliverable is the target-side `clang`,
+`lld` and `cc` *executables*: LLVM's own CMake builds them, with Aegir's hosted
+link recipe (the `sel4runtime` crt, musl, libc++ and the eh-frame script,
+`CMakeLists.txt:151-182`) supplied through its link flags. The configuration, and
+why:
 
 | Option | Value | Why |
 | --- | --- | --- |
@@ -144,6 +149,7 @@ cross-compiling against the already-built `musl_full` and exposed by a new
 | `LLVM_ENABLE_ZLIB/ZSTD/TERMINFO/LIBXML2/CURL/LIBEDIT` | `OFF` | no such dependencies on Aegir |
 | `CLANG_ENABLE_STATIC_ANALYZER`, `LLVM_INCLUDE_TESTS` | `OFF` | not shipped |
 | `LLVM_APPEND_VC_REV` | `OFF` | hermeticity: the same `GIT_CEILING_DIRECTORIES` concern as `dtc` (`specs/build.md`, *Build environment*) |
+| `CLANG_BUILD_TOOLS` / `LLD_BUILD_TOOLS` | `ON` | the `clang` and `lld` executables are the deliverable; LLVM's own `llvm-*` tools stay off |
 
 `compiler-rt`'s builtins for `riscv64` are built with the same cross toolchain;
 they are freestanding and need no libc. This is the same recipe the host
@@ -151,9 +157,10 @@ migration uses for Aegir's own links (`specs/build.md`, *The compiler: clang*
 step 3), so the two share it. libc++abi is already built by
 `scripts/build_libcxx.sh`.
 
-**Acceptance.** Both binaries exist, `llvm-readelf` reports a static `riscv64`
-ELF, sizes are measured against the 32 MiB disk (below), and any warning from
-our own patch is fixed (`AGENTS.md`).
+**Acceptance.** `clang`, `lld` and `cc` exist, `llvm-readelf` reports static
+`riscv64` ELFs, sizes are measured against the dedicated development disk
+(`specs/development.md`), and any warning from our own patch is fixed
+(`AGENTS.md`).
 
 ### Phase 2 — the POSIX personality
 
@@ -177,22 +184,25 @@ in a library and not a program (`specs/userland.md:149-156`):
 4. **Signals** — stubs, with LLVM's crash overrides disabled at build time.
 5. **Threads** — real seL4 TCBs, per the rules already written down in
    `specs/userland.md:85-116`.
-6. **Process** — `posix_spawn`/`execve` over Aegir's spawn. Deferred: Phase 3's
-   single-process driver does not need it.
+6. **Process** — `posix_spawn` and `wait4` over Aegir's spawn
+   (`specs/launch.md`). Load-bearing: the stock `clang` driver starts `cc1` and
+   the linker as child processes (`llvm/lib/Support/Unix/Program.inc:197`,
+   `HAVE_POSIX_SPAWN`). `fork` stays absent; nothing here needs an
+   address-space copy.
 
-### Phase 3 — the on-device driver
+### Phase 3 — the compiler as programs
 
-`apps/aegir-cc` links libclang and liblld and does the whole job in one process:
-build a `CompilerInstance` from `-cc1` options, emit an object with the
-integrated assembler, then call lld in-process to link, then write the ELF.
-No `fork`, no `exec`.
+The compiler is the stock `clang` and `lld` (with `cc` a name for the driver),
+each an ordinary Aegir program on the development tree. `clang` starts `cc1` and
+the linker as child processes through the POSIX process surface (Phase 2.6), so
+the argument handling, the include search and the link line are clang's own, not
+ours. This reverses the earlier in-process-driver decision, which existed only
+because the process surface was absent; `specs/launch.md` already names the spawn
+as the mechanism and `posix_spawn` as the interface.
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
-known freestanding source file, links it with a tiny crt, spawns the result, and
-prints the marker. The first compile is deliberately freestanding
-(`-ffreestanding -nostdinc`) so that no on-device sysroot is needed yet; the
-sysroot arc — musl headers, `libc.a`, `libc++.a`, and the `sel4runtime` crt —
-follows and is what makes an ordinary Aegir C/C++ program compile.
+known program against the `Sys:Development` sysroot, links it, spawns the
+result, and prints the marker.
 
 ### Phase 4 — tooling (libclang, clangd, clang-tidy)
 
@@ -262,17 +272,19 @@ sizes; it does not require them to run.
   the hosted apps) to that triple, so libc++ inline header code cannot differ
   between translation units, is open; today only `scripts/build_llvm.sh` uses
   it. The compiler's *output* triple (above) is a separate thing again.
-- **Where the compiler lives and how it is reached.** Phase 3 runs it from a
-  manifest service. A user reaching it interactively needs a shell or a session
-  command, and neither exists yet (`specs/services.md`'s session row is a
-  placeholder). That is a later arc.
+- **Where the compiler lives and how it is reached.** It is a development tool
+  on the system volume, run directly from the session as
+  `Sys:Development/C/clang` (`specs/development.md`); it is not a `Sys:C`
+  command and not a boot service. The boot acceptance starts it from a manifest
+  service.
 - **On-device sysroot packaging.** Designed in `specs/development.md`: the
   compiler ships in `Sys:Development` (`C`, `Include`, `Libs`), a program on the
   system volume run from the session, versioned with the runtime.
-- **Whether `posix_spawn` is ever needed.** The in-process driver avoids it; the
-  stock `clang` binary would not. This plan chooses the driver, but a POSIX
-  process model may be wanted for other ports and is the natural next client of
-  Phase 2.6.
+- **`posix_spawn`, decided.** It is needed and on the critical path: the stock
+  `clang` and `lld` are separate processes. `fork` stays absent — an
+  address-space copy is not something seL4 provides (`specs/launch.md`) — and
+  nothing here needs one. The surface is `posix_spawn` + `wait4` over Aegir's
+  spawn (Phase 2.6).
 - **Threads off, or on.** Building with `LLVM_ENABLE_THREADS=OFF` defers real
   threads to Phase 2.5. Whether Phase 3 should instead enable them depends on
   measured compile behavior under QEMU.

@@ -77,9 +77,10 @@ relative path is composed with the current directory before the translation
 The path view is the first sub-arc. The rest are the calls a POSIX program makes
 on top of it, each with its own acceptance client independent of any program:
 files (`open`/`read`/`write`/`lseek`/`stat`/…), memory (file-backed `mmap`,
-`mprotect`, a real `munmap`), environment and time, signals, threads, process
-(`specs/clang-on-aegir.md`'s Phase 2). The on-device compiler is the first large
-client, and it is what measures the surface (`specs/clang-on-aegir.md`).
+`mprotect`, a real `munmap`), environment and time, signals, threads, and process
+(`posix_spawn` and `wait4`; `fork` is absent on purpose, `specs/launch.md`). The
+on-device compiler is the first large client, and it is what measures the surface
+(`specs/clang-on-aegir.md`).
 
 ## What this is not
 

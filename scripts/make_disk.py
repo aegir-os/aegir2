@@ -520,7 +520,7 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # the acceptance cues on the compiler's own lines rather than an
         # interactive step (specs/development.md). The scale acceptance's huge
         # command runs after it, the same way (specs/memory.md).
-        tree = _with_startup(tree, b"Sys:Development/C/aegir-cc\n"
+        tree = _with_startup(tree, b"Sys:Development/C/cc\n"
                                    b"Sys:Development/C/aegir-big\n")
     return tree
 

@@ -181,7 +181,7 @@ run-ui: ## boot Aegir with a GTK window on the displays; you press the keys
 
 # The development machine (specs/development.md): the only target whose disk
 # carries Sys:Development -- the compiler under C and its sysroot beside it --
-# so the attended session can `Run Sys:Development/C/aegir-cc`. The default
+# so the attended session can `Run Sys:Development/C/cc`. The default
 # target keeps its small disk on purpose; name this one to have the tools.
 run-ui-dev: ## boot the development target with the compiler + sysroot on Sys:
 	$(PYTHON) scripts/run_target.py --target aegir-8g-smp4 --interactive

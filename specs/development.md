@@ -11,7 +11,7 @@ The machine's development environment is a directory on the system volume
 
 | Path | What it holds |
 | --- | --- |
-| `Sys:Development/C` | the compiler: `aegir-cc`, the in-process clang + lld driver (`specs/clang-on-aegir.md` Phase 3) |
+| `Sys:Development/C` | the compiler: `clang` and `lld`, with `cc` a name for the driver (`specs/clang-on-aegir.md` Phase 3) |
 | `Sys:Development/Include` | the sysroot's headers — musl's and libc++'s, as this runtime ships them |
 | `Sys:Development/Libs` | the sysroot's libraries and crt — `libc.a`, `libc++.a`, `libc++abi.a`, `libunwind.a`, compiler-rt's builtins, and `sel4runtime`'s crt objects |
 
@@ -23,8 +23,9 @@ which is what makes an ordinary `#include <stdio.h>` program compile on device �
 ## It is a program on the volume, not a boot service
 
 The compiler is read from `Sys:` at runtime and run the way any program is —
-from the session (`Run Sys:Development/C/aegir-cc …`), or through a `cc` command
-in `Sys:C` that fronts it (`specs/dos.md`). No part of it is in the boot initrd.
+the session runs `Sys:Development/C/clang …` (or its `cc` name) directly. It is a
+development tool of the `Sys:Development` tree and is not a `Sys:C` command. No
+part of it is in the boot initrd.
 
 That is a hard constraint, not a preference. The ELF loader places the rootserver
 just after its own image, so a rootserver whose initrd carried the compiler — 84
@@ -54,8 +55,9 @@ marker in `Sys:Development` names it and the driver reports it.
 ## Invocation and the first acceptance
 
 The compiler is invoked as a program on the volume: the session runs
-`Sys:Development/C/aegir-cc`, and a `cc` command in `Sys:C` fronts it with the
-sysroot flags so a caller writes `cc hello.c`.
+`Sys:Development/C/clang` (or `cc`). The driver itself puts
+`Sys:Development/Include` on the include path and links `Sys:Development/Libs`
+(above), so a caller writes `Sys:Development/C/cc hello.c`.
 
 The acceptance boots the dedicated target, runs the compiler from the session on
 a known source, spawns the result, and checks a marker — the shape
