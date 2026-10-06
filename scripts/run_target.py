@@ -721,6 +721,11 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     screen = (1280, 800)
     summary = ""
     boot_faulted: int | None = None
+    # The previous console line, without its newline. A cue can be split at a
+    # line boundary by a writer that flushed mid-line; joining the two lines
+    # recovers it. The logger is the serial's one writer now (specs/console.md),
+    # so this is a guard against a logging regression, not the fix.
+    previous = ""
     try:
         stream = process.stdout
         if stream is None:  # pragma: no cover - Popen above always pipes
@@ -777,9 +782,17 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             if boot_summary:
                 boot_faulted = int(boot_summary.group(2))
             for index, step in enumerate(target.qmp_steps):
-                if (step.times != 0 and step_matches[index] >= step.times) or re.search(
-                    step.trigger, stripped
-                ) is None:
+                if step.times != 0 and step_matches[index] >= step.times:
+                    continue
+                matched = re.search(step.trigger, stripped) is not None
+                if not matched and previous:
+                    # A cue split at the line boundary: neither half is the cue,
+                    # but their join is. A trigger already matched whole in the
+                    # previous line fired on that line and must not fire again.
+                    matched = re.search(step.trigger, previous) is None and re.search(
+                        step.trigger, previous + stripped
+                    ) is not None
+                if not matched:
                     continue
                 step_matches[index] += 1
                 socket_path = build_dir / str(target.qmp_socket)
@@ -935,6 +948,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                             flush=True,
                         )
                         failed = True
+            previous = stripped
             if target.marker in stripped:
                 seen = True
             # The run is done when the marker has printed and the script is
