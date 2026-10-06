@@ -58,12 +58,12 @@ void expect_true(bool got, char const *what)
     expect_u64(got ? 1 : 0, 1, what);
 }
 
-/* A seed row the way the spawn kit would carry one. */
-Row seed(uint64_t pid, uint64_t owner, char const *name, char const *path)
+/* A seed row the way a spawner would carry one. */
+Row seed(uint64_t pid, uint64_t parent, char const *name, char const *path)
 {
     Row row{};
     row.pid = pid;
-    row.owner = owner;
+    row.parent = parent;
     std::snprintf(row.name, sizeof(row.name), "%s", name);
     std::snprintf(row.path, sizeof(row.path), "%s", path);
     return row;
@@ -91,101 +91,111 @@ uint64_t answer(ProcessTable &table, uint32_t method, uint64_t const *in, uint32
 
 int main()
 {
-    constexpr uint64_t kSystem = 512; /* a system badge: bit 62 clear */
-    constexpr uint64_t kUser = make_user_badge(3, 1);
-    constexpr uint64_t kOtherUser = make_user_badge(4, 1);
+    /* A badge carries its class (specs/authority.md), and the pid is the
+     * process's own badge, so the authority check reads the class off it. */
+    constexpr uint64_t kSystem = 512; /* bit 62 clear */
+    constexpr uint64_t kEditor = make_user_badge(3, 5);
+    constexpr uint64_t kSameUser = make_user_badge(3, 9);
+    constexpr uint64_t kOtherUser = make_user_badge(4, 5);
+    constexpr uint64_t kNet = kSystem + 1; /* a system process */
 
     Row storage[3];
     ProcessTable table(storage, 3);
 
     /* Empty. */
-    expect_u64(answer(table, kMethodCount, nullptr, 0, kUser), 0, "an empty table counts zero");
+    expect_u64(answer(table, kMethodCount, nullptr, 0, kSameUser), 0,
+               "an empty table counts zero");
 
-    /* Register two: one user's, one the system's. */
-    Row a = seed(7001, kUser, "editor", "Sys:C/edit");
-    Row b = seed(7002, kSystem, "net", "Sys:C/net");
-    expect_u64(answer(table, kMethodRegister, words(a), kRowWords, kUser), kProcessAdded,
+    /* Register two: a user's process and a system's. */
+    Row a = seed(kEditor, kSameUser, "editor", "Sys:C/edit");
+    Row b = seed(kNet, kSystem, "net", "Sys:C/net");
+    expect_u64(answer(table, kMethodRegister, words(a), kRowWords, kSameUser), kProcessAdded,
                "a user's process registers");
     expect_u64(answer(table, kMethodRegister, words(b), kRowWords, kSystem), kProcessAdded,
-               "a system-started process registers");
+               "a system process registers");
     expect_u64(table.count(), 2, "the table holds two");
 
-    /* A duplicate pid is refused; the first row is kept. */
-    expect_u64(answer(table, kMethodRegister, words(a), kRowWords, kUser), kProcessRefused,
+    /* The parent is what the spawner recorded. */
+    expect_true(table.find(kEditor) != nullptr && table.find(kEditor)->parent == kSameUser,
+                "the row carries its parent pid");
+
+    /* A duplicate pid is refused. */
+    expect_u64(answer(table, kMethodRegister, words(a), kRowWords, kSameUser), kProcessRefused,
                "a duplicate pid is refused");
 
     /* Describe walks the set; an index past the count is the empty reply. */
     Row const *first = table.at(0);
-    expect_true(first != nullptr && first->pid == 7001, "describe names the first pid");
-    expect_u64(answer(table, kMethodCount, nullptr, 0, kUser), 2, "count answers two");
+    expect_true(first != nullptr && first->pid == kEditor, "describe names the first pid");
     uint64_t past = 9;
     uint64_t scratch[kRowWords + 2] = {};
-    expect_u64(table.handle(kMethodDescribe, &past, 1, kUser, scratch, kRowWords + 2), 0,
+    expect_u64(table.handle(kMethodDescribe, &past, 1, kSameUser, scratch, kRowWords + 2), 0,
                "describe past the count is the empty reply");
 
-    /* A user breaks its own class: C sets the flag and leaves it pending. */
-    uint64_t brk[2] = {7001, kAttnC};
-    expect_u64(answer(table, kMethodBreak, brk, 2, kUser), kBreakSet, "a user breaks its own");
-    expect_true(table.find(7001) != nullptr && table.find(7001)->flags == kAttnC,
+    /* A user breaks a process of the same user class: C sets it, break-pending. */
+    uint64_t brk[2] = {kEditor, kAttnC};
+    expect_u64(answer(table, kMethodBreak, brk, 2, kSameUser), kBreakSet,
+               "a user breaks its own class");
+    expect_true(table.find(kEditor) != nullptr && table.find(kEditor)->flags == kAttnC,
                 "the C flag is set");
-    expect_true(table.find(7001)->state == kStateBreakPending, "C leaves it break-pending");
+    expect_true(table.find(kEditor)->state == kStateBreakPending, "C leaves it break-pending");
 
     /* A user cannot break another user's process. */
-    uint64_t brk_other[2] = {7001, kAttnD};
+    uint64_t brk_other[2] = {kEditor, kAttnD};
     expect_u64(answer(table, kMethodBreak, brk_other, 2, kOtherUser), kBreakRefused,
                "a user cannot break another user's process");
-    expect_true(table.find(7001)->flags == kAttnC, "the refused flag did not land");
+    expect_true(table.find(kEditor)->flags == kAttnC, "the refused flag did not land");
 
-    /* A user cannot break a system-started process; the system class can. */
-    uint64_t brk_sys[2] = {7002, kAttnC};
-    expect_u64(answer(table, kMethodBreak, brk_sys, 2, kUser), kBreakRefused,
-               "a user cannot break a system-started process");
+    /* A user cannot break a system process; the system class can. */
+    uint64_t brk_sys[2] = {kNet, kAttnC};
+    expect_u64(answer(table, kMethodBreak, brk_sys, 2, kSameUser), kBreakRefused,
+               "a user cannot break a system process");
     expect_u64(answer(table, kMethodBreak, brk_sys, 2, kSystem), kBreakSet,
                "the system class breaks a system process");
 
     /* An unknown pid is refused. */
     uint64_t brk_none[2] = {9999, kAttnC};
-    expect_u64(answer(table, kMethodBreak, brk_none, 2, kUser), kBreakRefused,
+    expect_u64(answer(table, kMethodBreak, brk_none, 2, kSameUser), kBreakRefused,
                "an unknown pid is refused");
 
     /* Only the known flags are kept. */
-    uint64_t brk_all[2] = {7001, ~0ULL};
-    expect_u64(answer(table, kMethodBreak, brk_all, 2, kUser), kBreakSet, "all flags set");
-    expect_true(table.find(7001)->flags == kAttnAll, "only the known flags are kept");
+    uint64_t brk_all[2] = {kEditor, ~0ULL};
+    expect_u64(answer(table, kMethodBreak, brk_all, 2, kSameUser), kBreakSet, "all flags set");
+    expect_true(table.find(kEditor)->flags == kAttnAll, "only the known flags are kept");
 
-    /* Unregister removes it; the hole is filled and find misses it. */
-    uint64_t gone = 7001;
-    expect_u64(answer(table, kMethodUnregister, &gone, 1, kUser), kProcessAdded,
+    /* Unregister removes it; find misses it. */
+    uint64_t gone = kEditor;
+    expect_u64(answer(table, kMethodUnregister, &gone, 1, kSameUser), kProcessAdded,
                "unregister removes a pid");
     expect_u64(table.count(), 1, "one is left");
-    expect_true(table.find(7001) == nullptr, "the removed pid is gone");
+    expect_true(table.find(kEditor) == nullptr, "the removed pid is gone");
 
     /* A full table refuses rather than growing. */
-    Row c = seed(7003, kUser, "shell", "Sys:C/shell");
-    Row d = seed(7004, kUser, "make", "Sys:C/make");
-    Row e = seed(7005, kUser, "more", "Sys:C/more");
-    expect_u64(answer(table, kMethodRegister, words(c), kRowWords, kUser), kProcessAdded,
+    Row c = seed(kSameUser + 1, kSameUser, "shell", "Sys:C/shell");
+    Row d = seed(kSameUser + 2, kSameUser, "make", "Sys:C/make");
+    Row e = seed(kSameUser + 3, kSameUser, "more", "Sys:C/more");
+    expect_u64(answer(table, kMethodRegister, words(c), kRowWords, kSameUser), kProcessAdded,
                "a third registers");
-    expect_u64(answer(table, kMethodRegister, words(d), kRowWords, kUser), kProcessAdded,
+    expect_u64(answer(table, kMethodRegister, words(d), kRowWords, kSameUser), kProcessAdded,
                "a fourth fills it");
-    expect_u64(answer(table, kMethodRegister, words(e), kRowWords, kUser), kProcessRefused,
+    expect_u64(answer(table, kMethodRegister, words(e), kRowWords, kSameUser), kProcessRefused,
                "a full table refuses");
 
     /* A name or path past its field is cut and NUL-terminated, not read past. */
     Row long_name{};
-    long_name.pid = 8001;
-    long_name.owner = kUser;
+    long_name.pid = kSameUser + 5;
+    long_name.parent = kSameUser;
     std::memset(long_name.name, 'x', sizeof(long_name.name));
     std::memset(long_name.path, 'y', sizeof(long_name.path));
     Row small[1];
     ProcessTable one(small, 1);
-    expect_u64(answer(one, kMethodRegister, words(long_name), kRowWords, kUser), kProcessAdded,
-               "the long one registers");
+    expect_u64(answer(one, kMethodRegister, words(long_name), kRowWords, kSameUser),
+               kProcessAdded, "the long one registers");
     expect_u64(small[0].name[sizeof(small[0].name) - 1], 0, "the long name is terminated");
     expect_u64(small[0].path[sizeof(small[0].path) - 1], 0, "the long path is terminated");
 
     /* An unknown method is answered by saying nothing. */
-    expect_u64(answer(table, 99, nullptr, 0, kUser), ~0ULL, "an unknown method says nothing");
+    expect_u64(answer(table, 99, nullptr, 0, kSameUser), ~0ULL,
+               "an unknown method says nothing");
 
     /* The state a fresh row carries. */
     expect_u64(small[0].state, kStateRunning, "a new row runs");

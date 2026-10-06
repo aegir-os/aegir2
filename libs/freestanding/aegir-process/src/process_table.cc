@@ -47,15 +47,15 @@ Row const* ProcessTable::find(uint64_t pid) const noexcept
     return nullptr;
 }
 
-bool ProcessTable::may_break(uint64_t caller, uint64_t owner) noexcept
+bool ProcessTable::may_break(uint64_t caller, uint64_t target) noexcept
 {
     if (!aegir::ipc::is_user_badge(caller)) {
         return true; /* the system class is the superuser */
     }
-    if (!aegir::ipc::is_user_badge(owner)) {
-        return false; /* a user cannot break a system-started process */
+    if (!aegir::ipc::is_user_badge(target)) {
+        return false; /* a user cannot break a system process */
     }
-    return aegir::ipc::user_index(caller) == aegir::ipc::user_index(owner);
+    return aegir::ipc::user_index(caller) == aegir::ipc::user_index(target);
 }
 
 bool ProcessTable::add(Row const& seed) noexcept
@@ -97,7 +97,7 @@ bool ProcessTable::set_flags(uint64_t pid, uint64_t flags, uint64_t caller) noex
         if (rows_[i].pid != pid) {
             continue;
         }
-        if (!may_break(caller, rows_[i].owner)) {
+        if (!may_break(caller, rows_[i].pid)) {
             return false;
         }
         rows_[i].flags = flags;

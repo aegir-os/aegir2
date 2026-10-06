@@ -21,6 +21,7 @@
 #include <aegir/ipc/port.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
+#include <aegir/process_client.h>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -536,6 +537,15 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * which is what lets a background `Run` and the foreground line coexist
      * (specs/memory.md Phase 5). */
     end_staging();
+    /* The command is in the live set (specs/process.md): the launcher is its
+     * spawner, so the launcher registers it -- the command's badge as its pid,
+     * the launcher's own as the parent, its name, and the path its image came
+     * from. Best-effort: a launcher handed no registry registers nothing. */
+    if (kit_.process_registry != 0) {
+        aegir::ipc::Consumer const registry(kit_.process_registry);
+        (void)aegir::process::register_process(registry, badge, own_badge_, name.c_str(),
+                                               image_path_.c_str());
+    }
     live_.push_back(Started{process, badge, owner, command.background});
     if (out != nullptr) {
         *out = live_.back();

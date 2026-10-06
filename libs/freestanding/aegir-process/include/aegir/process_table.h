@@ -41,12 +41,14 @@ public:
     Row const* at(uint32_t index) const noexcept;
     Row const* find(uint64_t pid) const noexcept;
 
-    /** Whether `caller` may break the process `owner` started (specs/process.md
-     *  authority): a user breaks a process of its own user class, and the
-     *  system class -- the superuser, and what elevation becomes -- breaks any.
-     *  So a user's break of a system-started process is refused, which is the
-     *  rule that a system process needs elevation. */
-    static bool may_break(uint64_t caller, uint64_t owner) noexcept;
+    /** Whether `caller` may break the process whose pid is `target`
+     *  (specs/process.md authority): a user breaks a process of its own user
+     *  class -- the class the target's own badge carries, so a session service
+     *  started by auth but running as the user is the user's to break -- and
+     *  the system class, the superuser, breaks any. A user's break of a system
+     *  process is therefore refused, which is the rule that a system process
+     *  needs elevation. */
+    static bool may_break(uint64_t caller, uint64_t target) noexcept;
 
 private:
     bool add(Row const& seed) noexcept;

@@ -82,12 +82,12 @@ constexpr uint32_t kPathMax = 72;
 
 /** One process, as the registry knows it and as `describe` answers it. */
 struct Row {
-    uint64_t pid;   /* the process's badge, as the kernel reports it */
-    uint64_t owner; /* the badge whose class the process runs as -- the
-                       authority check's subject (its own, as the runtime
-                       registers it) */
-    uint64_t flags; /* the attention flags currently set */
-    uint64_t state; /* running, or a break pending */
+    uint64_t pid;    /* the process's badge, as the kernel reports it -- its
+                        identity, and the class the authority check reads */
+    uint64_t parent; /* the badge of the process that started it: the parent
+                        pid, which the spawner records */
+    uint64_t flags;  /* the attention flags currently set */
+    uint64_t state;  /* running, or a break pending */
     char name[kNameMax]; /* the program name, excluding its path */
     char path[kPathMax]; /* the program's full path, when the launcher knew it */
 };

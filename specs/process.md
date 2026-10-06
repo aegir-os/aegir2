@@ -52,11 +52,11 @@ foreground process.
    rides it in the bootstrap block (`specs/memory.md`, "The owner is the badge,
    minted per process"); the registry's `<process>` is that badge. No second id
    is invented.
-2. **Every command is breakable.** A command's runtime, standing itself up,
-   registers with the registry and hands it a **break source** — an
-   `aegir::signal` `Context` (`specs/signal.md`), the waitable source the
-   process itself owns. "Breakable" is a property of running the runtime, not a
-   flag a program opts into.
+2. **Every process is named.** A spawner registers each child it starts, so the
+   live set is the machine's process tree, not a set a program opts into. The
+   **break source** -- an `aegir::signal` `Context` (`specs/signal.md`), the
+   waitable source the process itself owns -- is the one part the child must
+   provide itself, and it lands with the delivery (Phase 2).
 3. **A break is a failing return code.** A process aborted by C exits with a
    distinguished nonzero status; the shell prints `***BREAK` for it and, being
    nonzero, it aborts a running script at or above `FailAt`'s level
@@ -82,9 +82,9 @@ registry.h`): a port that answers questions, in the multi-word envelope of
 
 A `Row` is what names a process:
 
-    pid          the process's badge, as the kernel reports it
-    owner        the badge whose class the process runs as -- the authority
-                 check's subject (its own, as the runtime registers it)
+    pid          the process's badge, as the kernel reports it -- its identity,
+                 and the class the authority check reads
+    parent       the badge of the process that started it: the parent pid
     name         the program name, excluding its path
     path         the program's full path, when the launcher knew it
     flags        the attention flags currently set
@@ -97,23 +97,25 @@ caller may not touch, is the refusal.
 
 ### Who registers
 
-The **process's runtime** registers, in one place: its pid (its own badge), the
-badge whose class it runs as, its name and its path -- and, when the break
-source lands, that source as the call's one capability (`specs/signal.md`: a
-message carries one capability). "Every command is breakable" is then a property
-of standing the runtime up, not something a spawner does on a command's behalf.
+The **spawner** registers each child it starts, in one call
+(`aegir/process_client.h`): the child's pid (the badge the spawner minted), the
+spawner's own badge as the child's **parent**, and the program's name and path.
+A process does not register itself, and should not have to: the spawner is the
+one that knows all four, and the row is a fact about a start. So the boot
+spawner registers every service, a session's spawner registers its services, a
+launcher registers its commands and its nested terminals, and a terminal
+registers its shell.
 
-The capability reaches it from its **spawner**: a command is handed a
-`process.registry` caller half among its grants, minted from an unbadged source
-the launcher holds, which auth delegates. `[session.authority]` names
-`process.registry`, so director hands auth the unbadged `spawn:process.registry`
-copy, and auth passes it to the launcher (`aegir-spawn-kit`'s
-`Kit::process_registry`), which mints each command's from it. A command whose
-spawner handed it none runs unregistered, and a Break cannot name it.
+The capability is the spawner's: a spawner handed a `process.registry` caller
+half registers its children, and one handed none registers nothing, so a Break
+cannot name them. For a session, `[session.authority]` names
+`process.registry` in its `needs` -- the union of what a session service may
+need -- so director hands auth the unbadged `spawn:process.registry` copy, and
+auth passes it to the launcher. A child never needs a registry capability of its
+own unless it is itself a spawner.
 
-A process with no runtime -- a freestanding boot service -- registers nothing
-yet: it has no row, and only the enforced halt (below), which needs no source,
-would apply to it.
+The break source (below) is the one part that must be the child's own; it is
+handled where it lands (Phase 2).
 
 ## Delivery: the flag, and the halt
 
@@ -186,12 +188,14 @@ is refused (the authority rule), and so is a pattern that matches none.
 
 ## Authority
 
-The registry checks the caller's badge against the row's `owner`, by the rule
-`specs/authority.md` sets: a caller breaks a process of its own user class. A
-process **started by the system** — a boot service, or a command an elevated
-request started — is broken only by the system class, which is "the boot
+The registry checks the caller's badge against the **target's own badge**, by
+the rule `specs/authority.md` sets: a caller breaks a process of its own user
+class. The class is the target's, not its starter's -- a session service is
+started by auth but runs as the user, so it is the user's to break -- and a
+process that **runs as the system** (a boot service, or a command an elevated
+request started) is broken only by the system class, which is "the boot
 services, plus whatever elevation hands out temporarily". So a session's `Break`
-reaches its own commands and nothing of the system's; breaking a system process
+reaches its own processes and nothing of the system's; breaking a system process
 is an elevated act, the same shape as any other (`specs/authority.md`'s
 one-shot system process, not an inherited right).
 
