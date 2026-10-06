@@ -35,6 +35,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -66,6 +67,57 @@ aegir::mem::Scratch g_scratch(nullptr);
  * heap cannot exist before the allocator that maps it. */
 alignas(64) unsigned char g_nodes[64 * 1024];
 
+/* The spawner's record of ends (specs/launch.md's "Waiting for a child"): a
+ * child's end is filed by its own `exited` call, or by the spawner's halt, and
+ * a `wait` that arrived first has its reply held here until then. */
+struct HeldWait {
+    seL4_CPtr slot = 0;
+};
+std::unordered_map<uint64_t, HeldWait> g_waits;   /* pid -> held reply */
+std::unordered_map<uint64_t, uint64_t> g_exits;   /* pid -> status, till waited */
+std::unordered_map<uint64_t, uint64_t> g_parents; /* child pid -> spawner pid */
+
+/* Slots for held replies, reused: the allocator's free is private, so a slot
+ * deleted after its reply is kept here and handed out again. Grows on demand. */
+std::vector<seL4_CPtr> g_free_reply_slots;
+
+seL4_CPtr take_reply_slot() noexcept
+{
+    if (!g_free_reply_slots.empty()) {
+        seL4_CPtr const slot = g_free_reply_slots.back();
+        g_free_reply_slots.pop_back();
+        return slot;
+    }
+    return g_objects.alloc_slot();
+}
+
+void give_reply_slot(seL4_CPtr slot) noexcept
+{
+    if (slot == 0) {
+        return;
+    }
+    (void)seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                            aegir::bootstrap::endpoint_depth());
+    g_free_reply_slots.push_back(slot);
+}
+
+/* File a child's end: answer a held wait at once, or keep it for a later one.
+ * The first filing of a pid wins, so a child's own status is not overwritten by
+ * a halt that followed it. */
+void file_exit(uint64_t pid, uint64_t status) noexcept
+{
+    auto waiter = g_waits.find(pid);
+    if (waiter != g_waits.end()) {
+        seL4_SetMR(0, 1);
+        seL4_SetMR(1, status);
+        seL4_Send(waiter->second.slot, seL4_MessageInfo_new(0, 0, 0, 2));
+        give_reply_slot(waiter->second.slot);
+        g_waits.erase(waiter);
+        return;
+    }
+    g_exits.emplace(pid, status);
+}
+
 /* Unpack the next string in the request, advancing `at` (the namespace
  * protocol's shape, aegir/nmspace.h). */
 bool read_string(uint64_t const *words, uint32_t count, uint32_t &at, std::string &out)
@@ -95,7 +147,7 @@ std::string default_window(uint64_t index)
  * std_out, window, stack. `stream` is the caller's con.stream capability, or
  * zero when it sent none. */
 void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
-                  bool cap_arrived, uint64_t *reply, uint32_t *reply_count)
+                  bool cap_arrived, uint64_t caller, uint64_t *reply, uint32_t *reply_count)
 {
     reply[0] = 0;
     *reply_count = 1;
@@ -172,6 +224,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
         if (!service.start_command(command, &started)) {
             return;
         }
+        g_parents.emplace(started.badge, caller);
         reply[0] = 1;
         reply[1] = started.badge;
         *reply_count = 2;
@@ -188,6 +241,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
         if (service.start_launcher(program, window, arguments, default_window(0), cwd,
                                    &started)) {
             write("nested terminal started");
+            g_parents.emplace(started.badge, caller);
             reply[0] = 1;
         }
         *reply_count = 1;
@@ -214,6 +268,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
     if (!service.start_command(command, &started)) {
         return;
     }
+    g_parents.emplace(started.badge, caller);
     write_started(argv_words[0].c_str());
     reply[0] = 1;
     reply[1] = started.badge;
@@ -223,7 +278,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
 /* Start a line's stages (kMethodPipeline): a stage count, each stage's argv
  * and its own redirections, then the context once (specs/pipe.md). */
 void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
-                     uint32_t count, bool cap_arrived, uint64_t *reply,
+                     uint32_t count, bool cap_arrived, uint64_t caller, uint64_t *reply,
                      uint32_t *reply_count)
 {
     reply[0] = 0;
@@ -293,6 +348,9 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
     if (!service.start_pipeline(stages.data(), stage_count, context, started.data(), cap)) {
         return;
     }
+    for (uint32_t i = 0; i < cap; ++i) {
+        g_parents.emplace(started[i].badge, caller);
+    }
     for (uint32_t i = 0; i < stage_count; ++i) {
         std::vector<std::string> const words =
             aegir::spawn::ServiceKit::split_words(stages[i].line);
@@ -332,6 +390,59 @@ void handle_halt(aegir::spawn::ServiceKit &service, uint64_t const *words, uint3
         return;
     }
     reply[0] = static_cast<uint64_t>(service.halt(words[0]));
+    /* The registry broke the child, so it never reached its own `exited`: file
+     * the end here, with the break status, so a waiting parent completes. */
+    file_exit(words[0], aegir::console::kBreakStatus);
+}
+
+/* A process's own end (kMethodExited), reported by the runtime it links. The
+ * caller's kernel badge *is* its pid, so it can only report itself. */
+void handle_exited(uint64_t const *words, uint32_t count, uint64_t caller, uint64_t *reply,
+                   uint32_t *reply_count)
+{
+    reply[0] = 1;
+    *reply_count = 1;
+    uint64_t const status = count >= 1 ? words[0] : 0;
+    file_exit(caller, status);
+}
+
+/* Wait for a child (kMethodWait): answer at once when the end is already filed,
+ * else hold the caller's reply until it is (specs/launch.md). Returns true when
+ * the reply is held, so the loop does not answer it here. */
+bool handle_wait(uint64_t const *words, uint32_t count, uint64_t caller, uint64_t *reply,
+                 uint32_t *reply_count)
+{
+    reply[0] = 0;
+    reply[1] = 0;
+    *reply_count = 2;
+    if (count < 1) {
+        return false;
+    }
+    uint64_t const pid = words[0];
+    /* Only the child's own spawner may wait for it (specs/authority.md): the
+     * caller's badge is checked against the pid that started the child. */
+    auto parent = g_parents.find(pid);
+    if (parent == g_parents.end() || parent->second != caller) {
+        return false;
+    }
+    auto ended = g_exits.find(pid);
+    if (ended != g_exits.end()) {
+        reply[0] = 1;
+        reply[1] = ended->second;
+        g_exits.erase(ended);
+        return false;
+    }
+    seL4_CPtr const slot = take_reply_slot();
+    if (slot == 0) {
+        return false;
+    }
+    if (seL4_CNode_SaveCaller(aegir::bootstrap::kSlotOwnCNode, slot,
+                              aegir::bootstrap::endpoint_depth()) != seL4_NoError) {
+        give_reply_slot(slot);
+        return false;
+    }
+    g_waits[pid] = HeldWait{slot};
+    return true;
 }
 
 }  // namespace
@@ -457,21 +568,27 @@ int main(int argc, char *argv[])
         bool cap_arrived = false;
         uint32_t const method = port.receive_words(words, aegir::ipc::kMaxWords, &count,
                                                    &badge, &cap_arrived);
-        static_cast<void>(badge);
         uint64_t reply[aegir::ipc::kMaxWords] = {};
         uint32_t reply_count = 0;
+        bool held = false;
         if (method == aegir::launch::kMethodSpawn) {
-            handle_spawn(service, words, count, cap_arrived, reply, &reply_count);
+            handle_spawn(service, words, count, cap_arrived, badge, reply, &reply_count);
         } else if (method == aegir::launch::kMethodPipeline) {
-            handle_pipeline(service, words, count, cap_arrived, reply, &reply_count);
+            handle_pipeline(service, words, count, cap_arrived, badge, reply, &reply_count);
         } else if (method == aegir::launch::kMethodRelease) {
             handle_release(service, words, count, reply, &reply_count);
         } else if (method == aegir::launch::kMethodHalt) {
             handle_halt(service, words, count, reply, &reply_count);
+        } else if (method == aegir::launch::kMethodExited) {
+            handle_exited(words, count, badge, reply, &reply_count);
+        } else if (method == aegir::launch::kMethodWait) {
+            held = handle_wait(words, count, badge, reply, &reply_count);
         } else {
             reply[0] = 0;
             reply_count = 1;
         }
-        port.reply_words(reply, reply_count);
+        if (!held) {
+            port.reply_words(reply, reply_count);
+        }
     }
 }

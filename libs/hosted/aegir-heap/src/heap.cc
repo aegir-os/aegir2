@@ -52,6 +52,7 @@
 #include <aegir/console_stream.h>
 #include <aegir/console_stream_client.h>
 #include <aegir/ipc/port.h>
+#include <aegir/launch.h>
 #include <aegir/memory.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
@@ -781,11 +782,28 @@ long sys_read(int fd, void *buffer, size_t length) noexcept
     return files::read(fd, buffer, length);
 }
 
+/* Report this process's end to its spawner (specs/launch.md's "Waiting for a
+ * child"): the launcher attributes the call to our own pid by the kernel's
+ * badge and files it, so a parent's `wait` can answer. A process the launcher
+ * gave no caller half (a boot service) has nothing to reach; best-effort. */
+void report_to_launcher(int status) noexcept
+{
+    aegir::ipc::Consumer const launcher = aegir::ipc::Consumer::find(
+        aegir::launch::kPortName, aegir::launch::kPortNameLength);
+    if (!launcher.valid()) {
+        return;
+    }
+    uint64_t const word = static_cast<uint64_t>(status);
+    uint64_t answer[1] = {};
+    (void)launcher.call_words(aegir::launch::kMethodExited, &word, 1, answer, 1);
+}
+
 /* The process is ending: report the status through the console stream, so the
  * shell's return-code line has its number (the interim until a status travels
- * another way), then halt. The command's own badge rides with it, so the
- * terminal can tell a foreground command's exit from a background `Run`'s
- * (specs/shell.md). A process with no stream just halts. */
+ * another way), tell the spawner's `wait`, then halt. The command's own badge
+ * rides with the stream message, so the terminal can tell a foreground
+ * command's exit from a background `Run`'s (specs/shell.md). A process with no
+ * stream still reports to its spawner and halts. */
 void report_exit(int status) noexcept
 {
     aegir::ipc::Consumer &stream = console_stream();
@@ -794,6 +812,7 @@ void report_exit(int status) noexcept
         (void)aegir::bootstrap::badge(&badge);
         (void)aegir::console::stream_exit(stream, static_cast<uint64_t>(status), badge);
     }
+    report_to_launcher(status);
     aegir::halt();
 }
 
