@@ -82,13 +82,44 @@ def preflight(target: Target) -> list[str]:
     return missing
 
 
+def stop_group(process: subprocess.Popen) -> None:
+    """Take a `start_new_session` command and its children down.
+
+    A signal reaches only the process it was sent to, and a build's cmake/ninja
+    children are the shell's, not its caller's: killing the shell alone leaves
+    them running with nobody to stop them (AGENTS.md). The shell leads its own
+    process group by construction, so signalling the group reaches the tree --
+    SIGTERM first, SIGKILL if it will not go.
+    """
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
 def bash(command: str, cwd: Path, timeout: int) -> None:
-    """Run a shell command with Aegir's pinned tools on PATH."""
+    """Run a shell command with Aegir's pinned tools on PATH.
+
+    The shell leads its own process group and the group is taken down whichever
+    way the command ends -- its own timeout, the outer `timeout` ending this
+    script, or a Ctrl-C -- so a long build's children cannot outlive the runner
+    (stop_group).
+    """
     print(f"INFO  (cd {cwd.relative_to(pins.ROOT)} && {command})", flush=True)
     # The marker after sourcing env.sh is a diagnostic: a `set -e` death inside
     # the source prints nothing, and without the marker a silent failure cannot
     # be told apart from the command itself failing to start.
-    subprocess.run(
+    process = subprocess.Popen(
         [
             "bash",
             "-c",
@@ -96,15 +127,26 @@ def bash(command: str, cwd: Path, timeout: int) -> None:
             f"echo 'INFO  environment ready (scripts/env.sh)' >&2; {command}",
         ],
         cwd=str(cwd),
-        check=True,
-        timeout=timeout,
         # Build steps never read the terminal. Handing them /dev/null instead
         # also takes the tty away from anything (qemu's -nographic stdio setup
         # is the known offender) that would poke it from the background process
-        # group `timeout` puts this pipeline in -- that poke is a SIGTTOU stop,
-        # which looks exactly like a configure that hangs forever.
+        # group this pipeline runs in -- that poke is a SIGTTOU stop, which
+        # looks exactly like a configure that hangs forever.
         stdin=subprocess.DEVNULL,
+        start_new_session=True,
     )
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_group(process)
+        raise
+    except BaseException:
+        # The outer `timeout` (or the user) ended us: main turns that signal
+        # into an exception, and the build tree has to come down with it.
+        stop_group(process)
+        raise
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, process.args)
 
 
 def configure(target: Target, build_dir: Path, timeout: int, extra_flags: str = "") -> None:
@@ -972,10 +1014,16 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--target", required=True, choices=sorted(TARGETS))
     parser.add_argument(
-        "--timeout",
+        "--build-timeout",
+        type=int,
+        default=1800,
+        help="seconds one build step (a runtime script, configure, ninja) may take",
+    )
+    parser.add_argument(
+        "--quiet-timeout",
         type=int,
         default=900,
-        help="seconds a build step, or a run with no console output, may take",
+        help="seconds a run may print nothing before it is treated as stopped",
     )
     parser.add_argument("--build-only", action="store_true", help="stop after building")
     parser.add_argument(
@@ -989,6 +1037,17 @@ def main(argv: list[str]) -> int:
         "--reconfigure", action="store_true", help="re-run cmake instead of reusing the build dir"
     )
     arguments = parser.parse_args(argv)
+
+    # The outer `timeout` the Makefile wraps every invocation in SIGTERMs this
+    # script, and Python's default handler exits without unwinding -- a build's
+    # process group would be left behind. Becoming an exception lets bash() take
+    # the tree down on the way out (stop_group); the QEMU path installs the same
+    # handler for its own process group.
+    def _stop(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
 
     target = TARGETS[arguments.target]
     build_dir = pins.ROOT / target.build_dir
@@ -1009,9 +1068,9 @@ def main(argv: list[str]) -> int:
     )
     wanted_flags = f"{wanted_flags} {extra_flags}".strip()
     try:
-        build_builtins(target, arguments.timeout)
+        build_builtins(target, arguments.build_timeout)
         if hosted:
-            build_runtimes(target, arguments.timeout)
+            build_runtimes(target, arguments.build_timeout)
         stamp = configured_flags(build_dir)
         # A directory configured with seL4's GNU toolchain -- one made before
         # configs/ set TRIPLE -- is not reusable: CMake keeps its cached
@@ -1036,14 +1095,14 @@ def main(argv: list[str]) -> int:
                 )
                 shutil.rmtree(build_dir)
             print(f"INFO  (re)configuring {target.name} as: {wanted_flags or 'defaults'}", flush=True)
-            configure(target, build_dir, arguments.timeout, extra_flags)
+            configure(target, build_dir, arguments.build_timeout, extra_flags)
             record_flags(build_dir, wanted_flags)
         elif stamp == "":
             # An existing build directory from before this record existed: adopt
             # it as configured with what the target now asks for, so a later
             # change is still noticed.
             record_flags(build_dir, wanted_flags)
-        build(target, build_dir, arguments.timeout)
+        build(target, build_dir, arguments.build_timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         pins.report(False, f"{target.name} build failed", str(exc))
         return 1
@@ -1056,7 +1115,7 @@ def main(argv: list[str]) -> int:
         return boot_interactive(target, build_dir)
 
     try:
-        seen, failed, summary = boot_and_watch(target, build_dir, arguments.timeout)
+        seen, failed, summary = boot_and_watch(target, build_dir, arguments.quiet_timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         pins.report(False, f"{target.name} boot failed", str(exc))
         return 1
@@ -1065,7 +1124,7 @@ def main(argv: list[str]) -> int:
         pins.report(
             False,
             f"{target.name} did not report success",
-            f"never saw {target.marker!r} within {arguments.timeout}s"
+            f"never saw {target.marker!r} within {arguments.quiet_timeout}s"
             if not seen
             else "an acceptance check failed (see the runner's lines above)",
         )

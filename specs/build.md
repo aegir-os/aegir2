@@ -393,9 +393,12 @@ Every target is configured and booted through `scripts/run_target.py`, which
 streams the guest console and stops QEMU when the target's success marker
 appears (QEMU never exits on its own). `scripts/targets.py` holds the target
 list. The watch is bounded on both sides: the runner itself stops a run that
-prints nothing for `--timeout` seconds and names the cues that never printed, so
-a step whose cue cannot come fails the run rather than wedging it until the
-outer `timeout` expires.
+prints nothing for `--quiet-timeout` seconds and names the cues that never
+printed, so a step whose cue cannot come fails the run rather than wedging it
+until the outer `timeout` expires. Build steps are bounded separately
+(`--build-timeout`, which the Makefile feeds from `BUILD_TIMEOUT`): a quiet guest
+and a compiling machine are different things, and a from-scratch LLVM cross-build
+runs for far longer than a guest should ever be silent.
 
 ## The root task, and what QEMU actually loads
 

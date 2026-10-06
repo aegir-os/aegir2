@@ -31,11 +31,14 @@ export AEGIR_TOOLKIT := $(TOOLKIT)
 
 # Wall-clock limits. Generous, but finite.
 TOOLS_TIMEOUT ?= 1800
+# BUILD_TIMEOUT is both the outer belt and the runner's per-step budget
+# (--build-timeout): the from-scratch LLVM cross-build alone runs ~15 minutes,
+# and a single step making progress at 900s must not be taken for a wedge.
 BUILD_TIMEOUT ?= 1800
 DEPS_TIMEOUT ?= 3600
 # The run's wall clock covers the boot *and* its acceptance, which grows as the
-# acceptance does; the runner bounds each step of it on its own (--timeout), so
-# this is the outer belt for a wedged run, not the boot's own limit.
+# acceptance does; the runner bounds each step of it on its own (--quiet-timeout),
+# so this is the outer belt for a wedged run, not the boot's own limit.
 RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
@@ -162,10 +165,10 @@ theme-preset: ## regenerate the theme's artwork table from MUI's XEN preset (hos
 	$(PYTHON) scripts/convert_prefs.py
 
 build: ## configure and build Aegir's own root task
-	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only
+	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only --build-timeout $(BUILD_TIMEOUT)
 
 run: ## boot Aegir under QEMU, stopping once it reports online
-	timeout $(RUN_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET)
+	timeout $(RUN_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-timeout $(BUILD_TIMEOUT)
 
 # run-ui is attended: QEMU's GTK window shows the gpu heads (one tab each),
 # the serial console stays here, and the guest's test bed paces itself on
@@ -179,11 +182,11 @@ run-ui: ## boot Aegir with a GTK window on the displays; you press the keys
 envelope: ## build and boot every target in the memory/cores envelope
 	@for target in aegir aegir-2g-smp2 aegir-2g-smp4 aegir-8g-smp4; do \
 		echo "== $$target"; \
-		timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $$target || exit 1; \
+		timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $$target --build-timeout $(BUILD_TIMEOUT) || exit 1; \
 	done
 
 test: ## build and boot the seL4 test suite on qemu-riscv-virt (acceptance test)
-	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_target.py --target sel4test
+	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_target.py --target sel4test --build-timeout $(BUILD_TIMEOUT)
 
 clean: ## remove build output, keep fetched tools
 	rm -rf build out
