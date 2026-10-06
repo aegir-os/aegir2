@@ -217,6 +217,38 @@ window.
   console drops a key with no focus -- and the command loses its head (the
   `info` -> `nfo` flake). A dock and the desktop icons are still to come.
 
+- **Phase 5 -- waiting for a child.** Proposed: `launch.session` gains `wait`
+  (a held reply keyed by pid), the spawn kit an exit notification the child
+  signals at exit with the status as its badge, and the POSIX layer
+  `posix_spawn`/`wait4` over them (`specs/clang-on-aegir.md`, `specs/posix.md`).
+
+## Waiting for a child
+
+`posix_spawn` returns a pid and `wait4` blocks until that child ends and returns
+its status (`specs/clang-on-aegir.md`). The status has a home today only for the
+*stream's* owner: a process sends `kStreamMethodExit` to its `con.stream`
+(`aegir/console_stream.h`). A parent process has no such channel, so the spawner
+grows one -- the spawner is what already holds a child's teardown, and a caller
+reaches it through `launch.session` beside the spawn (every program's grant
+carries that half, `libs/freestanding/aegir-spawn-kit/src/kit.cc:137-151`).
+
+Each child the launcher starts gets an **exit notification**, made the way the
+break source is (`specs/process.md` Phase 2): a notification out of the child's
+own memory, the child handed a `Mint`+`Write` copy at its own slot
+(`aegir/bootstrap.h`), the launcher keeping the receive half. At exit the child
+mints a copy of it badged with the status, signals it, and halts; the launcher
+reads the badge as the status. One notification per child, so two exits never
+OR together -- the same reason the break source is one per child.
+
+    wait   pid        answer: one word, the status; held until the child ends
+
+`launch.session` serves `wait` beside `kMethodSpawn`/`kMethodRelease`, a **held
+reply** like the console stream's blocking read (`specs/signal.md`): the launcher
+answers it when the named child's notification fires. `posix_spawn` records the
+pid the spawn reply already names; `wait4` calls `wait`. A program that spawns is
+therefore a program the launcher's policy lets spawn -- the policy every launch
+already passes.
+
 ## What this is not
 
 - **A `fork`.** There is no address-space copy; the child is a new process the
