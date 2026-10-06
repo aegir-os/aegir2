@@ -18,7 +18,10 @@ project(aegir-cc CXX)
 if(AEGIR_HOSTED_CXX)
   add_executable(aegir-cc src/main.cc src/probe.cc)
 
-  target_compile_options(aegir-cc PRIVATE -Wall -Wextra -Werror)
+  # LLVM and clang are built -fno-rtti, so a driver that subclasses one of their
+  # types (the diagnostic consumer) must be too, or the base's typeinfo is an
+  # undefined symbol at link.
+  target_compile_options(aegir-cc PRIVATE -Wall -Wextra -Werror -fno-rtti)
 
   # aegir-cxx-policy-hosted brings libc++ and full musl; aegir-heap turns the
   # process's memory into musl's heap and answers the POSIX file calls through

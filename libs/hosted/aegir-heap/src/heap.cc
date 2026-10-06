@@ -1068,6 +1068,21 @@ long vsyscall(long sysnum, ...) noexcept
             report_exit(static_cast<int>(va_arg(ap, long)));
         }
         break;
+    case 135: { /* rt_sigprocmask: Aegir delivers no signals, so the mask is
+                 * never changed and always empty. Succeed as a no-op -- musl's
+                 * thread and cancellation setup calls this, and -ENOSYS there
+                 * breaks a syscall it is bracketing (a write, in the
+                 * compiler's first case; specs/cxx.md's surface). */
+        static_cast<void>(va_arg(ap, int));
+        static_cast<void>(va_arg(ap, void *));
+        void *const oldset = va_arg(ap, void *);
+        size_t const sigset_size = va_arg(ap, size_t);
+        if (oldset != nullptr && sigset_size >= sizeof(unsigned long)) {
+            *static_cast<unsigned long *>(oldset) = 0;
+        }
+        ret = 0;
+        break;
+    }
     case 94: /* SYS_exit_group: end the process */
         report_exit(static_cast<int>(va_arg(ap, long)));
         break;
