@@ -499,7 +499,16 @@ def input_send_drags(socket_path: Path, drags: tuple, anchors: dict,
 
 def screen_dump(socket_path: Path, device: str, filename: str) -> str | None:
     """One console's screen, as a PPM QEMU writes: the acceptance check's eyes.
-    None when the dump happened, QMP's error text when it did not."""
+    None when the dump happened, QMP's error text when it did not.
+
+    A cue fires on a console line, which the guest may print *before* QEMU has
+    processed the flush that carries the pixels a service just drew (the
+    virtio-gpu scanout is the host-side copy a RESOURCE_FLUSH updates, and that
+    runs on the device, not the vCPU). A short settle lets the flush land, so a
+    dump taken at a cue sees the frame the cue announced rather than the one
+    before it. It only helps that race: a frame that is genuinely wrong stays
+    wrong and still fails the check."""
+    time.sleep(0.15)
     answer = qmp_command(
         socket_path,
         {"execute": "screendump", "arguments": {"filename": filename, "device": device}},
