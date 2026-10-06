@@ -97,6 +97,22 @@ inline bool register_process(aegir::ipc::Consumer const &registry, uint64_t pid,
     return answer.error == 0 && answer.count >= 1 && reply[0] == kProcessAdded;
 }
 
+/** Remove one process from the live set when it is gone (specs/process.md): the
+ *  spawner sends this as its child exits, **before** the child's memory is taken
+ *  back -- the registry drops the row and returns its break-source slot, so the
+ *  signal it held is never left pointing at a capability the reap has deleted.
+ *  False when there is no registry to call or it held no such pid. */
+inline bool unregister_process(aegir::ipc::Consumer const &registry, uint64_t pid) noexcept
+{
+    if (!registry.valid()) {
+        return false;
+    }
+    uint64_t reply[1] = {0};
+    aegir::ipc::WordsReply const answer =
+        registry.call_words(kMethodUnregister, &pid, 1, reply, 1);
+    return answer.error == 0 && answer.count >= 1 && reply[0] == kProcessAdded;
+}
+
 }  // namespace aegir::process
 
 #endif  // AEGIR_PROCESS_CLIENT_H

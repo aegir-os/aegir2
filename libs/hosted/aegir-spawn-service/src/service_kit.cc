@@ -335,6 +335,15 @@ void ServiceKit::register_child(uint64_t badge, std::string const &name, std::st
                                            static_cast<uint32_t>(path.size()));
 }
 
+void ServiceKit::unregister_child(uint64_t badge)
+{
+    if (kit_.process_registry == 0) {
+        return;
+    }
+    aegir::ipc::Consumer const registry(kit_.process_registry);
+    (void)aegir::process::unregister_process(registry, badge);
+}
+
 bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
                              uint32_t cwd_length, char const *const *arguments,
                              uint32_t argument_count)

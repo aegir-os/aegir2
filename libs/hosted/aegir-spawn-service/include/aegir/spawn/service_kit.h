@@ -307,6 +307,10 @@ private:
      * terminal, a shell -- joins the live set the same way. Best-effort: a kit
      * handed no registry half registers nothing. */
     void register_child(uint64_t badge, std::string const &name, std::string const &path);
+    /* Tell the registry a child is gone (specs/process.md), before its memory is
+     * taken back, so the registry drops the row and its break-source slot while
+     * the source capability is still valid. Best-effort like register. */
+    void unregister_child(uint64_t badge);
     /* An untyped of `bits` from mem.main through the current command's badged
      * copy (specs/memory.md): a nested terminal's runtime and shell pool. */
     seL4_CPtr alloc_child_mem(uint32_t bits);

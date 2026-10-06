@@ -827,6 +827,11 @@ int ServiceKit::release(uint64_t badge)
             continue;
         }
         bool const background = live_[i].background;
+        /* The live set loses it before its memory does (specs/process.md): the
+         * registry drops the row and returns the break-source slot while the
+         * source capability is still valid, so a later Break never signals a
+         * capability the reap has just deleted. */
+        unregister_child(live_[i].badge);
         reap(live_[i].process.tcb, live_[i].badge, live_[i].owner);
         live_.erase(live_.begin() + static_cast<std::ptrdiff_t>(i));
         if (live_.empty()) {
