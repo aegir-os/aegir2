@@ -872,11 +872,13 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
                     aegir::bootstrap::kSlotFirstDeclared + count, launch_port,
                     seL4_CapRights_new(0, 0, 1, 0), 0, 0};
     ++count;
-    /* Its own caller half, so a nested terminal is handed the same half a shell
-     * is given and its commands go through the one launcher too. */
+    /* The unbadged source its kit mints each child's `launch.session` caller
+     * half from (specs/launch.md): unbadged so the mint can carry the child's
+     * own pid as the badge, which is how the launcher attributes a call -- a
+     * spawn or an exit -- to the process that made it. */
     ports[count] = {"spawn:launch.session", 20,
                     aegir::bootstrap::kSlotFirstDeclared + count, launch_port,
-                    seL4_CapRights_new(1, 1, 0, 1), spec.badge, 0};
+                    seL4_CapRights_new(1, 1, 0, 1), 0, 0};
     ++count;
     /* Its own badged mem.main: its heap grows through it, as a command's does. */
     ports[count] = {aegir::memory::kPortName, aegir::memory::kPortNameLength,
@@ -1556,6 +1558,12 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
                         aegir::bootstrap::kSlotFirstDeclared + count, launch_port,
                         seL4_CapRights_new(1, 1, 0, 1), badge, 0};
         ++count;
+        /* The unbadged source its kit mints each child's caller half from, so
+         * every call carries the child's own pid (specs/launch.md). */
+        ports[count] = {"spawn:launch.session", 20,
+                        aegir::bootstrap::kSlotFirstDeclared + count, launch_port,
+                        seL4_CapRights_new(1, 1, 0, 1), 0, 0};
+        ++count;
     } else {
         if (!append_needs(spec.needs, launch_port, badge, namespace_badge, ports, 24,
                           &count)) {
@@ -2069,6 +2077,12 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     ports[port_count] = {aegir::launch::kPortName, aegir::launch::kPortNameLength,
                          aegir::bootstrap::kSlotFirstDeclared + port_count, launch_port,
                          seL4_CapRights_new(1, 1, 0, 1), kBootBadge, 0};
+    ++port_count;
+    /* The unbadged source the terminal's kit mints each child's caller half
+     * from, so every call carries the child's own pid (specs/launch.md). */
+    ports[port_count] = {"spawn:launch.session", 20,
+                         aegir::bootstrap::kSlotFirstDeclared + port_count, launch_port,
+                         seL4_CapRights_new(1, 1, 0, 1), 0, 0};
     ++port_count;
 
     static char const kName[] = "system.boot";

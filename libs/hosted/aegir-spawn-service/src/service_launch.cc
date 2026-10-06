@@ -723,11 +723,17 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     aegir::spawn::PortGrant ports[24];
     uint32_t port_count = aegir::spawn::launcher_ports(kit_, child, ports, 24);
     /* The nested terminal launches programs too (specs/launch.md): it is a
-     * launcher client, so it is handed the same caller half a shell gets,
-     * copied -- it is already badged. A launcher with no caller half of its own
-     * hands none, and the child's shell launches nothing. */
-    if (kit_.launch != 0 && port_count < 16) {
+     * launcher client, so it is handed its own caller half, badged with its pid
+     * so the launcher attributes its calls by the kernel's badge; and the
+     * unbadged source its own kit mints its shell's caller half from, because a
+     * badged cap cannot be minted again. A launcher with no caller half of its
+     * own hands none, and the child's shell launches nothing. */
+    if (kit_.launch != 0 && port_count + 1 < 24) {
         ports[port_count] = {aegir::launch::kPortName, aegir::launch::kPortNameLength,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count, kit_.launch,
+                             seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false};
+        ++port_count;
+        ports[port_count] = {"spawn:launch.session", 20,
                              aegir::bootstrap::kSlotFirstDeclared + port_count, kit_.launch,
                              seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true};
         ++port_count;

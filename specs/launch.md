@@ -217,10 +217,12 @@ window.
   console drops a key with no focus -- and the command loses its head (the
   `info` -> `nfo` flake). A dock and the desktop icons are still to come.
 
-- **Phase 5 -- waiting for a child.** Proposed: `launch.session` gains `wait`
-  (a held reply keyed by pid), the spawn kit an exit notification the child
-  signals at exit with the status as its badge, and the POSIX layer
-  `posix_spawn`/`wait4` over them (`specs/clang-on-aegir.md`, `specs/posix.md`).
+- **Phase 5 -- waiting for a child.** In progress: `launch.session` caller halves
+  are minted with the caller's pid, so a call is attributable by the kernel
+  (landed, with the spawn kit and auth granting the unbadged source); the runtime
+  reports its exit as an `exited` call, the launcher serves `wait` as a held
+  reply, and the POSIX layer adds `posix_spawn`/`wait4`
+  (`specs/clang-on-aegir.md`, `specs/posix.md`).
 
 ## Waiting for a child
 
@@ -232,22 +234,23 @@ grows one -- the spawner is what already holds a child's teardown, and a caller
 reaches it through `launch.session` beside the spawn (every program's grant
 carries that half, `libs/freestanding/aegir-spawn-kit/src/kit.cc:137-151`).
 
-Each child the launcher starts gets an **exit notification**, made the way the
-break source is (`specs/process.md` Phase 2): a notification out of the child's
-own memory, the child handed a `Mint`+`Write` copy at its own slot
-(`aegir/bootstrap.h`), the launcher keeping the receive half. At exit the child
-mints a copy of it badged with the status, signals it, and halts; the launcher
-reads the badge as the status. One notification per child, so two exits never
-OR together -- the same reason the break source is one per child.
+The mechanism is an ordinary call, attributed by the kernel. Every process is
+handed a `launch.session` caller half **minted with its own pid as the badge**
+(`libs/freestanding/aegir-spawn-kit/src/kit.cc`), so the launcher reads who is
+calling from the kernel, not from anything the caller says. The runtime the
+program links makes the call under `main`'s return, invisible to the program
+(`specs/cxx.md`): the hosted exit path calls `kMethodExited` with the status, and
+the launcher files it against the caller's own pid.
 
-    wait   pid        answer: one word, the status; held until the child ends
+    exited  status    in: a word; the runtime's exit report, answered at once
+    wait    pid        answer: one word, the status; held until the child ends
 
-`launch.session` serves `wait` beside `kMethodSpawn`/`kMethodRelease`, a **held
-reply** like the console stream's blocking read (`specs/signal.md`): the launcher
-answers it when the named child's notification fires. `posix_spawn` records the
-pid the spawn reply already names; `wait4` calls `wait`. A program that spawns is
-therefore a program the launcher's policy lets spawn -- the policy every launch
-already passes.
+A child that cannot call -- a fault, or the spawner's own halt/reap (a Break C,
+`specs/process.md`) -- is filed by the spawner itself, so `wait` completes on
+**any** end the spawner records, not only a cooperative return. `launch.session`
+serves `wait` beside `kMethodSpawn`/`kMethodRelease` as a **held reply**
+(`specs/signal.md`), answered when the named pid's end is filed. `posix_spawn`
+records the pid the spawn reply already names; `wait4` calls `wait`.
 
 ## What this is not
 

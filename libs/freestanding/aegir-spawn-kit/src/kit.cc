@@ -136,18 +136,17 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
     }
     /* The session launcher's caller half (specs/launch.md, specs/datatypes.md):
      * a command may ask the launcher to serve-launch a class, so any program can
-     * use a resource library, not only a launching program. Copied, not minted:
-     * the launcher's half is already badged, and the kernel refuses to re-badge
-     * an endpoint cap (updateCapData returns null when the badge is nonzero), so
-     * a mint fails to install -- and the launcher ignores the call's badge and
-     * attributes a command from its own range, so a copy loses nothing. An
+     * use a resource library, not only a launching program. Minted, not copied
+     * (specs/launch.md): the kit's source is unbadged, so the mint carries the
+     * child's own pid, and the launcher attributes every call -- a spawn or an
+     * exit -- by the kernel's badge rather than anything the caller says. An
      * output view is a command, so it shares this one grant -- which is why it
      * lives here, not in output_ports, where a second entry under the same name
      * would shadow it. */
     if (kit.launch != 0) {
         (void)put(out, capacity, n++, aegir::launch::kPortName,
                   aegir::launch::kPortNameLength, kit.launch,
-                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
     if (kit.clock != 0) {
         (void)put(out, capacity, n++, aegir::clock::kPortName,
@@ -310,14 +309,14 @@ uint32_t shell_ports(Kit const &kit, Child const &child, PortGrant *out, uint32_
               seL4_CapRights_new(1, 1, 0, 1), 0, 0, true, false);
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);
-    /* The launcher's caller half (specs/launch.md): copied, not minted -- it is
-     * already badged, and a badged endpoint cap cannot be minted again. A
-     * process with no launcher (the boot session's terminal) is granted none,
-     * so its shell's launches fail rather than guess at a port. */
+    /* The launcher's caller half (specs/launch.md): minted with the shell's own
+     * pid, so the launcher attributes its calls by the kernel's badge. A process
+     * with no launcher (the boot session's terminal) is granted none, so its
+     * shell's launches fail rather than guess at a port. */
     if (kit.launch != 0) {
         (void)put(out, capacity, n++, aegir::launch::kPortName,
                   aegir::launch::kPortNameLength, kit.launch,
-                  seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true);
+                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     }
     return n;
 }
