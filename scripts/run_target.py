@@ -214,6 +214,29 @@ def record_flags(build_dir: Path, flags: str) -> None:
     (build_dir / ".aegir-configure").write_text(flags, encoding="utf-8")
 
 
+def configured_with_clang(build_dir: Path) -> bool:
+    """Whether a build directory was configured with the pinned clang.
+
+    seL4 picks its toolchain at configure time from `TRIPLE`
+    (configs/riscv64-qemu-virt.cmake): with it, kernel/llvm.cmake and clang;
+    without, `${CROSS_COMPILER_PREFIX}g++`. `TRIPLE` is a cache variable, so a
+    directory configured before it was set keeps GCC in its `CMakeCache.txt`,
+    and neither a re-run of cmake nor a matching flag stamp switches it -- the
+    build then fails in our own sources on a warning only GCC raises
+    (aegir-trinket's `-Walloc-size-larger-than`). A cache with no compiler line
+    is treated as usable: the caller only asks about a directory that already
+    has a build.ninja.
+    """
+    cache = build_dir / "CMakeCache.txt"
+    if not cache.is_file():
+        return True
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("CMAKE_C_COMPILER:") or line.startswith("CMAKE_CXX_COMPILER:"):
+            if "clang" not in line:
+                return False
+    return True
+
+
 def qmp_command(socket_path: Path, command: dict) -> dict:
     """One command through QEMU's QMP socket, answered as a dict.
 
@@ -990,11 +1013,28 @@ def main(argv: list[str]) -> int:
         if hosted:
             build_runtimes(target, arguments.timeout)
         stamp = configured_flags(build_dir)
+        # A directory configured with seL4's GNU toolchain -- one made before
+        # configs/ set TRIPLE -- is not reusable: CMake keeps its cached
+        # compiler across a re-run, so it would build everything with
+        # riscv64-unknown-elf-g++ and fail in our own sources (the whole build
+        # is clang, specs/build.md). It is wiped and configured again, which is
+        # what lets TRIPLE's clang take effect on an old tree at all.
+        stale_toolchain = (build_dir / "build.ninja").is_file() and not configured_with_clang(
+            build_dir
+        )
         if (
             arguments.reconfigure
             or not (build_dir / "build.ninja").is_file()
+            or stale_toolchain
             or (stamp != "" and stamp != wanted_flags)
         ):
+            if stale_toolchain:
+                print(
+                    f"INFO  {target.name}'s build directory was configured with a "
+                    f"non-clang toolchain; removing it and configuring again",
+                    flush=True,
+                )
+                shutil.rmtree(build_dir)
             print(f"INFO  (re)configuring {target.name} as: {wanted_flags or 'defaults'}", flush=True)
             configure(target, build_dir, arguments.timeout, extra_flags)
             record_flags(build_dir, wanted_flags)
