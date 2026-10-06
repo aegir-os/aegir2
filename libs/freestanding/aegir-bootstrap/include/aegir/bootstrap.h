@@ -58,11 +58,6 @@ constexpr uint64_t kSlotSupervision = 4;
  *  back, and moved out of immediately -- a second transfer onto an occupied
  *  slot fails. */
 constexpr uint64_t kSlotReceiveCap = 5;
-/** The notification a child signals to report its exit, the status riding the
- *  badge of the copy it mints (specs/launch.md's "Waiting for a child"). It is
- *  write-only and unbadged: seL4 has no separate mint right, so the child
- *  re-badges a copy per exit and signals that. */
-constexpr uint64_t kSlotExit = 6;
 /** First slot the manifest's own declarations may use. */
 constexpr uint64_t kSlotFirstDeclared = 8;
 

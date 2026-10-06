@@ -699,15 +699,6 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (process.supervision == 0) {
         return fail("no memory for the supervision notification");
     }
-    /* The exit notification (specs/launch.md's "Waiting for a child"): the child
-     * signals it at exit, the status riding the badge of the copy it mints, and
-     * this side holds the receive half. Kept beside the supervision notification
-     * because the same supervisor owns both. */
-    process.exit_notify =
-        allocator_.alloc_object(seL4_NotificationObject, seL4_NotificationBits, account, &error);
-    if (process.exit_notify == 0) {
-        return fail("no memory for the exit notification");
-    }
 
     /* Its own CSpace and TCB, so it can name itself; the supervisor's fault
      * endpoint, carrying its badge; and the notification it signals when it is
@@ -732,12 +723,6 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (!install(bootstrap::kSlotSupervision, process.supervision, seL4_CanWrite,
                  request.badge)) {
         return fail("the supervision notification could not be installed");
-    }
-    /* Write only and unbadged: the child mints a badged copy of it per exit, so
-     * the badge installed here is replaced, and signalling the derived cap needs
-     * nothing the source does not already carry. */
-    if (!install(bootstrap::kSlotExit, process.exit_notify, seL4_CanWrite, 0)) {
-        return fail("the exit notification could not be installed");
     }
 
     /* The ports, each with the rights its side of the port calls for: an owner
