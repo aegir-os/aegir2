@@ -36,9 +36,18 @@ LLVM_PROJECT="${ROOT_DIR}/projects/llvm-project"
 # The pinned clang/llvm-ar/llvm-ranlib (scripts/env.sh).
 source "${ROOT_DIR}/scripts/env.sh"
 
-CC="$(command -v clang)"
-AR="$(command -v llvm-ar)"
-RANLIB="$(command -v llvm-ranlib)"
+CC="$(command -v clang || true)"
+AR="$(command -v llvm-ar || true)"
+RANLIB="$(command -v llvm-ranlib || true)"
+# Fail loudly, not silently: under `set -e` a missing tool dies at the command
+# substitution with no message at all, which reads exactly like the script doing
+# nothing.
+if [[ -z "${CC}" || -z "${AR}" || -z "${RANLIB}" ]]; then
+    echo "ERROR: the pinned LLVM toolchain is not on PATH" >&2
+    echo "       clang=${CC:-missing} llvm-ar=${AR:-missing} llvm-ranlib=${RANLIB:-missing}" >&2
+    echo "       run 'make tools' (and 'make tools-check') and try again" >&2
+    exit 1
+fi
 
 ARCHIVE="$(find "${INSTALL_DIR}" -name 'libclang_rt.builtins*.a' -print -quit 2>/dev/null)"
 if [[ -z "${ARCHIVE}" ]]; then
