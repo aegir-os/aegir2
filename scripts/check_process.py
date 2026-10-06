@@ -46,8 +46,6 @@ def main() -> int:
             "-I",
             str(PROCESS / "include"),
             "-I",
-            str(PROCESS / "src"),
-            "-I",
             str(IPC / "include"),
             str(DRIVER),
             str(PROCESS / "src" / "process_table.cc"),

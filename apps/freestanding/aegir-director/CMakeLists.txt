@@ -51,6 +51,7 @@ set(aegir_initrd_names
 set(aegir_initrd_binaries
     aegir-hello
     aegir-logger
+    aegir-process-registry
     aegir-rtc
     aegir-timer
     aegir-device-manager
@@ -91,6 +92,7 @@ set(aegir_initrd_binaries
 set(aegir_initrd_binary_names
     "aegir-hello"
     "aegir-logger"
+    "aegir-process-registry"
     "aegir-rtc"
     "aegir-timer"
     "aegir-device-manager"

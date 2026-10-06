@@ -17,7 +17,7 @@ add_library(aegir-process STATIC src/process_table.cc)
 
 target_compile_options(aegir-process PRIVATE -Wall -Wextra -Werror)
 
-target_include_directories(aegir-process PUBLIC include PRIVATE src)
+target_include_directories(aegir-process PUBLIC include)
 
 # aegir-ipc brings the designed badge space (aegir/ipc/badge.h) the authority
 # check reads; <stdint.h> comes from muslc, because user code is compiled

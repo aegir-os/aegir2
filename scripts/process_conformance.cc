@@ -13,8 +13,7 @@
 
 #include <aegir/ipc/badge.h>
 #include <aegir/process.h>
-
-#include "process_table.h"
+#include <aegir/process_table.h>
 
 #include <cstdio>
 #include <cstring>

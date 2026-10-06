@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "process_table.h"
+#include <aegir/process_table.h>
 
 #include <aegir/ipc/badge.h>
 

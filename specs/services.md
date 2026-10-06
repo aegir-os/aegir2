@@ -302,14 +302,15 @@ that the caller can read.
 | # | Service | Authority | Owns | Needs | Why it can start then |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `logger` | system | `log.main` | — | everything else logs; the only thing that keeps using the raw debug console after boot |
-| 2 | `device-manager` | system | `devmgr.registry` | `log.main` | holds `IRQControl` custody and the DTB copy; needs no filesystem; launches block drivers |
-| 3 | `vfs` | system | `vfs.namespace` | `log.main` | must exist before any filesystem, so filesystems have somewhere to register |
-| 4 | `initrd` | system | `vol.initrd` | `log.main`, `vfs.namespace` | serves the boot image as `Initrd:`; needs somewhere to register, and nothing else |
-| 5 | `partition-manager` | system | `partman.partitions` | `log.main`, `vfs.namespace` | needs block devices to exist (the registry and their ports arrive as grants); launches one filesystem per partition |
-| 6 | `console` | system | `console.gui` | `log.main`, `devmgr.registry` | needs the display and the HID devices bound; needs no filesystem (`specs/console.md`) |
-| 7 | `test` | system | — | `log.main`, `vfs.namespace` | the accumulating test bed; asks again until the volumes it checks exist |
-| 8 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace`, `console.gui` | needs the user database, which lives on a volume that only exists once the filesystems serve; spawns the greeter on the console (`specs/auth.md`) |
-| 9 | *sessions* | user | — | `log.main`, `vfs.namespace`, `console.gui` | not part of boot proper: `auth` starts one on each successful login, with the user's badge and account (`specs/auth.md`) |
+| 2 | `process` | system | `process.registry` | — | the live set, by pid (`specs/process.md`); needs nothing but to be up before anything registers, and the memory it is granted is its row storage |
+| 3 | `device-manager` | system | `devmgr.registry` | `log.main` | holds `IRQControl` custody and the DTB copy; needs no filesystem; launches block drivers |
+| 4 | `vfs` | system | `vfs.namespace` | `log.main` | must exist before any filesystem, so filesystems have somewhere to register |
+| 5 | `initrd` | system | `vol.initrd` | `log.main`, `vfs.namespace` | serves the boot image as `Initrd:`; needs somewhere to register, and nothing else |
+| 6 | `partition-manager` | system | `partman.partitions` | `log.main`, `vfs.namespace` | needs block devices to exist (the registry and their ports arrive as grants); launches one filesystem per partition |
+| 7 | `console` | system | `console.gui` | `log.main`, `devmgr.registry` | needs the display and the HID devices bound; needs no filesystem (`specs/console.md`) |
+| 8 | `test` | system | — | `log.main`, `vfs.namespace` | the accumulating test bed; asks again until the volumes it checks exist |
+| 9 | `auth` | system | `auth.login` | `log.main`, `vfs.namespace`, `console.gui` | needs the user database, which lives on a volume that only exists once the filesystems serve; spawns the greeter on the console (`specs/auth.md`) |
+| 10 | *sessions* | user | — | `log.main`, `vfs.namespace`, `console.gui` | not part of boot proper: `auth` starts one on each successful login, with the user's badge and account (`specs/auth.md`) |
 
 Every `needs` above names a port that some row `owns` — which is what makes the
 table a valid manifest sketch rather than prose: a row consuming a port nobody

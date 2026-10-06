@@ -20,6 +20,18 @@ account   = system
 owns      = log.main
 restart   = always
 
+# The process registry (specs/process.md): the live set, by pid. It has no
+# needs -- it answers about processes, not through one -- and its granted memory
+# is the row storage itself, so `memory_kib` is how many rows it holds at once,
+# a starting pool rather than a ceiling (specs/memory.md).
+[process]
+binary     = aegir-process-registry
+authority  = system
+account    = system
+owns       = process.registry
+memory_kib = 256
+restart    = always
+
 # The clock: the machine's RTC, mapped as a device and served as clock.main
 # (aegir/clock.h). A platform device has no virtio id and no bus map, so
 # director grants it the frame the devicetree names by compatible; its
