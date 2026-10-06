@@ -18,6 +18,7 @@
 
 #include "probe.h"
 
+#include <cstdlib>
 #include <new>
 
 #include <aegir/bootstrap.h>
@@ -108,13 +109,11 @@ __attribute__((constructor(300))) void cc_claim_heap() noexcept
     constexpr uint64_t kHeapBytes = 16ull << 20;
     if (!adopt_memory()) {
         aegir::debug_write("  cc: FAIL no untyped, vspace or window\n");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        aegir::halt();
+        std::_Exit(127);
     }
     if (!aegir::heap::init(*g_objects, *g_scratch, kHeapBytes)) {
         aegir::debug_write("  cc: FAIL the heap could not claim the window\n");
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        aegir::halt();
+        std::_Exit(127);
     }
 }
 
@@ -140,7 +139,16 @@ int main(int argc, char *argv[])
                                            : "AEGIR_CC_COMPILE_FAIL\n");
     failed += compile_failed;
 
-    /* The boot thread waits for this, so the marker can follow. */
-    seL4_Signal(aegir::bootstrap::kSlotSupervision);
-    return failed;
+    /* A command reports its status the way any other does: a plain return
+     * reaches the runtime's exit callback, which says the status on the console
+     * stream and halts (specs/shell.md). Signalling the boot supervisor's slot
+     * here -- a leftover from the service this grew out of -- left the shell's
+     * foreground command with no completion. */
+    /* `_Exit`, not `return`: sel4runtime's exit runs `__fini_array`, which for a
+     * program this size is LLVM's and clang's static destructors -- freeing a
+     * large object graph -- and the teardown is where the first successful
+     * compile stalled, after the object was already emitted. `_Exit` reaches
+     * exit_group, which reports the status through the console stream exactly
+     * as the exit callback would (specs/shell.md), without the destructors. */
+    std::_Exit(failed);
 }
