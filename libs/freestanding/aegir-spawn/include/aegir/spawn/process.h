@@ -263,6 +263,8 @@ struct Process {
     seL4_CPtr tcb;
     seL4_CPtr fault_endpoint; /* where its faults arrive, in our CSpace */
     seL4_CPtr supervision;    /* the notification it signals when it is ready */
+    seL4_CPtr exit_notify;    /* the notification it signals at exit, the status as the
+                                 badge of the copy it mints (specs/launch.md) */
     seL4_CPtr vspace_root;    /* its address space's root -- what a minted copy of the
                                  "vspace" grant names */
     uint64_t entry;
