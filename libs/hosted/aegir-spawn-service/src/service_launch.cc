@@ -451,22 +451,12 @@ bool ServiceKit::start_command(Command const &command, Started *out)
         return false;
     }
 
-    /* The command's break source (specs/process.md): the launcher makes a
-     * notification out of the command's own memory, so it is freed with the
-     * command; hands the command a copy through its ports; and keeps a badged
-     * copy for the registry. The badge is how the command's runtime tells a
-     * break from an empty poll. It is not bound to the command's TCB -- a
-     * process has one bound notification, and the console's event channel owns
-     * it -- so the runtime polls the source instead. Zero when the launcher has
-     * no registry to register with, or no memory for it: the command then runs
-     * with no way to be woken. */
-    seL4_CPtr break_notification = 0;
-    seL4_CPtr break_source = 0;
-    if (kit_.process_registry != 0) {
-        seL4_Error ntfn_error = seL4_NoError;
-        break_notification = memory().alloc_object(
-            seL4_NotificationObject, seL4_NotificationBits, account, &ntfn_error);
-    }
+    /* The command's break source (specs/process.md): a notification out of the
+     * command's own memory, so it is freed with the command, and a badged copy
+     * for the registry. Not bound to the command's TCB -- a process has one
+     * bound notification, and the console's event channel owns it -- so the
+     * runtime polls the source instead (specs/performance.md). */
+    BreakSource made = make_break_source(memory(), account);
 
     /* `Request.arguments` is what follows argv[0]: the spawner writes
      * `request.name` as argv[0] itself (specs/environment.md). */
@@ -511,10 +501,10 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * it (specs/process.md): the runtime polls it before it blocks on input.
      * Appended after the builders, which take slots from kSlotFirstDeclared
      * upward. */
-    if (break_notification != 0) {
+    if (made.notification != 0) {
         ports[port_count] = {"break.source", 12,
                              aegir::bootstrap::kSlotFirstDeclared + port_count,
-                             break_notification, seL4_AllRights, 0, 0};
+                             made.notification, seL4_AllRights, 0, 0};
         ++port_count;
     }
 
@@ -584,33 +574,12 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * which is what lets a background `Run` and the foreground line coexist
      * (specs/memory.md Phase 5). */
     end_staging();
-    /* A badged copy of the source for the registry (specs/process.md): the
-     * signal it sends carries this badge, which is what the command's poll sees
-     * -- an unbadged signal would read as an empty poll. Best-effort: a mint
-     * that fails leaves the command registered with no way to be woken. */
-    if (break_notification != 0) {
-        seL4_CPtr const mint = memory().alloc_slot();
-        if (mint != 0 &&
-            seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mint, endpoint_depth(),
-                            aegir::bootstrap::kSlotOwnCNode, break_notification,
-                            endpoint_depth(), seL4_CapRights_new(0, 0, 0, 1),
-                            1) == seL4_NoError) {
-            break_source = mint;
-        }
-    }
     /* The command is in the live set (specs/process.md): the launcher is its
-     * spawner, so the launcher registers it, handing the registry the source. */
-    register_child(badge, name, image_path_, break_source);
-    /* Our copies are staging: the child and the registry each hold their own, so
+     * spawner, so the launcher registers it, handing the registry the source.
+     * Our copies are staging: the child and the registry each hold their own, so
      * the notification stays alive until the row is unregistered (release). */
-    if (break_source != 0) {
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, break_source,
-                          endpoint_depth());
-    }
-    if (break_notification != 0) {
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, break_notification,
-                          endpoint_depth());
-    }
+    register_child(badge, name, image_path_, made.source);
+    drop_break_source(made);
     live_.push_back(Started{process, badge, owner, command.background});
     if (out != nullptr) {
         *out = live_.back();
@@ -746,6 +715,9 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     child.shell_pool = child_shell_pool;
     child.shell_pool_bits = kChildUntypedBits;
     child.launcher = false;
+    /* The nested terminal's account, named once: its staging and its break
+     * source are charged to this process's own badge (specs/auth.md). */
+    aegir::mem::Account account{"terminal", 0, 0, 0};
     /* launcher_ports fills up to 16 grants and a nested terminal appends its
      * launch half; size past both. */
     aegir::spawn::PortGrant ports[24];
@@ -758,6 +730,15 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
         ports[port_count] = {aegir::launch::kPortName, aegir::launch::kPortNameLength,
                              aegir::bootstrap::kSlotFirstDeclared + port_count, kit_.launch,
                              seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, true};
+        ++port_count;
+    }
+    /* The nested terminal's break source (specs/process.md): its own
+     * notification, appended after the launcher kit's ports. */
+    BreakSource made = make_break_source(memory(), account);
+    if (made.notification != 0) {
+        ports[port_count] = {"break.source", 12,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             made.notification, seL4_AllRights, 0, 0};
         ++port_count;
     }
 
@@ -826,7 +807,6 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     request.cspace_l1_bits = cnode_l1_ != 0 ? static_cast<uint32_t>(cnode_l1_) : 8;
     request.untyped_physical = 0;
     request.untyped_bits = kChildUntypedBits;
-    aegir::mem::Account account{"terminal", 0, 0, 0};
     aegir::spawn::Process process{};
     if (!spawner().spawn(request, account, process)) {
         aegir::debug_write("  spawn: FAIL spawning a nested terminal: ");
@@ -843,8 +823,11 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     }
     end_staging();
     /* The nested terminal is in the live set (specs/process.md): this process is
-     * its spawner, and `program` is the Initrd image it was asked for. */
-    register_child(child_badge, std::string(kName), program);
+     * its spawner, and `program` is the Initrd image it was asked for. It is
+     * never reaped (the session's reclaim takes its memory), so the registry's
+     * copy lives as long as the session; ours is staging. */
+    register_child(child_badge, std::string(kName), program, made.source);
+    drop_break_source(made);
     /* The nested terminal's staging was charged to this process's own badge (a
      * nested terminal is never reaped), so its frames stay mapped for the
      * session: move the staging mark past them, or a later command's staging

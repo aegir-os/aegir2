@@ -227,24 +227,26 @@ one-shot system process, not an inherited right).
    over it, and every spawner registering the children it starts. No interruption
    yet: a row is visible, and `describe`/`count` answer (which is what `Break
    NAME` walks). This is `Status`'s ground too.
-2. **The break source.** Landed for a launcher's commands. The launcher makes
-   each command a notification out of the command's own memory, hands the
-   command a copy through its ports (`break.source`) and a badged copy to the
-   registry in the `register` call; the registry stores it against the row and
-   signals it when `break` sets C; the command's runtime polls it -- one
-   non-blocking syscall, made before it blocks on input -- and exits with a
-   distinguished nonzero status. (The poll is a known cost, not the intended
-   shape; `specs/performance.md` records it and the fix.) The source is **not
-   bound** to the command's
-   TCB: a thread has one bound notification, and the console's event channel
-   owns it for a GUI program, so the source cannot take that slot. A thread
-   already blocked inside a call is therefore not reached -- the kernel latches
-   the signal (kernel/src/object/notification.c:122-131) -- and that case is the
-   enforced halt's, Phase 3. The launcher **unregisters** a command as it exits,
-   before the reap takes its memory back, so a stored source is never left
-   pointing at a deleted capability. Still to come: the shell, nested terminals
-   and the boot spawners (director, auth); and the status is not yet what the
-   shell renders `***BREAK` for (Phase 4).
+2. **The break source.** Landed for a launcher's children -- its commands, the
+   shell, and nested terminals. For each, the launcher makes a notification out
+   of the child's own memory, hands the child a copy through its ports
+   (`break.source`) and a badged copy to the registry in the `register` call; the
+   registry stores it against the row and signals it when `break` sets C; the
+   child's runtime polls it -- one non-blocking syscall, made before it blocks on
+   input -- and exits with a distinguished nonzero status. (The poll is a known
+   cost, not the intended shape; `specs/performance.md` records it and the fix.)
+   The source is **not bound** to the child's TCB: a thread has one bound
+   notification, and the console's event channel owns it for a GUI program, so
+   the source cannot take that slot. A thread already blocked inside a call is
+   therefore not reached -- the kernel latches the signal
+   (kernel/src/object/notification.c:122-131) -- and that case is the enforced
+   halt's, Phase 3. The launcher **unregisters** a child as it exits, before the
+   reap takes its memory back, so a stored source is never left pointing at a
+   deleted capability. Still to come: the boot spawners (director, auth), whose
+   children are freestanding and have no runtime wait to poll -- a source there
+   is inert until a freestanding idle wait exists, and Phase 3's halt reaches
+   them by TCB owner instead; and the status is not yet what the shell renders
+   `***BREAK` for (Phase 4).
 3. **The enforced halt.** `break` C also asks the TCB's owner to take the
    process back, so a program blocked in a single call dies.
 4. **The key.** The `line` method carries the line's pids; the terminal sets C

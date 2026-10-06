@@ -312,6 +312,21 @@ private:
      * taken back, so the registry drops the row and its break-source slot while
      * the source capability is still valid. Best-effort like register. */
     void unregister_child(uint64_t badge);
+    /* A child's break source (specs/process.md): a notification `objects` makes
+     * and a badged copy for the registry, or zeros when the kit has no registry
+     * half or no memory. The caller installs `notification` as the child's
+     * `break.source` port and hands `source` to register_child, then drops both
+     * -- the child and the registry each hold their own copy. Not bound to the
+     * child's TCB (a process has one bound notification, and the console's event
+     * channel owns it), so the child polls it; the cost and its fix are in
+     * specs/performance.md. */
+    struct BreakSource {
+        seL4_CPtr notification = 0;
+        seL4_CPtr source = 0;
+    };
+    BreakSource make_break_source(aegir::mem::Allocator &objects,
+                                  aegir::mem::Account &account) noexcept;
+    void drop_break_source(BreakSource &made) noexcept;
     /* An untyped of `bits` from mem.main through the current command's badged
      * copy (specs/memory.md): a nested terminal's runtime and shell pool. */
     seL4_CPtr alloc_child_mem(uint32_t bits);

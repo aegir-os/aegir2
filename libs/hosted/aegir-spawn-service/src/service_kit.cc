@@ -345,6 +345,45 @@ void ServiceKit::unregister_child(uint64_t badge)
     (void)aegir::process::unregister_process(registry, badge);
 }
 
+ServiceKit::BreakSource ServiceKit::make_break_source(aegir::mem::Allocator &objects,
+                                                      aegir::mem::Account &account) noexcept
+{
+    BreakSource made{};
+    if (kit_.process_registry == 0) {
+        return made;
+    }
+    seL4_Error error = seL4_NoError;
+    made.notification =
+        objects.alloc_object(seL4_NotificationObject, seL4_NotificationBits, account, &error);
+    if (made.notification == 0) {
+        return made;
+    }
+    /* The badge is what the child's poll reads: an unbadged signal would read as
+     * an empty poll, so the registry's copy is minted with a nonzero one. */
+    seL4_CPtr const slot = objects.alloc_slot();
+    if (slot != 0 &&
+        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, slot, endpoint_depth(),
+                        aegir::bootstrap::kSlotOwnCNode, made.notification,
+                        endpoint_depth(), seL4_CapRights_new(0, 0, 0, 1), 1) ==
+            seL4_NoError) {
+        made.source = slot;
+    }
+    return made;
+}
+
+void ServiceKit::drop_break_source(BreakSource &made) noexcept
+{
+    if (made.source != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, made.source, endpoint_depth());
+        made.source = 0;
+    }
+    if (made.notification != 0) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, made.notification,
+                          endpoint_depth());
+        made.notification = 0;
+    }
+}
+
 bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
                              uint32_t cwd_length, char const *const *arguments,
                              uint32_t argument_count)
@@ -371,7 +410,11 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
     child.badge = shell_badge_;
     child.runtime = shell_pool_;
     child.runtime_bits = shell_pool_bits_;
-    aegir::spawn::PortGrant ports[6];
+    /* The shell's break source (specs/process.md): its own notification, so a
+     * Break of the shell's pid reaches it at its next input read. Made before
+     * the ports, so its capability can ride in the grant. */
+    BreakSource made = make_break_source(*allocator_, account);
+    aegir::spawn::PortGrant ports[8];
     uint32_t port_count = aegir::spawn::shell_ports(kit_, child, ports, 6);
     /* The boot session's status endpoint (specs/boot.md): the shell sends the
      * outcome here and auth receives it. Only the boot process has one, and it
@@ -380,6 +423,12 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
         ports[port_count] = {"boot.status", 11,
                              aegir::bootstrap::kSlotFirstDeclared + port_count,
                              boot_status_, seL4_AllRights, 0, 0};
+        ++port_count;
+    }
+    if (made.notification != 0) {
+        ports[port_count] = {"break.source", 12,
+                             aegir::bootstrap::kSlotFirstDeclared + port_count,
+                             made.notification, seL4_AllRights, 0, 0};
         ++port_count;
     }
     static char const kName[] = "session.shell";
@@ -429,8 +478,11 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
         return false;
     }
     /* The shell is in the live set (specs/process.md): this process is its
-     * spawner, and the last image load's path is where its binary came from. */
-    register_child(shell_badge_, std::string(kName), image_path_);
+     * spawner, and the last image load's path is where its binary came from. The
+     * shell is spawned once and never reaped, so the registry's copy lives as
+     * long as the session; ours is staging. */
+    register_child(shell_badge_, std::string(kName), image_path_, made.source);
+    drop_break_source(made);
     return true;
 }
 
