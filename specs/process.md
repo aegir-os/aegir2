@@ -106,6 +106,13 @@ spawner registers every service, a session's spawner registers its services, a
 launcher registers its commands and its nested terminals, and a terminal
 registers its shell.
 
+A shell is a process like any other, so it carries a badge of its own from the
+range its terminal was delegated (`specs/launch.md`) -- not the `con.stream` key
+it once shared with the logger -- and the terminal keys its stream server on that
+badge. The session's serial ranges are disjoint for the same reason: a
+launcher-shaped service's shell takes its own serial, and the launcher's commands
+start past it, so a shell and a command never share a badge.
+
 The capability is the spawner's: a spawner handed a `process.registry` caller
 half registers its children, and one handed none registers nothing, so a Break
 cannot name them. For a session, `[session.authority]` names

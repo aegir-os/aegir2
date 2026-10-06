@@ -186,7 +186,9 @@ window.
   copy, and gives it a larger CSpace (specs/authority.md) so it can launch in
   turn. The kit itself is one module (`libs/freestanding/aegir-spawn-kit`): the
   launcher builds its commands and a nested terminal, the terminal only its own
-  shell, all with the same builders auth uses, so no spawner reassembles the
+  shell -- which takes a badge of its own from that range, so it is a process
+  the registry names rather than a `con.stream` key (specs/process.md) -- all
+  with the same builders auth uses, so no spawner reassembles the
   list -- and since specs/signal.md Phase 3 it is the launcher that builds the
   commands and the nested terminals. `NEWSHELL`/`NEWCLI`
   launch `aegir-terminal` this way, and a nested terminal stands up as a peer
