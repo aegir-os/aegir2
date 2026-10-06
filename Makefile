@@ -39,7 +39,7 @@ DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
 
 all: help
 
@@ -83,6 +83,9 @@ check-translation: ## run the gettext .mo parser against in-memory images (host)
 
 check-terminal: ## run the terminal grid against its host conformance cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_terminal.py
+
+check-process: ## run the process registry's table against its host cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_process.py
 
 check-args: ## run aegir::args against its host conformance cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_args.py

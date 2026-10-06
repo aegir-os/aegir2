@@ -38,6 +38,8 @@
 
 #include <stdint.h>
 
+#include <aegir/ipc/badge.h>
+
 extern "C" {
 /* libsel4's headers are C++-safe, but keeping the include here means callers do
  * not have to think about it. */
@@ -60,53 +62,6 @@ constexpr uint32_t kMethodEvent = 1;
  *  signal's badge are the same number, the service's own. Both sides are the
  *  owner's to keep: it badges the caller caps it hands out, and it checks. */
 constexpr seL4_Word kCallMark = 1ULL << 63;
-
-/** The designed badge space (specs/authority.md): bit 62 is the user class --
- * a badge with it set belongs to a user, one with it clear to the system. A
- * user badge is `kUserBadge | (user << 24) | serial`, where user is the row
- * in the user database (the row order is part of the format's meaning, so it
- * is stable within a build) and serial counts what the user has run. Auth
- * mints them (specs/auth.md); system badges stay small. */
-constexpr seL4_Word kUserBadge = 1ULL << 62;
-
-constexpr seL4_Word make_user_badge(uint64_t user, uint64_t serial) noexcept
-{
-    return kUserBadge | (user << 24) | serial;
-}
-
-/** The user index a badge carries: bits 24..61. A system badge has none, and
- *  is the superuser (specs/authority.md, specs/ownership.md). */
-constexpr uint64_t kUserIndexMask = 0x3fffffffffull;
-
-constexpr uint64_t user_index(seL4_Word badge) noexcept
-{
-    return (badge >> 24) & kUserIndexMask;
-}
-
-constexpr bool is_user_badge(seL4_Word badge) noexcept
-{
-    return (badge & kUserBadge) != 0;
-}
-
-/** The serial a user badge carries: bits 0..23, the low part of the identity.
- *  A process that launches others reads its own serial to find the badge range
- *  it was given (specs/launch.md). */
-constexpr uint64_t kUserSerialMask = 0xffffff;
-
-constexpr uint64_t serial_of(seL4_Word badge) noexcept
-{
-    return badge & kUserSerialMask;
-}
-
-/** The serial space one session owns: the session's badge, its terminal's and
- *  the badges that terminal hands out (commands and nested terminals) all come
- *  from one block of the user's 24-bit serial space. Auth advances its session
- *  counter by a whole stride (specs/auth.md), so no two sessions share a serial
- *  -- the VFS binds by badge and its serials are never reused. The range is a
- *  capacity table: a session that needs more grows it here, and auth's counter
- *  follows. 2^16 leaves room for a terminal's commands and several nested
- *  terminals while 256 sessions still fit the space. */
-constexpr uint64_t kSessionSerialStride = 1ULL << 16;
 
 /** One word of payload, in each direction. Enough for the boot set's protocols;
  *  a protocol that needs more words is a change to this envelope, which is why
