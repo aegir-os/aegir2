@@ -219,6 +219,15 @@ struct Request {
      * child that is not told them. */
     char const *boot = nullptr;
     uint32_t boot_length = 0;
+    /* The break source the spawner made for this child (specs/process.md): a
+     * notification it binds to the child's TCB before the child runs, so a
+     * signal to it reaches the child even while it is blocked in a receive
+     * (kernel/manual/parts/notifications.tex, "Binding Notifications"; a
+     * thread mid-`Call` is not woken, kernel/src/object/notification.c:122-131,
+     * which is what leaves the halt to Phase 3). Zero for a child the spawner
+     * gives no way to wake. The capability itself reaches the child through
+     * `ports`, named by the caller; this is only the binding. */
+    seL4_CPtr break_notification = 0;
     uint32_t priority;
     /* The core the child is placed on, when the spawner was told one. Absent
      * (`has_core` false) leaves the kernel's own default: a fresh TCB's
