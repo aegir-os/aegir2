@@ -172,7 +172,7 @@ target_compile_options(aegir-director PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(
   aegir-director
   PRIVATE aegir-cxx-policy aegir-runtime aegir-mem aegir-bootstrap aegir-devtree aegir-ipc aegir-log
-          aegir-manifest aegir-spawn sel4 muslc sel4runtime cpio
+          aegir-manifest aegir-process aegir-spawn sel4 muslc sel4runtime cpio
 )
 
 include(rootserver)

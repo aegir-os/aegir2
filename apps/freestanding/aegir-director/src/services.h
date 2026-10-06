@@ -129,6 +129,12 @@ private:
      *  them. Null with `count` zero when there is nothing to split. */
     char const *const *split_list(manifest::View value, uint32_t *count) noexcept;
 
+    /** Register the started boot set with the process registry
+     *  (specs/process.md): director is the spawner, so director records each
+     *  service. Best-effort -- a manifest with no process.registry port
+     *  registers nothing. */
+    void register_services(Started const *started, uint32_t count) noexcept;
+
     mem::Allocator &allocator_;
     /* Where the merged grant list for a service is built. A capability director
      * delegates is not a port, so it is not in the manifest's port graph, and the

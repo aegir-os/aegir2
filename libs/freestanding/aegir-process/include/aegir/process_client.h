@@ -28,13 +28,13 @@ namespace aegir::process {
 
 namespace detail {
 
-/** `text` into `out`, bounded by `capacity` and NUL-terminated; empty for a
- *  null text. */
-inline void copy_field(char *out, uint32_t capacity, char const *text) noexcept
+/** `text` (a `length`-byte view, or null) into `out`, bounded by `capacity` and
+ *  NUL-terminated. */
+inline void set_field(char *out, uint32_t capacity, char const *text, uint32_t length) noexcept
 {
     uint32_t at = 0;
     if (text != nullptr) {
-        for (; text[at] != '\0' && at + 1 < capacity; ++at) {
+        for (; at < length && at + 1 < capacity; ++at) {
             out[at] = text[at];
         }
     }
@@ -44,10 +44,12 @@ inline void copy_field(char *out, uint32_t capacity, char const *text) noexcept
 }  // namespace detail
 
 /** Register one process. `pid` is the child's badge, `parent` the spawner's
- *  (the parent pid), `name` the program name and `path` its full path (either
- *  may be null). False when there is no registry to call or it refused. */
+ *  (the parent pid), and `name`/`path` the program's name and full path as
+ *  views (either may be null or empty). False when there is no registry to call
+ *  or it refused. */
 inline bool register_process(aegir::ipc::Consumer const &registry, uint64_t pid,
-                             uint64_t parent, char const *name, char const *path) noexcept
+                             uint64_t parent, char const *name, uint32_t name_length,
+                             char const *path, uint32_t path_length) noexcept
 {
     if (!registry.valid()) {
         return false;
@@ -55,8 +57,8 @@ inline bool register_process(aegir::ipc::Consumer const &registry, uint64_t pid,
     Row row{};
     row.pid = pid;
     row.parent = parent;
-    detail::copy_field(row.name, sizeof(row.name), name);
-    detail::copy_field(row.path, sizeof(row.path), path);
+    detail::set_field(row.name, sizeof(row.name), name, name_length);
+    detail::set_field(row.path, sizeof(row.path), path, path_length);
     uint64_t reply[1] = {0};
     aegir::ipc::WordsReply const answer =
         registry.call_words(kMethodRegister, reinterpret_cast<uint64_t const *>(&row),

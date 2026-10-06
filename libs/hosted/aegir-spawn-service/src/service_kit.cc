@@ -24,6 +24,7 @@
 #include <aegir/net.h>
 #include <aegir/nmspace.h>
 #include <aegir/process.h>
+#include <aegir/process_client.h>
 
 #include <unistd.h>
 
@@ -323,6 +324,17 @@ aegir::mem::Allocator& ServiceKit::memory()
     return g_command_mem;
 }
 
+void ServiceKit::register_child(uint64_t badge, std::string const &name, std::string const &path)
+{
+    if (kit_.process_registry == 0) {
+        return;
+    }
+    aegir::ipc::Consumer const registry(kit_.process_registry);
+    (void)aegir::process::register_process(registry, badge, own_badge_, name.c_str(),
+                                           static_cast<uint32_t>(name.size()), path.c_str(),
+                                           static_cast<uint32_t>(path.size()));
+}
+
 bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const *cwd,
                              uint32_t cwd_length, uint64_t badge,
                              char const *const *arguments, uint32_t argument_count)
@@ -402,6 +414,9 @@ bool ServiceKit::spawn_shell(char const *image, uint64_t image_bytes, char const
         aegir::debug_write("\n");
         return false;
     }
+    /* The shell is in the live set (specs/process.md): this process is its
+     * spawner, and the last image load's path is where its binary came from. */
+    register_child(badge, std::string(kName), image_path_);
     return true;
 }
 

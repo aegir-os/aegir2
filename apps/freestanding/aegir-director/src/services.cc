@@ -7,6 +7,10 @@
 
 #include "services.h"
 
+#include <aegir/ipc/port.h>
+#include <aegir/process.h>
+#include <aegir/process_client.h>
+
 namespace aegir::director {
 
 namespace {
@@ -809,6 +813,28 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             return;
         }
         ++boot.started;
+    }
+
+    /* Register the boot set with the process registry (specs/process.md):
+     * director is the spawner, so it records each service -- its pid, its name,
+     * its parent (director's own is nobody, zero). One pass after the set is up,
+     * because the registry is itself a boot service: a call before it serves
+     * would block forever, and after this pass each call blocks only until the
+     * registry receives it. */
+    register_services(started, boot.started);
+}
+
+void Services::register_services(Started const *started, uint32_t count) noexcept
+{
+    PortGraph::Name const name{aegir::process::kPortName, aegir::process::kPortNameLength};
+    seL4_CPtr const endpoint = graph_.endpoint(name);
+    if (endpoint == 0) {
+        return;
+    }
+    aegir::ipc::Consumer const registry(endpoint);
+    for (uint32_t i = 0; i < count; ++i) {
+        (void)aegir::process::register_process(registry, started[i].badge, 0, started[i].name,
+                                               started[i].name_length, nullptr, 0);
     }
 }
 

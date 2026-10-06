@@ -77,14 +77,6 @@ uint32_t command_ports(Kit const &kit, Child const &child, PortGrant *out, uint3
         (void)put(out, capacity, n++, aegir::log::kPortName, aegir::log::kPortNameLength,
                   kit.log, seL4_CapRights_new(1, 0, 0, 1), child.badge, 0, false, false);
     }
-    /* The process registry (specs/process.md): the command's own caller half,
-     * minted with its badge, so its runtime registers itself under its pid --
-     * what a Break names. Optional, like the logger above. */
-    if (kit.process_registry != 0) {
-        (void)put(out, capacity, n++, aegir::process::kPortName,
-                  aegir::process::kPortNameLength, kit.process_registry,
-                  seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
-    }
     (void)put(out, capacity, n++, "untyped", 7, child.runtime, seL4_AllRights, 0,
               child.runtime_bits, false, false);
     /* The session's namespace, by copy: it already carries the session's
@@ -278,6 +270,16 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
     if (kit.font_main != 0) {
         (void)put(out, capacity, n++, kFontMainName, kFontMainNameLength, kit.font_main,
                   seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, false);
+    }
+    /* The process.registry caller half (specs/process.md): a launcher-shaped
+     * child registers every child it starts -- a shell, a command, a nested
+     * terminal -- so it needs the caller half itself. Optional: a boot whose
+     * director delegated none hands none, and the launcher's children go
+     * unregistered. */
+    if (kit.process_registry != 0) {
+        (void)put(out, capacity, n++, aegir::process::kPortName,
+                  aegir::process::kPortNameLength, kit.process_registry, seL4_AllRights, 0, 0,
+                  false, false);
     }
     return n;
 }

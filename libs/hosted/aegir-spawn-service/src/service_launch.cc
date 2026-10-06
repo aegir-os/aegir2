@@ -21,7 +21,6 @@
 #include <aegir/ipc/port.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
-#include <aegir/process_client.h>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -538,14 +537,8 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * (specs/memory.md Phase 5). */
     end_staging();
     /* The command is in the live set (specs/process.md): the launcher is its
-     * spawner, so the launcher registers it -- the command's badge as its pid,
-     * the launcher's own as the parent, its name, and the path its image came
-     * from. Best-effort: a launcher handed no registry registers nothing. */
-    if (kit_.process_registry != 0) {
-        aegir::ipc::Consumer const registry(kit_.process_registry);
-        (void)aegir::process::register_process(registry, badge, own_badge_, name.c_str(),
-                                               image_path_.c_str());
-    }
+     * spawner, so the launcher registers it. */
+    register_child(badge, name, image_path_);
     live_.push_back(Started{process, badge, owner, command.background});
     if (out != nullptr) {
         *out = live_.back();
@@ -681,8 +674,10 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     child.shell_pool = child_shell_pool;
     child.shell_pool_bits = kChildUntypedBits;
     child.launcher = false;
-    aegir::spawn::PortGrant ports[16];
-    uint32_t port_count = aegir::spawn::launcher_ports(kit_, child, ports, 16);
+    /* launcher_ports fills up to 16 grants and a nested terminal appends its
+     * launch half; size past both. */
+    aegir::spawn::PortGrant ports[24];
+    uint32_t port_count = aegir::spawn::launcher_ports(kit_, child, ports, 24);
     /* The nested terminal launches programs too (specs/launch.md): it is a
      * launcher client, so it is handed the same caller half a shell gets,
      * copied -- it is already badged. A launcher with no caller half of its own
@@ -775,6 +770,9 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
         return false;
     }
     end_staging();
+    /* The nested terminal is in the live set (specs/process.md): this process is
+     * its spawner, and `program` is the Initrd image it was asked for. */
+    register_child(child_badge, std::string(kName), program);
     /* The nested terminal's staging was charged to this process's own badge (a
      * nested terminal is never reaped), so its frames stay mapped for the
      * session: move the staging mark past them, or a later command's staging

@@ -410,6 +410,12 @@ uint32_t PortGraph::port_owner(unsigned index) const noexcept
     return index < port_count_ ? ports_[index].owner : 0;
 }
 
+seL4_CPtr PortGraph::endpoint(Name name) const noexcept
+{
+    uint32_t const index = port_index(name);
+    return index < port_count_ ? ports_[index].endpoint : 0;
+}
+
 spawn::PortGrant const *PortGraph::grants(uint32_t entry) const noexcept
 {
     return entry < entry_count_ ? &grants_[grant_offset_[entry]] : nullptr;

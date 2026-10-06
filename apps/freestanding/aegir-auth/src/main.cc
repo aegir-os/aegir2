@@ -37,6 +37,7 @@
 #include <aegir/metadata.h>
 #include <aegir/nmspace.h>
 #include <aegir/process.h>
+#include <aegir/process_client.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/kit.h>
 #include <aegir/spawn/process.h>
@@ -93,8 +94,9 @@ seL4_CPtr g_spawn_datatypes = 0;
 /* The font service's caller half (specs/fonts.md): the session's windows draw a
  * Sys:Fonts face through it, an OpenType one the toolkit cannot parse itself. */
 seL4_CPtr g_spawn_font = 0;
-/* The unbadged process registry (specs/process.md): the source auth hands the
- * launcher, which mints each command a caller half from it. */
+/* The process registry's caller half (specs/process.md): auth registers each
+ * service it starts with it, and hands it to a launcher, which registers each
+ * of its own children. */
 seL4_CPtr g_spawn_process = 0;
 aegir::ipc::Consumer g_gui;
 constexpr uint64_t kGreeterBadge = 768;
@@ -159,6 +161,26 @@ bool mint_session_nmspace(seL4_CPtr slot, uint64_t badge) noexcept
                            aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
                            g_spawn_nmspace, aegir::bootstrap::cnode_bits(),
                            seL4_CapRights_new(1, 1, 0, 1), badge) == seL4_NoError;
+}
+
+/* Register a just-started child with the process registry (specs/process.md):
+ * auth is the spawner, so it records the child's pid, its own badge as the
+ * parent, and the name and path the child stands as. Best-effort: a boot whose
+ * director delegated no registry leaves auth with none, and it registers
+ * nothing. */
+void register_child(uint64_t pid, char const *name, uint32_t name_length, char const *path,
+                    uint32_t path_length) noexcept
+{
+    if (g_spawn_process == 0) {
+        return;
+    }
+    uint64_t self = 0;
+    if (!aegir::bootstrap::badge(&self)) {
+        self = 0;
+    }
+    aegir::ipc::Consumer const registry(g_spawn_process);
+    (void)aegir::process::register_process(registry, pid, self, name, name_length, path,
+                                           path_length);
 }
 
 /* The untyped source (specs/memory.md): ask mem.main for a chunk as wide as a
@@ -825,13 +847,18 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
     }
     aegir::spawn::Kit kit = base_kit;
     kit.nmspace = g_kit_nmspace_slot;
+    /* The launcher registers every child it starts (specs/process.md), so it is
+     * handed the process.registry caller half, which launcher_ports grants. */
+    kit.process_registry = g_spawn_process;
     aegir::spawn::Child child{};
     child.badge = spec.badge;
     child.runtime = untyped;
     child.runtime_bits = kLauncherUntypedBits;
     child.launcher = true;
-    aegir::spawn::PortGrant ports[20];
-    uint32_t count = aegir::spawn::launcher_ports(kit, child, ports, 20);
+    /* launcher_ports fills up to 16 (four identity grants plus twelve), and a
+     * launcher's own ports are appended below; size past both. */
+    aegir::spawn::PortGrant ports[24];
+    uint32_t count = aegir::spawn::launcher_ports(kit, child, ports, 24);
     /* The endpoint's owner half: the launcher serves on it. An owner needs Read
      * to receive; the caller's halves carry Write instead, the other side of the
      * same endpoint. */
@@ -867,16 +894,6 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
     if (g_spawn_font != 0) {
         ports[count] = {"font.main", 9,
                         aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_font,
-                        seL4_AllRights, 0, 0};
-        ++count;
-    }
-    /* The process.registry source, unbadged (specs/process.md): the launcher
-     * mints each command a caller half from it, so the command's runtime
-     * registers itself. Named `process.registry`, the name its commands' caps
-     * carry, so the launcher finds it the way it finds font.main. */
-    if (g_spawn_process != 0) {
-        ports[count] = {aegir::process::kPortName, aegir::process::kPortNameLength,
-                        aegir::bootstrap::kSlotFirstDeclared + count, g_spawn_process,
                         seL4_AllRights, 0, 0};
         ++count;
     }
@@ -933,6 +950,8 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
         write("\n");
         return false;
     }
+    /* The launcher is in the live set (specs/process.md): auth is its spawner. */
+    register_child(spec.badge, spec.name, text_length(spec.name), nullptr, 0);
     if (supervision != nullptr) {
         *supervision = process.supervision;
     }
@@ -1485,7 +1504,7 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
             return false;
         }
     }
-    aegir::spawn::PortGrant ports[16];
+    aegir::spawn::PortGrant ports[24];
     uint32_t count = 0;
     if (spec.launcher) {
         if (!mint_session_nmspace(g_kit_nmspace_slot, namespace_badge)) {
@@ -1505,6 +1524,9 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
         kit.net_control = g_spawn_net_control;
         kit.nmspace = g_kit_nmspace_slot;
         kit.font_main = g_spawn_font;
+        /* A launcher-shaped service (the session's terminal) starts the shell
+         * and its commands, so it registers them (specs/process.md). */
+        kit.process_registry = g_spawn_process;
         aegir::spawn::Child child{};
         child.badge = badge;
         child.runtime = untyped;
@@ -1529,7 +1551,7 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
                         seL4_CapRights_new(1, 1, 0, 1), badge, 0};
         ++count;
     } else {
-        if (!append_needs(spec.needs, launch_port, badge, namespace_badge, ports, 16,
+        if (!append_needs(spec.needs, launch_port, badge, namespace_badge, ports, 24,
                           &count)) {
             return false;
         }
@@ -1538,7 +1560,7 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
                             untyped, seL4_AllRights, 0, spec.memory_bits};
             ++count;
         }
-        if (!append_owns(spec.owns, account, ports, 16, &count)) {
+        if (!append_owns(spec.owns, account, ports, 24, &count)) {
             return false;
         }
     }
@@ -1616,6 +1638,9 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
         write("\n");
         return false;
     }
+    /* The service is in the live set (specs/process.md): auth is its spawner,
+     * and `name_buffer` is the `session.<name>` it stands as. */
+    register_child(badge, name_buffer, name_at, spec.binary, spec.binary_length);
     if (supervision != nullptr) {
         *supervision = process.supervision;
     }
@@ -1753,6 +1778,9 @@ void start_session(uint32_t user, bool bureau) noexcept
             reclaim_session(badge, direct_badges, mark, scratch_mark, session_account);
             return;
         }
+        /* The smoke is in the live set (specs/process.md): auth is its spawner. */
+        register_child(badge, kSessionName, sizeof(kSessionName) - 1, kSessionBinary,
+                       sizeof(kSessionBinary) - 1);
         primary = process.supervision;
     } else {
         /* The session's launch endpoint (specs/session.md): auth makes it, so no
@@ -1981,6 +2009,9 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     boot_kit.net_socket = g_spawn_net_socket;
     boot_kit.net_control = g_spawn_net_control;
     boot_kit.font_main = g_spawn_font;
+    /* The boot terminal starts the Startup-Sequence's commands, so it registers
+     * them, and the shell it starts (specs/process.md). */
+    boot_kit.process_registry = g_spawn_process;
 
     aegir::spawn::Initrd const initrd(reinterpret_cast<void const *>(g_binaries_address),
                                       g_binaries_bytes);
@@ -2014,8 +2045,8 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
     boot_child.shell_pool = shell_pool;
     boot_child.shell_pool_bits = kShellPoolBits;
     boot_child.launcher = false;
-    aegir::spawn::PortGrant ports[16];
-    uint32_t port_count = aegir::spawn::launcher_ports(boot_kit, boot_child, ports, 16);
+    aegir::spawn::PortGrant ports[24];
+    uint32_t port_count = aegir::spawn::launcher_ports(boot_kit, boot_child, ports, 24);
     /* The boot status endpoint is not part of the kit a launched program gets:
      * only the boot terminal's shell sends the outcome on it (specs/boot.md). */
     ports[port_count] = {"boot.status", 11,
@@ -2084,6 +2115,9 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
                           aegir::bootstrap::cnode_bits());
         return true;
     }
+    /* The boot terminal is in the live set (specs/process.md): auth is its
+     * spawner. */
+    register_child(kBootBadge, kName, sizeof(kName) - 1, kBinary, sizeof(kBinary) - 1);
     /* The kit's namespace copy was auth's scratch: the boot terminal holds its
      * own now (specs/launch.md). */
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_kit_nmspace_slot,
@@ -2189,6 +2223,9 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
         write("\n");
         return;
     }
+    /* The greeter is in the live set (specs/process.md): auth is its spawner. */
+    register_child(kGreeterBadge, kGreeterName, sizeof(kGreeterName) - 1, kGreeterBinary,
+                   sizeof(kGreeterBinary) - 1);
     /* Wait for the form: the greeter signals when the cue is printed, and
      * serving -- and the rest of the boot, with its own lines -- starts
      * after, so the runner's cue never shares a serial line with another

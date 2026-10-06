@@ -50,6 +50,11 @@ public:
     char const *port_name(unsigned index, uint32_t *length) const noexcept;
     uint32_t port_owner(unsigned index) const noexcept;
 
+    /** The endpoint director holds for the named port, for the one port
+     *  director must call itself (process.registry, to register a boot
+     *  service -- specs/process.md). Zero when no port has that name. */
+    seL4_CPtr endpoint(Name name) const noexcept;
+
     /** What one entry holds, in slot order: first the ports it owns (which it
      *  reads) and then the ones it may call. */
     spawn::PortGrant const *grants(uint32_t entry) const noexcept;

@@ -294,6 +294,12 @@ private:
                                   std::vector<std::string> &storage,
                                   std::vector<char const *> &pointers);
     Started *find_live(uint64_t badge);
+    /* Register a child with the process registry (specs/process.md): the
+     * spawner is the one that knows the child's pid, its parent, its name and
+     * its path. One call, so every path this kit starts -- a command, a nested
+     * terminal, a shell -- joins the live set the same way. Best-effort: a kit
+     * handed no registry half registers nothing. */
+    void register_child(uint64_t badge, std::string const &name, std::string const &path);
     /* An untyped of `bits` from mem.main through the current command's badged
      * copy (specs/memory.md): a nested terminal's runtime and shell pool. */
     seL4_CPtr alloc_child_mem(uint32_t bits);
