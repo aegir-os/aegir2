@@ -42,7 +42,7 @@ DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui run-ui-dev envelope test clean distclean
 
 all: help
 
@@ -178,6 +178,13 @@ run: ## boot Aegir under QEMU, stopping once it reports online
 # process to detect when the operator is sitting in front of it.
 run-ui: ## boot Aegir with a GTK window on the displays; you press the keys
 	$(PYTHON) scripts/run_target.py --target $(TARGET) --interactive
+
+# The development machine (specs/development.md): the only target whose disk
+# carries Sys:Development -- the compiler under C and its sysroot beside it --
+# so the attended session can `Run Sys:Development/C/aegir-cc`. The default
+# target keeps its small disk on purpose; name this one to have the tools.
+run-ui-dev: ## boot the development target with the compiler + sysroot on Sys:
+	$(PYTHON) scripts/run_target.py --target aegir-8g-smp4 --interactive
 
 envelope: ## build and boot every target in the memory/cores envelope
 	@for target in aegir aegir-2g-smp2 aegir-2g-smp4 aegir-8g-smp4; do \
