@@ -124,12 +124,16 @@ port does not know is answered by saying nothing.
   are queued by the handler as keys arrive -- while a *command* runs on the
   stream, every key is a byte on its input queue rather than a keystroke for the
   idle editor (`specs/shell.md`'s Phase 4, design A: the command inherits the
-  shell's stream and reads it raw).
-- `line`. In: one word, the stage count of the line the shell is about to run.
-  The shell announces it before the first command starts, so the terminal --
-  which no longer spawns the line -- knows how many stages to wait for and
-  reports `pipeline exited` apart from `command exited` (`specs/pipe.md`).
-  Reply: nothing.
+  shell's stream and reads it raw). The one key that is not delivered is
+  **Ctrl-C** (`0x03`): while a command runs, the handler sets the **C** attention
+  flag on the line's foreground process instead of queuing the byte -- the
+  Amiga's Break, taken at the console (`specs/process.md`).
+- `line`. In: the stage count of the line the shell is about to run, and the pid
+  of each stage. The shell announces it before the first command starts, so the
+  terminal -- which no longer spawns the line -- knows how many stages to wait
+  for and reports `pipeline exited` apart from `command exited`
+  (`specs/pipe.md`), and holds the pids its Ctrl-C sets **C** on
+  (`specs/process.md`). Reply: nothing.
 - `read_line`. In: nothing. Out: one line, when the line editor has one; an
   empty reply otherwise. This is the cooked call; the shell loops on it. A
   cooked read begins the line editor if it is idle.

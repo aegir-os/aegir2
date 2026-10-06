@@ -128,7 +128,9 @@ namespace, and the spawn.
         else if words[0] names a directory: set the current directory
         else if words[0] resolves to a command: spawn it with the console,
              wait for its exit, print its status if non-zero; a status at or
-             above the fail level aborts the running command file
+             above the fail level aborts the running command file. A command a
+             Break aborted prints ***BREAK in place of the return-code line, and
+             is a failing status like any other (specs/process.md)
         else: unknown command
 
 The prompt is the current directory plus `>` — the Amiga's prompt is the
@@ -148,9 +150,10 @@ is refused — the guard is detection, not a depth cap. `Eval` is the same with 
 one-line frame, so an `Eval` line that starts a program completes correctly.
 `Quit [n]` drops the innermost frame, carrying the return code `n`; `FailAt
 [n]` sets the level at or above which a command's status drops it, which the
-Amiga's default of 10 makes "a warning passes, an error aborts". The parser and
-the frame stack are a value (`aegir::script`), host-tested by
-`make check-script`.
+Amiga's default of 10 makes "a warning passes, an error aborts". A **D** break
+flag set on the shell halts the running frame -- the same act `Quit` is -- where
+**C** aborts the foreground command (`specs/process.md`). The parser and the
+frame stack are a value (`aegir::script`), host-tested by `make check-script`.
 
 A command file may begin with `.KEY`: a comma-separated declaration of names,
 `name` or `name/A` (required), whose values are the arguments the file was run

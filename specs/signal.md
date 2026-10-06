@@ -106,10 +106,12 @@ exited`, and it cannot count stages it did not spawn.
 
 The shell owns the line, so the shell announces it: a `con.stream` method
 (`line`) that carries the stage count when a line begins, before its first
-command is launched. The terminal then holds the stage count and the bracket,
-and reports the completion cue exactly as it does now. This is the whole of the
-terminal's remaining line knowledge -- one word, from the component that owns
-the line, instead of a spawn the terminal no longer performs.
+command is launched, and the pid of each stage. The terminal then holds the
+stage count and the bracket, and reports the completion cue exactly as it does
+now; it also holds the pids, which is what its Ctrl-C sets the **C** Break flag
+on (`specs/process.md`). This is the whole of the terminal's remaining line
+knowledge -- from the component that owns the line, instead of a spawn the
+terminal no longer performs.
 
 ## Where it lands
 

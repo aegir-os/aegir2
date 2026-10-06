@@ -225,6 +225,8 @@ window.
   pool are finite; a command's own memory still grows under its badge
   (specs/memory.md).
 - **A process group or job control.** Stopping, signalling and reaping a
-  session's tree is its own arc (specs/shell.md's later list).
+  session's tree is its own arc (specs/shell.md's later list). Naming one
+  process and interrupting it -- the Amiga's Break, the registry, and the
+  enforced halt that reuses this spec's teardown -- is `specs/process.md`.
 - **Portable POSIX.** `aegir::launch` and the C spawn primitive are Aegir's;
   they fill the same role `fork`/`exec` do, not its whole API.

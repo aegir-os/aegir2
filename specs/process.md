@@ -1,0 +1,232 @@
+# process: naming a program and interrupting it
+
+Status: proposed, for review (2026-10). This fixes the **process registry** and
+the Amiga **Break** — how a running program is named by id and how it is
+interrupted. It is the home `specs/dos.md` already asks for ("`Status` needs a
+process registry") and the arc `specs/launch.md` defers ("a process group or job
+control"). The parts it touches: `specs/terminal.md` (the key), `specs/signal.md`
+(the `line` method), `specs/shell.md` (`***BREAK`, the script flag),
+`specs/launch.md` (the halt) and `specs/authority.md` (the elevation check).
+
+## The gap
+
+Aegir cannot interrupt a running command. The pieces say so plainly:
+
+- the shell, once a line is running, only waits for its status
+  (`apps/hosted/aegir-shell/src/main.cc`: the `busy_` loop polls
+  `command_status` and reads nothing else);
+- the terminal hands **every** key to the running command as a byte on its
+  input queue (`specs/terminal.md`), so Ctrl-C is only `0x03`, data in a stream
+  the command need not read;
+- `launch.session` can *reap* a command whose exit already arrived
+  (`kMethodRelease`, `libs/freestanding/aegir-launch/include/aegir/launch.h`)
+  and nothing else;
+- and there is no asynchronous interruption to reach for: `specs/signal.md`
+  is explicit — "not POSIX signals. There is no asynchronous interruption of a
+  running thread".
+
+The Amiga's answer is the one worth keeping, and it is a *command*, not a
+signal.
+
+## The Amiga's Break, kept
+
+    BREAK <process> [NAME <program name or pattern>] [ALL | C | D | E | F]
+
+`Break` sets **attention flags** on the process named by `<process>`:
+
+- **C** — abort the process. The Shell then prints `***BREAK`, not a plain
+  return-code line.
+- **D** — halt the execution of a running *script file* (the Shell's frame).
+- **E**, **F** — reserved. E was Commodity Exchange, which Aegir does not have;
+  neither is given a meaning here.
+- **ALL** sets C through F; the **default is C**.
+
+That is the shape: a process is named by **id**, flags are *set* (not a message
+into its stream), and the shell renders an abort distinctly. Ctrl-C at the
+console is not a second mechanism — it is the default flag set on the
+foreground process.
+
+## The decisions
+
+1. **The id is the per-process badge.** Aegir already mints one per process and
+   rides it in the bootstrap block (`specs/memory.md`, "The owner is the badge,
+   minted per process"); the registry's `<process>` is that badge. No second id
+   is invented.
+2. **Every command is breakable.** A command's runtime, standing itself up,
+   registers with the registry and hands it a **break source** — an
+   `aegir::signal` `Context` (`specs/signal.md`), the waitable source the
+   process itself owns. "Breakable" is a property of running the runtime, not a
+   flag a program opts into.
+3. **A break is a failing return code.** A process aborted by C exits with a
+   distinguished nonzero status; the shell prints `***BREAK` for it and, being
+   nonzero, it aborts a running script at or above `FailAt`'s level
+   (`specs/shell.md`) exactly as any failing status does.
+4. **Authority is the badge rule.** A caller may break a process of its **own
+   class**; a process **started by the system** needs **elevation**
+   (`specs/authority.md`: bit 62 is the user class — user badges carry the user
+   index, system badges do not).
+
+## The process registry
+
+One system service, `process.registry`, holding the live set. It is the shape
+`devmgr.registry` already is (`libs/freestanding/aegir-registry/include/aegir/
+registry.h`): a port that answers questions, in the multi-word envelope of
+`aegir::ipc`.
+
+    count                    answer: one word, how many processes are live
+    describe   index         answer: a Row's words
+    break      pid, flags    answer: one word, 1 set and 0 refused
+    register   metadata      in: the process's own break source as the call's
+                             one capability; answer: 1 registered, 0 refused
+    unregister pid           answer: one word
+
+A `Row` is what names a process:
+
+    pid          the process's badge, as the kernel reports it
+    owner        the badge of whoever started it (its class, for the authority
+                 check)
+    name         the program name, excluding its path
+    path         the program's full path, when the launcher knew it
+    flags        the attention flags currently set
+    state        running, or a break pending
+
+`break` sets the named flags in the row and *delivers* them (below). `register`
+and `unregister` are the spawn side: a process appears when it is started and
+leaves when it is gone. A break of a pid the registry does not hold, or one the
+caller may not touch, is the refusal.
+
+### Who registers
+
+The **spawn kit** registers the metadata — pid, owner, name and path — because
+it is the one place every process is built (`specs/launch.md`: "the launcher
+builds its commands and a nested terminal, the terminal only its own shell, all
+with the same builders auth uses, so no spawner reassembles the list"). The
+**process's runtime** registers the break source, because the source is the
+process's own `Context` and can be minted by no one else; it is the call's one
+capability (`specs/signal.md`: a message carries one capability). The registry
+joins the two by pid. A process with no runtime — a freestanding boot service —
+may register its metadata and no source: it has flags, and only the enforced
+halt (below) applies to it.
+
+## Delivery: the flag, and the halt
+
+The Amiga's process notices because its `Wait()` is woken and its DOS calls
+return `ERROR_BREAK`. Aegir cannot wake a thread (`specs/signal.md`), so the
+flag is delivered as **a source the process is waiting on, and the ultimate
+halt is enforced**:
+
+- **The source.** The registry signals the process's break `Context`
+  (`Transmitter`, `specs/signal.md`). A process in its main wait — waiting on
+  its stream *and* its break context together, which the model allows — wakes,
+  sees its flags, and exits (C) or acts (D). This is the cooperative half, and
+  it is what lets a program clean up. **The runtime includes the break context
+  in every wait**, so "all commands are breakable" holds without each program
+  asking.
+- **The halt.** A process blocked in a *single service call* — `ping` sitting
+  in the resolver — is not waiting on its break context and cannot be woken
+  this way. For **C**, the abort flag, the process is *also* torn down: the
+  registry asks the service that owns the process's TCB — the launcher, or the
+  boot supervisor — to suspend it and release its memory by badge
+  (`kMethodRelease`'s teardown, `specs/memory.md`). D/E/F are flags only; only
+  C halts.
+
+The enforced halt is what makes the feature reliable on a program that never
+waits; the cooperative source is what makes it Amiga-faithful on one that does.
+
+## The terminal and the key
+
+Ctrl-C is the console handler's, exactly as it is on the Amiga. While a command
+runs on a stream, the terminal **does not queue `0x03`** as a byte; it sets **C**
+on the **foreground pid** through the registry. To do that it must know the
+foreground pid, which it does not hold today (it learns a command's badge only
+from its exit report, `apps/hosted/aegir-terminal/src/main.cc`).
+
+The shell owns the line and got the badge from the spawn answer, so the shell
+announces it: the `con.stream` `line` method (`specs/signal.md`, "the line,
+announced by the shell"), which already carries a line's stage count, **also
+carries the line's pids** — the foreground command's, and a pipeline's every
+stage. The terminal then holds what it needs to break what it sees.
+
+An interrupt reaches the **foreground** line: a background `Run` command is
+untouched (the Amiga's behaviour), and a pipeline's every stage is broken, not
+one.
+
+## The shell
+
+- When a broken command's status arrives, the shell prints **`***BREAK`** in
+  place of `return code N`.
+- Because the break is a failing status, it drops a running command file when it
+  is at or above the fail level, precisely as `specs/shell.md`'s loop already
+  does for any nonzero status.
+- **D** is the flag for a script: a process that sets D on the shell's own
+  command file halts the frame, which is the same act as `Quit` — the
+  interpreter's word for ending a frame (`specs/shell.md`, `specs/dos.md`).
+
+## The `Break` command
+
+`C:Break`, a command like any other, a client of `process.registry`:
+
+    Break <process>            set the default flag (C) on the pid
+    Break <process> ALL        set C through F
+    Break <process> C          set C only
+    Break <process> NAME pat   break every live process whose path, or failing
+                               that whose name, matches the pattern
+                               (specs/pattern.md's matcher, as `Search`'s)
+
+`NAME` matching follows the Amiga: the pattern is compared against the full
+path first, then the program name. A caller that names a pid it may not break
+is refused (the authority rule), and so is a pattern that matches none.
+
+## Authority
+
+The registry checks the caller's badge against the row's `owner`, by the rule
+`specs/authority.md` sets: a caller breaks a process of its own user class. A
+process **started by the system** — a boot service, or a command an elevated
+request started — is broken only by the system class, which is "the boot
+services, plus whatever elevation hands out temporarily". So a session's `Break`
+reaches its own commands and nothing of the system's; breaking a system process
+is an elevated act, the same shape as any other (`specs/authority.md`'s
+one-shot system process, not an inherited right).
+
+## What this is not
+
+- **Not signals.** There is no asynchronous delivery into a running thread; a
+  flag is a source the process waits on, and the halt is a service taking a
+  process back (`specs/signal.md` is unchanged).
+- **Not a process table in the kernel.** The registry is a service; the kernel
+  keeps no name for a process (`specs/authority.md`: "there is no kernel-level
+  user to check against").
+- **Not job control.** Stop/continue, foreground/background submission and a
+  session's process *groups* are not here; this is naming and interrupting one
+  process, which is the piece the shell needs first.
+
+## Phases
+
+1. **The registry.** The port, the wire, the row, and the `Break` command over
+   it, with the metadata registered by the spawn kit. No interruption yet: a
+   row is visible, and `describe` answers. This is `Status`'s ground too.
+2. **The break source.** The runtime registers a break `Context` and includes it
+   in its waits; `break` signals it; a command exits on C. This is the
+   cooperative half, and it is what the terminal's Ctrl-C needs.
+3. **The enforced halt.** `break` C also asks the TCB's owner to take the
+   process back, so a program blocked in a single call dies.
+4. **The key.** The `line` method carries the line's pids; the terminal sets C
+   on Ctrl-C; the shell prints `***BREAK`; D halts a frame.
+
+## Open, for review
+
+- **The registry's owner.** Which system service serves `process.registry` — a
+  small `aegir-process` of its own, or an existing one (the fault supervisor,
+  or `auth`, which already mints identity)? Proposed: its own service, declared
+  in the manifest, started by director, so nothing existing grows a second job.
+- **The enforced halt's road to the TCB.** The registry holds no TCB; the
+  launcher and the boot supervisor do. Whether the registry asks the TCB's
+  owner by a call, or is handed a "take back" capability at registration, is
+  the one mechanism this spec leaves open.
+- **Registration of a freestanding service's metadata.** The kit registers it,
+  but the kit's register call carries the process's own source as its one
+  capability; a process with no source registers metadata alone, which needs a
+  second call shape (a register with no capability). Its form is open.
+- **What D means for a program that is not the shell.** The Amiga's Ctrl-D
+  halts a script *file*; whether D is the shell's alone, or a general "end your
+  input" a program may act on, is not fixed here.

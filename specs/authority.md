@@ -243,6 +243,10 @@ What multiuser means here, concretely:
   device capability": the capability was never handed over. Access control here
   is not a check that can be skipped by a buggy caller — it is the absence of a
   capability.
+- **Interrupting a process is the same check.** A process is broken by a caller
+  of its own class; one the system started is broken only by the system class,
+  so a session's `Break` needs no more than the badge rule, and a system
+  process's needs elevation (`specs/process.md`).
 
 ## Open, for review
 
