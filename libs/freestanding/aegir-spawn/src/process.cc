@@ -724,15 +724,6 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
                  request.badge)) {
         return fail("the supervision notification could not be installed");
     }
-    /* The child's break source (request.break_notification, specs/process.md):
-     * bind the spawner's notification to the child's TCB before it runs, so a
-     * signal to it reaches a child blocked in a receive as well as a running
-     * one. The capability reaches the child through its ports; this is the
-     * binding alone. */
-    if (request.break_notification != 0 &&
-        seL4_TCB_BindNotification(process.tcb, request.break_notification) != seL4_NoError) {
-        return fail("the child's break source could not be bound");
-    }
 
     /* The ports, each with the rights its side of the port calls for: an owner
      * gets Read (it receives; replying needs nothing from the endpoint), a caller
