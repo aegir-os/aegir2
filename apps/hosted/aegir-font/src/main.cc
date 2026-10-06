@@ -52,6 +52,7 @@
 #include FT_SYSTEM_H
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -219,7 +220,9 @@ bool open_face(std::string const &path, long index, OpenFace *out,
             line += why;
             line += ": ";
             line += path;
-            line += " would not open";
+            line += " would not open (errno ";
+            line += std::to_string(errno);
+            line += ")";
             write(line.c_str());
         }
         return false;
