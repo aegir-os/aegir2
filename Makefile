@@ -37,9 +37,13 @@ TOOLS_TIMEOUT ?= 1800
 BUILD_TIMEOUT ?= 1800
 DEPS_TIMEOUT ?= 3600
 # The run's wall clock covers the boot *and* its acceptance, which grows as the
-# acceptance does; the runner bounds each step of it on its own (--quiet-timeout),
-# so this is the outer belt for a wedged run, not the boot's own limit.
-RUN_TIMEOUT ?= 2700
+# acceptance does. A whole development-target run is two to three minutes end to
+# end, and the runner bounds each stretch of silence inside it on its own
+# (--quiet-timeout, 300s), so this belt is several times both: a wedge is
+# reported by the runner *before* this fires -- its cue list is the diagnosis,
+# and a bare SIGTERM would lose it -- while a QEMU that dies is reported in
+# seconds, because its console ends and the runner sees that at once.
+RUN_TIMEOUT ?= 900
 TEST_TIMEOUT ?= 1200
 
 .PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset check-posix-path build run run-ui run-ui-dev envelope test clean distclean

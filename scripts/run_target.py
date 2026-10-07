@@ -789,6 +789,27 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                 failed = True
                 break
             if line is None:
+                # The console ended: QEMU is gone and nothing more will be said,
+                # so a marker that never came means a dead machine -- not a
+                # timeout. Named here, with QEMU's own status, because the verdict
+                # below used to say "never saw X within 900s", which reads like a
+                # wait that never happened; that wording belongs to the quiet
+                # timeout, printed only when a live guest really does go quiet.
+                if not seen:
+                    code = process.poll()
+                    # Only a *non-zero* status says anything: 0 with no marker is
+                    # the simulate wrapper swallowing a QEMU that never started,
+                    # and QEMU's own error is already on the lines above.
+                    status = (
+                        f" (the console process exited with status {code})"
+                        if code is not None and code != 0
+                        else ""
+                    )
+                    print(
+                        f"    runner: FAIL QEMU's console ended before "
+                        f"{target.marker!r}{status}",
+                        flush=True,
+                    )
                 break
             stripped = line.rstrip("\n")
             if stripped:
@@ -1069,7 +1090,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--quiet-timeout",
         type=int,
-        default=900,
+        default=300,
+        # A green run talks all the way -- a whole development-target run is two
+        # to three minutes end to end -- so minutes of silence are a wedge, not a
+        # slow step. Kept well below the Makefile's RUN_TIMEOUT on purpose: the
+        # runner's own report (the cues that never printed) has to land *before*
+        # that outer belt kills the script, or a wedge is reported as a bare
+        # SIGTERM. A QEMU that dies instead of going quiet never reaches this: its
+        # console ends, and boot_and_watch says so at once.
         help="seconds a run may print nothing before it is treated as stopped",
     )
     parser.add_argument("--build-only", action="store_true", help="stop after building")
@@ -1171,7 +1199,11 @@ def main(argv: list[str]) -> int:
         pins.report(
             False,
             f"{target.name} did not report success",
-            f"never saw {target.marker!r} within {arguments.quiet_timeout}s"
+            # A guest that went quiet while alive is named by the runner's own
+            # line (the quiet timeout); a console that *ended* is a dead machine,
+            # which boot_and_watch reports with QEMU's status. Neither is a wait,
+            # so neither verdict says "within Ns".
+            "the guest stopped before the marker -- the runner's lines above say where"
             if not seen
             else "an acceptance check failed (see the runner's lines above)",
         )
