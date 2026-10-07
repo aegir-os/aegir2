@@ -130,6 +130,16 @@ int main()
     require(stat("/AEGIR", &info) == 0 && S_ISDIR(info.st_mode),
             "stat /AEGIR is a directory");
 
+    /* A native path sets the directory in Aegir's own grammar, and getcwd answers
+     * it that way: libc++'s std::filesystem::absolute and LLVM's
+     * sys::fs::make_absolute compose with this string and expect a `Volume:`
+     * root, and both run in processes that also speak the view
+     * (specs/posix.md, specs/environment.md). It is asserted here because one
+     * string serves both readers, and the view's form is the *other* answer. */
+    require(chdir("Sys:") == 0, "chdir Sys:");
+    require(getcwd(cwd, sizeof(cwd)) != nullptr && strcmp(cwd, "Sys:") == 0,
+            "getcwd after a native chdir is the Aegir grammar");
+
     /* The current directory is a POSIX path the layer maps: chdir of /Sys is
      * the VFS's Sys:, and getcwd answers /Sys back. */
     require(chdir("/Sys") == 0, "chdir /Sys");

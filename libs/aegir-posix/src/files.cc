@@ -152,6 +152,16 @@ bool g_cwd_loaded = false;
  * both come through. */
 bool g_cwd_is_root = false;
 
+/* And which grammar `getcwd` answers it in: the view's when the directory was
+ * set from a POSIX path, Aegir's when it was set natively or inherited from the
+ * spawner. The *stored* string is a VFS path either way, and it has to be:
+ * libc++'s std::filesystem::absolute and LLVM's sys::fs::make_absolute both
+ * read it and compose with it, and both expect a `Volume:` root -- a POSIX
+ * getcwd must not take that away from the process that also hosts the compiler
+ * (specs/environment.md's one string, specs/cxx.md's step 5, and the fs smoke's
+ * own Aegir-grammar check). */
+bool g_cwd_is_posix = false;
+
 /* The namespace, found once. A process that holds no vfs.namespace -- a
  * program that never said it needs one -- finds an invalid port and every
  * call is refused. */
@@ -180,9 +190,10 @@ char const *current_dir(uint32_t *length) noexcept
     return g_cwd_length != 0 ? g_cwd : nullptr;
 }
 
-void set_current_dir(char const *path, uint32_t length) noexcept
+void set_current_dir(char const *path, uint32_t length, bool posix_form) noexcept
 {
     g_cwd_is_root = false;
+    g_cwd_is_posix = posix_form;
     for (uint32_t i = 0; i < length; ++i) {
         g_cwd[i] = path[i];
     }
@@ -265,6 +276,36 @@ char const *posix_cwd(char *out, uint32_t *length) noexcept
     uint32_t vfs_length = 0;
     char const *const vfs = current_dir(&vfs_length);
     if (vfs == nullptr || !view::present(vfs, vfs_length, out, kPathCapacity, *length)) {
+        *length = 0;
+        return nullptr;
+    }
+    return out;
+}
+
+/* The current directory as `getcwd` answers it: the view's own form when a POSIX
+ * chdir set it, the Aegir grammar when a native one did or the process inherited
+ * it from its spawner (specs/posix.md). The string the layer keeps is a VFS path
+ * in both cases -- that is what `std::filesystem` and the compiler compose with
+ * -- so a native answer is that string as it stands, and a POSIX answer is its
+ * view form, which is where the mapping pays for itself. */
+char const *presented_cwd(char *out, uint32_t *length) noexcept
+{
+    if (g_cwd_is_root) {
+        out[0] = '/';
+        *length = 1;
+        return out;
+    }
+    uint32_t vfs_length = 0;
+    char const *const vfs = current_dir(&vfs_length);
+    if (vfs == nullptr) {
+        *length = 0;
+        return nullptr;
+    }
+    if (!g_cwd_is_posix) {
+        *length = vfs_length;
+        return vfs;
+    }
+    if (!view::present(vfs, vfs_length, out, kPathCapacity, *length)) {
         *length = 0;
         return nullptr;
     }
@@ -1597,14 +1638,20 @@ long chdir(char const *path) noexcept
         set_root_dir();
         return 0;
     }
-    set_current_dir(full, where.length);
+    /* The grammar the caller set the directory with is the grammar `getcwd`
+     * answers it in (specs/posix.md): a native path leaves Aegir's own, which
+     * is the form std::filesystem and the compiler read. */
+    set_current_dir(full, where.length,
+                    !view::detail::names_a_volume(path, text_length(path)));
     return 0;
 }
 
-/* getcwd, in the view (specs/posix.md): the root answers `/`, and any other
- * current directory is the POSIX path of the VFS path the layer kept -- the
- * name as written, so a resolve through an alias presents the alias, which is
- * the same rule a listing follows. */
+/* getcwd, in the view (specs/posix.md): the answer is in the grammar the
+ * directory was set in -- `/` and `/Sys/Tests` for a POSIX chdir, `Sys:Tests`
+ * for a native one or for the directory this process inherited, which is the
+ * form std::filesystem and the compiler compose with (presented_cwd). The name
+ * is the one the path carries, as written, so a resolve through an alias
+ * presents the alias -- the same rule a listing follows. */
 long getcwd(char *buffer, size_t size) noexcept
 {
     if (buffer == nullptr) {
@@ -1612,7 +1659,7 @@ long getcwd(char *buffer, size_t size) noexcept
     }
     char seen[kPathCapacity];
     uint32_t length = 0;
-    char const *const presented = posix_cwd(seen, &length);
+    char const *const presented = presented_cwd(seen, &length);
     if (presented == nullptr) {
         return -ENOENT;
     }
@@ -1756,7 +1803,10 @@ extern "C" int aegir_posix_set_current_dir(char const *path, uint32_t length) no
     if (length > aegir::posix::files::kPathCapacity) {
         return -1;
     }
-    aegir::posix::files::set_current_dir(path, length);
+    /* A native caller set it, so `getcwd` answers it in Aegir's own grammar
+     * (specs/posix.md): this is the door aegir::environment and a native
+     * std::filesystem::current_path(path) come through. */
+    aegir::posix::files::set_current_dir(path, length, false);
     return 0;
 }
 
