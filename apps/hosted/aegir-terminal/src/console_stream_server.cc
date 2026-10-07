@@ -8,6 +8,7 @@
 #include "console_stream_server.h"
 
 #include <aegir/console_stream.h>
+#include <aegir/debug.h>
 #include <aegir/trinket/unicode.h>
 
 #include <utility>
@@ -76,6 +77,17 @@ uint32_t ConsoleStreamServer::write_stream(uint64_t caller, std::string_view tex
     }
     buffer_.write(text);
     buffer_.scroll_to_bottom();
+    /* A command's output goes to the serial as well as to the grid. The grid is
+     * what a person reads; the serial is what the acceptance's runner reads, and
+     * until this the two had no meeting point: a plain program's marker on
+     * stdout reached the grid and nothing else, while the runtime's own writer
+     * (aegir::debug_write) reached the serial -- which is why an acceptance
+     * client that must carry no Aegir call could not be cued on. Verbatim, with
+     * no prefix: what the runner matches is what the program printed. Only a
+     * stream's writes come through here -- the typed line's echo is the line
+     * editor's -- so a run's log gains a command's output and not its own
+     * keystrokes (specs/console.md, specs/posix.md). */
+    aegir::debug_write(text.data(), static_cast<uint32_t>(text.size()));
     if (on_change) {
         on_change();
     }

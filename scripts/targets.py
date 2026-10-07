@@ -1783,12 +1783,19 @@ TARGETS: dict[str, Target] = {
             # of Aegir.
             QmpStep(r"AEGIR_POSIX_WAIT_OK"),
             # The path view's acceptance (specs/posix.md's first sub-arc): a
-            # plain program that carries no Aegir call, so it has no marker to
-            # print -- it opens `/AEGIR/AEGIR.TXT` through the view, browses `/`
-            # and the current directory, and exits with 63. The terminal's own
-            # line for that exit is the cue, and a failed check exits 1 instead,
-            # leaving this step's cue unprinted, which is how the run fails.
-            QmpStep(r"terminal: command exited 63"),
+            # plain program that opens `/AEGIR/AEGIR.TXT` through the view,
+            # browses `/` and the current directory, and prints
+            # AEGIR_POSIX_PATH_OK. The marker is the cue rather than an exit
+            # status: the session's Shell-Startup is a script, and a script stops
+            # at the first command that exits non-zero, so a non-zero success
+            # status made this client the last startup line that could ever run.
+            QmpStep(r"AEGIR_POSIX_PATH_OK"),
+            # The file sub-arc's acceptance (specs/posix.md): the writing half of
+            # the surface -- it creates, writes, reads back, truncates, renames
+            # and removes on the scratchpad volume through the view, and prints
+            # AEGIR_POSIX_FILE_OK. A failed check exits non-zero (2+n names the
+            # check), leaving its marker unprinted, which is how the run fails.
+            QmpStep(r"AEGIR_POSIX_FILE_OK"),
         ),
     ),
     "sel4test": Target(

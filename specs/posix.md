@@ -135,13 +135,20 @@ Two pieces make "carries no Aegir call" true rather than aspirational:
   the call itself is unaffected; and a process that cannot be stood up exits 127
   rather than halting, because a halt is a process that never ends and the shell
   waiting on it would wait for ever.
-- **its evidence is its exit status.** A program that must not know it is on
-  Aegir cannot call the runtime's diagnostic writer to print a marker, so the
-  acceptance's step cues on the terminal's own line for its exit
-  (`terminal: command exited <n>`, `scripts/targets.py`) with a status no other
-  command in the run carries -- the shape `aegir-echo`'s code already has in the
-  DOS acceptance. A check that fails exits with a status no step cues on, so the
+- **its evidence is a marker it prints itself.** `printf` is a libc call, not the
+  runtime's diagnostic writer, so printing `AEGIR_POSIX_PATH_OK` is still
+  something a program that does not know it is on Aegir can do, and the
+  acceptance's step cues on that line. A check that fails exits non-zero, so the
   cue is never printed and the run fails naming it.
+
+  A marker rather than an exit status, because of what runs the client: the
+  session's `Sys:S/Shell-Startup` is a script, and a script stops at the first
+  command that exits non-zero. Measured, on the run that put the file sub-arc's
+  client one line behind this one with a success status of 62: this client exited
+  63, the script stopped, and the file client -- staged under `Sys:Development/C`
+  and on the disk -- never started at all. A non-zero success status can only
+  ever belong to the last line of that script, which makes it a trap for every
+  sub-arc that follows.
 
 The rules above are pinned down without a boot as well: `aegir/posix/path.h` is a
 pure function of the path and the current directory, and `make check-posix-path`
@@ -149,6 +156,53 @@ asserts its cases on the host (`scripts/check_posix_path.py`) -- where a
 translation mistake lands as a line rather than as a path that resolves to the
 wrong volume. The guest proves the view over the namespace and the volume
 protocol.
+
+### The files sub-arc's acceptance
+
+`aegir-posix-file-test` is the client: a plain program -- `open` with `O_CREAT`,
+`write`, `read`, `lseek`, `fstat`, `ftruncate`, `truncate`, `rename`, `unlink`,
+`mkdir`, `rmdir`, `opendir`, `readdir`, and nothing else -- that carries no Aegir
+call of its own. It works on the volume the tree already treats as its scratchpad
+(`SCRATCH:`, reached as `/SCRATCH/...` through the view), because a write test has
+to write somewhere and the AEGIR volume's own content stays as deployed.
+
+What it proves is the writing half of the file surface over that volume's own
+protocol: a file created through the view with a directory component in its path,
+written in one call longer than a volume block, seeked, read back byte for byte,
+sized, truncated through the descriptor and then by name, renamed (the old name
+gone, the new one listed), and removed; a directory made, filled and removed; and
+a name that was removed reading as absent rather than as a handle that outlived
+it. It says `AEGIR_POSIX_FILE_OK` and exits 0; a failed check names itself and
+exits 1, leaving its step's cue unprinted.
+
+The file calls themselves needed no new mechanism: `libs/aegir-posix/src/files.cc`
+already answered them over the volume protocol's `Write`, `Mkdir`, `Remove`,
+`Rename` and `Truncate` methods, which the run measured rather than assumed. What
+the sub-arc found were two things about the acceptance rather than the layer, both
+measured on the guest:
+
+- **the session's script stops at the first command that exits non-zero.**
+  `Sys:S/Shell-Startup` is a script. A client whose *success* is a non-zero status
+  can therefore only ever be its last line: with the path view's client exiting 63
+  and the file client's line behind it, the file client never started -- staged
+  under `Sys:Development/C` and on the disk the whole time. The rule is that a
+  client's success is 0 and its evidence is a marker it prints, which is the shape
+  the process sub-arc's client already had.
+- **a client's `printf` reached its terminal, but not the acceptance.** The
+  dispatcher already serves fd 1/2 from the session's console stream
+  (`libs/hosted/aegir-heap/src/heap.cc`), so a plain program's output lands on the
+  grid — while the acceptance's runner reads the serial, where only the runtime's
+  own writer (`aegir::debug_write`, which is how the process sub-arc's client
+  prints) had ever appeared. The two meet in the terminal now: every write a
+  stream delivers is mirrored to the serial verbatim
+  (`apps/hosted/aegir-terminal/src/console_stream_server.cc`), so what the runner
+  matches is what a program printed, and a client that carries no Aegir call is
+  cued on like any other.
+- **a write did not move the descriptor's cursor.** `lseek(fd, 0, SEEK_CUR)`
+  after a write answered 0, because `libs/aegir-posix/src/files.cc`'s write
+  advanced the volume's own handle and left the descriptor's mirror alone. The
+  client's seventh check is exactly that, and the acceptance named it — which is
+  what the marker rule is for. `pwrite` remains the one that must not move it.
 
 ## What this is not
 

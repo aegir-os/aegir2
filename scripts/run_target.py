@@ -635,6 +635,14 @@ def development_tree(build_dir: Path) -> Path:
     posix_path = build_dir / "apps/hosted/aegir-posix-path-test/aegir-posix-path-test"
     if posix_path.is_file():
         shutil.copy2(posix_path, root / "C" / "posix-path-test")
+    # The file sub-arc's acceptance client (specs/posix.md): the writing half of
+    # the surface -- create, write, read back, truncate, rename, unlink, mkdir --
+    # over the view's spelling of the scratchpad volume. The same shape as the
+    # path view's client: no Aegir call of its own, and its own marker line
+    # (AEGIR_POSIX_FILE_OK) is the cue the acceptance's step waits on.
+    posix_file = build_dir / "apps/hosted/aegir-posix-file-test/aegir-posix-file-test"
+    if posix_file.is_file():
+        shutil.copy2(posix_file, root / "C" / "posix-file-test")
     return root
 
 

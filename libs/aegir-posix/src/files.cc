@@ -920,6 +920,13 @@ long write(int fd, void const *buffer, size_t count) noexcept
             total += written;
         }
         if (total > 0) {
+            /* A write moves the descriptor's cursor (POSIX), which is the mirror
+             * lseek answers from: the volume's handle keeps its own place, so
+             * this is bookkeeping the layer owes the program. Without it,
+             * lseek(fd, 0, SEEK_CUR) after a write answered 0 -- measured by the
+             * file sub-arc's client, whose seventh check is exactly that
+             * (specs/posix.md). pwrite is the one that must not move it. */
+            entry->offset += total;
             return static_cast<long>(total);
         }
     }
@@ -942,6 +949,7 @@ long write(int fd, void const *buffer, size_t count) noexcept
         }
         total += written;
     }
+    entry->offset += total;
     return static_cast<long>(total);
 }
 

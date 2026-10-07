@@ -7,10 +7,10 @@
  * A plain program in the POSIX sense: every call it makes is a libc call --
  * open, read, close, chdir, getcwd, stat, opendir and readdir -- so it carries
  * no Aegir call of its own. The runtime stands it up before `main` (aegir-crt0's
- * constructor), and its evidence is its own exit status, because a program that
- * must not know it is on Aegir cannot call the runtime's diagnostic writer to
- * say so. That is the shape `aegir-echo`'s code already has in the DOS
- * acceptance: the terminal's own `command exited <n>` line is the cue.
+ * constructor), and its evidence is a marker it prints itself: `printf` is a
+ * libc call, not the runtime's diagnostic writer, so saying AEGIR_POSIX_PATH_OK
+ * is still something a program that does not know it is on Aegir can do, and the
+ * acceptance's step cues on that line.
  *
  * What it proves is the `/`-rooted view: a volume under `/`, `.` and `..`
  * normalized against the composed path, the first component folded by the
@@ -19,14 +19,19 @@
  * a directory whose entries are the namespace's volumes and bindings.
  *
  * Statuses:
- *   63  every check passed (and it says AEGIR_POSIX_PATH_OK on stdout as well)
+ *    0  every check passed (and it says AEGIR_POSIX_PATH_OK on stdout as well)
  *    1  a check failed, named on stdout -- the terminal's grid, not the serial
  *
- * 63 is unique among the codes a dev target's session produces -- 0, the DOS
- * acceptance's 10, 42 and 77, the console's break at 20 -- so the acceptance's
- * QmpStep cues on `terminal: command exited 63` exactly, and a failure leaves
- * that cue unprinted, which is how the run fails (scripts/targets.py and
- * AGENTS.md's trigger rule: a cue has to be unique and has to be the proof).
+ * Success is 0 and the marker is the cue, which is the shape the process
+ * sub-arc's client already has (AEGIR_POSIX_WAIT_OK). A non-zero success status
+ * does not survive this session: the shell's Shell-Startup is a script and a
+ * script stops at the first command that exits non-zero. This client exited 63
+ * while the view was the last line of that script, and the run that added the
+ * file sub-arc's client behind it is the measurement: that client was staged
+ * under Sys:Development/C and on the disk, and it never started at all. Failure
+ * still exits non-zero, so a failed check leaves the marker unprinted and the run
+ * fails naming it (scripts/targets.py and AGENTS.md's trigger rule: a cue has to
+ * be unique and has to be the proof).
  */
 
 #include <dirent.h>
@@ -44,8 +49,6 @@ namespace {
  * the second is what a relative path and a component walk are measured with. */
 char const *const kAegirText = "aegir read this file off a disk it enumerated itself\n";
 char const *const kNestedText = "two components deep, and the walk found it\n";
-
-constexpr int kOkStatus = 63;
 
 [[noreturn]] void fail(char const *what)
 {
@@ -167,5 +170,5 @@ int main()
 
     printf("AEGIR_POSIX_PATH_OK\n");
     (void)fflush(nullptr);
-    _exit(kOkStatus);
+    _exit(0);
 }
