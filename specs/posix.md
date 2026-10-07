@@ -92,12 +92,13 @@ volume is a mount point and `/` is the list of them (below, "What this is not").
 The path view is the first sub-arc, and it has landed: the translation and its
 host conformance (`libs/aegir-posix`'s `aegir/posix/path.h`, `make
 check-posix-path`), the synthetic `/`, and the current directory, with the
-acceptance below. The rest are the calls a POSIX program makes on top of it, each
-with its own acceptance client independent of any program: files
-(`open`/`read`/`write`/`lseek`/`stat`/…), memory (file-backed `mmap`,
-`mprotect`, a real `munmap`), environment and time, signals, threads, and process
-(`posix_spawn` and `wait4`; `fork` is absent on purpose, `specs/launch.md`). The
-on-device compiler is the first large client, and it is what measures the surface
+acceptance below. **Files** and the first half of **memory** have followed: the
+write side of the file surface, and a *file's* bytes through `mmap`, each with an
+acceptance client of its own (below). What is left are the calls a POSIX program
+makes on top of those: `mprotect` and `MAP_FIXED` (the rest of memory),
+environment and time, signals, threads, and process (`posix_spawn` and `wait4`;
+`fork` is absent on purpose, `specs/launch.md`). The on-device compiler is the
+first large client, and it is what measures the surface
 (`specs/clang-on-aegir.md`).
 
 ### The process sub-arc's acceptance
@@ -203,6 +204,41 @@ measured on the guest:
   advanced the volume's own handle and left the descriptor's mirror alone. The
   client's seventh check is exactly that, and the acceptance named it — which is
   what the marker rule is for. `pwrite` remains the one that must not move it.
+
+### The memory sub-arc's acceptance — the first half, `mmap`
+
+`aegir-posix-memory-test` is the client: a plain program — `mmap`, `munmap`,
+`open`, `close`, `memcmp`, and nothing else — that carries no Aegir call, prints
+`AEGIR_POSIX_MEMORY_OK` and exits 0, and names a failed check with `2+n`. It maps
+`/AEGIR/AEGIR.TXT` through the path view and compares the *file's own bytes*
+through the mapping, which is the whole of what a compiler's `MemoryBuffer` asks
+of a file; writes through an anonymous mapping and reads it back; releases it with
+`munmap` and checks that the mapping which follows lands zeroed, which is what a
+recycling `munmap` owes a program that turns over large allocations
+(`specs/memory.md`); and pins `MAP_FIXED`'s refusal, because a mapping that lands
+quietly somewhere else is worse than one that fails.
+
+**`mprotect` is not here, and the two attempts that tried are the reason.** Both
+broke the tree; `074686f`'s message keeps the detail, and the findings belong to
+the step that lands it:
+
+- narrowing a fresh mapping's rights from `prot` cost the cxx smoke a fault on a
+  page it had mapped: its thread stack is `mmap`'d and written, so a mapping that
+  arrives less permissive than the caller asked for is a regression the protection
+  does not buy back. The heap maps everything writable, and `mprotect` is where a
+  mapping's rights change.
+- keeping the frame behind each mapped page in a table sized from the whole arena
+  cost the launcher the untyped it spawns commands with — `spawn: FAIL no untyped
+  for the command's runtime` — because that table is allocated at init, and a
+  launcher's window is large. The table has to cost what is *used*, not what could
+  be.
+
+The mechanism is otherwise established: the manual's own words are that a
+mapping's attributes can be updated on an existing mapping with a Map invocation
+at the same address (`kernel/manual/parts/vspace.tex:294`), and `Scratch::map_at`
+is that invocation — given the frame, which is what the record is for. The
+dispatch trace (`-DAEGIR_HEAP_TRACE`, `scripts/heap_trace.py`) is what located
+both failures: it named the faulting address and the operations before it.
 
 ## What this is not
 

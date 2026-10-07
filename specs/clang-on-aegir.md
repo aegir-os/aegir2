@@ -91,7 +91,7 @@ Verified in the tree. Each row is a prerequisite arc.
 | Capability | What LLVM/Clang needs | Aegir today |
 | --- | --- | --- |
 | File I/O | `open/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir` | **done** — the dispatcher answers all of these over `aegir::vfs` (`libs/hosted/aegir-heap/src/heap.cc`) |
-| Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | anonymous `mmap` only (`sys_mmap`, `heap.cc:513`); `munmap`/`mremap` exist, `mprotect` absent. **The one load-bearing gap.** |
+| Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | **file-backed `mmap` has landed** (`sys_mmap`, `heap.cc`), and `munmap`/`mremap` recycle their memory (specs/memory.md). `mprotect` is still absent: it needs the frame behind each mapped page to be in hand, which is the step that follows (specs/posix.md). `MAP_FIXED` is refused by decision. |
 | Process | `posix_spawn` + `wait4` for cc1 + ld; `fork` not needed | none; the POSIX process sub-arc is load-bearing (`specs/posix.md`) |
 | Threads | `pthread_create`, mutex, atomics | `LLVM_ENABLE_THREADS=OFF` avoids them; a `clone` route exists (musl patch 0002) but is not on this path |
 | Signals | `sigaction` (crash handlers) | none; disable or stub |
