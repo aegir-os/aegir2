@@ -1118,6 +1118,16 @@ def main(argv: list[str]) -> int:
     # process group would be left behind. Becoming an exception lets bash() take
     # the tree down on the way out (stop_group); the QEMU path installs the same
     # handler for its own process group.
+    #
+    # These handlers are what stops a run, and a signal has to reach *this*
+    # process to reach them. Measured, because the chain is longer than it looks
+    # (`make` -> the Makefile's own `timeout` -> this script -> simulate -> QEMU):
+    # SIGKILL of `make` left this script running, and QEMU with it, still deep in
+    # the acceptance a minute and a half later -- the Makefile's `timeout`
+    # survives its parent and keeps this script a child of the chain, so nothing
+    # here hears about the kill at all. Kill this process, or signal the whole
+    # process group (a terminal's Ctrl-C does), and the run takes itself down:
+    # QEMU is reaped and the cues that never printed are listed as the diagnosis.
     def _stop(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)
 
