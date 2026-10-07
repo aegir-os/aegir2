@@ -17,7 +17,7 @@
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
 #include <aegir/environment.h>
-#include <aegir/heap.h>
+#include <aegir/posix/files.h>
 #include <aegir/ipc/port.h>
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
@@ -213,8 +213,8 @@ bool ServiceKit::fetch_image_frame(void *context, uint64_t offset, uint64_t leng
      * does not serve read-frame refuses it, and the frame is filled through our
      * own window instead -- the inline read this stands in for, so a volume
      * that has not learned read-frame still loads. */
-    if (aegir::heap::files::read_frame(kit->image_fd_, offset, frame_offset, length, frame,
-                                       frame_bits) == static_cast<long>(length)) {
+    if (aegir::posix::files::read_frame(kit->image_fd_, offset, frame_offset, length, frame,
+                                        frame_bits) == static_cast<long>(length)) {
         return true;
     }
     if (kit->scratch_ == nullptr || frame_bits > seL4_PageBits) {

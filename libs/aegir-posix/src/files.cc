@@ -1,11 +1,12 @@
 /*
- * The runtime's file calls -- implementation. See files.h.
+ * aegir-posix: the file surface -- implementation. See
+ * include/aegir/posix/files.h.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
  * musl's filesystem functions (and so libc++'s std::filesystem) issue Linux
- * syscalls; the heap's dispatcher answers them here, in the process's own
+ * syscalls; aegir-heap's dispatcher answers them here, in the process's own
  * memory, by talking to the VFS instead of the kernel. The pieces:
  *
  *   - a resolved path is an Aegir path -- "Volume:rest" -- or a relative one,
@@ -28,7 +29,7 @@
 
 #define _GNU_SOURCE 1
 
-#include "files.h"
+#include <aegir/posix/files.h>
 
 #include <aegir/bootstrap.h>
 #include <aegir/mem/allocator.h>
@@ -43,7 +44,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
-namespace aegir::heap::files {
+namespace aegir::posix::files {
 
 namespace {
 
@@ -1575,32 +1576,32 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
     return static_cast<long>(total);
 }
 
-}  // namespace aegir::heap::files
+}  // namespace aegir::posix::files
 
 /* The current directory's two ends, for aegir::environment -- which is the
  * hosted C++ face of the same state chdir/getcwd answer. Plain C so the
  * libc++-facing translation unit can declare them (specs/environment.md). */
-extern "C" char const *aegir_heap_current_dir(uint32_t *length) noexcept
+extern "C" char const *aegir_posix_current_dir(uint32_t *length) noexcept
 {
-    return aegir::heap::files::current_dir(length);
+    return aegir::posix::files::current_dir(length);
 }
 
-extern "C" int aegir_heap_set_current_dir(char const *path, uint32_t length) noexcept
+extern "C" int aegir_posix_set_current_dir(char const *path, uint32_t length) noexcept
 {
     if (path == nullptr && length != 0) {
         return -1;
     }
-    if (length > aegir::heap::files::kPathCapacity) {
+    if (length > aegir::posix::files::kPathCapacity) {
         return -1;
     }
-    aegir::heap::files::set_current_dir(path, length);
+    aegir::posix::files::set_current_dir(path, length);
     return 0;
 }
 
 /* The program directory, for aegir::environment: a plain-C bridge, the same
  * shape as the current directory's, so the libc++-facing unit can declare it
  * (specs/environment.md). */
-extern "C" char const *aegir_heap_program_dir(uint32_t *length) noexcept
+extern "C" char const *aegir_posix_program_dir(uint32_t *length) noexcept
 {
-    return aegir::heap::files::program_dir(length);
+    return aegir::posix::files::program_dir(length);
 }

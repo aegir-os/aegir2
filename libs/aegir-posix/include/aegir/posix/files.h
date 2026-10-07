@@ -1,25 +1,29 @@
 /*
- * The runtime's file calls: the POSIX layer musl's filesystem functions and
- * std::filesystem reach (specs/cxx.md step 5).
+ * aegir-posix: the file surface (specs/posix.md).
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
- * The dispatcher in heap.cc owns the switch over musl's syscall numbers; this
- * header is the handful of functions it calls for the filesystem. They live in
- * their own translation unit because this is the one place a hosted runtime
- * touches seL4 -- it resolves Aegir paths through aegir::vfs -- and keeping it
- * apart from heap.cc's musl-facing C leaves each side of the seL4/libc++
- * boundary in one translation unit (specs/userland.md).
+ * The POSIX layer musl's filesystem functions and std::filesystem reach
+ * (specs/cxx.md step 5, specs/posix.md). The dispatcher in aegir-heap's
+ * heap.cc owns the switch over musl's syscall numbers; this header is the
+ * handful of functions it calls for the filesystem. They live here rather than
+ * in the heap because they are the personality and the heap is the allocator:
+ * this is the one place a hosted runtime touches seL4 -- it resolves Aegir
+ * paths through aegir::vfs -- and the layer grows in one library
+ * (specs/posix.md's boundary, specs/clang-on-aegir.md's Phase 2).
  *
  * Plain types only, so heap.cc can include this without an seL4 header of its
- * own; the free functions are named after the syscall they answer, not the
- * libc function, because that is the layer they intercept.
+ * own, with one exception: read_frame hands a page *capability* over, which has
+ * no plain-C shape (aegir/volume.h, `seL4_CPtr`). The free functions are named
+ * after the syscall they answer, not the libc function, because that is the
+ * layer they intercept.
  */
 
-#ifndef AEGIR_HEAP_FILES_H
-#define AEGIR_HEAP_FILES_H
+#ifndef AEGIR_POSIX_FILES_H
+#define AEGIR_POSIX_FILES_H
 
+#include <aegir/volume.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,7 +32,7 @@ class Allocator;
 class Scratch;
 }
 
-namespace aegir::heap::files {
+namespace aegir::posix::files {
 
 /** Hand the file layer the allocator its capability slots come from and the
  *  window it maps a bulk write's frame through. Called from heap::init; before
@@ -77,6 +81,20 @@ long fcntl(int fd, int command, long argument) noexcept;
  * std::filesystem::copy fails with ENOSYS (specs/dos.md's copy command). */
 long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept;
 
+/** Read `length` bytes of the file open as `fd`, from its `offset`, into
+ *  `frame` -- a 4 KiB page capability of the caller's -- starting
+ *  `frame_offset` bytes in. This is the volume protocol's read-frame
+ *  (aegir/volume.h): the filesystem maps the frame for the one call and the
+ *  bytes never cross a message, so a program image is read straight into the
+ *  frames the child will hold (specs/director.md's spawn path). It has no libc
+ *  shape -- it hands a capability over -- so it is named rather than reached
+ *  through musl, the way every other call here is. Returns the number of bytes
+ *  read, or a negative errno -- EIO when the volume refuses, EBADF when the fd
+ *  is not a readable file with a handle. */
+long read_frame(int fd, uint64_t offset, uint64_t frame_offset, uint64_t length,
+                seL4_CPtr frame,
+                uint32_t frame_bits = aegir::volume::kFrameBitsMin) noexcept;
+
 /* The attribute calls (specs/bfs.md's metadata protocol). A filesystem that
  * has no attributes answers EOPNOTSUPP; one that has them but not this name
  * answers ENODATA. `l`-prefixed names are the symlink forms, which read the
@@ -97,6 +115,6 @@ long removexattr(char const *path, char const *name) noexcept;
 long lremovexattr(char const *path, char const *name) noexcept;
 long fremovexattr(int fd, char const *name) noexcept;
 
-}  // namespace aegir::heap::files
+}  // namespace aegir::posix::files
 
-#endif  // AEGIR_HEAP_FILES_H
+#endif  // AEGIR_POSIX_FILES_H

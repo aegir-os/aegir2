@@ -43,8 +43,6 @@
 
 #include <aegir/heap.h>
 
-#include "files.h"
-#include "posix.h"
 #include "regions.h"
 #include "time.h"
 
@@ -58,6 +56,8 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/network.h>
+#include <aegir/posix/files.h>
+#include <aegir/posix/spawn.h>
 #include <aegir/process.h>
 #include <aegir/thread.h>
 #include <errno.h>
@@ -111,6 +111,13 @@ void __init_tls(size_t *aux);
 }
 
 namespace aegir::heap {
+
+/* The POSIX surface is a library of its own now -- libs/aegir-posix, one step
+ * at the files boundary (specs/posix.md) -- so the dispatcher forwards its
+ * file calls across a library edge. The alias keeps this switch's own
+ * spelling: every case below names the syscall it answers, not the library it
+ * landed in. */
+namespace files = aegir::posix::files;
 
 namespace {
 
@@ -792,7 +799,7 @@ long wait_child(int pid, int *status) noexcept
     aegir::ipc::Consumer const launcher = aegir::ipc::Consumer::find(
         aegir::launch::kPortName, aegir::launch::kPortNameLength);
     uint64_t badge = 0;
-    if (!launcher.valid() || pid <= 0 || !take_child_badge(pid, &badge)) {
+    if (!launcher.valid() || pid <= 0 || !aegir::posix::take_child_badge(pid, &badge)) {
         return -ECHILD;
     }
     uint64_t answer[2] = {};

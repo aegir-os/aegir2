@@ -25,12 +25,12 @@ char const *const *sel4runtime_envp(void);
 
 /* The current directory lives in the runtime, because chdir/getcwd and
  * std::filesystem::current_path reach the same state (specs/environment.md):
- * this library is the C++ face of it, not a second copy. aegir-heap owns the
- * buffer and answers the two calls. */
+ * this library is the C++ face of it, not a second copy. The POSIX layer
+ * (libs/aegir-posix) owns the buffer and answers the two calls. */
 extern "C" {
-char const *aegir_heap_current_dir(uint32_t *length) noexcept;
-int aegir_heap_set_current_dir(char const *path, uint32_t length) noexcept;
-char const *aegir_heap_program_dir(uint32_t *length) noexcept;
+char const *aegir_posix_current_dir(uint32_t *length) noexcept;
+int aegir_posix_set_current_dir(char const *path, uint32_t length) noexcept;
+char const *aegir_posix_program_dir(uint32_t *length) noexcept;
 }
 
 namespace aegir::environment {
@@ -188,7 +188,7 @@ char const *const *environ() noexcept
 std::string_view current_dir() noexcept
 {
     uint32_t length = 0;
-    char const *found = aegir_heap_current_dir(&length);
+    char const *found = aegir_posix_current_dir(&length);
     if (found == nullptr) {
         return {};
     }
@@ -197,13 +197,13 @@ std::string_view current_dir() noexcept
 
 bool set_current_dir(std::string_view path) noexcept
 {
-    return aegir_heap_set_current_dir(path.data(), static_cast<uint32_t>(path.size())) == 0;
+    return aegir_posix_set_current_dir(path.data(), static_cast<uint32_t>(path.size())) == 0;
 }
 
 std::string_view program_dir() noexcept
 {
     uint32_t length = 0;
-    char const *found = aegir_heap_program_dir(&length);
+    char const *found = aegir_posix_program_dir(&length);
     return found != nullptr ? std::string_view(found, static_cast<std::size_t>(length))
                             : std::string_view();
 }

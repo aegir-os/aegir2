@@ -1,5 +1,5 @@
 /*
- * aegir-heap: the POSIX spawn entry point (specs/posix.md).
+ * aegir-posix: the spawn entry point (specs/posix.md's process sub-arc).
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
@@ -24,9 +24,9 @@
 #include <string.h>
 #include <sys/types.h>
 
-#include "posix.h"
+#include <aegir/posix/spawn.h>
 
-namespace aegir::heap {
+namespace aegir::posix {
 
 namespace {
 
@@ -71,7 +71,7 @@ bool take_child_badge(int pid, uint64_t *badge) noexcept
     return false;
 }
 
-}  // namespace aegir::heap
+}  // namespace aegir::posix
 
 extern "C" int posix_spawn(pid_t *pid, char const *path,
                            posix_spawn_file_actions_t const *file_actions,
@@ -117,7 +117,7 @@ extern "C" int posix_spawn(pid_t *pid, char const *path,
     if (refused != 0) {
         return EIO;
     }
-    int const child = aegir::heap::register_child(badge);
+    int const child = aegir::posix::register_child(badge);
     if (child == 0) {
         return EAGAIN;
     }

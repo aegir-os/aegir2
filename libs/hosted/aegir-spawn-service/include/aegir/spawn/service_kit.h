@@ -171,7 +171,7 @@ public:
                             void *destination) noexcept;
     /* The Request::image_frame_source: read the open image at an offset
      * straight into a frame the spawner holds, through the volume's read-frame
-     * (aegir/heap.h) -- the filesystem maps the frame, so the bytes never cross
+     * (aegir/posix/files.h) -- the filesystem maps the frame, so the bytes never cross
      * a message. `frame_bits` is the frame's size, so a loader pulling a large
      * segment's bulk names a 2 MiB mega page. The context is this ServiceKit. */
     static bool fetch_image_frame(void *context, uint64_t offset, uint64_t length,

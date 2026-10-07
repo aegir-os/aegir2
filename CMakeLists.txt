@@ -195,6 +195,10 @@ target_compile_options(aegir-cxx-policy INTERFACE -Wall -Wextra -Werror)
 
 add_subdirectory(libs/freestanding)
 if(AEGIR_HOSTED_CXX)
+  # The POSIX personality first: it is a hosted library like the others, but
+  # nothing under libs/hosted owns it (specs/posix.md), and aegir-heap forwards
+  # its syscall cases to it.
+  add_subdirectory(libs/aegir-posix)
   add_subdirectory(libs/hosted)
 endif()
 # The hosted apps first: director packs them into its initrd, so they must be
