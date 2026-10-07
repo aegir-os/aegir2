@@ -36,4 +36,7 @@ target_include_directories(
   INTERFACE "${AEGIR_LLVM_SOURCE_DIR}/llvm/include"
             "${AEGIR_LLVM_BUILD_DIR}/include"
             "${AEGIR_LLVM_SOURCE_DIR}/clang/include"
-            "${AEGIR_LLVM_BUILD_DIR}/tools/clang/include")
+            "${AEGIR_LLVM_BUILD_DIR}/tools/clang/include"
+            # lld's own headers, for the linker as a program (Phase 1's lld,
+            # specs/clang-on-aegir.md): lld/Common/Driver.h is what a tool calls.
+            "${AEGIR_LLVM_SOURCE_DIR}/lld/include")
