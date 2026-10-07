@@ -162,6 +162,57 @@ void *grow_node_region(void *context, unsigned *bytes) noexcept
     return reinterpret_cast<void *>(page);
 }
 
+/* The frame behind each mapped page of the arena, so that mprotect can name it
+ * again: a mapping's rights change by issuing the Map invocation at the same
+ * address (kernel/manual/parts/vspace.tex:294), and that invocation names the
+ * frame, which map_page would otherwise drop. 512 frames to a page, one chunk per
+ * 512 pages of the arena, and a chunk is mapped the first time a page in its
+ * range is mapped -- so the record costs what is *used*. Sizing a table from the
+ * whole arena at init was tried and cost the launcher the untyped it spawns
+ * commands with (measured: "spawn: FAIL no untyped for the command's runtime"),
+ * because a launcher's window is large. */
+constexpr uint32_t kFramesPerChunk = kPageBytes / sizeof(seL4_CPtr);
+
+struct FrameChunk {
+    FrameChunk *next;
+    uint32_t first; /* the arena page index this chunk starts at */
+    seL4_CPtr frames[kFramesPerChunk];
+};
+
+FrameChunk *g_frame_chunks = nullptr;
+
+/* The chunk holding arena page `index`, made when `create` unless it is already
+ * there. Its own page is mapped without being recorded: it is the record, not
+ * arena memory a program was given. */
+FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
+{
+    for (FrameChunk *chunk = g_frame_chunks; chunk != nullptr; chunk = chunk->next) {
+        if (index >= chunk->first && index - chunk->first < kFramesPerChunk) {
+            return chunk;
+        }
+    }
+    if (!create || !ready_ || mmap_ - brk_ < kPageBytes) {
+        return nullptr;
+    }
+    uintptr_t const page = mmap_ - kPageBytes;
+    aegir::mem::Account account{"heap", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const frame =
+        g_allocator->alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account, &error);
+    if (frame == 0 || !g_scratch->map_at(page, frame)) {
+        return nullptr;
+    }
+    mmap_ = page;
+    auto *chunk = reinterpret_cast<FrameChunk *>(page);
+    chunk->next = g_frame_chunks;
+    chunk->first = index - (index % kFramesPerChunk);
+    for (uint32_t i = 0; i < kFramesPerChunk; ++i) {
+        chunk->frames[i] = 0;
+    }
+    g_frame_chunks = chunk;
+    return chunk;
+}
+
 /* Diagnosis only, off unless the heap is built with -DAEGIR_HEAP_TRACE: every
  * mapping, release and refusal is logged, so the pairs can be replayed offline
  * (scripts/heap_trace.py). The badge tags the lines, because two processes with
@@ -245,7 +296,19 @@ bool map_page(uintptr_t address) noexcept
     if (frame == 0) {
         return false;
     }
-    return g_scratch->map_at(address, frame);
+    if (!g_scratch->map_at(address, frame)) {
+        return false;
+    }
+    /* Remembered so that mprotect can name the frame again (the chunk record
+     * above). Every arena page is recorded; a page outside the arena cannot
+     * happen here, and would simply not be. */
+    if (address >= base_ && address < limit_) {
+        uint32_t const index = static_cast<uint32_t>((address - base_) / kPageBytes);
+        if (FrameChunk *chunk = frame_chunk(index, true)) {
+            chunk->frames[index - chunk->first] = frame;
+        }
+    }
+    return true;
 }
 
 /* The memory service, found once by name through the bootstrap block, the way
@@ -626,6 +689,61 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     return -ENOMEM;
 }
 
+/* POSIX protection bits as the kernel's rights, so that a read-only mapping is
+ * read-only to the hardware and not merely in the caller's intentions: read is
+ * always allowed -- a mapping nothing may read is not something a program asks
+ * for -- and write follows PROT_WRITE (specs/posix.md). */
+seL4_CapRights_t rights_for(int prot) noexcept
+{
+    return seL4_CapRights_new(0, 0, 1, (prot & PROT_WRITE) != 0 ? 1 : 0);
+}
+
+/* Give the pages of `[address, address + length)`, already mapped, the rights
+ * `rights` carries. The manual's own words are that a mapping's attributes can be
+ * updated on an existing mapping with a Map invocation at the same address
+ * (kernel/manual/parts/vspace.tex:294), and this is that invocation. With no
+ * unmap first: an unmap whose remap does not succeed leaves the process without
+ * memory it owns, and that is worse than a protection that did not change. */
+bool set_rights(uintptr_t address, size_t length, seL4_CapRights_t rights) noexcept
+{
+    for (uintptr_t at = address; at < address + length; at += kPageBytes) {
+        if (!ready_ || at < base_ || at >= limit_) {
+            return false;
+        }
+        uint32_t const index = static_cast<uint32_t>((at - base_) / kPageBytes);
+        FrameChunk *chunk = frame_chunk(index, false);
+        if (chunk == nullptr || chunk->frames[index - chunk->first] == 0) {
+            return false;
+        }
+        if (!g_scratch->map_at(at, chunk->frames[index - chunk->first], rights)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* SYS_mprotect: a mapping's protection, changed in place (specs/posix.md). The
+ * whole range must be one the arena mapped, because the frame behind each page is
+ * what the invocation names; a page it never mapped is ENOMEM, as a kernel would
+ * say for a range it cannot back. */
+long sys_mprotect(void *addr, size_t length, int prot) noexcept
+{
+    if (!ready_ || addr == nullptr || length == 0 ||
+        (reinterpret_cast<uintptr_t>(addr) & (kPageBytes - 1)) != 0) {
+        return -EINVAL;
+    }
+    uintptr_t const address = reinterpret_cast<uintptr_t>(addr);
+    uintptr_t const needed = align_up(length);
+    if (address < base_ || address + needed > limit_) {
+        return -ENOMEM;
+    }
+    if (!set_rights(address, needed, rights_for(prot))) {
+        return -ENOMEM;
+    }
+    trace("mprotect", address, needed);
+    return 0;
+}
+
 /* SYS_madvise: a hint. mallocng asks for reclaim; the pages are already ours
  * and mapped, so there is nothing to advise. */
 long sys_madvise(void *addr, size_t length, int advice) noexcept
@@ -993,6 +1111,9 @@ long vsyscall(long sysnum, ...) noexcept
         ret = sys_mmap(va_arg(ap, void *), va_arg(ap, size_t),
                        va_arg(ap, int), va_arg(ap, int), va_arg(ap, int),
                        va_arg(ap, off_t));
+        break;
+    case 226: /* SYS_mprotect */
+        ret = sys_mprotect(va_arg(ap, void *), va_arg(ap, size_t), va_arg(ap, int));
         break;
     case 215: /* SYS_munmap */
         ret = sys_munmap(va_arg(ap, void *), va_arg(ap, size_t));

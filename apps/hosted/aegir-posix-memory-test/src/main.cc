@@ -14,15 +14,15 @@
  * What it proves is the memory half of the surface that
  * `specs/clang-on-aegir.md` calls the load-bearing gap: a *file's* bytes through
  * a mapping (what LLVM's MemoryBuffer does for every input object file), an
- * anonymous mapping written through and read back, `munmap` returning it, a
- * mapping that follows landing on memory that is there and zero-filled, and
- * MAP_FIXED refused rather than quietly landing somewhere else.
+ * anonymous mapping written through and read back, `mprotect` changing a page's
+ * protection and leaving the mapping usable, `munmap` returning it, a mapping
+ * that follows landing on memory that is there and zero-filled, and MAP_FIXED
+ * refused rather than quietly landing somewhere else.
  *
- * `mprotect` is the next step of this sub-arc and is deliberately *not* checked
- * here: it needs a mapping's frame to be in hand, and the first attempt at
- * keeping one cost the launcher the untyped it spawns commands with (measured:
- * "spawn: FAIL no untyped for the command's runtime"), so it lands on its own
- * with its own acceptance rather than making this client red.
+ * The frame behind each mapped page is what `mprotect` needs in hand, and the
+ * heap keeps that record in chunks it maps as it needs them -- sizing it from the
+ * arena at init was tried and cost the launcher the untyped it spawns commands
+ * with (measured: "spawn: FAIL no untyped for the command's runtime").
  *
  * The file is the AEGIR volume's own, whose bytes the path view's client also
  * knows (scripts/make_disk.py's AEGIR_BFS_TREE), and it is read through the view
@@ -100,6 +100,16 @@ int main()
     }
     require(arena[kAnonymous - 1] == static_cast<char>('a' + ((kAnonymous - 1) % 26)),
             "a written mapping reads back its own bytes");
+
+    /* mprotect: a mapping's protection can be changed and the mapping stays
+     * usable -- read-only here, then writable again. What the rights mean is the
+     * hardware's business, so this checks what a program relies on: the pages keep
+     * what they held, and the mapping takes writes again once it is writable. */
+    require(mprotect(arena, kPage, PROT_READ) == 0, "mprotect a page read-only");
+    require(arena[0] == 'a', "a read-only mapping still reads its bytes");
+    require(mprotect(arena, kPage, PROT_READ | PROT_WRITE) == 0, "mprotect it writable again");
+    arena[0] = 'z';
+    require(arena[0] == 'z', "and it takes a write again");
 
     /* munmap gives it back, and a mapping that follows lands on memory that is
      * there and zero-filled -- which is what a real munmap owes a program that

@@ -192,13 +192,14 @@ void *Scratch::map_large(seL4_CPtr frame) noexcept
     return reinterpret_cast<void *>(address);
 }
 
-bool Scratch::map_at(uintptr_t address, seL4_CPtr frame) noexcept
+bool Scratch::map_at(uintptr_t address, seL4_CPtr frame,
+                     seL4_CapRights_t rights) noexcept
 {
     if (frame == 0 || (address & (kPage - 1)) != 0 ||
         address < base_ || address + kPage > limit_) {
         return false;
     }
-    seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+    seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, rights,
                                            seL4_RISCV_Default_VMAttributes);
     unsigned attempts = 0;
     while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
@@ -225,7 +226,7 @@ bool Scratch::map_at(uintptr_t address, seL4_CPtr frame) noexcept
         } else if (mapped != seL4_NoError) {
             return false;
         }
-        error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+        error = seL4_RISCV_Page_Map(frame, root_, address, rights,
                                     seL4_RISCV_Default_VMAttributes);
     }
     if (error != seL4_NoError) {
