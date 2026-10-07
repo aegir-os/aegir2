@@ -20,7 +20,12 @@ namespace aegir::command {
 /** Stand the hosted runtime up from the kit the terminal's spawn gave this
  *  process. False -- with the reason on the debug serial -- when the untyped,
  *  the VSpace root or the window is missing, or the heap cannot claim it. A
- *  command that gets false should _Exit(127): it has no runtime to work in. */
+ *  command that gets false should _Exit(127): it has no runtime to work in.
+ *
+ *  Idempotent, and true when the runtime has stood this process up already:
+ *  aegir-crt0's constructor does that before `main` for a program that carries
+ *  no Aegir call of its own, so a program may call this and need not know which
+ *  of the two stood it up. */
 bool start(char const *name) noexcept;
 
 /** The heap a command runs in, in bytes. Commands are small; 8 MiB is roomy

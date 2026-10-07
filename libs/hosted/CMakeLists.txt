@@ -14,6 +14,9 @@ add_subdirectory(aegir-launch)
 add_subdirectory(aegir-spawn-service)
 add_subdirectory(aegir-script)
 add_subdirectory(aegir-command)
+# After aegir-command, whose stand-up it calls before main: the runtime's crt0
+# (specs/posix.md's acceptance, which must run a program carrying no Aegir call).
+add_subdirectory(aegir-crt0)
 add_subdirectory(aegir-cxxabi-shim)
 add_subdirectory(aegir-filesystem)
 add_subdirectory(aegir-datatypes)

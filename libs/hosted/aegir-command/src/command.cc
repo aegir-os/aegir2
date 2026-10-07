@@ -23,6 +23,11 @@ namespace {
 aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 
+/* Whether this process is already up: the heap is claimed once, and a second
+ * ask -- a program that calls start() on top of aegir-crt0's constructor, or
+ * the other way round -- is answered rather than refused. */
+bool g_stood_up = false;
+
 bool adopt_memory() noexcept
 {
     uint64_t untyped_slot = 0;
@@ -66,6 +71,14 @@ bool adopt_memory() noexcept
 
 bool start(char const *name) noexcept
 {
+    /* The runtime may have stood this process up already: aegir-crt0's
+     * constructor runs before main, so a program that carries no Aegir call is
+     * up when it starts and the call this one carries is a no-op. One heap per
+     * process is the rule (heap::init's own ready_ guard), so a second ask is
+     * answered here rather than refused. */
+    if (g_stood_up) {
+        return true;
+    }
     if (!adopt_memory()) {
         aegir::debug_write("  ");
         aegir::debug_write(name != nullptr ? name : "command");
@@ -78,6 +91,7 @@ bool start(char const *name) noexcept
         aegir::debug_write(": FAIL the heap would not claim the window\n");
         return false;
     }
+    g_stood_up = true;
     return true;
 }
 
