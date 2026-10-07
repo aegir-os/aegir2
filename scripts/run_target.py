@@ -621,6 +621,14 @@ def development_tree(build_dir: Path) -> Path:
     posix_child = build_dir / "apps/hosted/aegir-posix-child/aegir-posix-child"
     if posix_child.is_file():
         shutil.copy2(posix_child, root / "C" / "aegir-posix-child")
+    # The path view's acceptance client (specs/posix.md's first sub-arc): a
+    # plain program -- no Aegir call of its own -- that opens `/AEGIR/AEGIR.TXT`
+    # and browses `/`. It is run from Sys:S/Shell-Startup, and its own exit
+    # status (63) is the cue the acceptance's step waits on, so it needs no
+    # marker of its own.
+    posix_path = build_dir / "apps/hosted/aegir-posix-path-test/aegir-posix-path-test"
+    if posix_path.is_file():
+        shutil.copy2(posix_path, root / "C" / "posix-path-test")
     return root
 
 

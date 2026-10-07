@@ -18,10 +18,26 @@ namespace aegir::command {
 
 namespace {
 
-/* Static, like every hosted program's: the allocator's untyped table is tens
- * of kilobytes and a process's stack is pages (specs/userland.md). */
-aegir::mem::Allocator g_objects(nullptr);
-aegir::mem::Scratch g_scratch(nullptr);
+/* The allocator and the window the heap is claimed on: function-local statics
+ * on purpose. An allocator's untyped table is tens of kilobytes and a process's
+ * stack is pages (specs/userland.md), so they cannot live on the stack -- but a
+ * *file-scope* object is built by a dynamic initializer, and those run after
+ * aegir-crt0's constructor (whose priority is low because the heap must be up
+ * before a program's own constructors can allocate). That left this stand-up
+ * asking a zeroed allocator -- no node pool, so the very kit it was handed was
+ * refused -- which is the one thing the ordering must not do. The first ask
+ * builds them instead, whoever makes it. */
+aegir::mem::Allocator &objects() noexcept
+{
+    static aegir::mem::Allocator allocator(nullptr);
+    return allocator;
+}
+
+aegir::mem::Scratch &window() noexcept
+{
+    static aegir::mem::Scratch scratch(nullptr);
+    return scratch;
+}
 
 /* Whether this process is already up: the heap is claimed once, and a second
  * ask -- a program that calls start() on top of aegir-crt0's constructor, or
@@ -55,14 +71,14 @@ bool adopt_memory() noexcept
     bool ok = aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
               aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
               aegir::bootstrap::window(&window_base, &window_bytes) &&
-              g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
+              objects().adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
                                       untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0,
-                          aegir::bootstrap::cnode_bits());
-        ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
-                             static_cast<uintptr_t>(window_base),
-                             static_cast<uintptr_t>(window_base + window_bytes), &g_objects);
+        objects().adopt_slots(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free, 0,
+                              aegir::bootstrap::cnode_bits());
+        ok = window().adopt(static_cast<seL4_CPtr>(vspace_slot),
+                            static_cast<uintptr_t>(window_base),
+                            static_cast<uintptr_t>(window_base + window_bytes), &objects());
     }
     return ok;
 }
@@ -85,7 +101,7 @@ bool start(char const *name) noexcept
         aegir::debug_write(": FAIL no untyped, vspace or window\n");
         return false;
     }
-    if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
+    if (!aegir::heap::init(objects(), window(), kHeapBytes)) {
         aegir::debug_write("  ");
         aegir::debug_write(name != nullptr ? name : "command");
         aegir::debug_write(": FAIL the heap would not claim the window\n");

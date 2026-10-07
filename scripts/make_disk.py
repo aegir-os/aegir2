@@ -531,7 +531,8 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # command runs after it, the same way (specs/memory.md).
         tree = _with_startup(tree, b"Sys:Development/C/cc\n"
                                    b"Sys:Development/C/aegir-big\n"
-                                   b"Sys:Development/C/posix-test\n")
+                                   b"Sys:Development/C/posix-test\n"
+                                   b"Sys:Development/C/posix-path-test\n")
     return tree
 
 

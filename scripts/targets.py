@@ -1787,6 +1787,13 @@ TARGETS: dict[str, Target] = {
             # the runtime's POSIX face is proven by a process that knows nothing
             # of Aegir.
             QmpStep(r"AEGIR_POSIX_WAIT_OK"),
+            # The path view's acceptance (specs/posix.md's first sub-arc): a
+            # plain program that carries no Aegir call, so it has no marker to
+            # print -- it opens `/AEGIR/AEGIR.TXT` through the view, browses `/`
+            # and the current directory, and exits with 63. The terminal's own
+            # line for that exit is the cue, and a failed check exits 1 instead,
+            # leaving this step's cue unprinted, which is how the run fails.
+            QmpStep(r"terminal: command exited 63"),
         ),
     ),
     "sel4test": Target(

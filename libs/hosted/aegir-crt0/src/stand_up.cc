@@ -24,8 +24,9 @@
  * second stand-up would need are the program's own.
  */
 
+#include <stdlib.h>
+
 #include <aegir/command.h>
-#include <aegir/debug.h>
 
 namespace {
 
@@ -38,9 +39,13 @@ namespace {
 __attribute__((constructor(210))) void stand_up() noexcept
 {
     if (!aegir::command::start("command")) {
-        /* start() has named the reason on the debug console, and a process
-         * with no heap has no runtime to return into. */
-        aegir::halt();
+        /* start() has named the reason on the debug console, and a process with
+         * no heap has no runtime to return into. It exits rather than halts:
+         * halting is a process that never ends, and the shell waiting on this
+         * one would wait for ever -- which is exactly what the first
+         * stand-up failure did. 127 is the code the stand-up's own contract
+         * names for "no runtime to work in" (aegir/command.h). */
+        _Exit(127);
     }
 }
 
