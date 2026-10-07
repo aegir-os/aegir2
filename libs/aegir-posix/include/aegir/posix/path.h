@@ -171,6 +171,39 @@ inline bool translate(char const *path, uint32_t length, char const *cwd,
         ++kept;
     }
 
+    /* `/dev/null` is Aegir's `NIL:` -- the device whose reads are EOF and whose
+     * writes are dropped (specs/vfs.md) -- which is exactly what POSIX means by
+     * it, and which a compiler asks for: LLVM opens /dev/null to decide whether
+     * its output has colours (projects/llvm-project/llvm/lib/Support/Unix/
+     * Process.inc:231), so printing needs it. Nothing here binds a `dev:` volume,
+     * so the view answers it the way it answers every other POSIX path: the
+     * volume's name is folded as the namespace folds any first component, and the
+     * name below it is kept as written. `NIL:` takes any name (specs/pipe.md: "a
+     * read is EOF, a write is dropped"), so `NIL:null` is the device. */
+    if (write == 8) {
+        static char const kDevice[] = "dev/null";
+        static char const kNative[] = "NIL:null";
+        bool matches = true;
+        for (uint32_t i = 0; i < 8 && matches; ++i) {
+            char c = vfs[i];
+            if (i < 3 && c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c - 'A' + 'a');
+            }
+            matches = c == kDevice[i];
+        }
+        if (matches) {
+            if (sizeof(kNative) > capacity) {
+                return false;
+            }
+            for (uint32_t i = 0; i < sizeof(kNative); ++i) {
+                vfs[i] = kNative[i];
+            }
+            out.target = Target::Vfs;
+            out.length = sizeof(kNative) - 1;
+            return true;
+        }
+    }
+
     /* What is left is `Name` or `Name/rest`: the root is its own answer, and
      * the first separator becomes the colon that names the volume's root. */
     if (kept == 0) {

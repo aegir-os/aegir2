@@ -525,17 +525,26 @@ def aegir_tree(commands, datatypes, development=()) -> list:
     tree.append(("dir", "Homes", [("dir", "rroland", home_children)]))
     if development:
         tree.append(("dir", "Development", list(development)))
-        # A target that carries the compiler runs it once at session start, so
-        # the acceptance cues on the compiler's own lines rather than an
-        # interactive step (specs/development.md). The scale acceptance's huge
-        # command runs after it, the same way (specs/memory.md).
-        tree = _with_startup(tree, b"Sys:Development/C/cc\n"
-                                   b"Sys:Development/C/aegir-big\n"
-                                   b"Sys:Development/C/posix-test\n"
+        # A target that carries the compiler runs its programs once at session
+        # start, so the acceptance cues on their own lines rather than an
+        # interactive step (specs/development.md). The clients and the scale
+        # acceptance's huge command (specs/memory.md) come first, and the compiler
+        # and linker last, because loading a 97 MiB or 57 MiB program spends the
+        # spawn path's untyped and nothing yet reclaims a departed command's -- so
+        # a big program placed before `aegir-big` makes `aegir-big` fail
+        # ("spawn: FAIL no untyped for the command's runtime"), which is the cap it
+        # exists to break and is recorded in specs/clang-on-aegir.md.
+        #
+        # `ld.lld --version` and not bare `lld`: lld takes its flavour from the name
+        # it is invoked under. clang is deployed but not invoked yet: it runs and
+        # returns 1 in silence on the guest, which is Phase 3's open item.
+        tree = _with_startup(tree, b"Sys:Development/C/posix-test\n"
                                    b"Sys:Development/C/posix-path-test\n"
                                    b"Sys:Development/C/posix-file-test\n"
                                    b"Sys:Development/C/posix-memory-test\n"
-                                   b"Sys:Development/C/posix-env-test\n")
+                                   b"Sys:Development/C/posix-env-test\n"
+                                   b"Sys:Development/C/aegir-big\n"
+                                   b"Sys:Development/C/ld.lld --version\n")
     return tree
 
 

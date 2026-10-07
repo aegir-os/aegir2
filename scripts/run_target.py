@@ -595,19 +595,27 @@ def ensure_disk(target: Target, build_dir: Path) -> None:
 
 def development_tree(build_dir: Path) -> Path:
     """Lay out `Sys:Development` for make_disk (specs/development.md): the
-    compiler and the scale acceptance's huge command under C, the sysroot under
-    Include and Libs. The compiler is this build's `aegir-cc` app, deployed as
-    `cc`; the sysroot is the next increment -- the first compile is freestanding
-    (`specs/clang-on-aegir.md`), so Include and Libs are the tree's shape and not
-    yet its content."""
+    compiler and the linker and the scale acceptance's huge command under C, the
+    sysroot under Include and Libs. The compiler is this build's `aegir-clang` --
+    clang's own driver, linked by Aegir's CMake (apps/hosted/aegir-clang) --
+    deployed as `clang` and as `cc`, the name specs/development.md and the
+    session's startup already use for it, with `aegir-lld` as `lld` beside it
+    because clang's driver reaches for a linker by name. The sysroot is the next
+    increment -- the first compile is freestanding (`specs/clang-on-aegir.md`) --
+    so Include and Libs are the tree's shape and not yet its content."""
     root = build_dir / "development"
     shutil.rmtree(root, ignore_errors=True)
     (root / "C").mkdir(parents=True)
     (root / "Include").mkdir()
     (root / "Libs").mkdir()
-    compiler = build_dir / "apps/hosted/aegir-cc/aegir-cc"
-    if compiler.is_file():
-        shutil.copy2(compiler, root / "C" / "cc")
+    for program, name in (
+        ("aegir-clang/aegir-clang", "clang"),
+        ("aegir-clang/aegir-clang", "cc"),
+        ("aegir-lld/aegir-lld", "ld.lld"),
+    ):
+        built = build_dir / "apps/hosted" / program
+        if built.is_file():
+            shutil.copy2(built, root / "C" / name)
     # The scale acceptance's deliberately huge command (specs/memory.md) travels
     # beside the compiler: it runs at session start, and a spawn-path cap that
     # creeps back fails on it by name.

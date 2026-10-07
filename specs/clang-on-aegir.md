@@ -217,18 +217,36 @@ ours. This reverses the earlier in-process-driver decision, which existed only
 because the process surface was absent; `specs/launch.md` already names the spawn
 as the mechanism and `posix_spawn` as the interface.
 
-**Its first question is already measured.** Phase 1's programs were deployed once,
-ahead of this phase, to see what they would do, and the staging was right:
-`development_tree` put `cc`, `clang`, `lld` and everything else on the volume, ten
-programs, 323 MiB. On the guest both programs *started* — the launcher announced
-each — and then neither printed nor exited. They were still holding the spawn path
-when `aegir-big` ran after them, whose own spawn failed ("Unknown command"), which
-is what stopped the session's script and wedged the run: 98 cues unprinted
-(`/tmp/aegir-run43.log`). So the question is what a 97 MiB hosted program does
-after its stand-up. The dispatch trace (`-DAEGIR_HEAP_TRACE`, then
-`scripts/heap_trace.py`, `specs/memory.md`) is the instrument that answered the
-same shape of question for `mprotect`, and isolating the session's startup to
-`cc --version` alone is the cheapest way to ask it without company.
+**Where the programs stand, measured.** They were deployed ahead of this phase to
+see what they would do, and the answer corrected the question: there was no hang.
+Markers either side of the driver call (`printf`, so the harnesses stayed free of
+Aegir calls) showed both programs run to completion — constructor, `main`, driver,
+return (`/tmp/aegir-run44.log`). Two real faults came out of it instead:
+
+- **`lld` works on the guest.** It refused `lld --version` because lld takes its
+  flavour from the name it is invoked under — its own diagnostic says which names
+  it wants — and deployed as `ld.lld` it prints `LLD 20.1.8 (compatible with GNU
+  linkers)` in the session's own startup, which is the dev target's cue now
+  (`/tmp/aegir-run46.log`).
+- **`clang` runs and returns 1 in silence.** Its first fault was concrete and is
+  fixed: it asked for `/dev/null` — LLVM opens it to decide whether its output has
+  colours (`projects/llvm-project/llvm/lib/Support/Unix/Process.inc:231`) — and the
+  view translated that to a `dev:` volume nothing binds. The fix is the view's own:
+  `/dev/null` is Aegir's `NIL:`, the device whose reads are EOF and whose writes
+  are dropped (`libs/aegir-posix/include/aegir/posix/path.h`, pinned by
+  `make check-posix-path`). What remains is unplaced: clang returns 1 with nothing
+  on either stream. The dispatch trace (`-DAEGIR_HEAP_TRACE` on `aegir-heap`, then
+  `scripts/heap_trace.py` — the instrument that answered this shape of question for
+  `mprotect`) is where that picks up.
+
+**And a cap came back, now that there are real programs.** Loading a 97 MiB and a
+57 MiB program spends the spawn path's untyped, and nothing reclaims a departed
+command's: placed *before* `aegir-big`, both made its spawn fail — `spawn: FAIL no
+untyped for the command's runtime`, four attempts — which is the cap `aegir-big`
+exists to break (`specs/development.md`). The session's startup therefore runs the
+clients and `aegir-big` first and the big programs last, which is a workaround with
+a reason rather than a fix: reclaiming a departed command's memory is the work that
+names.
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the

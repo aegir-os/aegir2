@@ -133,6 +133,21 @@ int main()
     /* A volume or a binding, and the path below it. */
     {
         expect_vfs("/Sys", cwd, "Sys:", "a volume's root");
+
+        /* `/dev/null` is Aegir's `NIL:` -- the device whose reads are EOF and
+         * whose writes are dropped (specs/vfs.md) -- and it is asked for by name:
+         * LLVM opens /dev/null to decide whether its output has colours, so a
+         * compiler cannot print without it. The volume is folded like any first
+         * component, the name below it is kept as written, and nothing else under
+         * /dev is special. */
+        expect_vfs("/dev/null", cwd, "NIL:null", "`/dev/null` is the NIL: device");
+        expect_vfs("/DEV/null", cwd, "NIL:null",
+                   "the device's volume name is folded like any other");
+        expect_vfs("/dev/Null", cwd, "dev:Null",
+                   "the name below the device's volume is kept as written");
+        expect_vfs("/dev/nullx", cwd, "dev:nullx", "only `null` is the device");
+        expect_vfs("/./dev/null", cwd, "NIL:null",
+                   "normalization reaches the device too");
         expect_vfs("/Sys/", cwd, "Sys:", "a trailing slash names the same root");
         expect_vfs("/AEGIR", cwd, "AEGIR:", "a volume name as written");
         expect_vfs("/aegir/AEGIR.TXT", cwd, "aegir:AEGIR.TXT",

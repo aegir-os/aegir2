@@ -59,17 +59,23 @@ The compiler is invoked as a program on the volume: the session runs
 `Sys:Development/Include` on the include path and links `Sys:Development/Libs`
 (above), so a caller writes `Sys:Development/C/cc hello.c`.
 
-**Where that stands.** The programs exist: `apps/hosted/aegir-clang` and
-`apps/hosted/aegir-lld` build clang's and lld's own sources and are linked by
+**Where that stands.** The programs exist and are deployed. `apps/hosted/aegir-clang`
+and `apps/hosted/aegir-lld` build clang's and lld's own sources and are linked by
 Aegir's CMake (`specs/clang-on-aegir.md`'s Phase 1, landed — 97 MiB and 57 MiB,
-both static `riscv64` ELFs). `development_tree` is what will put them in
-`Sys:Development/C` — `clang`, `lld`, and `cc` as the same program under the name
-this file uses — and it stages the probe `apps/hosted/aegir-cc` today, whose own
-CMakeLists says these supersede it. That staging is Phase 3's first work rather
-than this file's, because it was measured once: both programs load and *start* on
-the guest and then neither print nor exit, which holds the spawn path until the
-next command's spawn fails and the session's script stops
-(`specs/clang-on-aegir.md`, Phase 3, with the run as evidence).
+both static `riscv64` ELFs), and `development_tree` copies them into
+`Sys:Development/C` as `clang` and `cc` (the same program under the name this file
+uses) and as `ld.lld` — the name lld asks for, since it takes its flavour from how
+it is invoked. The session's startup runs `ld.lld --version`, which answers on the
+guest with its own banner and is the dev target's cue; clang runs there and returns
+1 in silence, which is Phase 3's open item (`specs/clang-on-aegir.md`), so its
+invocation waits while its deployment does not.
+
+**The startup's order is deliberate.** The POSIX clients and `aegir-big` run first
+and the big programs last: loading a 97 MiB or 57 MiB program spends the spawn
+path's untyped, and nothing reclaims a departed command's yet, so a big program
+placed before `aegir-big` makes its spawn fail with `spawn: FAIL no untyped for the
+command's runtime` — the cap `aegir-big` exists to break. That is a workaround with
+a reason, not a fix.
 
 The sysroot is where that file says it is: `Include` and `Libs` are the tree's
 shape and not yet its content, because the first compile is freestanding.

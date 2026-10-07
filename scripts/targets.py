@@ -1770,8 +1770,15 @@ TARGETS: dict[str, Target] = {
         qmp_steps=_AEGIR_8G_SMP4.qmp_steps + (
             # The compiler runs at session start (specs/development.md); its own
             # lines are the cue, so nothing is typed for it.
-            QmpStep(r"AEGIR_CC_READ_OK"),
-            QmpStep(r"AEGIR_CC_COMPILE_OK"),
+            # specs/clang-on-aegir.md's Phase 1/3, as programs on the volume: `cc`
+            # and `clang` are apps/hosted/aegir-clang and `ld.lld` is
+            # apps/hosted/aegir-lld, and the session's startup runs lld with
+            # --version. Its own banner is the cue, so what the run proves is that
+            # the linker loaded on the guest and answered. clang is deployed beside
+            # it and not invoked: it runs and returns 1 in silence there, which is
+            # Phase 3's open item, and a cue that cannot fire would make every run
+            # red for it.
+            QmpStep(r"LLD 20"),
             # The scale acceptance's deliberately huge command runs after it
             # (specs/memory.md): its line is the proof that a program tens of
             # megabytes long came up through the whole spawn path with every

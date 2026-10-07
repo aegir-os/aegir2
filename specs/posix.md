@@ -52,6 +52,18 @@ names, `stat("/Name")` is the volume's or binding's root. A volume that says it
 has no directory (`kFlagNoDir`, `NIL:`) is listed under `/` but is not itself a
 directory to browse.
 
+**The device a program expects is the view's too.** `/dev/null` is Aegir's `NIL:`
+— the device whose reads are EOF and whose writes are dropped (`specs/vfs.md`),
+which is exactly what POSIX means by it — and it is asked for by name: LLVM opens
+`/dev/null` to decide whether its output has colours
+(`projects/llvm-project/llvm/lib/Support/Unix/Process.inc:231`), so a compiler
+cannot print without it. Nothing here binds a `dev:` volume, so the view answers
+it the way it answers every POSIX path: the volume's name is folded as the
+namespace folds any first component, the name below it is kept as written, and
+`NIL:` takes any name, so `/dev/null` is `NIL:null` (`libs/aegir-posix/include/
+aegir/posix/path.h`). Nothing else under `/dev` is special, and both are asserted
+by `make check-posix-path`.
+
 ## The boundary
 
 The translation is one step at the `files` boundary: a path that begins with `/`
