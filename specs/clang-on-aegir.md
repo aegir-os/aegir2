@@ -283,14 +283,23 @@ names repeat and member names mean nothing to a linker), the crt objects, the
 stand-up, the eh-frame script, clang's own headers beside their program, the source,
 and a generated *short* link line.
 
-What the acceptance still stops on is one thing, and it is not the compiler. With
-the compile done on the device, `ld.lld` reports `cannot find linker script
-Sys:Development/Libs/aegir-eh-frame.lds` and `unable to find library -l:sysroot.a` —
-files that are staged, and that were verified on the host. So the linker is not
-reaching `Sys:Development/Libs/` on the guest: a path-resolution question in lld's
-own file handling (`-T`, `-L` and `-l:`, and whatever it does before `open`), which
-is where this picks up. The session's startup does not invoke the acceptance yet,
-because a failing link stops the session's script and starves every command after it.
+What the acceptance still stops on is one thing, and it is not the compiler. The
+compile runs on the device — clang reads `Sys:Development/hello.c` and writes an
+object — and `ld.lld` then reports `cannot find linker script
+Sys:Development/aegir-eh-frame.lds` and `unable to find library -l:sysroot.a`. Those
+files are staged, verified on the host, and *flat in the directory clang just read*:
+the staging was moved out of a `Libs` subdirectory on the first measurement of this,
+and the second measurement failed identically. So the fault is lld's own file access
+on a path it is handed — `-T`, `-L`, `-l:`, and whatever it does before `open` — and
+that is where this picks up. The session's startup does not invoke the acceptance
+yet, because a failing link stops the session's script and starves every command
+after it.
+
+A third measurement rules out the obvious explanation: the staging was moved out of
+the `Libs` subdirectory into `Sys:Development` itself, so the script and the archive
+sit exactly where `hello.c` sits — and `ld.lld` failed identically, in the same run
+whose compile through that directory succeeded. (That arrangement also cost 27 cues
+elsewhere in the run, so it is reverted; the sysroot stays in `Libs`.)
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
