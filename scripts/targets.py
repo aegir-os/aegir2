@@ -1778,6 +1778,7 @@ TARGETS: dict[str, Target] = {
             # it and not invoked: it runs and returns 1 in silence there, which is
             # Phase 3's open item, and a cue that cannot fire would make every run
             # red for it.
+            QmpStep(r"clang version 20"),
             QmpStep(r"LLD 20"),
             # The scale acceptance's deliberately huge command runs after it
             # (specs/memory.md): its line is the proof that a program tens of

@@ -646,6 +646,20 @@ long fstat(int fd, void *buffer) noexcept
     if (buffer == nullptr) {
         return -EFAULT;
     }
+    /* The standard descriptors are the console the runtime routes them to, and
+     * they are answered here because the fd table does not hold them: the
+     * terminal owns their stream (specs/shell.md), so a program that asks what
+     * they are gets the truth -- a character device, readable and writable --
+     * while one that does not ask still writes through the stream. This is not
+     * decoration. LLVM's Process::FixupStandardFileDescriptors
+     * (projects/llvm-project/llvm/lib/Support/Unix/Process.inc:210-242) fstats
+     * stdout and stderr and, on EBADF, dup2's /dev/null over both: measured, that
+     * is why every program linking LLVM printed nothing on the guest while its
+     * own libc calls printed fine (specs/clang-on-aegir.md's Phase 3). */
+    if (fd >= 0 && fd <= 2) {
+        fill_kstat(static_cast<Kstat *>(buffer), S_IFCHR | 0600, 0, 0);
+        return 0;
+    }
     Entry *entry = entry_for(fd);
     if (entry == nullptr) {
         return -EBADF;
