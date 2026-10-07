@@ -220,8 +220,8 @@ window.
 - **Phase 5 -- waiting for a child.** In progress: `launch.session` caller halves
   are minted with the caller's pid, so a call is attributable by the kernel
   (landed, with the spawn kit and auth granting the unbadged source); the runtime
-  reports its exit as an `exited` call, the launcher serves `wait` as a held
-  reply, and the POSIX layer adds `posix_spawn`/`wait4`
+  reports its exit as a one-way `exited` message, the launcher serves `wait` as a
+  held reply, and the POSIX layer adds `posix_spawn`/`wait4`
   (`specs/clang-on-aegir.md`, `specs/posix.md`).
 
 ## Waiting for a child
@@ -234,15 +234,23 @@ grows one -- the spawner is what already holds a child's teardown, and a caller
 reaches it through `launch.session` beside the spawn (every program's grant
 carries that half, `libs/freestanding/aegir-spawn-kit/src/kit.cc:137-151`).
 
-The mechanism is an ordinary call, attributed by the kernel. Every process is
-handed a `launch.session` caller half **minted with its own pid as the badge**
+The mechanism is attributable by the kernel. Every process is handed a
+`launch.session` caller half **minted with its own pid as the badge**
 (`libs/freestanding/aegir-spawn-kit/src/kit.cc`), so the launcher reads who is
-calling from the kernel, not from anything the caller says. The runtime the
-program links makes the call under `main`'s return, invisible to the program
-(`specs/cxx.md`): the hosted exit path calls `kMethodExited` with the status, and
+sending from the kernel, not from anything the sender says. The runtime the
+program links makes the report under `main`'s return, invisible to the program
+(`specs/cxx.md`): the hosted exit path sends `kMethodExited` with the status, and
 the launcher files it against the caller's own pid.
 
-    exited  status    in: a word; the runtime's exit report, answered at once
+The report is **one-way** (`aegir/ipc/port.h`'s `send_words`), because nothing is
+being asked: the process has an exit still to make -- the stream exit that reaps
+it -- and waiting for an answer would put the launcher's whole serve loop on the
+critical path of every command's exit. The launcher receives the report -- and
+the sender is released -- before it files the end, so the end is recorded ahead
+of the reap that follows. `wait`, by contrast, **is** a call, because it must be
+answered.
+
+    exited  status    in: a word; the runtime's exit report, one-way, no answer
     wait    pid        answer: one word, the status; held until the child ends
 
 A child that cannot call -- a fault, or the spawner's own halt/reap (a Break C,

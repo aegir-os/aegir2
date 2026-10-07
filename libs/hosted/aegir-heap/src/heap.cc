@@ -808,9 +808,15 @@ long wait_child(int pid, int *status) noexcept
 }
 
 /* Report this process's end to its spawner (specs/launch.md's "Waiting for a
- * child"): the launcher attributes the call to our own pid by the kernel's
+ * child"): the launcher attributes the message to our own pid by the kernel's
  * badge and files it, so a parent's `wait` can answer. A process the launcher
- * gave no caller half (a boot service) has nothing to reach; best-effort. */
+ * gave no caller half (a boot service) has nothing to reach; best-effort.
+ *
+ * One-way, not a call: there is nothing to wait for, and the process has an
+ * exit still to make -- the stream exit that reaps it. Waiting for a reply
+ * here would put the launcher's whole serve loop on the critical path of every
+ * command's exit; the message is received, and the sender released, before the
+ * launcher files it. */
 void report_to_launcher(int status) noexcept
 {
     aegir::ipc::Consumer const launcher = aegir::ipc::Consumer::find(
@@ -819,8 +825,7 @@ void report_to_launcher(int status) noexcept
         return;
     }
     uint64_t const word = static_cast<uint64_t>(status);
-    uint64_t answer[1] = {};
-    (void)launcher.call_words(aegir::launch::kMethodExited, &word, 1, answer, 1);
+    launcher.send_words(aegir::launch::kMethodExited, &word, 1);
 }
 
 /* The process is ending: report the status through the console stream, so the

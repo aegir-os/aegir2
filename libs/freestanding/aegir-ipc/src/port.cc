@@ -116,6 +116,23 @@ WordsReply Consumer::call_transfer(uint32_t method, uint64_t const *out,
     return reply;
 }
 
+void Consumer::send_words(uint32_t method, uint64_t const *out, uint32_t out_count) const noexcept
+{
+    if (out_count > kMaxWords) {
+        return;
+    }
+    seL4_SetMR(kMethodMr, method);
+    for (uint32_t i = 0; i < out_count; ++i) {
+        seL4_SetMR(kWordMr + i, out[i]);
+    }
+    /* The same envelope a call carries (the method's word, then the payload),
+     * so the owner's receive_words reads it identically; the difference is the
+     * invocation -- Send, not Call -- so no reply capability is left for the
+     * owner to answer. */
+    seL4_MessageInfo_t const info = seL4_MessageInfo_new(0, 0, 0, kWordMr + out_count);
+    seL4_Send(capability_, info);
+}
+
 Owner::Owner() noexcept : capability_(0) {}
 
 Owner::Owner(seL4_CPtr capability) noexcept : capability_(capability) {}

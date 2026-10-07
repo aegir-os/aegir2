@@ -396,12 +396,11 @@ void handle_halt(aegir::spawn::ServiceKit &service, uint64_t const *words, uint3
 }
 
 /* A process's own end (kMethodExited), reported by the runtime it links. The
- * caller's kernel badge *is* its pid, so it can only report itself. */
-void handle_exited(uint64_t const *words, uint32_t count, uint64_t caller, uint64_t *reply,
-                   uint32_t *reply_count)
+ * caller's kernel badge *is* its pid, so it can only report itself. One-way:
+ * the runtime sends it and does not wait, so this is filed and never answered
+ * (the message left no reply capability to answer). */
+void handle_exited(uint64_t const *words, uint32_t count, uint64_t caller) noexcept
 {
-    reply[0] = 1;
-    *reply_count = 1;
     int const status = count >= 1 ? static_cast<int>(words[0]) : 0;
     file_exit(caller, static_cast<uint64_t>(status));
 }
@@ -571,6 +570,7 @@ int main(int argc, char *argv[])
         uint64_t reply[aegir::ipc::kMaxWords] = {};
         uint32_t reply_count = 0;
         bool held = false;
+        bool one_way = false;
         if (method == aegir::launch::kMethodSpawn) {
             handle_spawn(service, words, count, cap_arrived, badge, reply, &reply_count);
         } else if (method == aegir::launch::kMethodPipeline) {
@@ -580,14 +580,16 @@ int main(int argc, char *argv[])
         } else if (method == aegir::launch::kMethodHalt) {
             handle_halt(service, words, count, reply, &reply_count);
         } else if (method == aegir::launch::kMethodExited) {
-            handle_exited(words, count, badge, reply, &reply_count);
+            /* One-way: filed, never answered -- a `Send` left no reply cap. */
+            handle_exited(words, count, badge);
+            one_way = true;
         } else if (method == aegir::launch::kMethodWait) {
             held = handle_wait(words, count, badge, reply, &reply_count);
         } else {
             reply[0] = 0;
             reply_count = 1;
         }
-        if (!held) {
+        if (!held && !one_way) {
             port.reply_words(reply, reply_count);
         }
     }

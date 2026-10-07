@@ -124,15 +124,17 @@ constexpr uint32_t kMethodRelease = 22;
 constexpr uint32_t kMethodHalt = 23;
 
 /** A process's own end, reported by the runtime it links (specs/launch.md's
- *  "Waiting for a child"). The hosted exit path makes this call under `main`'s
+ *  "Waiting for a child"). The hosted exit path makes this report under `main`'s
  *  return, so the program is never aware of it. The launcher attributes it to
  *  the caller's own pid by the kernel's badge, so a process can only report
  *  itself. Fields after the method:
  *
  *    status        one word: the exit status
  *
- *  Answer: one word, 1 filed. A call the launcher answers at once, not a held
- *  reply -- the child halts as soon as it returns. */
+ *  One-way (aegir/ipc/port.h's `send_words`): the runtime sends it and does not
+ *  wait for an answer, so the report never delays the exit that follows it; the
+ *  launcher files it and never replies. A call here would leave the caller
+ *  blocked, because there is no answer to give. */
 constexpr uint32_t kMethodExited = 24;
 
 /** Wait for a child to end (specs/launch.md's "Waiting for a child"). The

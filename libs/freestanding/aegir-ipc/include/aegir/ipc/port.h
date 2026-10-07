@@ -7,7 +7,8 @@
  * specs/services.md defines the model and the rights that make it hold. What
  * this library provides is the two halves a service actually uses:
  *
- *   - `Consumer`, for a port someone else owns: call it, get an answer;
+ *   - `Consumer`, for a port someone else owns: call it, get an answer, or
+ *     send one message the owner needs no answer to;
  *   - `Owner`, for a port you own: receive, reply.
  *
  * The two are separate types on purpose, and not for tidiness. A port has
@@ -126,6 +127,14 @@ public:
     WordsReply call_transfer(uint32_t method, uint64_t const *out, uint32_t out_count,
                              seL4_CPtr cap, uint64_t *in, uint32_t in_capacity,
                              bool *cap_received) const noexcept;
+
+    /** The one-way form: send one message and do not wait for an answer. The
+     *  caller blocks only until the owner receives it -- a rendezvous, not a
+     *  round trip -- and the owner must not reply, because a `Send` leaves no
+     *  reply capability behind. For a report the owner files rather than
+     *  answers (a process's own exit, specs/launch.md's "Waiting for a child");
+     *  a protocol that needs an answer uses call_words. */
+    void send_words(uint32_t method, uint64_t const *out, uint32_t out_count) const noexcept;
 
 private:
     seL4_CPtr capability_;
