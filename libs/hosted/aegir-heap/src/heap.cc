@@ -513,10 +513,24 @@ long sys_brk(uintptr_t new_break) noexcept
     return static_cast<long>(brk_);
 }
 
-/* SYS_mmap: anonymous private mappings, which is what mallocng asks for.
- * The address is ours to choose: grow down from the top of the region, past
- * the brk side. Frames are mapped at the addresses it hands out. Returns the
- * address, or a negative errno that __syscall_ret reads into MAP_FAILED.
+/* SYS_mmap: anonymous private mappings, which is what mallocng asks for, and a
+ * file's bytes when the mapping names one -- what LLVM's MemoryBuffer does for
+ * every input object file, which specs/clang-on-aegir.md calls the load-bearing
+ * gap.
+ *
+ * The address is ours to choose: grow down from the top of the region, past the
+ * brk side. Frames are mapped at the addresses it hands out, and a mapping that
+ * names a file has them filled from that file at the given offset, through the
+ * POSIX layer's pread -- so a compiler's input arrives by the same path a read()
+ * would have taken (specs/posix.md). Past the file's end the pages read as zero,
+ * which is what a fresh frame holds and what a reused region is set to. The
+ * protection a caller asked for is not enforced here: mprotect's own step is
+ * where a mapping's rights change, and narrowing a fresh mapping was measured to
+ * cost the cxx smoke a fault on a page it had mapped.
+ *
+ * MAP_FIXED is refused: the arena's free area is the one interval between the
+ * break and the cursor, so a hole punched into it could not be handed back, and
+ * replacing a live mapping is not something the heap can do (specs/posix.md).
  *
  * The DISPATCHER_TRACE lines are diagnosis, not a feature: every mapping and
  * release is logged so the pair can be checked offline. They are temporary. */
@@ -525,33 +539,44 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
 {
     static_cast<void>(addr);
     static_cast<void>(prot);
-    static_cast<void>(fd);
-    static_cast<void>(offset);
-    if (!ready_ || (flags & MAP_ANONYMOUS) == 0 || (flags & MAP_FIXED) != 0 ||
-        length == 0) {
+    bool const file_backed = (flags & MAP_ANONYMOUS) == 0;
+    if (!ready_ || (flags & MAP_FIXED) != 0 || length == 0 ||
+        (file_backed && fd < 0)) {
         return -EINVAL;
     }
     uintptr_t const needed = align_up(length);
+    uintptr_t base = 0;
     if (void *released = g_free_regions.take(needed)) {
         /* mmap promises zero-filled pages, and a released region is not: the
          * bytes it holds are the last owner's (specs/memory.md). */
         memset(released, 0, needed);
-        trace("mmap-reused", reinterpret_cast<uintptr_t>(released), needed);
-        return static_cast<long>(reinterpret_cast<uintptr_t>(released));
-    }
-    if (needed > mmap_ - brk_) {
-        trace("mmap-refused", length, 0);
-        return -ENOMEM;
-    }
-    uintptr_t const base = mmap_ - needed;
-    mmap_ = base;
-    for (uintptr_t page = 0; page < needed / kPageBytes; ++page) {
-        if (!map_page(base + page * kPageBytes)) {
+        base = reinterpret_cast<uintptr_t>(released);
+        trace("mmap-reused", base, needed);
+    } else {
+        if (needed > mmap_ - brk_) {
             trace("mmap-refused", length, 0);
             return -ENOMEM;
         }
+        base = mmap_ - needed;
+        mmap_ = base;
+        for (uintptr_t page = 0; page < needed / kPageBytes; ++page) {
+            if (!map_page(base + page * kPageBytes)) {
+                trace("mmap-refused", length, 0);
+                return -ENOMEM;
+            }
+        }
     }
-    trace("mmap", base, needed);
+    if (file_backed) {
+        long const filled =
+            files::pread(fd, reinterpret_cast<void *>(base), needed, offset);
+        if (filled < 0) {
+            trace("mmap-file-refused", length, 0);
+            return filled;
+        }
+        trace("mmap-file", base, static_cast<uintptr_t>(filled));
+    } else {
+        trace("mmap", base, needed);
+    }
     return static_cast<long>(base);
 }
 

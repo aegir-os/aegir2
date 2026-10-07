@@ -533,7 +533,8 @@ def aegir_tree(commands, datatypes, development=()) -> list:
                                    b"Sys:Development/C/aegir-big\n"
                                    b"Sys:Development/C/posix-test\n"
                                    b"Sys:Development/C/posix-path-test\n"
-                                   b"Sys:Development/C/posix-file-test\n")
+                                   b"Sys:Development/C/posix-file-test\n"
+                                   b"Sys:Development/C/posix-memory-test\n")
     return tree
 
 

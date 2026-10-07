@@ -643,6 +643,13 @@ def development_tree(build_dir: Path) -> Path:
     posix_file = build_dir / "apps/hosted/aegir-posix-file-test/aegir-posix-file-test"
     if posix_file.is_file():
         shutil.copy2(posix_file, root / "C" / "posix-file-test")
+    # The memory sub-arc's acceptance client (specs/posix.md): the load-bearing
+    # gap specs/clang-on-aegir.md names -- a file's bytes through a mapping, an
+    # anonymous mapping, mprotect, and munmap -- its own marker (AEGIR_POSIX_MEMORY_OK)
+    # being the cue the acceptance's step waits on.
+    posix_memory = build_dir / "apps/hosted/aegir-posix-memory-test/aegir-posix-memory-test"
+    if posix_memory.is_file():
+        shutil.copy2(posix_memory, root / "C" / "posix-memory-test")
     return root
 
 

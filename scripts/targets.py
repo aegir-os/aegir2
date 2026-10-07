@@ -1796,6 +1796,12 @@ TARGETS: dict[str, Target] = {
             # AEGIR_POSIX_FILE_OK. A failed check exits non-zero (2+n names the
             # check), leaving its marker unprinted, which is how the run fails.
             QmpStep(r"AEGIR_POSIX_FILE_OK"),
+            # The memory sub-arc's acceptance (specs/posix.md): a file's bytes
+            # through a read-only mapping, an anonymous mapping written through,
+            # mprotect and munmap. Same shape as the other clients -- no Aegir
+            # call of its own, and its marker is the cue (a failed check exits
+            # 2+n, leaving it unprinted, which is how the run fails).
+            QmpStep(r"AEGIR_POSIX_MEMORY_OK"),
         ),
     ),
     "sel4test": Target(
