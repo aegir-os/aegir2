@@ -236,8 +236,8 @@ re-checked at every LLVM bump (`specs/third_party.md`'s upgrade list).
 - **Disk.** The compiler is on the order of 100–200 MiB. The acceptance disk is
   small (`scripts/make_disk.py`) and cannot hold it; `specs/development.md` gives
   the compiler its own target and larger disk, so the disk the existing tests
-  stand on — created once and run `-snapshot` (`scripts/targets.py`) — is not
-  grown.
+  stand on — created once, and answered through the per-run overlay in
+  `scripts/run_target.py` — is not grown.
 - **Envelope.** The 2 GiB floor cannot host a compiler; development and
   acceptance are on `aegir-8g-smp4`. That is a capacity finding for
   `specs/aegir.md` to carry, not a quiet change of the floor.

@@ -36,8 +36,8 @@ image stays small.
 ## The target and the disk
 
 The compiler and its sysroot are on a **dedicated target** with its own, larger
-disk, so the `aegir` target's disk — created once and run `-snapshot`
-(`scripts/targets.py`) — is not grown. The disk builds its `Sys:` volume with the
+disk, so the `aegir` target's disk — created once, and answered through the
+overlay `scripts/run_target.py` makes for each run — is not grown. The disk builds its `Sys:` volume with the
 development tree, as the AEGIR volume's other content is
 (`scripts/make_disk.py`'s `AEGIR_BFS_TREE`, through `scripts/mkfs_bfs.py`), so
 `Sys:Development` is there at boot. The default targets keep the disk they have.

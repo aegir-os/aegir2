@@ -1123,8 +1123,8 @@ What was decided, and what it took:
   -- its BPB is nowhere near sector 0 -- and each file's content is the
   checksum, and SCRATCH starts empty because it is the write test's
   scratchpad: the test creates, writes, reads back, truncates, and lists
-  there, under QEMU's `-snapshot` overlay so the disk image itself stays
-  pristine.
+  there, under the per-run overlay `scripts/run_target.py` makes over the disk
+  image, so the image itself stays pristine.
 - **fs.fat writes FAT16 and FAT32**: the volume protocol's handle side
   (`specs/vfs.md`) -- open/create/truncate, write at the cursor with the
   chain extended through the free-cluster scan, close; mkdir, remove,

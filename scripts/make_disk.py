@@ -17,9 +17,9 @@ into the file directly, and mtools works on a partition *inside* an image
 with its `image@@offset` syntax -- so the whole thing is tool invocations
 and a truncate.
 
-The image is created once and left alone (scripts/run_target.py), and QEMU
-takes it read-only with `-snapshot`, so a run's writes land in a throwaway
-overlay: a disk that changes between runs is not something to depend on.
+The image is created once and left alone (scripts/run_target.py), and a run
+answers its writes through a throwaway overlay the runner makes over it, so a
+disk that changes between runs is not something to depend on.
 Delete it to make a fresh one.
 """
 

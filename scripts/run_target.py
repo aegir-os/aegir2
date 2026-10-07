@@ -79,6 +79,12 @@ def preflight(target: Target) -> list[str]:
         # machine's device tree by running it
         # (kernel/src/plat/qemu-riscv-virt/config.cmake:133).
         missing.append("qemu-system-riscv64 (a host package)")
+    if shutil.which("qemu-img") is None:
+        # A run's disk is answered through an overlay this script makes
+        # (with_overlay), not QEMU's -snapshot: QEMU creates its own in a
+        # directory compiled into the binary, so a host that mounts that one
+        # read-only could not start a guest at all.
+        missing.append("qemu-img (a host package; the run's disk overlay)")
     return missing
 
 
@@ -567,9 +573,9 @@ def ensure_disk(target: Target, build_dir: Path) -> None:
     a GPT built by make_disk.py in the build directory, with the command set
     packed as Sys:C (specs/dos.md). Rebuilt on every run, because the commands
     it carries change with the build and the AEGIR partition is sized from
-    them: a stale disk would serve a stale command. QEMU's -snapshot keeps even
-    a writing run off it. It lives in the build output rather than the
-    repository, where scratch belongs.
+    them: a stale disk would serve a stale command. A writing run is kept off it
+    by the overlay `with_overlay` puts beside it. It lives in the build output
+    rather than the repository, where scratch belongs.
 
     A target that carries the development tree (specs/development.md) also gets
     `Sys:Development`, laid out from this build's own artifacts so the compiler
@@ -675,6 +681,65 @@ def ensure_host(build_dir: Path) -> None:
     )
 
 
+def with_overlay(target: Target, build_dir: Path) -> tuple[list[str], Path]:
+    """The target's QEMU arguments with the disk answered through an overlay this
+    run owns, and the overlay itself for the caller to delete.
+
+    QEMU's `-snapshot` used to do this and cannot here: it makes its overlay in a
+    directory compiled into the binary (`/var/tmp`), so a host that mounts that
+    one read-only -- or has filled it -- cannot start a guest at all, whatever
+    the target or the disk. The same overlay made in the build directory, beside
+    the disk it backs, needs nothing of the host but a writable build directory,
+    which every other part of a run already needs: the guest's writes are real to
+    the guest and gone after it, and `disk.img` itself never changes -- the
+    property the disk's created-once rule (specs/development.md) wants.
+
+    The overlay is named by a relative path for the same reason the disk is: the
+    arguments travel to QEMU as one string through simulate's --extra-qemu-args,
+    and QEMU resolves that against the build directory it is started in.
+    """
+    disk = build_dir / "disk.img"
+    overlay = build_dir / "overlay.qcow2"
+    overlay.unlink(missing_ok=True)
+    subprocess.run(
+        [
+            "qemu-img",
+            "create",
+            "-q",
+            "-f",
+            "qcow2",
+            "-b",
+            str(disk),
+            "-F",
+            "raw",
+            str(overlay),
+        ],
+        check=True,
+    )
+    arguments: list[str] = []
+    tokens = shlex.split(" ".join(target.qemu_args))
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "-drive" and index + 1 < len(tokens):
+            arguments += [
+                "-drive",
+                ",".join(
+                    f"file={overlay.name}"
+                    if field.startswith("file=")
+                    else "format=qcow2"
+                    if field.startswith("format=")
+                    else field
+                    for field in tokens[index + 1].split(",")
+                ),
+            ]
+            index += 2
+            continue
+        arguments.append(token)
+        index += 1
+    return arguments, overlay
+
+
 def boot_interactive(target: Target, build_dir: Path) -> int:
     """Boot the image with QEMU's own window on the displays: the user is the
     runner. The keys the acceptance check's script would press are theirs to
@@ -684,7 +749,8 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
     ensure_disk(target, build_dir)
     ensure_tftp(build_dir)
     ensure_host(build_dir)
-    extra = " ".join(target.qemu_args)
+    arguments, overlay = with_overlay(target, build_dir)
+    extra = " ".join(arguments)
     # -g/-s replace simulate's -nographic: a GTK window on the consoles, the
     # serial console on the terminal. Attached with `=`, for the same reason
     # --extra-qemu-args is: argparse reads a loose value starting with `-` as
@@ -693,10 +759,15 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
         "./simulate --graphic='-display gtk' --serial='-serial stdio' --extra-qemu-args="
         + shlex.quote(extra)
     )
-    return subprocess.call(
-        ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec {command}"],
-        cwd=str(build_dir),
-    )
+    try:
+        return subprocess.call(
+            ["bash", "-c", f"set -euo pipefail; . {ENV_SCRIPT}; exec {command}"],
+            cwd=str(build_dir),
+        )
+    finally:
+        # The window closing, or a signal to this script: either way the run is
+        # over and its overlay is scratch.
+        overlay.unlink(missing_ok=True)
 
 
 def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, bool, str]:
@@ -713,7 +784,8 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     ensure_tftp(build_dir)
     ensure_host(build_dir)
 
-    extra = " ".join(target.qemu_args)
+    arguments, overlay = with_overlay(target, build_dir)
+    extra = " ".join(arguments)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)
     # A leftover socket from a previous run would make QEMU's own bind fail.
     if target.qmp_socket is not None:
@@ -1075,6 +1147,9 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+        # QEMU is done with the overlay, and the overlay is scratch: the disk
+        # image it backs is the thing that stays.
+        overlay.unlink(missing_ok=True)
     return seen, failed, summary
 
 
