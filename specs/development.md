@@ -59,6 +59,21 @@ The compiler is invoked as a program on the volume: the session runs
 `Sys:Development/Include` on the include path and links `Sys:Development/Libs`
 (above), so a caller writes `Sys:Development/C/cc hello.c`.
 
+**Where that stands.** The programs exist: `apps/hosted/aegir-clang` and
+`apps/hosted/aegir-lld` build clang's and lld's own sources and are linked by
+Aegir's CMake (`specs/clang-on-aegir.md`'s Phase 1, landed — 97 MiB and 57 MiB,
+both static `riscv64` ELFs). `development_tree` is what will put them in
+`Sys:Development/C` — `clang`, `lld`, and `cc` as the same program under the name
+this file uses — and it stages the probe `apps/hosted/aegir-cc` today, whose own
+CMakeLists says these supersede it. That staging is Phase 3's first work rather
+than this file's, because it was measured once: both programs load and *start* on
+the guest and then neither print nor exit, which holds the spawn path until the
+next command's spawn fails and the session's script stops
+(`specs/clang-on-aegir.md`, Phase 3, with the run as evidence).
+
+The sysroot is where that file says it is: `Include` and `Libs` are the tree's
+shape and not yet its content, because the first compile is freestanding.
+
 The acceptance boots the dedicated target, runs the compiler from the session on
 a known source, spawns the result, and checks a marker — the shape
 `specs/clang-on-aegir.md` states once.

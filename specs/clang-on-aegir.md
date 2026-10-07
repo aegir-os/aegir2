@@ -128,15 +128,21 @@ This plan is the deliverable. Writing it also settles three housekeeping points:
   not a merge into it: that document builds Aegir's ELFs with clang on the host;
   this one runs clang on Aegir.
 
-### Phase 1 — cross-build `clang` + `lld` (the first landed milestone)
+### Phase 1 — cross-build `clang` + `lld` (landed)
 
-New `scripts/build_llvm.sh`, modelled on `scripts/build_libcxx.sh`,
-cross-compiling against the already-built `musl_full` and exposed by a new
-`libs/aegir-llvm/imported.cmake`. The deliverable is the target-side `clang`,
-`lld` and `cc` *executables*: LLVM's own CMake builds them, with Aegir's hosted
-link recipe (the `sel4runtime` crt, musl, libc++ and the eh-frame script,
-`CMakeLists.txt:151-182`) supplied through its link flags. The configuration, and
-why:
+`scripts/build_llvm.sh`, modelled on `scripts/build_libcxx.sh`, cross-compiles
+LLVM, clang and lld as **libraries** against the already-built `musl_full` and
+libc++, exposed by `libs/aegir-llvm/imported.cmake`. The programs come from those
+libraries the way every hosted program comes from its own: **Aegir's CMake links
+them**, from clang's and lld's own tool sources, in `apps/hosted/aegir-clang` and
+`apps/hosted/aegir-lld`. So `build_llvm.sh` builds no executables and
+`CLANG_BUILD_TOOLS`/`LLD_BUILD_TOOLS` stay **off**. The earlier plan had LLVM's own
+CMake link them with Aegir's recipe supplied as link flags, and the reason it
+changed is that Aegir's CMake already knows that recipe (the `sel4runtime` crt,
+seL4's link groups, musl, libc++ and the eh-frame script, `CMakeLists.txt:151-182`),
+while the runtime archives such a link names do not exist until Aegir's build has
+run once — a second pass, for a link we would have had to re-express inside a
+foreign CMake. The configuration, and why:
 
 | Option | Value | Why |
 | --- | --- | --- |
@@ -149,7 +155,7 @@ why:
 | `LLVM_ENABLE_ZLIB/ZSTD/TERMINFO/LIBXML2/CURL/LIBEDIT` | `OFF` | no such dependencies on Aegir |
 | `CLANG_ENABLE_STATIC_ANALYZER`, `LLVM_INCLUDE_TESTS` | `OFF` | not shipped |
 | `LLVM_APPEND_VC_REV` | `OFF` | hermeticity: the same `GIT_CEILING_DIRECTORIES` concern as `dtc` (`specs/build.md`, *Build environment*) |
-| `CLANG_BUILD_TOOLS` / `LLD_BUILD_TOOLS` | `ON` | the `clang` and `lld` executables are the deliverable; LLVM's own `llvm-*` tools stay off |
+| `CLANG_BUILD_TOOLS` / `LLD_BUILD_TOOLS` | `OFF` | the programs are ours (above); LLVM's own `llvm-*` tools stay out, and the one stray target-side `llvm-tblgen` is what `CMAKE_EXE_LINKER_FLAGS` carries a placeholder for |
 
 `compiler-rt`'s builtins for `riscv64` are built with the same cross toolchain;
 they are freestanding and need no libc. This is the same recipe the host
@@ -157,10 +163,21 @@ migration uses for Aegir's own links (`specs/build.md`, *The compiler: clang*
 step 3), so the two share it. libc++abi is already built by
 `scripts/build_libcxx.sh`.
 
-**Acceptance.** `clang`, `lld` and `cc` exist, `llvm-readelf` reports static
-`riscv64` ELFs, sizes are measured against the dedicated development disk
-(`specs/development.md`), and any warning from our own patch is fixed
-(`AGENTS.md`).
+Two things the *programs* needed that the libraries did not, each recorded where
+it lives: `__cxa_thread_atexit_impl`, which libc++abi's thread-local path calls and
+musl's install here has no counterpart for (`libs/hosted/aegir-cxxabi-shim/src/
+thread_atexit.cc`: accepted and dropped, because Aegir's programs are
+single-threaded by decision); and, for clang's own tool sources, upstream's warning
+policy rather than ours (`apps/hosted/aegir-clang/CMakeLists.txt`, the user's
+decision, matching what the tree already does for LLVM's and clang's headers under
+`specs/build.md`).
+
+**Acceptance.** `clang` and `lld` exist as programs and `llvm-readelf` reports
+static `riscv64` ELFs — 59496904 and 101699576 bytes, `EXEC`, no `PT_INTERP` —
+sizes measured against the dedicated development disk (`specs/development.md`), and
+any warning from our own patch is fixed (`AGENTS.md`; there is no patch). Deploying
+them, and what a 97 MiB hosted program does after its stand-up, is Phase 3 — which
+has its first measurement already.
 
 ### Phase 2 — the POSIX personality
 
@@ -199,6 +216,19 @@ the argument handling, the include search and the link line are clang's own, not
 ours. This reverses the earlier in-process-driver decision, which existed only
 because the process surface was absent; `specs/launch.md` already names the spawn
 as the mechanism and `posix_spawn` as the interface.
+
+**Its first question is already measured.** Phase 1's programs were deployed once,
+ahead of this phase, to see what they would do, and the staging was right:
+`development_tree` put `cc`, `clang`, `lld` and everything else on the volume, ten
+programs, 323 MiB. On the guest both programs *started* — the launcher announced
+each — and then neither printed nor exited. They were still holding the spawn path
+when `aegir-big` ran after them, whose own spawn failed ("Unknown command"), which
+is what stopped the session's script and wedged the run: 98 cues unprinted
+(`/tmp/aegir-run43.log`). So the question is what a 97 MiB hosted program does
+after its stand-up. The dispatch trace (`-DAEGIR_HEAP_TRACE`, then
+`scripts/heap_trace.py`, `specs/memory.md`) is the instrument that answered the
+same shape of question for `mprotect`, and isolating the session's startup to
+`cc --version` alone is the cheapest way to ask it without company.
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the

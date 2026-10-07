@@ -2,12 +2,13 @@
 #
 # Cross-build LLVM, clang and lld *libraries* for one Aegir target.
 #
-# The on-device compiler (specs/clang-on-aegir.md) links libLLVM/libclang/liblld
-# into an ordinary Aegir hosted program -- the in-process driver of Phase 3 --
-# so only the static libraries are needed, not the stock clang/lld executables.
-# That also sidesteps teaching LLVM's own CMake to link Aegir hosted programs:
-# the driver is linked by Aegir's CMake, which already knows the sel4runtime crt
-# and the runtime's libraries.
+# The programs come from these libraries (specs/clang-on-aegir.md's Phase 1):
+# apps/hosted/aegir-clang and apps/hosted/aegir-lld compile clang's and lld's own
+# tool sources and are linked by Aegir's CMake, which already knows the sel4runtime
+# crt and the runtime's libraries. So this script builds no executables, and
+# LLD_BUILD_TOOLS/CLANG_BUILD_TOOLS stay OFF deliberately. That also sidesteps
+# teaching LLVM's own CMake to link Aegir hosted programs, and means the programs
+# are built, and deployed, by the same build that builds everything else.
 #
 # clang's and lld's libraries live under tools/ (tools/clang/lib, tools/lld/lib),
 # so LLVM_INCLUDE_TOOLS must stay ON or there is no clangFrontend at all --
