@@ -322,6 +322,16 @@ directory, the transient slot, and `fill_kstat`'s kind. The check is cheap and n
 no compiler: a client that `stat`s `Sys:Development/Libs/crt0.o` (staged, present)
 the way the path view's client `stat`s `/AEGIR`.
 
+Evidence already in hand narrows that to one suspect, and it is the walk. `stat` on a
+*depth-1* nested file works — LLVM's `MemoryBuffer::getFile` stats before it opens, and
+clang's compile of `Sys:Development/hello.c` succeeded, so `fs::status` was answered
+there. Depth-2 *resolution* works too: the shell spawns `Sys:Development/C/cc`. What
+has never worked is `stat` on a *depth-2 nested file* — `Sys:Development/Libs/crt0.o`,
+and the linker script beside it. So `openat`'s walk and `Volume::stat`'s walk disagree
+past one component, and the fix belongs in the volume client's stat
+(`libs/freestanding/aegir-vfs-client`) rather than in `libs/aegir-posix/src/files.cc`.
+The one-run probe above still names it outright.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
