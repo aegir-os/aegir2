@@ -45,6 +45,11 @@ void adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexc
 long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept;
 long fstat(int fd, void *buffer) noexcept;
 
+/* SYS_faccessat (riscv64 48): whether a path can be reached. `access` is this call
+ * with AT_FDCWD, and it is how a linker asks about a file before opening it
+ * (specs/clang-on-aegir.md). */
+long faccessat(int dfd, char const *path, int mode, int flags) noexcept;
+
 /* SYS_statx (riscv64 291): the same answer as fstatat/stat in musl's `struct
  * statx` layout, because LLVM's fs::status calls statx directly where musl's stat
  * is the kstat path -- which is how a linker's existence check sees the

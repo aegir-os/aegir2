@@ -358,6 +358,33 @@ any measurement so far.
 dispatcher's ENOSYS, and a program calling it directly would see every file as absent.
 It is not what lld was doing, and the trace above is why that can be said.
 
+**Correction: it *was* this layer, and the call that proved it is `faccessat`.** The
+reasoning above was wrong where it mattered. Two calls stand between a program and a
+file -- `stat` and `access` -- and lld asks the *second*: the layer had no answer for
+`faccessat` at all (riscv64 48; the dispatcher's ENOSYS answered it), so every
+existence check came back denied **without any syscall at all**, which is exactly why
+every trace showed the layer never being asked about the script or the archives.
+Implemented (`libs/aegir-posix/src/files.cc`'s `faccessat`, `heap.cc`'s case 48), lld's
+own `--verbose` immediately shows it loading what it could not find before:
+
+    ld.lld: /Sys/Development/Libs/aegir-eh-frame.lds
+    ld.lld: /Sys/Development/Libs/crt0.o
+    ld.lld: /Sys/Development/Libs/crti.o
+
+and "cannot find linker script" and "unable to find library" are gone. The lesson is
+that a layer answering `stat` is not a layer answering *is this file there*.
+
+**What is left is memory, and it is measured.** The link then reached the archive and
+was refused: `cannot open Sys:Development/Libs/sysroot.a: Out of memory`, with the
+layer's own numbers -- `needed=0x2d2e000` (45.2 MiB, the archive) against
+`free=0x7a6000` (7.6 MiB left in the arena), and the arena's own line:
+`arena base=0x3f923000 limit=0x40123000 scratch=0x123000-0x40123000 seed=0x800000` --
+8 MiB of a ~1 GiB window, because the arena is seeded from `bytes` rather than taking
+the window. Growing it naively (from `scratch.base()`) *broke the run* (133 cues
+unprinted), so that lower bound exists for a reason and the growth needs to be
+understood before it is made. That is the next step: the arena has always been short
+of the space a linker's input asks for.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.

@@ -722,13 +722,22 @@ def development_tree(build_dir: Path) -> Path:
     staged = {p.name: p for p in libs.rglob("*") if p.is_file()}
 
     def path_of(name: str) -> str:
-        return "Sys:Development/" + str(staged[name].relative_to(root))
+        # A POSIX path, because the program reading this line is a POSIX program:
+        # `/Sys/Development/x` is the absolute path it looks like, where
+        # `Sys:Development/x` reads to lld as a *relative* name that happens to hold
+        # a colon. The path view maps one to the other, so the layer accepts either,
+        # and what lld does with its arguments is lld's business
+        # (specs/clang-on-aegir.md's Phase 3 records every grammar tried).
+        return "/Sys/Development/" + str(staged[name].relative_to(root))
 
     head = ("crt0.o", "crti.o", "crtbegin.o", "stand-up.o")
     tail = ("crtend.o", "crtn.o")
     bodies = sorted(n for n in staged if n.endswith(".a") and n != "libgcc.a")
     (root / "link.sh").write_text(
-        "Sys:Development/C/ld.lld -o SCRATCH:hello --eh-frame-hdr "
+        # --verbose while this fault is open: it prints lld's own search paths and
+        # what it opens, which the layer's trace cannot show -- lld asks this
+        # filesystem nothing at all about -T or -l: (specs/clang-on-aegir.md).
+        "Sys:Development/C/ld.lld --verbose -o SCRATCH:hello --eh-frame-hdr "
         f"-T {path_of('aegir-eh-frame.lds')} "
         + " ".join(path_of(n) for n in head if n in staged)
         + " SCRATCH:hello.o"

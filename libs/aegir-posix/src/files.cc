@@ -616,6 +616,47 @@ void adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexc
     g_scratch = &scratch;
 }
 
+/* The path an `*at` call means. `AT_FDCWD` (and any negative anchor) leaves the
+ * name as given, and so does a name that stands on its own -- the POSIX root or a
+ * `Volume:` path. A *directory descriptor* prefixes the path it was opened with,
+ * which is what `Entry::path` holds. Zero means the anchor is not a directory this
+ * layer can name, or the composed path does not fit.
+ *
+ * This is how a linker searches: it opens a directory and then asks about names
+ * relative to that descriptor, so refusing the anchor made every such question look
+ * like a missing file (specs/clang-on-aegir.md's Phase 3 -- the trace showed the
+ * layer never even being asked about the script or the archives lld reported). */
+uint32_t anchored_path(int dfd, char const *path, uint32_t path_length, char *out,
+                       uint32_t capacity) noexcept
+{
+    if (path_length + 1 > capacity) {
+        return 0;
+    }
+    if (dfd < 0 || path[0] == '/' || view::detail::names_a_volume(path, path_length)) {
+        for (uint32_t i = 0; i < path_length; ++i) {
+            out[i] = path[i];
+        }
+        out[path_length] = '\0';
+        return path_length;
+    }
+    Entry const *entry = entry_for(dfd);
+    if (entry == nullptr || !entry->directory) {
+        return 0;
+    }
+    uint32_t at = 0;
+    for (; at < entry->path_length && at + 1 < capacity; ++at) {
+        out[at] = entry->path[at];
+    }
+    if (at > 0 && out[at - 1] != '/' && at + 1 < capacity) {
+        out[at++] = '/';
+    }
+    for (uint32_t i = 0; i < path_length && at + 1 < capacity; ++i) {
+        out[at++] = path[i];
+    }
+    out[at] = '\0';
+    return at;
+}
+
 long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept
 {
     static_cast<void>(flags);
@@ -628,12 +669,13 @@ long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept
     if (path[0] == '\0' && dfd >= 0) {
         return fstat(dfd, buffer);
     }
-    if (dfd != AT_FDCWD) {
-        /* A directory fd as the anchor is not answered yet: the calls libc++'s
-         * filesystem makes in the common paths pass AT_FDCWD. */
+    char anchored[kPathCapacity];
+    uint32_t const length =
+        anchored_path(dfd, path, text_length(path), anchored, sizeof(anchored));
+    if (length == 0) {
         return -ENOENT;
     }
-    if (!stat_target(path, text_length(path), static_cast<Kstat *>(buffer))) {
+    if (!stat_target(anchored, length, static_cast<Kstat *>(buffer))) {
         return -ENOENT;
     }
     return 0;
@@ -685,6 +727,41 @@ struct Statx {
     uint32_t stx_dev_minor;
     uint64_t pad1[14];
 };
+
+/* SYS_faccessat (riscv64 48; `access` is this call with AT_FDCWD): whether a path
+ * can be reached, which is how a linker asks about a file before it opens it. The
+ * layer had no answer for it at all -- the dispatcher's ENOSYS -- so every existence
+ * check a program made through `access` came back denied while the file was present
+ * and readable: lld's "cannot find linker script" and "unable to find library"
+ * beside clang opening the same directory (specs/clang-on-aegir.md's Phase 3: lld's
+ * own `--verbose` shows it trying the path, and no stat call for it ever reached
+ * this layer, because this call never had an answer to give).
+ *
+ * The mode bits are answered permissively for a path that resolves at all: the
+ * volume services enforce permission on open and on create, so nothing is granted
+ * here that the operation itself would not allow. */
+long faccessat(int dfd, char const *path, int mode, int flags) noexcept
+{
+    static_cast<void>(mode);
+    static_cast<void>(flags);
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr) {
+        return -EFAULT;
+    }
+    char anchored[kPathCapacity];
+    uint32_t const length =
+        anchored_path(dfd, path, text_length(path), anchored, sizeof(anchored));
+    if (length == 0) {
+        return -ENOENT;
+    }
+    Kstat info{};
+    if (!stat_target(anchored, length, &info)) {
+        return -ENOENT;
+    }
+    return 0;
+}
 
 long statx(int dfd, char const *path, int flags, unsigned int mask, void *buffer) noexcept
 {
@@ -769,11 +846,13 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
     if (path == nullptr) {
         return -EFAULT;
     }
-    if (dfd != AT_FDCWD) {
-        /* A directory fd as the anchor is not answered yet: the calls libc++'s
-         * filesystem makes in the common paths pass AT_FDCWD. */
+    char anchored[kPathCapacity];
+    uint32_t const anchored_length =
+        anchored_path(dfd, path, text_length(path), anchored, sizeof(anchored));
+    if (anchored_length == 0) {
         return -ENOENT;
     }
+    path = anchored;
     if (names_the_root(path, text_length(path))) {
         /* The synthetic root (specs/posix.md): a directory to browse -- which
          * is what `opendir("/")` opens it as -- and not a file to open. */

@@ -1232,6 +1232,13 @@ long vsyscall(long sysnum, ...) noexcept
     case 101: /* SYS_nanosleep: the timer service behind it (aegir/timer.h) */
         ret = time::nanosleep(va_arg(ap, void const *), va_arg(ap, void *));
         break;
+    case 48: /* SYS_faccessat: `access` is this call with AT_FDCWD, and a linker asks
+              * it whether a file is there before it opens it (files.h's faccessat,
+              * specs/clang-on-aegir.md -- this is what answered "cannot find linker
+              * script" and "unable to find library" while the files were staged). */
+        ret = files::faccessat(va_arg(ap, int), va_arg(ap, char const *),
+                               va_arg(ap, int), va_arg(ap, int));
+        break;
     case 49: /* SYS_chdir */
         ret = files::chdir(va_arg(ap, char const *));
         break;
