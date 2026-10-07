@@ -9,14 +9,24 @@
  * syscalls; aegir-heap's dispatcher answers them here, in the process's own
  * memory, by talking to the VFS instead of the kernel. The pieces:
  *
- *   - a resolved path is an Aegir path -- "Volume:rest" -- or a relative one,
- *     joined to the process's current directory (environment.md). A volume
- *     capability is minted by the namespace for the call; transient calls
- *     reuse one slot, an open file keeps its own until close.
+ *   - a path goes through the view first (specs/posix.md): `/Name/rest` is the
+ *     native `Name:rest`, `/` is the synthetic root, `.` and `..` are
+ *     normalized, and a path that already names a volume passes through
+ *     untouched. The translation itself is the pure function in
+ *     aegir/posix/path.h; posix_path is what hands it the current directory,
+ *     and names_the_root is what the calls that can speak about `/` ask.
+ *   - the current directory is one VFS path the layer keeps -- a native
+ *     program and aegir::environment read the same string (environment.md) --
+ *     with `/` as a state of its own, because no VFS path names it. chdir
+ *     writes both, getcwd presents them back as the view's path.
  *   - the fd table is per-process and grows on demand: an open file is a
  *     volume capability, the volume-relative path, a write handle when it is
  *     open for writing, and the read cursor. A directory is the same minus the
  *     handle, with a listing cursor.
+ *   - the synthetic root is a directory of a third kind: no volume, no path,
+ *     and a listing that is the namespace's own -- every volume and every
+ *     binding, one entry each -- which is what stat, openat with O_DIRECTORY
+ *     and getdents answer it from.
  *   - statx, openat, read, write, lseek, getdents64, mkdirat, unlinkat,
  *     chdir, getcwd and fcntl are the calls the standard library actually
  *     makes; each answers a value or a negative errno.
@@ -30,6 +40,7 @@
 #define _GNU_SOURCE 1
 
 #include <aegir/posix/files.h>
+#include <aegir/posix/path.h>
 
 #include <aegir/bootstrap.h>
 #include <aegir/mem/allocator.h>
@@ -133,6 +144,14 @@ char g_cwd[kPathCapacity];
 uint32_t g_cwd_length = 0;
 bool g_cwd_loaded = false;
 
+/* Whether it is the POSIX root instead (specs/posix.md): `/` is a place in the
+ * view and not one in the VFS, so no VFS path names it and the state lives here
+ * beside the path. `chdir("/")` is what sets it, and any VFS path clears it --
+ * a VFS path is never the root -- which is why the clear sits in
+ * set_current_dir, the one door a POSIX chdir's translation and a native chdir
+ * both come through. */
+bool g_cwd_is_root = false;
+
 /* The namespace, found once. A process that holds no vfs.namespace -- a
  * program that never said it needs one -- finds an invalid port and every
  * call is refused. */
@@ -163,10 +182,20 @@ char const *current_dir(uint32_t *length) noexcept
 
 void set_current_dir(char const *path, uint32_t length) noexcept
 {
+    g_cwd_is_root = false;
     for (uint32_t i = 0; i < length; ++i) {
         g_cwd[i] = path[i];
     }
     g_cwd_length = length;
+    g_cwd_loaded = true;
+}
+
+/* The root, which has no VFS path: the buffer holds none, and `getcwd` answers
+ * `/` while this stands (specs/posix.md). */
+void set_root_dir() noexcept
+{
+    g_cwd_is_root = true;
+    g_cwd_length = 0;
     g_cwd_loaded = true;
 }
 
@@ -212,50 +241,60 @@ void copy_text(char *destination, char const *source, uint32_t length) noexcept
     }
 }
 
-/* A path is absolute when it names a volume before any slash: Aegir's shape is
- * "Volume:rest", and everything after the colon (and the aliases) is the VFS's
- * to substitute. A path with no colon is relative and joins the current
- * directory. */
-bool names_a_volume(char const *path, uint32_t length) noexcept
+/* ---- the POSIX view's translation (specs/posix.md) ------------------------ */
+
+/* The path view's grammar, named apart from the many `path` parameters below. */
+namespace view = aegir::posix::path;
+
+/* The layer's current directory in the view's own form: `/Sys/Tests`, or `/`
+ * for the root. Empty -- nullptr, zero -- when the process has none, which is
+ * what makes a relative path refused rather than guessed at
+ * (specs/environment.md).
+ *
+ * The layer keeps the current directory as a *VFS* path, because that is what a
+ * native program and aegir::environment read (specs/environment.md: the
+ * current directory is a VFS path, not a lock); the view's form of it is
+ * derived here, per call, so the one string stays the one string. */
+char const *posix_cwd(char *out, uint32_t *length) noexcept
 {
-    for (uint32_t i = 0; i < length; ++i) {
-        if (path[i] == ':') {
-            return true;
-        }
-        if (path[i] == '/') {
-            return false;
-        }
+    if (g_cwd_is_root) {
+        out[0] = '/';
+        *length = 1;
+        return out;
     }
-    return false;
+    uint32_t vfs_length = 0;
+    char const *const vfs = current_dir(&vfs_length);
+    if (vfs == nullptr || !view::present(vfs, vfs_length, out, kPathCapacity, *length)) {
+        *length = 0;
+        return nullptr;
+    }
+    return out;
 }
 
-bool absolute_path(char const *path, uint32_t length, char *out, uint32_t capacity,
-                   uint32_t *out_length) noexcept
+/* The layer's one translation (specs/posix.md's boundary): a path that begins
+ * with `/` is POSIX and is rewritten to the native `Volume:rest`, anything else
+ * is native and passes through, and `.`/`..` are normalized because the Amiga's
+ * directories have none. It is the pure function in aegir/posix/path.h; this is
+ * what hands it the current directory, and `where` says whether a VFS path came
+ * back or the synthetic root did. */
+bool posix_path(char const *given, uint32_t length, char *out,
+                view::Translation &where) noexcept
 {
-    if (names_a_volume(path, length)) {
-        if (length > capacity) {
-            return false;
-        }
-        copy_text(out, path, length);
-        *out_length = length;
-        return true;
-    }
+    char cwd[kPathCapacity];
     uint32_t cwd_length = 0;
-    char const *cwd = current_dir(&cwd_length);
-    if (cwd == nullptr) {
-        return false;
-    }
-    uint32_t const total = cwd_length + (length != 0 ? 1 + length : 0);
-    if (total > capacity) {
-        return false;
-    }
-    copy_text(out, cwd, cwd_length);
-    if (length != 0) {
-        out[cwd_length] = '/';
-        copy_text(out + cwd_length + 1, path, length);
-    }
-    *out_length = total;
-    return true;
+    char const *const base = posix_cwd(cwd, &cwd_length);
+    return view::translate(given, length, base, cwd_length, out, kPathCapacity, where);
+}
+
+/* Whether a path names the synthetic root: `/`, `/.`, `/..`, `..` from below
+ * it. Only the calls that can say something about the root ask -- stat, openat
+ * with O_DIRECTORY, chdir, mkdirat -- because every other call wants a volume
+ * to talk to, which the root is not (specs/posix.md). */
+bool names_the_root(char const *given, uint32_t length) noexcept
+{
+    char full[kPathCapacity];
+    view::Translation where{};
+    return posix_path(given, length, full, where) && where.target == view::Target::Root;
 }
 
 /* One resolve's result: the capability (in the slot the caller named) and the
@@ -269,15 +308,18 @@ struct Target {
     uint32_t volume_name_length;
 };
 
-/* Resolve `path` (relative or absolute) into `slot`. False when the path is
- * relative and there is no current directory, the volume is unknown, or the
- * capability did not arrive. */
+/* Resolve `path` into `slot`: the layer's translation first, then the
+ * namespace's resolve of the VFS path it answered. False when the path is
+ * relative and there is no current directory, when it is the synthetic root --
+ * which no volume answers for, and which only the calls in names_the_root
+ * handle -- when the volume is unknown, or when the capability did not
+ * arrive. */
 bool resolve_target(char const *path, uint32_t length, seL4_CPtr slot,
                     Target &out) noexcept
 {
     char full[kPathCapacity];
-    uint32_t full_length = 0;
-    if (!absolute_path(path, length, full, kPathCapacity, &full_length)) {
+    view::Translation where{};
+    if (!posix_path(path, length, full, where) || where.target != view::Target::Vfs) {
         return false;
     }
     aegir::vfs::Namespace &space = namespace_port();
@@ -285,19 +327,19 @@ bool resolve_target(char const *path, uint32_t length, seL4_CPtr slot,
         return false;
     }
     aegir::vfs::Namespace::Resolved resolved{};
-    if (!space.resolve(full, full_length, slot, resolved) ||
+    if (!space.resolve(full, where.length, slot, resolved) ||
         resolved.rest_length > kPathCapacity) {
         return false;
     }
     copy_text(out.rest, resolved.rest, resolved.rest_length);
     out.rest_length = resolved.rest_length;
     out.volume = slot;
-    /* The volume part of the absolute path, as written: two resolves of the
+    /* The volume part of the translated path, as written: two resolves of the
      * same volume through different aliases answer with different aliases, so
      * only the spelling can say whether two paths share one volume -- and
      * rename must not cross volumes. */
     uint32_t name_length = 0;
-    while (name_length < full_length && full[name_length] != ':') {
+    while (name_length < where.length && full[name_length] != ':') {
         ++name_length;
     }
     if (name_length > sizeof(out.volume_name)) {
@@ -364,6 +406,9 @@ seL4_CPtr transient_slot() noexcept
 
 struct Entry {
     bool used;
+    /* The synthetic root: a directory with no volume and no path, whose
+     * listing is the namespace's own (specs/posix.md). */
+    bool root;
     bool directory;
     bool readable;
     bool writable;
@@ -426,6 +471,7 @@ int install(seL4_CPtr slot, Target const &target, uint64_t handle, bool director
         return -EMFILE;
     }
     Entry &entry = g_entries[fd];
+    entry.root = false;
     entry.directory = directory;
     entry.readable = readable;
     entry.writable = writable;
@@ -435,6 +481,29 @@ int install(seL4_CPtr slot, Target const &target, uint64_t handle, bool director
     entry.index = 0;
     entry.path_length = target.rest_length;
     copy_text(entry.path, target.rest, target.rest_length);
+    return fd;
+}
+
+/* The synthetic root as a directory fd: no volume, no path, and no capability
+ * to give back at close. Its entries are the namespace's -- every volume and
+ * every binding, one each -- which is what getdents reads for it
+ * (specs/posix.md). */
+int install_root() noexcept
+{
+    int const fd = alloc_fd();
+    if (fd == kNoFd) {
+        return -EMFILE;
+    }
+    Entry &entry = g_entries[fd];
+    entry.root = true;
+    entry.directory = true;
+    entry.readable = false;
+    entry.writable = false;
+    entry.volume = 0;
+    entry.handle = 0;
+    entry.offset = 0;
+    entry.index = 0;
+    entry.path_length = 0;
     return fd;
 }
 
@@ -455,9 +524,15 @@ void fill_kstat(Kstat *out, uint64_t kind, uint64_t size, uint64_t mtime) noexce
     out->st_ctime_sec = static_cast<long>(mtime);
 }
 
-/* One file's kind and size into a kstat, by path or by the fd that names it. */
+/* One file's kind and size into a kstat, by path or by the fd that names it.
+ * The path form answers the synthetic root first: `/` is a directory, and it
+ * has no volume to stat (specs/posix.md). */
 bool stat_target(char const *path, uint32_t length, Kstat *out) noexcept
 {
+    if (names_the_root(path, length)) {
+        fill_kstat(out, aegir::volume::kKindDir, 0, 0);
+        return true;
+    }
     seL4_CPtr const slot = transient_slot();
     if (slot == 0) {
         return false;
@@ -478,6 +553,11 @@ bool stat_target(char const *path, uint32_t length, Kstat *out) noexcept
 
 bool stat_entry(Entry const &entry, Kstat *out) noexcept
 {
+    /* An fd on the synthetic root fstats as the directory it is. */
+    if (entry.root) {
+        fill_kstat(out, aegir::volume::kKindDir, 0, 0);
+        return true;
+    }
     aegir::vfs::Volume::Info info{};
     if (!aegir::vfs::Volume(entry.volume).stat(entry.path, entry.path_length, info)) {
         return false;
@@ -548,6 +628,14 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
         /* A directory fd as the anchor is not answered yet: the calls libc++'s
          * filesystem makes in the common paths pass AT_FDCWD. */
         return -ENOENT;
+    }
+    if (names_the_root(path, text_length(path))) {
+        /* The synthetic root (specs/posix.md): a directory to browse -- which
+         * is what `opendir("/")` opens it as -- and not a file to open. */
+        if ((flags & O_DIRECTORY) == 0) {
+            return -EISDIR;
+        }
+        return install_root();
     }
     seL4_CPtr const slot = take_slot();
     if (slot == 0) {
@@ -862,6 +950,32 @@ long lseek(int fd, long offset, int whence) noexcept
     return static_cast<long>(position);
 }
 
+namespace {
+
+/* One directory entry in the kernel's shape, which musl's readdir reads
+ * straight into its own struct dirent. False when the caller's buffer is full:
+ * nothing is written and the listing cursor does not move, so the next call
+ * carries on where this one stopped. */
+bool put_dirent(uint8_t *out, size_t *used, size_t count, uint64_t index,
+                char const *name, uint32_t name_length, uint8_t kind) noexcept
+{
+    uint32_t const record = (kDirentHeader + name_length + 1 + 7) & ~7u;
+    if (*used + record > count) {
+        return false;
+    }
+    auto *dirent = reinterpret_cast<Dirent64 *>(out + *used);
+    dirent->d_ino = index + 1;
+    dirent->d_off = static_cast<int64_t>(index + 1);
+    dirent->d_reclen = static_cast<uint16_t>(record);
+    dirent->d_type = kind;
+    copy_text(dirent->d_name, name, name_length);
+    dirent->d_name[name_length] = '\0';
+    *used += record;
+    return true;
+}
+
+}  // namespace
+
 long getdents(int fd, void *buffer, size_t count) noexcept
 {
     Entry *entry = entry_for(fd);
@@ -870,27 +984,62 @@ long getdents(int fd, void *buffer, size_t count) noexcept
     }
     auto *out = static_cast<uint8_t *>(buffer);
     size_t used = 0;
+    /* The synthetic root lists the namespace's own names, so its two counts are
+     * asked once for the whole call (specs/posix.md). */
+    uint64_t volumes = 0;
+    uint64_t bindings = 0;
+    aegir::vfs::Namespace &space = namespace_port();
+    if (entry->root &&
+        (!space.valid() || !space.volume_count(volumes) || !space.bind_count(bindings))) {
+        volumes = 0;
+        bindings = 0;
+    }
     for (;;) {
+        if (entry->root) {
+            /* Every volume and every binding hangs off `/` as one entry, in the
+             * order the namespace lists them and under the name the volume
+             * registered. A volume that says it has no directory (kFlagNoDir:
+             * NIL:) is listed and is not one to browse, which is what the type
+             * says here (specs/posix.md). */
+            nmspace::Row row{};
+            nmspace::BindingRow binding{};
+            char const *name = nullptr;
+            uint8_t kind = kDirentDirectory;
+            if (entry->index < volumes) {
+                if (!space.describe(entry->index, row)) {
+                    break;
+                }
+                name = row.name;
+                if ((row.flags & nmspace::kFlagNoDir) != 0) {
+                    kind = kDirentRegular;
+                }
+            } else if (entry->index - volumes < bindings) {
+                if (!space.bind_describe(entry->index - volumes, binding)) {
+                    break;
+                }
+                name = binding.name;
+            } else {
+                break; /* the end of the root */
+            }
+            if (!put_dirent(out, &used, count, entry->index, name, text_length(name),
+                            kind)) {
+                break; /* the caller's buffer is full; the next call continues */
+            }
+            entry->index += 1;
+            continue;
+        }
         /* `listed.name` points into the Volume, so it must outlive the copy. */
         aegir::vfs::Volume volume(entry->volume);
         aegir::vfs::Volume::Entry listed{};
         if (!volume.list(entry->path, entry->path_length, entry->index, listed)) {
             break; /* end of directory (or a refusal, which reads as one) */
         }
-        uint32_t const name_length = listed.name_length;
-        uint32_t const record = (kDirentHeader + name_length + 1 + 7) & ~7u;
-        if (used + record > count) {
+        uint8_t const kind = listed.kind == aegir::volume::kKindDir ? kDirentDirectory
+                                                                   : kDirentRegular;
+        if (!put_dirent(out, &used, count, entry->index, listed.name,
+                        listed.name_length, kind)) {
             break; /* the caller's buffer is full; the next call continues */
         }
-        auto *dirent = reinterpret_cast<Dirent64 *>(out + used);
-        dirent->d_ino = entry->index + 1;
-        dirent->d_off = static_cast<int64_t>(entry->index + 1);
-        dirent->d_reclen = static_cast<uint16_t>(record);
-        dirent->d_type = listed.kind == aegir::volume::kKindDir ? kDirentDirectory
-                                                               : kDirentRegular;
-        copy_text(dirent->d_name, listed.name, name_length);
-        dirent->d_name[name_length] = '\0';
-        used += record;
         entry->index += 1;
     }
     return static_cast<long>(used);
@@ -1429,37 +1578,50 @@ long fremovexattr(int fd, char const *name) noexcept
     return status == aegir::metadata::kOk ? 0 : -status_errno(status);
 }
 
+/* chdir, in the view (specs/posix.md): a POSIX path is translated to the VFS
+ * path the layer keeps, `/` is the root state -- no VFS path names it -- and a
+ * native path is stored as written. So the one current directory a native
+ * program and aegir::environment read stays a VFS path, and the view derives
+ * its own form of it. */
 long chdir(char const *path) noexcept
 {
     if (path == nullptr) {
         return -EFAULT;
     }
     char full[kPathCapacity];
-    uint32_t length = 0;
-    if (!absolute_path(path, text_length(path), full, kPathCapacity, &length)) {
+    view::Translation where{};
+    if (!posix_path(path, text_length(path), full, where)) {
         return -ENOENT;
     }
-    set_current_dir(full, length);
+    if (where.target == view::Target::Root) {
+        set_root_dir();
+        return 0;
+    }
+    set_current_dir(full, where.length);
     return 0;
 }
 
+/* getcwd, in the view (specs/posix.md): the root answers `/`, and any other
+ * current directory is the POSIX path of the VFS path the layer kept -- the
+ * name as written, so a resolve through an alias presents the alias, which is
+ * the same rule a listing follows. */
 long getcwd(char *buffer, size_t size) noexcept
 {
     if (buffer == nullptr) {
         return -EFAULT;
     }
-    if (g_cwd_length == 0) {
-        static_cast<void>(current_dir(nullptr));
-    }
-    if (g_cwd_length == 0) {
+    char seen[kPathCapacity];
+    uint32_t length = 0;
+    char const *const presented = posix_cwd(seen, &length);
+    if (presented == nullptr) {
         return -ENOENT;
     }
-    if (size < static_cast<size_t>(g_cwd_length) + 1) {
+    if (size < static_cast<size_t>(length) + 1) {
         return -ERANGE;
     }
-    copy_text(buffer, g_cwd, g_cwd_length);
-    buffer[g_cwd_length] = '\0';
-    return static_cast<long>(g_cwd_length) + 1;
+    copy_text(buffer, presented, length);
+    buffer[length] = '\0';
+    return static_cast<long>(length) + 1;
 }
 
 long fcntl(int fd, int command, long argument) noexcept
