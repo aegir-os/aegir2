@@ -228,16 +228,20 @@ return (`/tmp/aegir-run44.log`). Two real faults came out of it instead:
   it wants — and deployed as `ld.lld` it prints `LLD 20.1.8 (compatible with GNU
   linkers)` in the session's own startup, which is the dev target's cue now
   (`/tmp/aegir-run46.log`).
-- **`clang` runs and returns 1 in silence.** Its first fault was concrete and is
-  fixed: it asked for `/dev/null` — LLVM opens it to decide whether its output has
-  colours (`projects/llvm-project/llvm/lib/Support/Unix/Process.inc:231`) — and the
-  view translated that to a `dev:` volume nothing binds. The fix is the view's own:
-  `/dev/null` is Aegir's `NIL:`, the device whose reads are EOF and whose writes
-  are dropped (`libs/aegir-posix/include/aegir/posix/path.h`, pinned by
-  `make check-posix-path`). What remains is unplaced: clang returns 1 with nothing
-  on either stream. The dispatch trace (`-DAEGIR_HEAP_TRACE` on `aegir-heap`, then
-  `scripts/heap_trace.py` — the instrument that answered this shape of question for
-  `mprotect`) is where that picks up.
+- **`clang` runs and prints.** Two faults, both the layer's, both fixed and both
+  measured. It asked for `/dev/null` — LLVM opens it to decide whether its output
+  has colours (`projects/llvm-project/llvm/lib/Support/Unix/Process.inc:231`) — and
+  the view translated that to a `dev:` volume nothing binds; the view answers it now
+  (`/dev/null` is Aegir's `NIL:`, `libs/aegir-posix/include/aegir/posix/path.h`,
+  pinned by `make check-posix-path`). That fix is what exposed the second, and the
+  real one: `Process::FixupStandardFileDescriptors` (the same file, :210-242) fstats
+  stdout and stderr and, on `EBADF`, `dup2`s `/dev/null` over both — and `fstat`
+  answered `EBADF` for the standard descriptors, because the fd table does not hold
+  them (the terminal owns their stream, `specs/shell.md`). So every program linking
+  LLVM was mute while its own libc calls printed, which is exactly the split the
+  harness's markers showed. `fstat` answers them now — a character device, readable
+  and writable — and clang prints `clang version 20.1.8` in the session's startup
+  (`/tmp/aegir-run47.log`).
 
 **And a cap came back, now that there are real programs.** Loading a 97 MiB and a
 57 MiB program spends the spawn path's untyped, and nothing reclaims a departed
@@ -247,6 +251,25 @@ exists to break (`specs/development.md`). The session's startup therefore runs t
 clients and `aegir-big` first and the big programs last, which is a workaround with
 a reason rather than a fix: reclaiming a departed command's memory is the work that
 names.
+
+**And the acceptance's own progress, measured.** `development_tree` stages what it
+needs — the sysroot's `Libs` as *one* merged archive (a volume holds only so many
+names at all, `scripts/mkfs_bfs.py:231-236`; and a 4096-byte tree node works where
+2048 refused the dev tree, `scripts/mkfs_bfs.py:32`), the source, and a generated
+link line — and the session ran it: **the device compiled the source with clang**
+(`cc --target=riscv64-unknown-elf -c` — clang's own driver and cc1, nothing of the
+host in the loop), which is what the shell reaching the *next* line proves. The link
+then stopped twice, and both are named: a two-kilobyte command line arrives
+truncated, because a command's arguments travel in one envelope (fixed by reaching
+the archive through `-L` and `-l:` in a few hundred bytes), and `ld.lld: cannot
+open …/sysroot.a: Out of memory` — the unreclaimed memory again, with a 97 MiB
+compiler and a 57 MiB linker already loaded. So the acceptance waits on that
+reclamation, not on anything about the compiler.
+
+None of that staging is committed: with it in place a later run's spawn failed with
+`a segment of the program could not be mapped`, and a run after that stopped before
+its marker, so the tree stands at the configuration `p3_deploy` proved green and
+this paragraph is the record of what to pick up.
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the

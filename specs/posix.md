@@ -219,6 +219,16 @@ measured on the guest:
   client's seventh check is exactly that, and the acceptance named it — which is
   what the marker rule is for. `pwrite` remains the one that must not move it.
 
+**The standard descriptors are answered, and `fstat` on them is what made a
+compiler speak.** Fds 0, 1 and 2 are the console the runtime routes them to, and the
+fd table does not hold them: the terminal owns their stream (`specs/shell.md`), so
+`write` reached it while `fstat` answered `EBADF`. LLVM's
+`Process::FixupStandardFileDescriptors` fstats stdout and stderr and, on `EBADF`,
+`dup2`s `/dev/null` over both (`projects/llvm-project/llvm/lib/Support/Unix/
+Process.inc:210-242`) — so a program linking LLVM lost everything it printed, which
+is why clang ran and said nothing (`specs/clang-on-aegir.md`'s Phase 3). `fstat`
+answers them now as they are: a character device, readable and writable.
+
 ### The memory sub-arc's acceptance
 
 `aegir-posix-memory-test` is the client: a plain program — `mmap`, `munmap`,
