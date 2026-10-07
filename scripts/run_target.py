@@ -650,6 +650,14 @@ def development_tree(build_dir: Path) -> Path:
     posix_memory = build_dir / "apps/hosted/aegir-posix-memory-test/aegir-posix-memory-test"
     if posix_memory.is_file():
         shutil.copy2(posix_memory, root / "C" / "posix-memory-test")
+
+    # The environment-and-time sub-arc's client (specs/posix.md): what a plain
+    # program reads and changes in its own environment, what uname and sysconf
+    # say the system is, and a clock that moves across a sleep -- its marker
+    # (AEGIR_POSIX_ENV_OK) being the cue the acceptance's step waits on.
+    posix_env = build_dir / "apps/hosted/aegir-posix-env-test/aegir-posix-env-test"
+    if posix_env.is_file():
+        shutil.copy2(posix_env, root / "C" / "posix-env-test")
     return root
 
 

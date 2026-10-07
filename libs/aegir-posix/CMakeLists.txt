@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-posix CXX)
 
-add_library(aegir-posix STATIC src/files.cc src/spawn.cc)
+add_library(aegir-posix STATIC src/files.cc src/spawn.cc src/system.cc)
 
 target_include_directories(aegir-posix PUBLIC include)
 
@@ -31,5 +31,6 @@ target_link_libraries(aegir-posix PUBLIC
     aegir-launch
     aegir-mem
     aegir-vfs-client
+    aegir-release
     sel4
 )

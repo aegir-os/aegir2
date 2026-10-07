@@ -58,6 +58,7 @@
 #include <aegir/network.h>
 #include <aegir/posix/files.h>
 #include <aegir/posix/spawn.h>
+#include <aegir/posix/system.h>
 #include <aegir/process.h>
 #include <aegir/thread.h>
 #include <errno.h>
@@ -1215,6 +1216,9 @@ long vsyscall(long sysnum, ...) noexcept
         break;
     case 16: /* SYS_fremovexattr */
         ret = files::fremovexattr(va_arg(ap, int), va_arg(ap, char const *));
+        break;
+    case 160: /* SYS_uname: what this system says it is (aegir/release.h) */
+        ret = aegir::posix::system::uname(va_arg(ap, void *));
         break;
     case 113: /* SYS_clock_gettime: the clock and timer services behind it */
         ret = time::clock_gettime(va_arg(ap, int), va_arg(ap, void *));

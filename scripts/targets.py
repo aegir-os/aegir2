@@ -1802,6 +1802,11 @@ TARGETS: dict[str, Target] = {
             # call of its own, and its marker is the cue (a failed check exits
             # 2+n, leaving it unprinted, which is how the run fails).
             QmpStep(r"AEGIR_POSIX_MEMORY_OK"),
+            # apps/hosted/aegir-posix-env-test: the environment-and-time sub-arc
+            # (specs/posix.md) -- getenv/setenv/environ, uname, sysconf, and a
+            # clock that moves across a nanosleep. Same shape as the others: no
+            # Aegir call of its own, and its marker is the cue.
+            QmpStep(r"AEGIR_POSIX_ENV_OK"),
         ),
     ),
     "sel4test": Target(

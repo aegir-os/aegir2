@@ -46,6 +46,9 @@ add_subdirectory(aegir-authdb)
 add_subdirectory(aegir-mem)
 add_subdirectory(aegir-bootstrap)
 add_subdirectory(aegir-ipc)
+# A leaf: a header of words with no runtime behind them (specs/environment.md),
+# registered last so nothing above it waits on it.
+add_subdirectory(aegir-release)
 add_subdirectory(aegir-signal)
 add_subdirectory(aegir-vfs-client)
 add_subdirectory(aegir-log)
