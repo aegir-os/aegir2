@@ -206,6 +206,15 @@ AEGIR_BFS_TREE = [
         # line never runs.
         ("file", "CtrlD-Test",
          b"break x name session.shell d\naegir-echo CtrlD-not-reached\n"),
+        # The enforced halt (specs/process.md Phase 3): a background `wait` -- a
+        # long timer that never returns and never polls its break source -- is
+        # Broken and reaped, then Control-Test runs. It is a file, not three
+        # console lines, because the `wait` image starts between the first and
+        # second: typed from the console, the `break` line lands while that
+        # image is starting and the guest's key queue drops it (run_target's
+        # press; the same reason the command files are typed one per step).
+        ("file", "Halt-Test",
+         b"run wait 99999\nbreak x name wait\nexecute Sys:S/Control-Test\n"),
         
         # The session's services, as data (specs/session.md): auth reads the
         # user's Home:S/session.manifest first, then this. `authority` is always

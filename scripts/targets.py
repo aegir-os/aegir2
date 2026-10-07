@@ -771,13 +771,6 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # the file in order.
                 press="execute Sys:S/Interpreter-Test\n",
             ),
-            # Control flow (specs/shell.md): Control-Test's only reachable last
-            # line is aegir-echo 42, so this is a cue no other command gives.
-            # Every branch a correct run must not take exits at or above the
-            # fail level, which drops the file there rather than going on, so a
-            # `command exited 42` means If/Else/EndIf, the condition words and
-            # the Skip all chose the path they should.
-            QmpStep(r"terminal: command exited 42"),
             QmpStep(
                 r"launcher: command started date",
                 events=TERMINAL_CLICK,
@@ -951,23 +944,30 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
-                # Control flow (specs/shell.md): the last command has failed and
-                # the console is idle, so the runner now runs Control-Test, whose
-                # If/Else/EndIf and Skip are the next cue. It is typed here, not
-                # in the big opening press, because a press longer than the
-                # keyboard's queue drops keys and mangles a line.
-                #
-                # Before it, a background `wait` -- a long timer, so it never
-                # returns and never polls its break source -- is Broken. It is the
-                # enforced halt's subject: only the halt can take a process back
-                # that the cooperative source cannot reach (specs/process.md
-                # Phase 3). `x` is a placeholder process argument; NAME matches.
-                press="run wait 99999\nbreak x name wait\nexecute Sys:S/Control-Test\n",
+                # The enforced halt (specs/process.md Phase 3) and the control
+                # flow (specs/shell.md) are one file, Sys:S/Halt-Test: a
+                # background `wait` -- a long timer that never returns and never
+                # polls its break source -- is Broken and reaped, then
+                # Control-Test runs, whose If/Else/EndIf and Skip are the 42 cue.
+                # It is one console line on purpose: typed as three, the `break`
+                # line lands while the `wait` image is starting and the guest's
+                # key queue drops it (the same reason the command files are typed
+                # one per step). `x` is a placeholder process argument; NAME
+                # matches.
+                press="execute Sys:S/Halt-Test\n",
             ),
             # The halt landed: the registry signalled nothing the `wait` would
             # see and asked the launcher to suspend and reap it. No press -- the
             # next cue follows when Control-Test starts.
             QmpStep(r"process: halted \d+"),
+            # Control flow (specs/shell.md): Control-Test's only reachable last
+            # line is aegir-echo 42, so its exit is the cue that the If/Else/
+            # EndIf, the condition words and the Skip all chose the path they
+            # should. The same cue says the console is idle, so one step both
+            # proves the control flow and types the next file: Control-Test's run
+            # and the press cannot be two steps on one cue -- two steps sharing a
+            # trigger both fire on the first occurrence, in list order
+            # (AGENTS.md).
             QmpStep(
                 r"terminal: command exited 42",
                 events=TERMINAL_CLICK,
