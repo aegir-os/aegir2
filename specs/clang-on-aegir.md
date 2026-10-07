@@ -380,10 +380,10 @@ layer's own numbers -- `needed=0x2d2e000` (45.2 MiB, the archive) against
 `free=0x7a6000` (7.6 MiB left in the arena), and the arena's own line:
 `arena base=0x3f923000 limit=0x40123000 scratch=0x123000-0x40123000 seed=0x800000` --
 8 MiB of a ~1 GiB window, because the arena is seeded from `bytes` rather than taking
-the window. Growing it naively (from `scratch.base()`) *broke the run* (133 cues
-unprinted), so that lower bound exists for a reason and the growth needs to be
-understood before it is made. That is the next step: the arena has always been short
-of the space a linker's input asks for.
+the window. Growing it naively (from `scratch.base()`) *broke the run* -- 133 cues
+unprinted, reproduced with no instrumentation in the build at all -- so that lower
+bound is load-bearing and its reason has to be found before the arena grows: what the
+seed protects is the next question, not a bigger number.
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
