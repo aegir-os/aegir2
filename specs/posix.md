@@ -92,13 +92,16 @@ volume is a mount point and `/` is the list of them (below, "What this is not").
 The path view is the first sub-arc, and it has landed: the translation and its
 host conformance (`libs/aegir-posix`'s `aegir/posix/path.h`, `make
 check-posix-path`), the synthetic `/`, and the current directory, with the
-acceptance below. **Files** and **memory** have followed: the write side of the
-file surface, and `mmap` (a file's bytes included), `mprotect`, `munmap` and
-`MAP_FIXED`'s refusal, each sub-arc with an acceptance client of its own (below).
-What is left are the calls a POSIX program makes on top of those: environment and
-time, signals, threads, and process (`posix_spawn` and `wait4`; `fork` is absent
-on purpose, `specs/launch.md`). The on-device compiler is the first large client,
-and it is what measures the surface (`specs/clang-on-aegir.md`).
+acceptance below. **Files**, **memory** and **environment and time** have
+followed: the write side of the file surface, `mmap` (a file's bytes included),
+`mprotect`, `munmap` and `MAP_FIXED`'s refusal, and the environment, `uname` and
+the clock a program reads -- each sub-arc with an acceptance client of its own
+(below). What is left are the calls a POSIX program makes on top of those:
+signals and threads, the two the endpoint's own table says it does not need
+(`LLVM_ENABLE_THREADS=OFF`, and crash handlers disabled or stubbed,
+`specs/clang-on-aegir.md:96-97`) -- and then the surface is whole. The on-device
+compiler is the first large client, and it is what measures it
+(`specs/clang-on-aegir.md`).
 
 ### The process sub-arc's acceptance
 
@@ -243,6 +246,35 @@ guest, and each a trap for whoever comes next:
 The dispatch trace (`-DAEGIR_HEAP_TRACE` on `aegir-heap`, read back with
 `scripts/heap_trace.py`) is what located the second two: it named the faulting
 address and the operations that preceded it.
+
+### The environment-and-time sub-arc's acceptance
+
+`aegir-posix-env-test` is the client: a plain program — `getenv`, `setenv`,
+`unsetenv`, `environ`, `uname`, `sysconf`, `getcwd`, `chdir`, `clock_gettime`,
+`nanosleep` and `printf`, and no Aegir call of its own — that prints
+`AEGIR_POSIX_ENV_OK` and exits 0, and names a failed check with `2+n`.
+
+Most of what it checks was already there, and the client is what says so: the
+environment rides the startup frame's `argc`/`argv`/`envp`
+(`bootstrap.h:158-159`), so `getenv`, `setenv`, `unsetenv` and `environ` work in a
+hosted program with nothing of ours behind them; `clock_gettime` and `nanosleep`
+were answered (the clock and timer services), and the monotonic clock moves across
+a sleep; `sysconf`'s page size, clock tick and processor count are answered too.
+The sub-arc's single gap was `uname`, whose riscv64 number (160) fell through to
+`-ENOSYS`.
+
+So the one mechanism this sub-arc added is the answer to `uname`, and it lives in
+one place: `libs/freestanding/aegir-release`'s `aegir/release.h` holds what this
+system says it is — sysname `Aegir`, nodename `aegir`, release `0.1`, version
+`Aegir riscv64`, machine named per architecture, no domainname — and
+`libs/aegir-posix`'s `system.cc` copies those words into musl's `struct utsname`
+(six 65-byte fields, the kernel's own layout) when the dispatcher's case 160 calls
+it. The machine is the one part the target decides, so a target the header does not
+know is a compile error rather than a wrong answer.
+
+What the client *inherited* it prints rather than asserts: the session's
+environment is the running system's business, and a client that pinned a value
+would fail for a reason that is not the layer's.
 
 ## What this is not
 

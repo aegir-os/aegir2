@@ -95,7 +95,7 @@ Verified in the tree. Each row is a prerequisite arc.
 | Process | `posix_spawn` + `wait4` for cc1 + ld; `fork` not needed | none; the POSIX process sub-arc is load-bearing (`specs/posix.md`) |
 | Threads | `pthread_create`, mutex, atomics | `LLVM_ENABLE_THREADS=OFF` avoids them; a `clone` route exists (musl patch 0002) but is not on this path |
 | Signals | `sigaction` (crash handlers) | none; disable or stub |
-| Time/env | `clock_gettime`, `nanosleep`, `getenv`, `uname`, `getcwd` | `clock_gettime`/`nanosleep`/`getcwd` done; `environ`/`getenv` on `aegir::environment`; `uname`/`sysconf` a stub |
+| Time/env | `clock_gettime`, `nanosleep`, `getenv`, `uname`, `getcwd` | **Landed**: `getenv`/`setenv`/`environ` work in a hosted program (the environment rides the startup frame's envp, `bootstrap.h:158-159`), `uname` answers from `aegir/release.h`, `sysconf` needs nothing of ours, and `clock_gettime`/`nanosleep`/`getcwd` were already answered — measured by `aegir-posix-env-test` (specs/posix.md). |
 | C++ | libc++ **no EH/RTTI** | already built tier-1 (`scripts/build_libcxx.sh`) |
 | Assembler/linker | integrated assembler + lld | cross-buildable from the vendored tree (Phase 1); not on device |
 

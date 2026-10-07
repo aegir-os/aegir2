@@ -78,8 +78,13 @@ given (`specs/userland.md`: the calls belong in a library, not a program).
 - **The C and C++ mapping is the filesystem arc's.** `getcwd`/`chdir` and
   `std::filesystem::current_path()` reach the same state; the runtime answers
   them there, not here. Landed with `specs/cxx.md` step 5: the runtime's file
-  layer (`aegir-heap/src/files.cc`) owns the one buffer, and
+  layer (`libs/aegir-posix/src/files.cc`) owns the one buffer, and
   `aegir::environment` is its C++ face over a plain-C bridge.
+- **The rest of the POSIX C mapping is the POSIX layer's** (`specs/posix.md`):
+  `getenv`/`setenv`/`unsetenv`/`environ` reach the startup frame's `envp` and need
+  nothing of ours, and `uname` answers from `aegir/release.h` — the one place that
+  says what this system is, so that a banner, a shell's `version` and `uname`
+  cannot disagree about it. Both landed and measured by `aegir-posix-env-test`.
 
 ## The shape
 
@@ -157,3 +162,11 @@ spawner's, `set_current_dir` changes it, and a relative path with no current
 directory is refused. It prints `ENV_SMOKE_OK`. The director gives it arguments
 and `Sys:` so the checks have something to read, and the flag-off build is
 unchanged.
+
+The *plain program's* half of the same surface is `aegir-posix-env-test`
+(`specs/posix.md`, the environment-and-time sub-arc): `getenv`, `setenv`,
+`unsetenv` and `environ` from libc, `uname` answered out of `aegir/release.h`,
+`sysconf` for the page size and the clock tick and the processor count, and a
+monotonic clock that moves across a `nanosleep`. It prints `AEGIR_POSIX_ENV_OK`
+and exits 0, and it prints what it inherited rather than asserting it -- the
+session's environment is the running system's business, not this layer's promise.
