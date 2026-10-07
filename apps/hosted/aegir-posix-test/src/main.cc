@@ -34,9 +34,17 @@ int main(int argc, char *argv[])
     }
     aegir::debug_write("AEGIR_POSIX_START\n");
 
-    char *child_argv[] = {const_cast<char *>("date"), nullptr};
+    /* The child is its own program, with its own name, deployed beside this one
+     * under `Sys:Development/C`. It is not `date` on purpose: the launcher
+     * announces every started command as `command started <argv[0]>`, and the
+     * acceptance fires a step on `command started date` -- a child named `date`
+     * would fire that step here, on the first date, and leave the acceptance's
+     * own date with no press (scripts/run_target.py, AGENTS.md). */
+    char *child_argv[] = {const_cast<char *>("Sys:Development/C/aegir-posix-child"),
+                          nullptr};
     pid_t pid = 0;
-    if (posix_spawn(&pid, "date", nullptr, nullptr, child_argv, environ) != 0) {
+    if (posix_spawn(&pid, "Sys:Development/C/aegir-posix-child", nullptr, nullptr,
+                    child_argv, environ) != 0) {
         aegir::debug_write("AEGIR_POSIX_SPAWN_FAIL\n");
         std::_Exit(1);
     }

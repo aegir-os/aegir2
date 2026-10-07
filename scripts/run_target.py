@@ -614,6 +614,13 @@ def development_tree(build_dir: Path) -> Path:
     posix_test = build_dir / "apps/hosted/aegir-posix-test/aegir-posix-test"
     if posix_test.is_file():
         shutil.copy2(posix_test, root / "C" / "posix-test")
+    # The POSIX acceptance's child (specs/posix.md): it lies beside the test
+    # under a name of its own, so the launcher's `command started
+    # aegir-posix-child` is a cue no acceptance step shares -- a child named
+    # `date` would fire the acceptance's own `date` step (scripts/run_target.py).
+    posix_child = build_dir / "apps/hosted/aegir-posix-child/aegir-posix-child"
+    if posix_child.is_file():
+        shutil.copy2(posix_child, root / "C" / "aegir-posix-child")
     return root
 
 

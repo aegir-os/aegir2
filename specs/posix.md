@@ -82,6 +82,22 @@ files (`open`/`read`/`write`/`lseek`/`stat`/…), memory (file-backed `mmap`,
 on-device compiler is the first large client, and it is what measures the surface
 (`specs/clang-on-aegir.md`).
 
+### The process sub-arc's acceptance
+
+`aegir-posix-test` is the client: a plain C program that calls `posix_spawn` and
+`wait4` and carries no Aegir call, so the runtime's POSIX face is measured by a
+program that does not know it is on Aegir. Its child is `aegir-posix-child`, a
+program of its own that stands up the hosted runtime and returns from `main` --
+nothing else.
+
+The child is a **distinct program with a distinct name** on purpose, not an
+existing command like `date`. The launcher announces every command it starts as
+`command started <argv[0]>` (`specs/launch.md`), and the acceptance fires a step
+on that cue; a child named `date` would fire the acceptance's own `date` step on
+the *first* date -- the child -- and leave the acceptance's date with no press
+(`scripts/run_target.py`, `AGENTS.md`'s trigger-uniqueness rule). Both live
+under `Sys:Development/C`, which only the development target carries.
+
 ## What this is not
 
 Not a change to Aegir's native paths, `std::filesystem`, or the namespace — the
