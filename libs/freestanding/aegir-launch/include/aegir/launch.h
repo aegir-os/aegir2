@@ -146,6 +146,14 @@ constexpr uint32_t kMethodExited = 24;
  *  caller's child. A **held reply** (specs/signal.md) until the child ends. */
 constexpr uint32_t kMethodWait = 25;
 
+/** The C primitive a runtime uses to start one command (specs/posix.md): the
+ *  argv packed NUL-separated, program first; it builds the request from the
+ *  caller's own context and answers the started badge. 0 started, nonzero
+ *  refused. Declared here, with no libc++ include, so a runtime's dispatcher
+ *  can call it without pulling a C++ header beside musl and seL4. */
+extern "C" int aegir_launch_command(char const *argv, uint32_t argv_length,
+                                    uint64_t *badge_out) noexcept;
+
 }  // namespace aegir::launch
 
 #endif  // AEGIR_LAUNCH_H

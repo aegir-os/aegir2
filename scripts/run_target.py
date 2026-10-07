@@ -608,6 +608,12 @@ def development_tree(build_dir: Path) -> Path:
     big = build_dir / "apps/hosted/aegir-big/aegir-big"
     if big.is_file():
         shutil.copy2(big, root / "C" / "aegir-big")
+    # The POSIX process surface's acceptance client (specs/posix.md): a plain
+    # program that spawns a child with `posix_spawn` and waits for it with
+    # `wait4`, proving the runtime's POSIX face.
+    posix_test = build_dir / "apps/hosted/aegir-posix-test/aegir-posix-test"
+    if posix_test.is_file():
+        shutil.copy2(posix_test, root / "C" / "posix-test")
     return root
 
 

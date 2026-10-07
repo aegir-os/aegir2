@@ -460,11 +460,30 @@ uint32_t ConsoleStreamServer::handle(uint32_t method, uint64_t const* words,
         /* A command of the line said it is done. The stream stays open -- it is
          * the shell's -- and the status waits for the terminal to finalize.
          * Only when every stage the shell announced has reported is the line's
-         * status due (specs/pipe.md); the terminal routes a background
-         * command's exit away from here, so this counts the foreground line's
-         * own stages. */
+         * status due (specs/pipe.md).
+         *
+         * The exit carries the process's own badge (aegir/console_stream.h),
+         * and only a badge the shell announced for this line is the line's end:
+         * a command's own child -- one it started, POSIX or not -- has a badge
+         * of its own, and its exit belongs to whoever started it, not to this
+         * terminal line. So a badge off the line is not counted, and the line
+         * is not completed. A line whose pids have not been announced yet (the
+         * launch answer has not arrived) counts as before. */
         Stream* s = find(caller);
         if (s != nullptr) {
+            if (count >= 2 && !s->pids.empty()) {
+                uint64_t const badge = words[1];
+                bool on_line = false;
+                for (uint64_t const pid : s->pids) {
+                    if (pid == badge) {
+                        on_line = true;
+                        break;
+                    }
+                }
+                if (!on_line) {
+                    return 0;
+                }
+            }
             if (count >= 1) {
                 s->status = words[0];
             }

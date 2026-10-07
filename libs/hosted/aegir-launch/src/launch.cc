@@ -278,4 +278,10 @@ extern "C" int aegir_spawn(char *const argv[], char const *std_in, char const *s
     return aegir_launch_request(kMethodSpawn, out, words);
 }
 
+extern "C" int aegir_launch_command(char const *argv, uint32_t argv_length,
+                                    uint64_t *badge_out) noexcept
+{
+    return command(argv, argv_length, "", 0, "", 0, false, badge_out) ? 0 : 1;
+}
+
 }  // namespace aegir::launch

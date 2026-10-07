@@ -44,6 +44,7 @@
 #include <aegir/heap.h>
 
 #include "files.h"
+#include "posix.h"
 #include "regions.h"
 #include "time.h"
 
@@ -782,6 +783,30 @@ long sys_read(int fd, void *buffer, size_t length) noexcept
     return files::read(fd, buffer, length);
 }
 
+/* Wait for a child the launcher started (specs/posix.md): call the launcher's
+ * `wait`, which holds the reply until the child ends, and encode the status as
+ * Linux wait4 does -- the exit code in bits 8..15, the low byte zero so
+ * WIFEXITED is true. */
+long wait_child(int pid, int *status) noexcept
+{
+    aegir::ipc::Consumer const launcher = aegir::ipc::Consumer::find(
+        aegir::launch::kPortName, aegir::launch::kPortNameLength);
+    uint64_t badge = 0;
+    if (!launcher.valid() || pid <= 0 || !take_child_badge(pid, &badge)) {
+        return -ECHILD;
+    }
+    uint64_t answer[2] = {};
+    aegir::ipc::WordsReply const reply =
+        launcher.call_words(aegir::launch::kMethodWait, &badge, 1, answer, 2);
+    if (reply.error != 0 || reply.count < 2 || answer[0] != 1) {
+        return -ECHILD;
+    }
+    if (status != nullptr) {
+        *status = static_cast<int>((answer[1] & 0xffu) << 8);
+    }
+    return pid;
+}
+
 /* Report this process's end to its spawner (specs/launch.md's "Waiting for a
  * child"): the launcher attributes the call to our own pid by the kernel's
  * badge and files it, so a parent's `wait` can answer. A process the launcher
@@ -806,13 +831,17 @@ void report_to_launcher(int status) noexcept
  * stream still reports to its spawner and halts. */
 void report_exit(int status) noexcept
 {
+    /* Tell the spawner's `wait` first (specs/launch.md's "Waiting for a
+     * child"): the terminal's stream exit below triggers a `release` that reaps
+     * this process, so the launcher must have the end before that happens, or a
+     * parent waiting on it is never answered. */
+    report_to_launcher(status);
     aegir::ipc::Consumer &stream = console_stream();
     if (stream.valid()) {
         uint64_t badge = 0;
         (void)aegir::bootstrap::badge(&badge);
         (void)aegir::console::stream_exit(stream, static_cast<uint64_t>(status), badge);
     }
-    report_to_launcher(status);
     aegir::halt();
 }
 
@@ -1163,6 +1192,16 @@ long vsyscall(long sysnum, ...) noexcept
     case 94: /* SYS_exit_group: end the process */
         report_exit(static_cast<int>(va_arg(ap, long)));
         break;
+    case 260: { /* SYS_wait4: wait for a child the launcher started
+                 * (specs/posix.md). The launcher holds the reply until the child
+                 * ends, so this blocks as wait4 should. */
+        int const pid = va_arg(ap, int);
+        int *const status = static_cast<int *>(va_arg(ap, void *));
+        static_cast<void>(va_arg(ap, int));     /* options */
+        static_cast<void>(va_arg(ap, void *));  /* rusage */
+        ret = wait_child(pid, status);
+        break;
+    }
     default:
         break;
     }

@@ -521,7 +521,8 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # interactive step (specs/development.md). The scale acceptance's huge
         # command runs after it, the same way (specs/memory.md).
         tree = _with_startup(tree, b"Sys:Development/C/cc\n"
-                                   b"Sys:Development/C/aegir-big\n")
+                                   b"Sys:Development/C/aegir-big\n"
+                                   b"Sys:Development/C/posix-test\n")
     return tree
 
 

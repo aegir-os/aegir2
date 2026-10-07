@@ -402,8 +402,8 @@ void handle_exited(uint64_t const *words, uint32_t count, uint64_t caller, uint6
 {
     reply[0] = 1;
     *reply_count = 1;
-    uint64_t const status = count >= 1 ? words[0] : 0;
-    file_exit(caller, status);
+    int const status = count >= 1 ? static_cast<int>(words[0]) : 0;
+    file_exit(caller, static_cast<uint64_t>(status));
 }
 
 /* Wait for a child (kMethodWait): answer at once when the end is already filed,

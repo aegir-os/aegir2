@@ -23,7 +23,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-heap CXX)
 
-add_library(aegir-heap STATIC src/heap.cc src/files.cc src/time.cc)
+add_library(aegir-heap STATIC src/heap.cc src/files.cc src/time.cc src/posix.cc)
 
 target_include_directories(aegir-heap PUBLIC include)
 # The process registry's wire (specs/process.md), by include alone: the break

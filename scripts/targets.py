@@ -1782,6 +1782,11 @@ TARGETS: dict[str, Target] = {
             # megabytes long came up through the whole spawn path with every
             # byte in place, so a cap that creeps back fails here by name.
             QmpStep(r"AEGIR_BIG_OK \d+ bytes, every byte the pattern"),
+            # The POSIX process surface's acceptance (specs/posix.md): a plain
+            # program spawns a child with posix_spawn and waits with wait4, so
+            # the runtime's POSIX face is proven by a process that knows nothing
+            # of Aegir.
+            QmpStep(r"AEGIR_POSIX_WAIT_OK"),
         ),
     ),
     "sel4test": Target(
