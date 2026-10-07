@@ -1778,6 +1778,11 @@ TARGETS: dict[str, Target] = {
             # it and not invoked: it runs and returns 1 in silence there, which is
             # Phase 3's open item, and a cue that cannot fire would make every run
             # red for it.
+            # specs/clang-on-aegir.md's Phase 1/3: `cc` is clang and `ld.lld` is lld,
+            # and the session runs each with --version, so the cues are their own
+            # banners. The acceptance that compiles, links and runs a program is
+            # staged beside them: its compile works on the device, and its link stops
+            # on lld not finding the staged sysroot files (specs/clang-on-aegir.md).
             QmpStep(r"clang version 20"),
             QmpStep(r"LLD 20"),
             # The scale acceptance's deliberately huge command runs after it

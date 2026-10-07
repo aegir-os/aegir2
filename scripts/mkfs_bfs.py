@@ -29,7 +29,15 @@ import sys
 from pathlib import Path
 
 BLOCK = 2048
-NODE = 2048  # the B+tree node size (the service reads it from the tree header)
+NODE = 4096  # the B+tree node size (the service reads it from the tree header)
+# One leaf holds one directory's, or one index's, names, and the development tree's
+# Sys: outgrew 2048 bytes of them. The space grows; the tree does not shrink
+# (AGENTS.md: no arbitrary or hardcoded limits). The header carries the size and the
+# service honours it -- measured, a 4096-node volume mounts and serves its files --
+# and 4096 holds the dev tree with the sysroot staged beside it. A tree that
+# outgrows *this* wants the builder to split leaves into a real multi-leaf B+tree,
+# which the format already allows and the service already walks (aegir/bfs/
+# bplustree.h:15-16, writer.h:180, src/volume.cc:641-672).
 SECTOR = 512
 
 # The timestamp every initial entry carries: a fixed epoch, not the build time,

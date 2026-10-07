@@ -266,10 +266,31 @@ open …/sysroot.a: Out of memory` — the unreclaimed memory again, with a 97 M
 compiler and a 57 MiB linker already loaded. So the acceptance waits on that
 reclamation, not on anything about the compiler.
 
-None of that staging is committed: with it in place a later run's spawn failed with
-`a segment of the program could not be mapped`, and a run after that stopped before
-its marker, so the tree stands at the configuration `p3_deploy` proved green and
-this paragraph is the record of what to pick up.
+**And the growths it needs are in, measured.** Two of those were AGENTS.md's "no
+arbitrary or hardcoded limits" in substance: the *builder* refused any tree that
+outgrew one 2048-byte B+tree node, and the heap refused a mapping when its
+fixed-seed arena filled. Both grow now. `NODE = 4096` builds the development tree
+with the sysroot staged beside it, and the volume mounts and serves it
+(`scripts/mkfs_bfs.py:32`; a tree that outgrows even that wants the builder to split
+leaves into a real multi-leaf B+tree, which the format allows and the service already
+walks — `aegir/bfs/bplustree.h:15-16`, `writer.h:180`, `src/volume.cc:641-672`). And
+the heap's arena takes the window it is given rather than the seed alone
+(`libs/hosted/aegir-heap/src/heap.cc`: `bytes` is a floor, not a ceiling), because
+what bounded it before — a frame record sized from the arena at init — is chunked
+now. Both are committed, the run is green with them, and the sysroot's staging
+rides with them: one merged archive (members renamed by their archive, since six
+names repeat and member names mean nothing to a linker), the crt objects, the
+stand-up, the eh-frame script, clang's own headers beside their program, the source,
+and a generated *short* link line.
+
+What the acceptance still stops on is one thing, and it is not the compiler. With
+the compile done on the device, `ld.lld` reports `cannot find linker script
+Sys:Development/Libs/aegir-eh-frame.lds` and `unable to find library -l:sysroot.a` —
+files that are staged, and that were verified on the host. So the linker is not
+reaching `Sys:Development/Libs/` on the guest: a path-resolution question in lld's
+own file handling (`-T`, `-L` and `-l:`, and whatever it does before `open`), which
+is where this picks up. The session's startup does not invoke the acceptance yet,
+because a failing link stops the session's script and starves every command after it.
 
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the

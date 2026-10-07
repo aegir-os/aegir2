@@ -666,6 +666,81 @@ def development_tree(build_dir: Path) -> Path:
     posix_env = build_dir / "apps/hosted/aegir-posix-env-test/aegir-posix-env-test"
     if posix_env.is_file():
         shutil.copy2(posix_env, root / "C" / "posix-env-test")
+
+    # The sysroot's content (specs/development.md): Libs is what a *hosted* Aegir
+    # program links against, so that a compiler standing on the volume can link one.
+    # The archives go in as *one* file rather than fifty -- a volume holds a bounded
+    # number of names, and this is the space growing rather than the tree shrinking
+    # -- and members are renamed by their archive on the way in, because six member
+    # names repeat across the set and member names mean nothing to a linker, since
+    # symbols live in the objects. crt objects, the stand-up (aegir-crt0 is an
+    # OBJECT library, so its object is the only form a link can name), the eh-frame
+    # script, and the three things clang's runtime directory publishes for the
+    # target (scripts/build_compiler_rt.sh) ride beside it. llvm-ar is the tree's own.
+    runtime = build_dir.parent / "runtime"
+    repo = build_dir.parent.parent
+    libs = root / "Libs"
+    archives = []
+    for pattern in ("libs/*/*.a", "libs/*/*/*.a", "libsel4/libsel4.a",
+                    "sel4runtime/libsel4runtime.a"):
+        archives += sorted(build_dir.glob(pattern))
+    for install in ("musl-install", "cxx-install"):
+        archives += sorted((runtime / install / "lib").glob("*.a"))
+
+    llvm_ar = next(repo.glob("third_party/toolchain/*/bin/llvm-ar"), None)
+    if llvm_ar is not None and archives:
+        members = libs / "members"
+        members.mkdir()
+        for archive in archives:
+            alone = members / archive.stem
+            alone.mkdir()
+            subprocess.run([llvm_ar, "x", str(archive)], cwd=alone, check=True)
+            for member in alone.iterdir():
+                member.rename(members / f"{archive.stem}__{member.name}")
+            alone.rmdir()
+        subprocess.run(
+            [llvm_ar, "rcs", str(libs / "sysroot.a"), *sorted(members.iterdir())],
+            check=True)
+        shutil.rmtree(members)
+
+    for name in ("crt0.o", "crti.o", "crtn.o"):
+        shutil.copy2(build_dir / "lib" / name, libs / name)
+    shutil.copy2(build_dir / "aegir-eh-frame.lds", libs / "aegir-eh-frame.lds")
+    for toolchain_runtime in repo.glob("third_party/toolchain/*/lib/clang/*/lib/"
+                                       "riscv64-unknown-unknown-elf"):
+        for name in ("crtbegin.o", "crtend.o", "libgcc.a"):
+            if (toolchain_runtime / name).is_file():
+                shutil.copy2(toolchain_runtime / name, libs / name)
+    for stand_up in build_dir.glob("libs/hosted/aegir-crt0/CMakeFiles/*/src/stand_up*"):
+        shutil.copy2(stand_up, libs / "stand-up.o")
+
+    # The link the acceptance runs, generated from what is actually staged rather
+    # than listed by hand, and *short* on purpose: a command's arguments travel in
+    # one envelope, so a two-kilobyte line of paths arrives truncated (measured --
+    # the shell could not find the linker script that was plainly staged). So the
+    # crt objects are named and the archive is reached through -L and -l:.
+    staged = {p.name: p for p in libs.rglob("*") if p.is_file()}
+
+    def path_of(name: str) -> str:
+        return "Sys:Development/" + str(staged[name].relative_to(root))
+
+    head = ("crt0.o", "crti.o", "crtbegin.o", "stand-up.o")
+    tail = ("crtend.o", "crtn.o")
+    bodies = sorted(n for n in staged if n.endswith(".a") and n != "libgcc.a")
+    (root / "link.sh").write_text(
+        "Sys:Development/C/ld.lld -o SCRATCH:hello --eh-frame-hdr "
+        f"-T {path_of('aegir-eh-frame.lds')} "
+        + " ".join(path_of(n) for n in head if n in staged)
+        + " SCRATCH:hello.o"
+        + " -L Sys:Development/Libs "
+        + " ".join(f"-l:{n}" for n in bodies)
+        + " "
+        + " ".join(path_of(n) for n in tail if n in staged)
+        + f" -l:libgcc.a\n"
+    )
+
+    # The source the acceptance compiles, staged beside the sysroot (specs/).
+    shutil.copy2(repo / "scripts" / "sysroot-hello.c", root / "hello.c")
     return root
 
 

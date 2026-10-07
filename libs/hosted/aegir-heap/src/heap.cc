@@ -465,10 +465,16 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     network::adopt_window(allocator, scratch);
 
     /* The top of the window, page-aligned so brk arithmetic stays on page
-     * boundaries, and below nothing the window already holds. */
+     * boundaries, and below nothing the window already holds. `bytes` is a floor,
+     * not a ceiling: the arena takes as much of the window as is there, because a
+     * program needing more than the seed should be given what the process has
+     * rather than refused (AGENTS.md: no arbitrary or hardcoded limits). What
+     * bounded that before -- a frame record sized from the arena at init -- is
+     * chunked now, so a large arena costs nothing until it is used. */
     uintptr_t const top = align_down(scratch.limit());
-    base_ = top - align_up(bytes);
-    if (base_ < scratch.base()) {
+    uintptr_t const floor = top > align_up(bytes) ? top - align_up(bytes) : 0;
+    base_ = floor > align_up(scratch.base()) ? floor : align_up(scratch.base());
+    if (base_ >= top || base_ < scratch.base()) {
         return false;
     }
     limit_ = top;
