@@ -44,6 +44,12 @@ void adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch) noexc
  * syscall does. */
 long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept;
 long fstat(int fd, void *buffer) noexcept;
+
+/* SYS_statx (riscv64 291): the same answer as fstatat/stat in musl's `struct
+ * statx` layout, because LLVM's fs::status calls statx directly where musl's stat
+ * is the kstat path -- which is how a linker's existence check sees the
+ * filesystem (specs/clang-on-aegir.md). */
+long statx(int dfd, char const *path, int flags, unsigned int mask, void *buffer) noexcept;
 long openat(int dfd, char const *path, int flags, int mode) noexcept;
 long close(int fd) noexcept;
 /* Open a path as a redirected standard stream (specs/shell.md): fd 0 reads it

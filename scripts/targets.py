@@ -1782,7 +1782,8 @@ TARGETS: dict[str, Target] = {
             # and the session runs each with --version, so the cues are their own
             # banners. The acceptance that compiles, links and runs a program is
             # staged beside them: its compile works on the device, and its link stops
-            # on lld not finding the staged sysroot files (specs/clang-on-aegir.md).
+            # inside lld, which never asks this filesystem about the staged script or
+            # archives at all (specs/clang-on-aegir.md).
             QmpStep(r"clang version 20"),
             QmpStep(r"LLD 20"),
             # The scale acceptance's deliberately huge command runs after it

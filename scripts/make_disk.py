@@ -173,6 +173,14 @@ AEGIR_BFS_TREE = [
     ("dir", "DOCS", [
         ("file", "NESTED.TXT",
          b"two components deep, and the walk found it\n"),
+        # Three components inside the volume: a file under a directory under DOCS.
+        # That is the depth the staged sysroot sits at (`Sys:Development/Libs/x`)
+        # and the one where `stat` and `open` were last seen disagreeing
+        # (specs/clang-on-aegir.md's Phase 3).
+        ("dir", "DEEPER", [
+            ("file", "INNER.TXT",
+             b"three components deep, and the walk ends there\n"),
+        ]),
     ]),
     ("file", "Readme With A Long Name.txt",
      b"a long name, read back whole -- the 8.3 form cannot spell it\n"),

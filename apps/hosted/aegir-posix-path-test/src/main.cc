@@ -133,6 +133,35 @@ int main()
     require(stat("/AEGIR", &info) == 0 && S_ISDIR(info.st_mode),
             "stat /AEGIR is a directory");
 
+    /* A *file* a directory deep inside a volume, and one at its root: `stat` must
+     * walk as far as `open` does. This is the call lld's existence check makes,
+     * and it is the one that failed on the staged sysroot while `open` succeeded
+     * beside it (specs/clang-on-aegir.md's Phase 3). */
+    require(stat("/AEGIR/DOCS/NESTED.TXT", &info) == 0 && S_ISREG(info.st_mode),
+            "stat /AEGIR/DOCS/NESTED.TXT is a regular file");
+    require(stat("/AEGIR/AEGIR.TXT", &info) == 0 && S_ISREG(info.st_mode),
+            "stat /AEGIR/AEGIR.TXT is a regular file");
+
+    /* The *same* volume by the route lld's existence check takes: invoked with a
+     * `Sys:` path, this is a stat through the binding (`Sys:` aliases the system
+     * volume), not through the volume's own name. Both forms are native, so both
+     * skip the view's normalization (specs/clang-on-aegir.md's Phase 3). */
+    require(stat("Sys:AEGIR.TXT", &info) == 0 && S_ISREG(info.st_mode),
+            "stat Sys:AEGIR.TXT is a regular file");
+    require(stat("Sys:DOCS/NESTED.TXT", &info) == 0 && S_ISREG(info.st_mode),
+            "stat Sys:DOCS/NESTED.TXT is a regular file");
+
+    /* Three components inside the volume, by both calls and both routes: the depth
+     * the staged sysroot sits at, and the one where `stat` and `open` were last
+     * seen disagreeing (specs/clang-on-aegir.md's Phase 3). */
+    require(reads_text("/AEGIR/DOCS/DEEPER/INNER.TXT",
+                       "three components deep, and the walk ends there\n"),
+            "open /AEGIR/DOCS/DEEPER/INNER.TXT");
+    require(stat("/AEGIR/DOCS/DEEPER/INNER.TXT", &info) == 0 && S_ISREG(info.st_mode),
+            "stat /AEGIR/DOCS/DEEPER/INNER.TXT is a regular file");
+    require(stat("Sys:DOCS/DEEPER/INNER.TXT", &info) == 0 && S_ISREG(info.st_mode),
+            "stat Sys:DOCS/DEEPER/INNER.TXT is a regular file");
+
     /* A native path sets the directory in Aegir's own grammar, and getcwd answers
      * it that way: libc++'s std::filesystem::absolute and LLVM's
      * sys::fs::make_absolute compose with this string and expect a `Volume:`

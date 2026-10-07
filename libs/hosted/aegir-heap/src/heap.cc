@@ -1324,6 +1324,12 @@ long vsyscall(long sysnum, ...) noexcept
     case 80: /* SYS_fstat */
         ret = files::fstat(va_arg(ap, int), va_arg(ap, void *));
         break;
+    case 291: /* SYS_statx: LLVM's fs::status calls it directly, where musl's own
+               * stat family is the kstat path above, so a linker's existence check
+               * lands here (files.h's statx, specs/clang-on-aegir.md). */
+        ret = files::statx(va_arg(ap, int), va_arg(ap, char const *), va_arg(ap, int),
+                           va_arg(ap, unsigned int), va_arg(ap, void *));
+        break;
     case 93: /* SYS_exit: end the calling thread, not the process. A thread
               * that musl's __pthread_exit has finished with suspends here; the
               * process's boot thread (no TCB of its own) reports the status and

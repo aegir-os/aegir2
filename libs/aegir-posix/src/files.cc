@@ -43,6 +43,7 @@
 #include <aegir/posix/path.h>
 
 #include <aegir/bootstrap.h>
+#include <aegir/debug.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <aegir/metadata.h>
@@ -635,6 +636,95 @@ long newfstatat(int dfd, char const *path, void *buffer, int flags) noexcept
     if (!stat_target(path, text_length(path), static_cast<Kstat *>(buffer))) {
         return -ENOENT;
     }
+    return 0;
+}
+
+/* SYS_statx (riscv64 291): the same answer as the stat family above, in musl's
+ * `struct statx` layout. The layer had left this call at the dispatcher's ENOSYS --
+ * musl's own stat is the kstat path on this architecture, so our calls never needed
+ * it -- and a program that calls statx *directly* (glibc's stat does where the
+ * kernel offers it, and LLVM's fs::status does on the systems it was written for)
+ * would then see every file as absent. The structure is musl's `struct statx`
+ * (include/sys/stat.h), declared here the way Kstat and Dirent64 are -- it is the
+ * caller's layout and nothing else -- and only the fields `STATX_BASIC_STATS`
+ * promises are filled.
+ *
+ * Measured against the linker's "cannot find": lld's `-T` and `-l:` never reach this
+ * layer at all. A trace in stat_target shows every call it *is* asked for, and those
+ * three paths are not among them, so this closes a hole rather than being that
+ * fault's cause (specs/clang-on-aegir.md's Phase 3).
+ *
+ * Outside the file's anonymous namespace on purpose: heap.cc's dispatcher is the
+ * caller, so it needs external linkage. */
+struct StatxTimestamp {
+    int64_t tv_sec;
+    uint32_t tv_nsec;
+    int32_t reserved;
+};
+
+struct Statx {
+    uint32_t stx_mask;
+    uint32_t stx_blksize;
+    uint64_t stx_attributes;
+    uint32_t stx_nlink;
+    uint32_t stx_uid;
+    uint32_t stx_gid;
+    uint16_t stx_mode;
+    uint16_t pad0;
+    uint64_t stx_ino;
+    uint64_t stx_size;
+    uint64_t stx_blocks;
+    uint64_t stx_attributes_mask;
+    StatxTimestamp stx_atime;
+    StatxTimestamp stx_btime;
+    StatxTimestamp stx_ctime;
+    StatxTimestamp stx_mtime;
+    uint32_t stx_rdev_major;
+    uint32_t stx_rdev_minor;
+    uint32_t stx_dev_major;
+    uint32_t stx_dev_minor;
+    uint64_t pad1[14];
+};
+
+long statx(int dfd, char const *path, int flags, unsigned int mask, void *buffer) noexcept
+{
+    static_cast<void>(flags);
+    static_cast<void>(mask);
+    /* STATX_BASIC_STATS: the mask this layer's answers correspond to (musl's
+     * <sys/stat.h>). */
+    constexpr uint32_t kBasicStats = 0x7ff;
+    if (g_allocator == nullptr) {
+        return -ENOSYS;
+    }
+    if (path == nullptr || buffer == nullptr) {
+        return -EFAULT;
+    }
+    Kstat info{};
+    if (path[0] == '\0') {
+        /* AT_EMPTY_PATH, as newfstatat treats the same case. */
+        if (dfd < 0 || fstat(dfd, &info) != 0) {
+            return -ENOENT;
+        }
+    } else if (dfd != AT_FDCWD) {
+        /* A directory fd as the anchor is not answered yet, as newfstatat says. */
+        return -ENOENT;
+    } else if (!stat_target(path, text_length(path), &info)) {
+        return -ENOENT;
+    }
+    auto *out = static_cast<Statx *>(buffer);
+    *out = Statx{};
+    out->stx_mask = kBasicStats;
+    out->stx_blksize = static_cast<uint32_t>(info.st_blksize);
+    out->stx_nlink = static_cast<uint32_t>(info.st_nlink);
+    out->stx_uid = info.st_uid;
+    out->stx_gid = info.st_gid;
+    out->stx_mode = static_cast<uint16_t>(info.st_mode);
+    out->stx_ino = info.st_ino;
+    out->stx_size = static_cast<uint64_t>(info.st_size);
+    out->stx_blocks = static_cast<uint64_t>(info.st_blocks);
+    out->stx_atime.tv_sec = info.st_atime_sec;
+    out->stx_mtime.tv_sec = info.st_mtime_sec;
+    out->stx_ctime.tv_sec = info.st_ctime_sec;
     return 0;
 }
 

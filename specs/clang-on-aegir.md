@@ -332,6 +332,32 @@ past one component, and the fix belongs in the volume client's stat
 (`libs/freestanding/aegir-vfs-client`) rather than in `libs/aegir-posix/src/files.cc`.
 The one-run probe above still names it outright.
 
+**Then the measurements disproved that too, and the trace named the real fault.** What
+this layer *was* asked to answer, it answered: the path view's client stats files at
+three components inside a volume, by the volume's name and through the `Sys:` binding,
+and passes; clang reads `Sys:Development/Libs/crt0.o` and says so in its own warning;
+and a trace in the layer's stat chokepoint (`stat_target`) shows the loader statting
+`Sys:Development/C/cc` and `Sys:Development/C/ld.lld` successfully. The decisive part
+is what the trace does **not** contain: no stat of
+`Sys:Development/Libs/aegir-eh-frame.lds`, of `sysroot.a` or of `libgcc.a` ever reaches
+this layer, while lld reports exactly those paths as "cannot find". So lld refuses them
+inside itself, before any syscall — its own `-T` and `-l:` handling, not this
+filesystem. Each guess along the way (a shallow stat walk, the `Libs` subdirectory, the
+colon in the path, `statx`, the binding route, the working directory, the script) was
+killed by a measurement rather than by an argument, and the recorded reasoning above
+is kept as what it was: wrong, and wrong in a way a run could see.
+
+What the next step needs is lld's own reasoning, read against what our shell hands it
+(and it hands it verbatim: lld's errors quote paths back exactly). Upstream
+`projects/llvm-project/lld/ELF/Driver.cpp`'s `-T`/`-l:` handling, or `ld.lld`'s own
+search-path output, answers it directly; no further work on this layer is indicated by
+any measurement so far.
+
+`SYS_statx` (riscv64 291) is answered now regardless
+(`libs/aegir-posix/src/files.cc`, `files.h`, `heap.cc`): the layer had left it at the
+dispatcher's ENOSYS, and a program calling it directly would see every file as absent.
+It is not what lld was doing, and the trace above is why that can be said.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
