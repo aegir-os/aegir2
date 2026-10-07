@@ -311,6 +311,17 @@ library *exists* before opening it — `fs::exists` over the search paths, which
 `stat` where `open` already works. That is the one call to look at next, and it is
 why the compile succeeds while the link cannot find its inputs.
 
+The read of that call puts the layer on the hook after all, one level down.
+`newfstatat` reaches the file through `stat_target` (`libs/aegir-posix/src/files.cc`),
+which shares `resolve_target` with `openat` — the same resolve clang's read of
+`Sys:Development/hello.c` already proves — but then asks the volume differently:
+`aegir::vfs::Volume::stat(rest, length, info)` through a `transient_slot()`, where
+`openat` goes through the open path. So the probe is `stat` against that one path,
+and the suspects in order are `Volume::stat`'s reply for a member of a *nested*
+directory, the transient slot, and `fill_kstat`'s kind. The check is cheap and needs
+no compiler: a client that `stat`s `Sys:Development/Libs/crt0.o` (staged, present)
+the way the path view's client `stat`s `/AEGIR`.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
