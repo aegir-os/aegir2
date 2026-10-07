@@ -91,7 +91,7 @@ Verified in the tree. Each row is a prerequisite arc.
 | Capability | What LLVM/Clang needs | Aegir today |
 | --- | --- | --- |
 | File I/O | `open/read/write/lseek/fstat/stat/unlink/mkdir/opendir/readdir` | **done** — the dispatcher answers all of these over `aegir::vfs` (`libs/hosted/aegir-heap/src/heap.cc`) |
-| Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | **file-backed `mmap` has landed** (`sys_mmap`, `heap.cc`), and `munmap`/`mremap` recycle their memory (specs/memory.md). `mprotect` is still absent: it needs the frame behind each mapped page to be in hand, which is the step that follows (specs/posix.md). `MAP_FIXED` is refused by decision. |
+| Memory | file-backed `mmap`, `mprotect`, `MAP_FIXED`, real `munmap` | **Landed**: file-backed `mmap` (`sys_mmap`, `heap.cc`), `mprotect` (`sys_mprotect`, over a record of the frame behind each mapped page), and `munmap`/`mremap` recycling (specs/memory.md) — all measured by `aegir-posix-memory-test` (specs/posix.md). `MAP_FIXED` is refused by decision: the arena's free area is one interval, so a hole punched into it could not be handed back. |
 | Process | `posix_spawn` + `wait4` for cc1 + ld; `fork` not needed | none; the POSIX process sub-arc is load-bearing (`specs/posix.md`) |
 | Threads | `pthread_create`, mutex, atomics | `LLVM_ENABLE_THREADS=OFF` avoids them; a `clone` route exists (musl patch 0002) but is not on this path |
 | Signals | `sigaction` (crash handlers) | none; disable or stub |

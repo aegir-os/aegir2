@@ -178,6 +178,18 @@ its last owner's bytes. The split, the first fit and the neighbour merge are
 unchanged. `scripts/check_regions.py` asserts 297 cases, and the boot the fix
 was measured against is green (specs/fonts.md picks the font service back up).
 
+**And the frames are named now, for `mprotect`.** A mapping's rights change by
+issuing the Map invocation again at the same address
+(`kernel/manual/parts/vspace.tex:294`), and that invocation names the frame -- so
+the heap keeps one `seL4_CPtr` per mapped arena page, in chunks of 512 that it maps
+the first time a page in their range is mapped. Two shapes were tried first and
+rejected by measurement, and neither is worth repeating: a table sized from the
+whole arena at init cost the *launcher* the untyped it spawns commands with
+(`spawn: FAIL no untyped for the command's runtime`), and mapping a fresh page with
+the rights its `prot` asked for cost the cxx smoke a fault on a page it had mapped,
+because its thread stack is `mmap`'d and written. `mmap` maps everything writable
+and `mprotect` is the only thing that narrows (specs/posix.md).
+
 ## What every service sees: a region, not a capability
 
 The memory service hands out **pristine untyped**, and that is the right unit
