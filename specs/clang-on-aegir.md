@@ -301,6 +301,16 @@ sit exactly where `hello.c` sits — and `ld.lld` failed identically, in the sam
 whose compile through that directory succeeded. (That arrangement also cost 27 cues
 elsewhere in the run, so it is reverted; the sysroot stays in `Libs`.)
 
+A fourth places the fault in lld's *search* rather than in the layer. Pointing `-T` at
+a staged file that is certainly there — `crt0.o`, beside the script — produced the
+*same* "cannot find linker script", while lld's attempt at a file that genuinely was
+not there reported the *layer's own errno*: `ld.lld: error: cannot open
+SCRATCH:hello.o: No such file or directory`. So lld reaches this filesystem and its
+`open` reports errors faithfully; what fails is how it decides a script or a `-l:`
+library *exists* before opening it — `fs::exists` over the search paths, which is
+`stat` where `open` already works. That is the one call to look at next, and it is
+why the compile succeeds while the link cannot find its inputs.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
