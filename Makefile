@@ -42,7 +42,7 @@ DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 2700
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset build run run-ui run-ui-dev envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset check-posix-path build run run-ui run-ui-dev envelope test clean distclean
 
 all: help
 
@@ -113,6 +113,9 @@ check-fonts: ## run the toolkit's font catalog against its host conformance case
 
 check-regions: ## run the heap's free-region list against its host conformance cases (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_regions.py
+
+check-posix-path: ## run the POSIX path view against its host conformance cases (host)
+	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_posix_path.py
 
 check-font-probe: ## run the font service's probe over the vendored faces (host)
 	timeout $(TOOLS_TIMEOUT) $(PYTHON) scripts/check_font_probe.py
