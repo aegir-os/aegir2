@@ -233,7 +233,16 @@ void check_thread()
         });
         worker.join();
         joined = true;
+    } catch (std::exception const &error) {
+        /* A thread that will not start says why: libc++ throws a system_error whose
+         * what() names the failure, and `catch (...)` discarded it while this was the
+         * one check failing (specs/memory.md, "The record"). */
+        std::printf("cxx-smoke: thread failed: %s\n", error.what());
+        std::fflush(nullptr);
+        joined = false;
     } catch (...) {
+        std::printf("cxx-smoke: thread failed: something not a std::exception\n");
+        std::fflush(nullptr);
         joined = false;
     }
     report(joined && counter == 1,

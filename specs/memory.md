@@ -391,6 +391,24 @@ a refused protection change was invisible while the log looked clean. Both of it
 refusals are traced now. Measured green: `CXX_SMOKE_OK` (and its `std::thread` check)
 pass, zero refusals of either kind, `PASS aegir-8g-smp4 booted`, `RUN_EXIT=0`.
 
+**And the growth the record was meant to enable is not landable yet -- now for a named
+reason.** With `mmap` reserving its runs from the window's top (the arena itself a
+reservation, the bounds and the frame record keyed to the window so those runs are
+owned), the C++ smoke's thread check fails deterministically, and it says why:
+
+    cxx-smoke: thread failed: thread constructor failed: Resource temporarily unavailable
+
+That is `EAGAIN` out of `pthread_create`: the thread is never created. It rules out the
+join, the TLS and the mutex in one line, and it points at the creation path -- the
+stack's `mmap` and the guard's `mprotect`. The instrument that produced it is one line
+in the *smoke*, not the heap: `catch (std::exception const &error)` and print
+`error.what()`, where a bare `catch (...)` had been discarding the reason while this was
+the one check failing. What is still silent is `map_page`'s own failure -- the frame it
+asks the allocator for, which is how `mmap` would come back `ENOMEM` and `pthread_create`
+turn into `EAGAIN` -- so the next attempt starts by tracing that, and by checking all
+three refusal counts (`mmap-refused`, `munmap-refused`, `mprotect-refused`) rather than
+the two that happened to be grepped.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
