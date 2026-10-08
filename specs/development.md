@@ -186,6 +186,20 @@ with; if a page frame fails too, the framing itself is wrong for this path.
 Reverted rather than left standing (`AGENTS.md`: a failure is a failure, and the tree must
 stand while the next experiment runs).
 
+**The page-sized experiment answers it.** The same read frame taken at `seL4_PageBits` —
+allocated with the write frame's own `alloc_page` — runs clean: all five POSIX markers fire,
+the acceptance still compiles, and the run ends in the same place as before the change (the
+link's 300 s window, 54 cues missing). So:
+
+- **The framing is sound; the *size* was the fault.** A 2 MiB frame, mapped through the
+  scratch cursor the heap's arena reserves from, breaks hosted file reads; a 4 KiB page does
+  not.
+- **A page buys nothing measurable** — the volume's own chunking was page-sized already — so
+  this version is not landed either. What is needed is a mega frame that does *not* collide
+  with the arena, and the question to answer is therefore what the 2 MiB frame collides with
+  (the scratch cursor, the arena's reservation from the window's top, or the untyped the
+  allocation takes per process) — not whether `read()` can be framed at all.
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
