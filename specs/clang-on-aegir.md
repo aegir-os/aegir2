@@ -463,6 +463,24 @@ portion, agreed at spawn and reserved before either is used, with `reserve` enfo
 it. That is the "one allocator" this needs -- one place that says who gets what,
 rather than two cursors inferring it.
 
+**And the question that ends the guessing: why two allocators at all?** Because they
+are two *disciplines*, and the attempts above proved both halves. `Scratch` is a
+*streaming* mapper: `next()` walks forward, `unmap` hands the last page back, and
+`rewind` restores a *mark* -- a stack, for the map-fill-unmap rhythm that fills a frame
+and hands it on. The heap is a *retentive* allocator: regions live until `munmap` and
+are then *reused* from a free list, which is why a program can map and unmap all day.
+Give the heap the scratch's cursor and every mapping consumes what `munmap` cannot give
+back: measured, the *spawner's* window -- the one a program's segments are zeroed
+through -- fills up, and spawning itself fails with "the window the frame is zeroed
+through is full" (129 cues unprinted). Neither allocator is wrong; they answer
+different questions.
+
+So "one allocator" is a piece of design, not a merge: one *address-space* allocator
+with reuse -- a region list both draw from -- with the scratch's streaming idiom and
+the heap's retentive policy as its clients. `reserve`, `unmap` and `rewind` are the
+primitives it would keep; the free list is what it would add. That is the shape the
+window wants, and it is the ground this stands on.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
