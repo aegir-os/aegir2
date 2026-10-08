@@ -1781,9 +1781,8 @@ TARGETS: dict[str, Target] = {
             # specs/clang-on-aegir.md's Phase 1/3: `cc` is clang and `ld.lld` is lld,
             # and the session runs each with --version, so the cues are their own
             # banners. The acceptance that compiles, links and runs a program is
-            # staged beside them: its compile works on the device, its link finds
-            # every staged file now that the layer answers `faccessat`, and it then
-            # asks for more memory than a command's arena has (specs/clang-on-aegir.md).
+            # staged beside them: compile and link both work on the device now, and
+            # the link's memory is the one thing left (specs/clang-on-aegir.md).
             QmpStep(r"clang version 20"),
             QmpStep(r"LLD 20"),
             # The scale acceptance's deliberately huge command runs after it

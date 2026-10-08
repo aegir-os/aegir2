@@ -413,6 +413,26 @@ base, and moving the floor *inside* the allocation path changes `mmap_ - brk_` u
 the very allocations that are growing the record. That is the next thing to
 understand; the attempt is reverted so the tree stands where it is green.
 
+**Resolved: the record's key was that cycle.** The chunk list is found by linear
+search and every chunk is allocated from the registry, which grows by mapping arena
+pages -- pages this record is what remembers. Measuring an index from a floor that can
+*descend* put an arena at the window's top at a quarter-million-scale index, so the
+record spread over hundreds of chunks and the growth fed itself: that is what hung
+`posix-memory-test`. Indexing from the arena's *top* (`limit_`, which never moves)
+keeps the indices small and the cycle out of reach. The record is keyed that way now,
+and it is green on its own: `make run TARGET=aegir-8g-smp4` reaches
+"PASS  aegir-8g-smp4 booted" with every POSIX marker and both programs answering
+(`clang version 20.1.8`, `LLD 20.1.8`), and `posix-memory-test` passed with the growth
+in place as well.
+
+What remains is the growth's *own* effect, and one measurement is still missing: with
+the floor descending, the link's `Out of memory` is gone and no `ld.lld:` error appears
+at all -- so the link itself may well be complete -- yet the acceptance's marker does
+not print and the session's script stops there (55 cues short, and that run's
+`service 30 (hello) faulted` is present in the green run too, so it is not this).
+Reading that run's tail -- where `SCRATCH:hello` would be spawned, and what the shell
+reports there -- is the next step, not more heap surgery.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.

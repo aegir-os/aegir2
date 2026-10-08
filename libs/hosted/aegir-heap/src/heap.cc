@@ -304,7 +304,14 @@ bool map_page(uintptr_t address) noexcept
      * above). Every arena page is recorded; a page outside the arena cannot
      * happen here, and would simply not be. */
     if (address >= base_ && address < limit_) {
-        uint32_t const index = static_cast<uint32_t>((address - base_) / kPageBytes);
+        /* Indexed from the arena's *top*, which never moves. A floor that can
+         * descend is the wrong thing to measure from: an arena at the window's top
+         * then lands at a quarter-million-scale index, the record spreads over
+         * hundreds of chunks, and every chunk is allocated from the registry --
+         * which grows by mapping arena pages, which this record is what remembers.
+         * That is a cycle, and it is what hung posix-memory-test
+         * (specs/clang-on-aegir.md's Phase 3). */
+        uint32_t const index = static_cast<uint32_t>((limit_ - address) / kPageBytes);
         if (FrameChunk *chunk = frame_chunk(index, true)) {
             chunk->frames[index - chunk->first] = frame;
         }
@@ -717,7 +724,7 @@ bool set_rights(uintptr_t address, size_t length, seL4_CapRights_t rights) noexc
         if (!ready_ || at < base_ || at >= limit_) {
             return false;
         }
-        uint32_t const index = static_cast<uint32_t>((at - base_) / kPageBytes);
+        uint32_t const index = static_cast<uint32_t>((limit_ - at) / kPageBytes);
         FrameChunk *chunk = frame_chunk(index, false);
         if (chunk == nullptr || chunk->frames[index - chunk->first] == 0) {
             return false;
