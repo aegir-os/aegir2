@@ -146,19 +146,21 @@ aegir::heap::detail::Regions g_free_regions;
 
 bool map_page(uintptr_t address) noexcept;
 
-/* Another node page for the free list: one page mapped below the cursor, where
- * every mmap comes from, so it is address space the heap already owns. */
+/* Another node page for the free list: one page reserved from the window's top, the
+ * same source as every other run the heap places. Carved off `mmap_` instead it landed
+ * *inside the arena*, which maps those same pages -- measured, the kernel's answer was
+ * "Virtual address (0x4012d000) already mapped", one page below the window's end
+ * (specs/memory.md, "one space, one owner"). */
 void *grow_node_region(void *context, unsigned *bytes) noexcept
 {
     static_cast<void>(context);
-    if (!ready_ || mmap_ - brk_ < kPageBytes) {
+    if (!ready_ || g_scratch == nullptr) {
         return nullptr;
     }
-    uintptr_t const page = mmap_ - kPageBytes;
-    if (!map_page(page)) {
+    uintptr_t const page = g_scratch->reserve(1);
+    if (page == 0 || !map_page(page)) {
         return nullptr;
     }
-    mmap_ = page;
     *bytes = static_cast<unsigned>(kPageBytes);
     return reinterpret_cast<void *>(page);
 }
@@ -190,11 +192,13 @@ uint32_t g_run_capacity = 0;
 
 bool grow_run_record() noexcept
 {
-    if (!ready_ || mmap_ - brk_ < kPageBytes) {
+    /* Reserved from the window's top, like the free list's nodes and every other run the
+     * heap places: one source, so nothing lands inside the arena (specs/memory.md). */
+    if (!ready_ || g_scratch == nullptr) {
         return false;
     }
-    uintptr_t const page = mmap_ - kPageBytes;
-    if (!map_page(page)) {
+    uintptr_t const page = g_scratch->reserve(1);
+    if (page == 0 || !map_page(page)) {
         return false;
     }
     auto *const more = reinterpret_cast<Run *>(page);
@@ -207,7 +211,6 @@ bool grow_run_record() noexcept
     }
     g_runs = more;
     g_run_capacity = count;
-    mmap_ = page;
     return true;
 }
 
@@ -270,10 +273,17 @@ FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
             return chunk;
         }
     }
-    if (!create || !ready_ || mmap_ - brk_ < kPageBytes) {
+    if (!create || !ready_ || g_scratch == nullptr) {
         return nullptr;
     }
-    uintptr_t const page = mmap_ - kPageBytes;
+    /* Reserved from the window's top, like the free list's nodes and the run record:
+     * one source for everything the heap places (specs/memory.md, "one space, one
+     * owner"). Carved off `mmap_` this landed inside the arena and the kernel answered
+     * "Virtual address ... already mapped". */
+    uintptr_t const page = g_scratch->reserve(1);
+    if (page == 0) {
+        return nullptr;
+    }
     aegir::mem::Account account{"heap", 0, 0, 0};
     seL4_Error error = seL4_NoError;
     seL4_CPtr const frame =
@@ -281,7 +291,6 @@ FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
     if (frame == 0 || !g_scratch->map_at(page, frame)) {
         return nullptr;
     }
-    mmap_ = page;
     auto *chunk = reinterpret_cast<FrameChunk *>(page);
     chunk->next = g_frame_chunks;
     chunk->first = index - (index % kFramesPerChunk);
@@ -357,11 +366,6 @@ uintptr_t align_up(uintptr_t value) noexcept
     return (value + kPageBytes - 1) & ~(kPageBytes - 1);
 }
 
-uintptr_t align_down(uintptr_t value) noexcept
-{
-    return value & ~(kPageBytes - 1);
-}
-
 /* Map one 4 KiB frame at `address`, from the allocator's untyped, into the
  * adopted window. The heap's pages are charged to its own account -- one
  * accounting hole, charged once and never reclaimed, the same shape as the
@@ -378,10 +382,16 @@ bool map_page(uintptr_t address) noexcept
     if (!g_scratch->map_at(address, frame)) {
         return false;
     }
-    /* Remembered so that mprotect can name the frame again (the chunk record
-     * above). Every arena page is recorded; a page outside the arena cannot
-     * happen here, and would simply not be. */
-    if (address >= base_ && address < limit_) {
+    /* Remembered so that mprotect can name the frame again (the chunk record above).
+     * Every page the heap maps inside its window is recorded -- the arena *and* the runs
+     * reserved from the window's top, which sit below it. Bounded by the arena instead,
+     * a reserved run's pages went unrecorded and mprotect was refused with nothing to
+     * see: measured, the memory client's check 10, `mprotect-refused` on one page
+     * (specs/memory.md, "one space, one owner"). The registry's own pages now come from
+     * `reserve` too, so recording a page outside the arena no longer runs the cycle the
+     * note below describes. */
+    if (g_scratch != nullptr && address >= g_scratch->base() &&
+        address < g_scratch->limit()) {
         /* Indexed from the arena's *top*, which never moves. A floor that can
          * descend is the wrong thing to measure from: an arena at the window's top
          * then lands at a quarter-million-scale index, the record spreads over
@@ -556,15 +566,26 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
      * rather than refused (AGENTS.md: no arbitrary or hardcoded limits). What
      * bounded that before -- a frame record sized from the arena at init -- is
      * chunked now, so a large arena costs nothing until it is used. */
-    uintptr_t const top = align_down(scratch.limit());
-    uintptr_t const floor = top > align_up(bytes) ? top - align_up(bytes) : 0;
-    base_ = floor > align_up(scratch.base()) ? floor : align_up(scratch.base());
-    if (base_ >= top || base_ < scratch.base()) {
+    /* The arena is a *reservation* from the window's top -- `Scratch::reserve` walks down
+     * from there -- so it sits *beside* the frames a service maps as it starts instead of
+     * enclosing them, and every other run the heap places (an mmap, its own bookkeeping)
+     * is reserved the same way rather than carved out of a fixed arena. `bytes` is the
+     * size of this first run, not a ceiling: `sys_mmap` reserves more when it needs it,
+     * which is what lets a 57 MiB linker run where an 8 MiB seed used to stop it
+     * (specs/memory.md, "one space, one owner"). */
+    if (bytes < kPageBytes) {
         return false;
     }
-    limit_ = top;
+    uint32_t const wanted = static_cast<uint32_t>(align_up(bytes) / kPageBytes);
+    uintptr_t const base = scratch.reserve(wanted);
+    if (base == 0) {
+        return false;
+    }
+    base_ = base;
+    limit_ = base + static_cast<uintptr_t>(wanted) * kPageBytes;
     brk_ = base_;
-    mmap_ = top;
+    /* `brk` grows within the arena; everything else the heap places is reserved. */
+    mmap_ = limit_;
     ready_ = true;
     g_free_regions.set_node_source(grow_node_region, nullptr);
     trace("region", base_, limit_);
@@ -708,12 +729,18 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
         base = reinterpret_cast<uintptr_t>(released);
         trace("mmap-reused", base, needed);
     } else {
-        if (needed > mmap_ - brk_) {
+        /* A run reserved from the window's top (`Scratch::reserve` walks down from
+         * there), not carved from a fixed arena: the window is what the process has, and
+         * its reservation cursor is the only cap. A run handed back is reserved again, or
+         * reused from `g_free_regions` above -- this is the bound that said "Out of
+         * memory" when a 97 MiB compiler tried to link (specs/memory.md). */
+        uintptr_t const reserved =
+            g_scratch->reserve(static_cast<unsigned>(needed / kPageBytes));
+        if (reserved == 0) {
             trace("mmap-refused", length, 0);
             return -ENOMEM;
         }
-        base = mmap_ - needed;
-        mmap_ = base;
+        base = reserved;
         for (uintptr_t page = 0; page < needed / kPageBytes; ++page) {
             if (!map_page(base + page * kPageBytes)) {
                 trace("mmap-refused", length, 0);
@@ -770,6 +797,11 @@ long sys_munmap(void *addr, size_t length) noexcept
         trace("munmap-refused", base, bytes);
         return -EINVAL;
     }
+    /* And back to the window: `Scratch::release` takes the run when it ends at the
+     * reservation cursor and does nothing otherwise -- the space is in the heap's list
+     * either way, so a run that is not adjacent is handed out again rather than lost
+     * (specs/memory.md, "one space, one owner"). */
+    g_scratch->release(base, static_cast<unsigned>(bytes / kPageBytes));
     return 0;
 }
 
@@ -805,7 +837,14 @@ seL4_CapRights_t rights_for(int prot) noexcept
 bool set_rights(uintptr_t address, size_t length, seL4_CapRights_t rights) noexcept
 {
     for (uintptr_t at = address; at < address + length; at += kPageBytes) {
-        if (!ready_ || at < base_ || at >= limit_) {
+        /* The *window*, not the arena: everything the heap places -- an mmap's run, its
+         * own bookkeeping, the arena itself -- lies inside the window the process was
+         * given, and only the arena lies between base_ and limit_. Bounded by the arena,
+         * this refused mprotect on any mmap'd page, and silently: measured, the memory
+         * client's check 10 ("mprotect a page read-only") came back ENOMEM with the
+         * kernel saying nothing (specs/memory.md, "one space, one owner"). */
+        if (!ready_ || g_scratch == nullptr || at < g_scratch->base() ||
+            at >= g_scratch->limit()) {
             return false;
         }
         uint32_t const index = static_cast<uint32_t>((limit_ - at) / kPageBytes);
@@ -837,7 +876,12 @@ long sys_mprotect(void *addr, size_t length, int prot) noexcept
     }
     uintptr_t const address = reinterpret_cast<uintptr_t>(addr);
     uintptr_t const needed = align_up(length);
-    if (address < base_ || address + needed > limit_) {
+    /* The window, not the arena: `mmap`'s runs and the heap's own bookkeeping are
+     * reserved from the window's top, so they sit *below* `base_` -- and an arena bound
+     * here refused a legitimate protection change with no kernel error to see
+     * (specs/memory.md, "one space, one owner"). */
+    if (g_scratch == nullptr || address < g_scratch->base() ||
+        address + needed > g_scratch->limit()) {
         trace("mprotect-refused", address, needed);
         return -ENOMEM;
     }

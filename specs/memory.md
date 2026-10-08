@@ -470,26 +470,42 @@ None of it needs a kernel, musl or LLVM change: frames are unbounded through `me
 `kMethodAlloc`, page tables are created on demand, and the three choices above are the only
 limits in the way.
 
-### What the two-ends design already proves, and what it still breaks (measured)
+### One space, one owner: what it took (measured)
 
-Status of the arc's two landed pieces, and of the third before it was parked:
+The arc is landed, and it took four corrections, each of which the run named:
 
-- **`Scratch` with two ends, and the streaming cursor stopping at the reservation cursor**
-  (`9c138b81`, `9ecf8592`): landed, build green, behaviour identical for every caller --
-  nothing reserves yet.
-- **The heap as the client** (arena reserved from the top, `mmap` reserving its own runs,
-  `munmap` returning them to the list *and* the window): **the design works**. With it,
-  *no service faults at one page past its window* -- the signature that killed `font`,
-  `fssmoke`, `envsmoke`, `cxxsmoke` and `hello` in every earlier attempt is gone, and
-  `CXX_SMOKE_OK` fires where `cxxsmoke` used to die before its thread check. `AEGIR_POSIX_
-  WAIT_OK`, `PATH_OK` and `FILE_OK` fire too.
-- **What it still breaks**, which is why it is parked rather than landed: `posix-memory-test`
-  exits **12**, and that client's status is `2 + n`, so it is check 10 -- `mprotect` on a page
-  of a run `mmap` reserved. The kernel says so on the way out:
-  `[decodeRISCVFrameInvocation/893 ... "posix-memory-test"]: Virtual add...` (truncated in the
-  log). The next attempt starts there: `map_page`'s frame record is indexed from the arena's
-  `limit_`, and `mmap`'s runs now sit *below* the arena because the arena is reserved first
-  -- so `set_rights` walks an index the record was not built for.
+1. **Everything the heap places comes from `reserve`.** The free list's nodes, the run
+   record and the frame chunks were carved *down from `mmap_`* -- and `mmap_` is the arena's
+   *top* -- so the heap's own bookkeeping was laid on the arena's pages. The kernel said so
+   exactly: `[decodeRISCVFrameInvocation/893 ... "font"]: Virtual address (0x4012d000)
+   already mapped`, one page below each service's window end. Three sites, one source now.
+   (`mmap_` keeps its other meaning: `brk`'s ceiling, the arena's end.)
+2. **`set_rights` and `sys_mprotect` bound by the *window*, not the arena.** `mmap`'s runs sit
+   *below* `base_` because the arena is reserved first, so an arena bound refused a
+   legitimate `mprotect` -- silently, which is how `posix-memory-test` failed check 10 with
+   the kernel saying nothing at all.
+3. **`map_page` records every page it maps *inside the window*.** It recorded only arena
+   pages, so a reserved run's frames were never in the record -- and `set_rights` needs
+   exactly that to name the frame behind a page. This is the one the trace found:
+   `mprotect-refused 0x3f898000 0x1000` for the client whose pages came from `mmap-reused`.
+   (The cycle its comment warned about -- the record growing through arena pages -- is gone,
+   because the registry's pages come from `reserve` too.)
+4. **The streaming cursor stops at the reservation cursor** (`map`/`map_large`), and a
+   service's window no longer grows: measured, `window-probe` is REFUSED for every process.
+
+**Result, on `aegir-8g-smp4`:** no service faults at one page past its window -- the
+signature that killed `font`, `fssmoke`, `envsmoke`, `cxxsmoke` and `hello` in every earlier
+attempt -- and `CXX_SMOKE_OK` fires where `cxxsmoke` used to die before its thread check. All
+five POSIX clients pass (`WAIT_OK`, `PATH_OK`, `FILE_OK`, `MEMORY_OK`, `ENV_OK`), zero
+`mprotect-refused`, zero `already mapped`. And the session's script reaches the acceptance:
+`launcher: command started Sys:Development/C/cc`, with the compiler then reserving region
+after region (`region 0x4401d000 0x4481d000`, `mmap 0x4401c000`, `mmap 0x44013000`, ...) --
+a 97 MiB program taking what it needs, past a seed that used to stop it.
+
+What limits the run now is not a cap in the heap but the runner's own quiet timeout
+(`FAIL no console line within 300s`): clang compiles silently for longer than that. That is
+the next thing to decide -- a development target that runs a real compile needs a quiet
+allowance that fits one, and the acceptance's remaining steps follow it.
 
 ## What this is not
 
