@@ -504,6 +504,24 @@ design needs either way is the fact neither caller states today: *where a window
 space begins*, told to `Scratch` by whoever laid the window out -- the boot path and
 the spawner both know it.
 
+**The trace answered, and then three installs failed identically -- which is itself the
+finding.** `heap-init` shows every process a ~1 GiB window (`seed=0x4000000` for the
+compiler, `0x800000` for most) and the arena at the window's *top*; so the sizes were
+never the problem. With `reserve` taking that top and the arena reserved from it, the
+same services die the same way -- `cxxsmoke`, `envsmoke`, `fssmoke`, `font` and `hello`,
+each "faulted on a memory access at <window top> + 0xf", 154 cues unprinted --
+*identically* with the scratch's free list in place, without it, and with the arena
+limited to what the window has. So it is none of those three: not the free list, not
+the arena's size, not the reservation's end. What all three share is `Scratch::reserve`
+being *used at `heap::init`*: the heap asking the window for its arena through the same
+door a service's frames come through.
+
+The next attempt needs an instrument aimed at the *mapping* rather than the
+allocation -- a `map_page` trace or the heap's dispatch trace over `cxxsmoke`'s or
+`font`'s first moments -- which says who owns the page at `<top> + 0xf` and what wrote
+past it. The four instruments used so far were all pointed at the allocator's
+bookkeeping, and every one of them came back clean.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
