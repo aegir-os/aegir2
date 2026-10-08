@@ -6,6 +6,8 @@
 
 - No arbitrary and hardcoded limits without explicit permission. Capacity tables should
   grow on demand.
+- There is no such thing as a "flake" - a broken run is a broken run. We must find out
+  why. It succeeding on a subsequent re-run is unacceptable. A failure is a failure.
 - Any use of `make test` or other long running bash process must use `timeout` so as to
   detect any 'wedged' process. But `timeout` signals only the process it started, so
   killing a wrapper can leave its children running with nobody to stop them: a
