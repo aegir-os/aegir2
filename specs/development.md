@@ -117,19 +117,25 @@ That window is deliberately small and it stays small: a timer is a guess, while 
 that reports is a fact — which is why `Sys:S/Development-Acceptance` reports between its
 commands rather than asking for a longer wait.
 
-**What the link does, measured since.** The load is *not* the cost, so no allowance is
-owed it: a child's image is mapped in **mega pages** where the filesystem can serve a
-large `read-frame` (`libs/freestanding/aegir-mem/src/child_vspace.cc:354-385`), which is
-~29 calls for lld's 57 MiB, and the typed `ld.lld --version` step takes seconds (its
-`command started` line to the acceptance's next cue is about twenty console lines). What
-stops the run is that the link produces *nothing at all* after
-`launcher: command started Sys:Development/C/ld.lld`: `link.sh` runs it with `--verbose`
-(`scripts/run_target.py:737-746`), whose whole purpose is to print the paths it searches
-and the files it opens, and none of that arrives, nor does the `AEGIR_ACCEPTANCE_LINKED`
-echo after it. So the link is a *hang*, not slowness — and it completed in an earlier run
-(the one that printed `AEGIR_HELLO_OK`), so it is not deterministic either. That is the
-next thing to name: lld, the crt objects and the archive it opens, against the allocator
-the memory arc just reworked.
+**What the link does, measured with the dispatch trace.** It is not a hang: the trace
+(`-DAEGIR_HEAP_TRACE`) shows the linker alive and allocating right up to the silence —
+`mmap 0x422cc000 0x4000`, `mmap 0x422c3000 0x2000`, its own badge — and the runner's quiet
+window is what ends the run. Two things make it *look* like nothing is happening:
+
+- `link.sh` runs lld with `--verbose` (`scripts/run_target.py:737-746`), and lld writes that
+  to **stderr**. The terminal mirrors a command's *stdout* to the serial — which is how
+  every marker here is read — but not its stderr, so the one command that would narrate
+  itself narrates into the grid and not into the log.
+- The work itself is slow, and the reason is a number: the link reads ~100 MB of crt
+  objects and the archive through the **file** path, whose reads are **page-sized**, while
+  the *image* loader next door maps **mega pages** where the filesystem serves a large
+  `read-frame` (`libs/freestanding/aegir-mem/src/child_vspace.cc:354-385`; ~29 calls for
+  lld's 57 MiB). Thousands of frame-sized reads, each an IPC and a mapping, is where the
+  minutes go.
+
+So the next thing to make fast — a *speed* question, not a timeout one — is the file read
+path's granularity, and second whether a command's stderr should reach the serial at all,
+since a long command that narrates itself into the grid is one the acceptance cannot see.
 
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
