@@ -259,9 +259,14 @@ AEGIR_BFS_TREE = [
         # specs/memory.md). The runner types one `execute Sys:S/Development-Acceptance`
         # on the startup's last line, when the shell is free again.
         ("file", "Development-Acceptance",
+         b"echo AEGIR_ACCEPTANCE_COMPILING\n"
+         b"date\n"
          b"Sys:Development/C/cc --target=riscv64-unknown-elf"
          b" -c Sys:Development/hello.c -o SCRATCH:hello.o\n"
+         b"date\n"
+         b"echo AEGIR_ACCEPTANCE_COMPILED\n"
          b"execute Sys:Development/link.sh\n"
+         b"echo AEGIR_ACCEPTANCE_LINKED\n"
          b"SCRATCH:hello\n"),
         
         # The session's services, as data (specs/session.md): auth reads the
@@ -593,15 +598,17 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # `--version`, which proves it loaded, and the acceptance itself is typed later
         # from `Sys:S/Development-Acceptance` (its cue is the last line below, which the
         # guest prints when this script has finished and the shell is free again).
+        # The startup stays *fast*, and carries nothing the acceptance needs: the runner
+        # types each acceptance step instead (scripts/targets.py), because a key typed
+        # while this script is running is lost -- measured, an `execute ...` cued on the
+        # script's own last line never reached the shell at all. What is left here is what
+        # works from a script and is quick: the POSIX clients and the scale acceptance.
         tree = _with_startup(tree, b"Sys:Development/C/posix-test\n"
                                    b"Sys:Development/C/posix-path-test\n"
                                    b"Sys:Development/C/posix-file-test\n"
                                    b"Sys:Development/C/posix-memory-test\n"
                                    b"Sys:Development/C/posix-env-test\n"
-                                   b"Sys:Development/C/aegir-big\n"
-                                   b"Sys:Development/C/cc --version\n"
-                                   b"Sys:Development/C/ld.lld --version\n"
-                                   b"echo AEGIR_DEVELOPMENT_READY\n")
+                                   b"Sys:Development/C/aegir-big\n")
     return tree
 
 

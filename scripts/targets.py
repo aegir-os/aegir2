@@ -1744,8 +1744,29 @@ TARGETS: dict[str, Target] = {
             # banners. The acceptance that compiles, links and runs a program is
             # staged beside them: compile and link both complete on the device now,
             # and the step after the link is the one left (specs/clang-on-aegir.md).
-            QmpStep(r"clang version 20"),
-            QmpStep(r"LLD 20"),
+            # The acceptance's programs, typed one command per step (specs/development.md):
+            # none of this lives in the session's startup, because a key typed while that
+            # script runs is lost -- measured, an `execute` cued on the script's own last
+            # line never reached the shell at all. Each step clicks the terminal first, as
+            # every DOS step does, and the first cue is a line the *demo* prints: the demo
+            # is a separate, step-paced process, so its lines cannot appear until the
+            # startup has finished and the runner has paced them.
+            # The cue is a demo line, and one no other step uses: the demo is a separate,
+            # step-paced process, so its lines cannot appear until the startup has
+            # finished and the runner has paced it there. (Checked against every `demo:`
+            # cue in the list -- `demo: opened AEGIR.TXT` was the obvious choice and is
+            # already a step's, so this one is used instead; AGENTS.md's rule: one step
+            # per cue.)
+            QmpStep(r"demo: filtered A#\? 2",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/cc --version\n"),
+            QmpStep(r"clang version 20",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/ld.lld --version\n"),
+            QmpStep(r"LLD 20",
+                    events=TERMINAL_CLICK,
+                    press="execute Sys:S/Development-Acceptance\n"),
+            QmpStep(r"AEGIR_HELLO_OK"),
             # The acceptance itself (specs/clang-on-aegir.md:203-205), typed rather than
             # run from the session's startup: it takes minutes, and a startup that takes
             # minutes keeps the shell busy while the runner types the DOS acceptance into
@@ -1754,7 +1775,20 @@ TARGETS: dict[str, Target] = {
             # that line is the cue; the script it runs compiles the source with clang,
             # links it with lld, and runs the result, and its lines run in order -- so the
             # marker below is only reached if all three worked.
-            QmpStep(r"AEGIR_DEVELOPMENT_READY",
+            # The cue is the last startup command's *start*, not the script's last
+            # line: a key typed while the shell is still finishing its startup script
+            # can be lost. Measured, that is what happened -- in one run the
+            # acceptance's `execute` never reached the shell and the demo's gestures ran
+            # instead, where the run before it reached the shell and printed
+            # AEGIR_HELLO_OK. Cueing on the command the shell launches is the idiom the
+            # DOS chain uses for every one of its typed lines, and it holds.
+            QmpStep(r"launcher: command started Sys:Development/C/ld.lld",
+                    # Click the terminal first, as every DOS step does: the cue says a
+                    # command started, not that the shell will receive the key. Measured,
+                    # by the time this fires the demo has the focus, and the typed
+                    # `execute` went to the demo's window -- it never reached the shell,
+                    # while the DOS steps, which click first, all land.
+                    events=TERMINAL_CLICK,
                     press="execute Sys:S/Development-Acceptance\n"),
             QmpStep(r"AEGIR_HELLO_OK"),
             # The scale acceptance's deliberately huge command runs after it
