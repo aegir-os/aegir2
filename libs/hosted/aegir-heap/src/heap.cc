@@ -407,6 +407,42 @@ bool map_page(uintptr_t address) noexcept
     return true;
 }
 
+/* Map one 2 MiB frame at `address`, from the allocator's untyped: the same mapping a page
+ * gets, at a granularity worth having where a run is large and aligned. One page-table entry
+ * instead of 512, and one frame retyped instead of 512 -- which is what a file-backed mapping
+ * of a hundred megabytes was paying a page at a time, and where a linker's minutes went
+ * (specs/development.md). The kernel takes the frame's size from the frame itself, so the
+ * mapping call is the one `map_page` uses.
+ *
+ * The frame is recorded for *every* page it covers, because that is how the record is keyed:
+ * `mprotect` and `set_rights` look a page's frame up by index, and a mega frame recorded once
+ * would be invisible to 511 of its own pages. */
+bool map_large_page(uintptr_t address) noexcept
+{
+    constexpr uintptr_t kMega = 1ull << seL4_LargePageBits;
+    constexpr uintptr_t kMegaPages = kMega / kPageBytes;
+    aegir::mem::Account account{"heap", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const frame = g_allocator->alloc_object(seL4_RISCV_Mega_Page,
+                                                      seL4_LargePageBits, account, &error);
+    if (frame == 0) {
+        return false;
+    }
+    if (!g_scratch->map_at(address, frame)) {
+        return false;
+    }
+    if (g_scratch != nullptr && address >= g_scratch->base() && address < g_scratch->limit()) {
+        for (uintptr_t page = 0; page < kMegaPages; ++page) {
+            uint32_t const index =
+                static_cast<uint32_t>((limit_ - (address + page * kPageBytes)) / kPageBytes);
+            if (FrameChunk *chunk = frame_chunk(index, true)) {
+                chunk->frames[index - chunk->first] = frame;
+            }
+        }
+    }
+    return true;
+}
+
 /* The memory service, found once by name through the bootstrap block, the way
  * the console stream and the clock are (specs/memory.md). A process not given
  * the port has an invalid consumer, and its heap is bounded by its seed as
@@ -741,7 +777,35 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
             return -ENOMEM;
         }
         base = reserved;
-        for (uintptr_t page = 0; page < needed / kPageBytes; ++page) {
+        /* A file-backed run is filled with the file's bytes and then read by whatever asked
+         * for it. A compiler's input -- a hundred megabytes of it -- was 25,600 frame retypes
+         * and 25,600 mappings here, one page at a time, which is where a linker's minutes went
+         * (specs/development.md). Its aligned middle goes in 2 MiB frames, the way the image
+         * loader maps a child's blocks (libs/freestanding/aegir-mem/src/child_vspace.cc), and
+         * the unaligned head and tail stay one page each. An anonymous run keeps pages
+         * throughout: those are what a program mprotects, and a protection change inside a
+         * mega page cannot be split. */
+        constexpr uintptr_t kMega = 1ull << seL4_LargePageBits;
+        constexpr uintptr_t kMegaPages = kMega / kPageBytes;
+        uintptr_t page = 0;
+        if (file_backed) {
+            while (page < needed / kPageBytes && (base + page * kPageBytes) % kMega != 0) {
+                if (!map_page(base + page * kPageBytes)) {
+                    trace("mmap-refused", length, 0);
+                    return -ENOMEM;
+                }
+                ++page;
+            }
+            while (page + kMegaPages <= needed / kPageBytes &&
+                   (base + page * kPageBytes) % kMega == 0) {
+                if (!map_large_page(base + page * kPageBytes)) {
+                    trace("mmap-refused", length, 0);
+                    return -ENOMEM;
+                }
+                page += kMegaPages;
+            }
+        }
+        for (; page < needed / kPageBytes; ++page) {
             if (!map_page(base + page * kPageBytes)) {
                 trace("mmap-refused", length, 0);
                 return -ENOMEM;
