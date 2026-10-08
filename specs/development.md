@@ -176,6 +176,18 @@ changed: the system's allocation path under a malloc-heavy program. That is wher
 starts — and the trace is reverted rather than left on, because it costs every run more than it
 tells.
 
+**Then the A/B named it, and it is not the allocator either.** With the `-l:` archives left out of
+`link.sh` — temporary, reverted — the link **finishes in 6 seconds** (`23:45:51` to `23:45:57`,
+and `AEGIR_ACCEPTANCE_LINKED` prints). `libgcc.a` (310 KB) is read in that same fast pass, so what
+costs the minutes is **`sysroot.a` specifically: 46 MB, 1580 members**. Loading, reads, mappings
+and the spawn pool are all below that, and the compile — two 97 MB programs — proves it in 8
+seconds.
+
+**A second bug surfaced in the same run, and it is independent of the cost.**
+`ld.lld: error: SCRATCH:hello.o: section header string table index 1 does not exist` is the last
+thing the linker says about its inputs: the object clang wrote is malformed, or lld reads it
+wrongly. The link cannot succeed until that is understood, whatever the archive costs.
+
 **First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
 through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
 it now asks for a **mega** page (`seL4_RISCV_Mega_Page` with `seL4_LargePageBits` — the same
