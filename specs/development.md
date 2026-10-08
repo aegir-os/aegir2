@@ -217,6 +217,27 @@ The read path's granularity is therefore **blocked, not wrong**: it cannot have 
 until a departed process's memory is returned, or the spawn path's pool grows. That is the
 piece to do first, and it is one fix for both — the link's `Out of memory` and this.
 
+**And the leak was mine, but not the whole story.** The accessor allocated the frame *before*
+mapping it, so when `map_large` refused it returned false *leaving the frame allocated*, and
+the refusal did not latch — every read then paid another 2 MiB. Fixed (the frame is given back
+with its own cookie, and the attempt latches), and the run is *still* broken the same way: 27
+`command started` against 47, the five markers gone, 152 cues missing.
+
+That is itself the measurement, and it settles the mechanism. Had `map_large` been refusing in
+a hosted window, the fixed code would have fallen back to the path the committed tree has, and
+the run would be healthy. It is not — so the map *succeeds* (a fresh process has the 2 MiB of
+window to give), and what breaks the session is the frame being **held**: 2 MiB of untyped per
+process that reads a file. **That is not the heap and not the window.** Last night's two-ends
+allocator does what it says — `map_large` respects the reservation cursor and refuses rather
+than colliding — and nothing here is evidence against it. What runs out is the pool commands
+are *spawned* from, which never gets a departed command's memory back: the shortage
+`aegir-big` documents.
+
+So the read path needs a frame it does not *hold*: take the 2 MiB for the duration of a read
+and give it straight back, so the pool sees it only while a read is in flight — one process at
+a time rather than every process forever. That is the next thing to try, and it needs no change
+to the allocator at all.
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
