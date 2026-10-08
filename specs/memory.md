@@ -420,6 +420,20 @@ takes them in order -- `mmap`'s runs coming from the window's top instead of the
 `mmap_`, or the arena-as-reservation itself (`heap::init`) and what the services still
 hold that it no longer covers.
 
+**And removing the heap cap alone is not enough -- measured.** `heap::init(..., 0)` now
+means "as much of the window as there is", and `command.h`'s `kHeapBytes` is gone, so a
+hosted command's heap is its whole window. The run stops at the session's *first* command:
+the five POSIX markers never fire and no `Sys:Development/C/cc` line appears, because the
+arena took the window the **scratch** needs for its streaming frames. Same wall as the
+first attempt, from the other side.
+
+So the two changes belong together, and neither works alone: the cap has to go (a
+program's size is not ours to choose) *and* the arena and the scratch have to stop being
+two tenants of one window -- one allocator over one space, which is what the user asked
+for and what this whole arc keeps arriving at. The measured constraint on that allocator
+is now known exactly: **a process cannot map past its window** (`window-probe: REFUSED`,
+every process, green run), so the one space must be *shared*, not *extended*.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
