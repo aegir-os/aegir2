@@ -734,21 +734,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"demo: closed",
                 events=TERMINAL_CLICK,
-                # The shell's own words first, read by the shell itself rather
-                # than spawned: SetEnv sets, GetEnv reads it back, UnSet removes
-                # it, and the second GetEnv says so; an alias (hi stands for
-                # echo) expands, Prompt changes the prompt, Eval runs a line,
-                # and Why explains a return code. The redirection (`echo ...
-                # >file`) and the first command file come last. The command
-                # files are typed one per step, cued by the command the one
-                # before it starts, because a press sent while the guest is
-                # starting an image fills its eight-deep input queue and drops
-                # keys -- and a dropped key mangles the line.
-                press="setenv PROBE value\necho \"quoted $PROBE\"\ngetenv PROBE\nunset PROBE\n"
-                      "getenv PROBE\nalias hi echo\nhi alias-expanded\nprompt AEGIR\n"
-                      "eval echo eval-line\nwhy 10\necho shell-redirect >Home:ShellOut.TXT\n"
-                      "set prog aegir-print\nset value env-substituted\n"
-                      "execute Sys:S/Subst-Test\n",
+                # The shell's own words, as one file the runner types with one command:
+                # Sys:S/Builtin-Test holds SetEnv/GetEnv/UnSet/alias/Prompt/Eval/Why and
+                # the redirection, and the shell runs its lines in order -- so nothing is
+                # typed across the gap where the console loses a key (the file's tuple in
+                # scripts/make_disk.py carries the reasoning and the measurement, and
+                # specs/shell.md's Phase 7/8 says which line proves which builtin). The
+                # file's last line is `execute Sys:S/Subst-Test`, whose own words make the
+                # command the next step waits on start.
+                press="execute Sys:S/Builtin-Test\n",
             ),
             # Substitution (specs/shell.md): Subst-Test's command word is the
             # variable $prog, so aegir-print starting proves the environment

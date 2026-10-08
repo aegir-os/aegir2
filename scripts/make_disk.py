@@ -224,6 +224,33 @@ AEGIR_BFS_TREE = [
         ("file", "Halt-Test",
          b"run wait 99999\nbreak x name wait\nexecute Sys:S/Control-Test\n"),
 
+        # The shell's own words, as one file the runner types with one `execute`
+        # (specs/shell.md's Phase 7/8): SetEnv sets, GetEnv reads it back, UnSet removes
+        # it, and the second GetEnv says so; an alias (hi stands for echo) expands, Prompt
+        # changes the prompt, Eval runs a line, Why explains a return code, and the
+        # redirection (`echo ... >file`) proves a builtin's stdout reaches a path. It is a
+        # *file* rather than fourteen typed lines because the console drops a key typed in
+        # the gap while a command is starting (aegir-terminal's console_stream_server:
+        # queue_input appends to the caller's stream, and a key with no stream bound and no
+        # editor attached is lost) -- measured, that mangled line ten of the old press into
+        # `eval-lie` and the survivor into `0` (specs/memory.md). Subst-Test and Params-Test
+        # run last: they are the substitution and argument proofs.
+        ("file", "Builtin-Test",
+         b"setenv PROBE value\n"
+         b"echo \"quoted $PROBE\"\n"
+         b"getenv PROBE\n"
+         b"unset PROBE\n"
+         b"getenv PROBE\n"
+         b"alias hi echo\n"
+         b"hi alias-expanded\n"
+         b"prompt AEGIR\n"
+         b"eval echo eval-line\n"
+         b"why 10\n"
+         b"echo shell-redirect >Home:ShellOut.TXT\n"
+         b"set prog aegir-print\n"
+         b"set value env-substituted\n"
+         b"execute Sys:S/Subst-Test\n"),
+
         # The acceptance's own script (specs/clang-on-aegir.md:203-205): the device
         # compiles a source with clang, links it with lld, and runs the result. It is a
         # script and not a line of the session's startup because it takes minutes, and a
