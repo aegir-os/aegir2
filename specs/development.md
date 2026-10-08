@@ -168,6 +168,24 @@ with the bytes coming *out*: take it at `seL4_RISCV_Mega_Page` with `seL4_LargeP
 copy path above shows the page fallback), reuse it across calls rather than per call, and
 `memcpy` each filled frame out to the caller's buffer.
 
+**Tried, and it broke the hosted path.** The read frame assembled as above — a mega page,
+mapped through the scratch, `read()` framing first and falling through to the path it had —
+built clean and then ended a run early: the five POSIX markers never printed, 152 cues were
+missing, and the guest stopped talking *while the services' own filesystem tests were still
+passing* (`test: SCRATCH:...`, `test: UNION: ...`). So a hosted program's file reads broke,
+not the volumes.
+
+Two suspects, and the cheap way to separate them is size: the frame was taken at
+`seL4_RISCV_Mega_Page` (2 MiB) and mapped through the same scratch cursor the heap's arena
+reserves from, while the *write* frame beside it — which has never broken anything — is one
+4 KiB page. So the next experiment is one variable: take the read frame at `seL4_PageBits`
+and nothing else changed. If a *page* frame works, the size of the frame (2 MiB, mapped, or
+the untyped it takes per process) is the fault and the fix is to find what that size collides
+with; if a page frame fails too, the framing itself is wrong for this path.
+
+Reverted rather than left standing (`AGENTS.md`: a failure is a failure, and the tree must
+stand while the next experiment runs).
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
