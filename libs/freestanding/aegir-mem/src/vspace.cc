@@ -102,13 +102,19 @@ void *Scratch::map(seL4_CPtr frame) noexcept
     if (frame == 0) {
         return nullptr;
     }
-    /* A window that may grow does so a large page at a time; the missing
-     * page tables are created below, on the kernel's FailedLookup. */
-    while (next_ + kPage > limit_) {
+    /* The streaming cursor stops at the *reservation* cursor, not at a window that
+     * grows: the top of the window is where reservations come from (reserve), and a
+     * service cannot map past the window it was given (measured: window-probe,
+     * REFUSED, every process). A window that may grow -- the root task's, which
+     * reserves nothing -- still grows a large page at a time, and takes the
+     * reservation cursor with it. The missing page tables are created below, on the
+     * kernel's FailedLookup. */
+    while (next_ + kPage > high_) {
         if (!may_grow_) {
             return nullptr;
         }
         limit_ += kLargePage;
+        high_ = limit_;
     }
     uintptr_t address = next_;
     seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
@@ -156,11 +162,15 @@ void *Scratch::map_large(seL4_CPtr frame) noexcept
      * window already holds stay below it, and the cursor rounds up past
      * them. */
     next_ = (next_ + kLargePage - 1) & ~(kLargePage - 1);
-    while (next_ + kLargePage > limit_) {
+    /* The reservation cursor is the streaming cursor's ceiling, for the reason map()
+     * gives above: a service cannot map past its window, and the top belongs to
+     * reservations. A window that may grow takes the reservation cursor with it. */
+    while (next_ + kLargePage > high_) {
         if (!may_grow_) {
             return nullptr;
         }
         limit_ += kLargePage;
+        high_ = limit_;
     }
     uintptr_t address = next_;
     /* One Page_Map serves every frame size on this architecture: the kernel
