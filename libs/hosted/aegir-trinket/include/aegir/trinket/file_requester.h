@@ -71,6 +71,15 @@ public:
     void close();
     bool visible() const;
 
+    /** Whether the console has laid the requester's fields out: `visible()` goes true
+     *  when `show()` is called, but the body's boxes have no rectangle until the
+     *  console sizes that window, one frame later. A caller that cues the acceptance on
+     *  the requester must wait for *this*, not for `visible()`: measured, a cue written
+     *  straight after `show()` had the runner click a zero rectangle and type the name
+     *  into nothing (specs/testing.md's rect cues -- the rectangles must be in hand
+     *  before the cue that clicks them, and the guest is the only one that knows). */
+    bool laid_out() const noexcept;
+
     Window& window() { return requester_.window(); }
     Application& application() { return app_; }
 

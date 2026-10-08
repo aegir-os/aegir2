@@ -562,6 +562,17 @@ bool FileRequester::visible() const
     return requester_.visible();
 }
 
+bool FileRequester::laid_out() const noexcept
+{
+    /* The fields' rectangles exist once the console has sized this window, and the
+     * File box is the one a caller types a name into (visible() goes true at show(),
+     * a frame before that). A caller cueing the acceptance on the requester waits for
+     * this: measured, a cue written straight after show() had the runner click a zero
+     * rectangle (rect editor.requester.file_box 0 0 0 0) and the editor try to save to
+     * an empty path. */
+    return file_box_ != nullptr && file_box_->screen_rect().width > 0;
+}
+
 int FileRequester::row_count() const
 {
     return list_ != nullptr ? list_->count() : 0;

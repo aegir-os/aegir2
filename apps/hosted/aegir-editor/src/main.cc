@@ -30,6 +30,7 @@
 #include <aegir/trinket/theme.h>
 #include <aegir/trinket/unicode.h>
 #include <aegir/trinket/window.h>
+#include <aegir/trinket/diagnostics.h>
 #include <aegir/trinket/window_spec.h>
 #include <aegir/vfs.h>
 #include <sel4/sel4.h>
@@ -311,6 +312,12 @@ int main(int argc, char *argv[])
     bool focus_seen = false;
     bool registered = false;
     bool want_active = false;
+    /* The requester's cue waits for the console to lay the window out (the menu action
+     * that opens it holds the menu id here: 2 Open..., 4 Save As...). Written from the
+     * poll instead of at show() because a cue sent at show() has the runner click a
+     * zero rectangle -- the name then lands nowhere and the editor saves an empty path
+     * (specs/testing.md's rect cues). */
+    uint32_t pending_requester_cue = 0;
     auto ensure_registered = [&]() {
         if (registered || !bureau.valid() || (!bureau_up && !focus_seen)) {
             return;
@@ -337,6 +344,27 @@ int main(int argc, char *argv[])
          * the editor has to be clicked back. These cues pace that -- the
          * set_active has returned by the time one prints. */
         write(is_active ? "  editor: active\n" : "  editor: away\n");
+    };
+    /* Where the widgets stand, for the acceptance (specs/testing.md's rect cues): the
+     * runner clicks by name, so a font or metric change moves the click with the widget
+     * instead of leaving it on whatever happened to be at a fixed coordinate. The demo
+     * reports its own the same way (aegir-gui-demo's report_demo) -- and this is what
+     * the editor lacked: with no rectangles to name, its steps guessed screen
+     * coordinates, which cannot express "the requester's File box" or "the window
+     * clicked back". Reported from app.on_poll, before any cue of ours is written,
+     * because the runner answers a cue by sending the next step's events -- each
+     * rectangle must be in hand before the cue that clicks it. */
+    auto report_editor = [&]() {
+        window.report_rects("editor");
+        tabs_ptr->report_parts("editor.tabs");
+        if (!open.empty()) {
+            int const active = tabs_ptr->active();
+            if (active >= 0 && active < static_cast<int>(open.size())) {
+                report_rect("editor.content",
+                            *open[static_cast<std::size_t>(active)].edit);
+            }
+        }
+        requester->report_parts("editor.requester");
     };
     app.on_screen_owner = [&](bool up) {
         if (!up) {
@@ -385,6 +413,21 @@ int main(int argc, char *argv[])
     TextDocument::Mode last_mode = TextDocument::Mode::INSERT;
 
     app.on_poll = [&]() {
+        /* Before anything of ours prints (see report_editor): the rectangles the
+         * runner's next click names must be current before the cue that click
+         * answers, every poll. */
+        report_editor();
+        /* The requester's cue, held back until the console has laid its fields out: sent
+         * from the menu action it went out while the boxes still had zero rectangles
+         * (rect editor.requester.file_box 0 0 0 0), the runner clicked nothing, the name
+         * landed nowhere and the editor saved an empty path. The poll is where the
+         * layout has happened, so the cue belongs here -- and the rectangles it names
+         * are the ones report_editor() has just published. */
+        if (pending_requester_cue != 0 && requester->laid_out()) {
+            write(pending_requester_cue == 4 ? "  editor: save requester\n"
+                                             : "  editor: open requester\n");
+            pending_requester_cue = 0;
+        }
         if (!open.empty()) {
             Tab const &tab = open[static_cast<std::size_t>(tabs_ptr->active())];
             tab.sync();
@@ -410,7 +453,8 @@ int main(int argc, char *argv[])
              * not, so a save has somewhere to go (specs/auth.md). */
             requester->open_at(U"Sys:");
             requester->show();
-            write("  editor: open requester\n");
+            /* The cue is the poll's, once the console has laid the fields out. */
+            pending_requester_cue = 2;
             break;
         case 3: /* Save */
             save_active();
@@ -419,7 +463,8 @@ int main(int argc, char *argv[])
             saving = true;
             requester->open_at(U"Home:");
             requester->show();
-            write("  editor: save requester\n");
+            /* The cue is the poll's, once the console has laid the fields out. */
+            pending_requester_cue = 4;
             break;
         case 5: /* Quit */
             /* Tell the bureau the editor is no longer the active client before

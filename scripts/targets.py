@@ -1033,17 +1033,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 pixels=(("gpu0", 442, 234, 102, 136, 187),),
-                # The editor is the active window, so the screen bar's first
-                # title -- "Ed" -- is its menu. The click is at the title's
-                # left, x 10, not the demo's x 30: "Ed" is two cells wide and
-                # its slot ends before 30 (desktop.cc title_slots), so the
-                # demo's coordinate would land past it and drop nothing.
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                # The editor is the active window, so the screen bar's first title
+                # -- "Ed" -- is its menu: click the title by name. This is where the
+                # coordinate could not be trusted: "Ed" is two cells wide and its slot
+                # ends before x 30 (desktop.cc title_slots), so a fixed coordinate
+                # either lands past it and drops nothing, or lands on the neighbour's
+                # title once the bar's titles move.
+                clicks=(("bureau.title.1", 0.5, 0.5),),
             ),
             # The menu dropped. Its rows are 22 pixels at y 33, 55, 77, 99 and
             # 121 from the bar: New, Open..., Save, Save As..., Quit. Save As...
@@ -1059,12 +1055,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                     ("gpu0", 100, 33, 240, 240, 240),
                 ),
                 dark=(("gpu0", 0, 22, 120, 110, 20),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 4055}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                # The row by name rather than by its y: the fourth is Save As...,
+                # which raises the requester in save mode. The guest reports the rows
+                # (the bureau's bar), so a row that moves or a menu that grows a
+                # heading cannot put the click on the wrong item.
+                clicks=(("bureau.item.4", 0.5, 0.5),),
             ),
             # The requester is up over the namespace, its drawer at Sys:, its
             # Pattern box focused. Type a name into its File box and Return: the
@@ -1077,12 +1072,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # The requester's titlebar, and its list of Home:'s entries.
                 pixels=(("gpu0", 700, 200, 102, 136, 187),),
                 dark=(("gpu0", 424, 261, 404, 160, 150),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17278}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21340}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                # The File box by name, which is the field the name is typed into: the
+                # editor reports it now (report_editor), so the click follows the widget
+                # rather than a coordinate that has to be guessed -- and the guess is
+                # what put EDITED.TXT into the Pattern box with half of it lost.
+                clicks=(("editor.requester.file_box", 0.5, 0.5),),
                 press="EDITED.TXT\n",
                 press_delay=0.2,
             ),
@@ -1101,19 +1095,14 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # file it wrote -- present whether the requester has closed yet.
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 110, 18, 6),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
-                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 3154}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                # The editor's content by name, then the bar's own title, then Save --
+                # each a rectangle the guest reports now (report_editor and the
+                # bureau's own bar), so the click follows the window wherever the
+                # layout puts it instead of a coordinate that guessed where it was.
+                clicks=(
+                    ("editor.content", 0.5, 0.5),
+                    ("bureau.title.1", 0.5, 0.5),
+                    ("bureau.item.3", 0.5, 0.5),
                 ),
             ),
             # Save wrote the tab's own name; New then makes a fresh Untitled tab.
@@ -1126,19 +1115,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 110, 18, 6),
                       ("gpu0", 432, 226, 220, 12, 20)),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
-                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 1352}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                # The editor's content, the bar's title, and New -- by name (report_editor
+                # and the bureau's bar), so none of the three guesses a coordinate.
+                clicks=(
+                    ("editor.content", 0.5, 0.5),
+                    ("bureau.title.1", 0.5, 0.5),
+                    ("bureau.item.1", 0.5, 0.5),
                 ),
             ),
             # New made a third tab; Open... reads a system file, the readable
@@ -1151,19 +1133,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # left one.
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 150, 18, 8),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
-                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 2253}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                # The editor's content, the bar's title, and Open... -- by name
+                # (report_editor and the bureau's bar), so none guesses a coordinate.
+                clicks=(
+                    ("editor.content", 0.5, 0.5),
+                    ("bureau.title.1", 0.5, 0.5),
+                    ("bureau.item.2", 0.5, 0.5),
                 ),
             ),
             # The open-mode requester, its drawer at Sys:: the version file is a
@@ -1175,12 +1150,10 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # The requester again, this time over Sys:'s entries.
                 pixels=(("gpu0", 700, 200, 102, 136, 187),),
                 dark=(("gpu0", 424, 261, 404, 160, 150),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17278}},
-                    {"type": "abs", "data": {"axis": "y", "value": 21340}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                ),
+                # The File box by name, as the Save step above: the requester's fields
+                # are the guest's own rectangles now (report_editor), so the name is
+                # typed where it belongs wherever the requester is drawn.
+                clicks=(("editor.requester.file_box", 0.5, 0.5),),
                 press="VER.TXT\n",
                 press_delay=0.2,
             ),
@@ -1193,19 +1166,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # Open added a third tab: three labels cross the strip.
                 pixels=(("gpu0", 700, 190, 102, 136, 187),),
                 dark=(("gpu0", 424, 202, 220, 18, 8),),
-                events=(
-                    {"type": "abs", "data": {"axis": "x", "value": 17920}},
-                    {"type": "abs", "data": {"axis": "y", "value": 12288}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 450}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
-                    {"type": "abs", "data": {"axis": "x", "value": 256}},
-                    {"type": "abs", "data": {"axis": "y", "value": 4955}},
-                    {"type": "btn", "data": {"button": "left", "down": True}},
-                    {"type": "btn", "data": {"button": "left", "down": False}},
+                # The editor's content, the bar's title, and Quit -- the fifth row --
+                # all by name: the editor's own rectangles (report_editor) and the
+                # bureau's rows, so the click follows the window and the menu.
+                clicks=(
+                    ("editor.content", 0.5, 0.5),
+                    ("bureau.title.1", 0.5, 0.5),
+                    ("bureau.item.5", 0.5, 0.5),
                 ),
             ),
             # Quit returns the shell its prompt: the viewer is launched where
