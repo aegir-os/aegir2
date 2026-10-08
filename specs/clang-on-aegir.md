@@ -481,6 +481,29 @@ the heap's retentive policy as its clients. `reserve`, `unmap` and `rewind` are 
 primitives it would keep; the free list is what it would add. That is the shape the
 window wants, and it is the ground this stands on.
 
+**Built, and backed out with one measurement: the heap-using boot services die.** The
+one allocator went in as designed -- `Scratch` with a free list (`release` merging
+adjacent runs, `reserve` first-fitting, a run that ends at the cursor handed straight
+back, list nodes taken from the window itself) and the heap as its client (arena
+reserved at init, `mmap` reserving its own runs, `munmap` releasing them). The run then
+collapses at the services whose arena `initialise` lays out: `cxxsmoke`, `hello` and
+`fssmoke` each "faulted on a memory access at 0x0", which is what a program does when
+its heap never came up. Two candidates, and the next attempt's first job is to say
+which:
+
+- the arena reserved from the window's base landed on pages those services already
+  hold -- `initialise` computes `base_` from the end of the bootinfo, which is free
+  space *by our reckoning* and not necessarily by the service's; the heap's old shape
+  (arena at the window's *top*) dodged that by accident of position; or
+- `heap::init` simply refused, because `reserve` would not give the seed's worth of
+  pages (a small adopted window, `may_grow_` false), and every later allocation is a
+  null return.
+
+A trace in `init`'s failure path and in `reserve` answers it in one run. What the
+design needs either way is the fact neither caller states today: *where a window's free
+space begins*, told to `Scratch` by whoever laid the window out -- the boot path and
+the spawner both know it.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
