@@ -1907,17 +1907,46 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
         aegir::mem::Account account{"copy", 0, 0, 0};
         seL4_Error error = seL4_NoError;
         void *cookie = nullptr;
-        seL4_CPtr const frame = g_allocator->alloc_object(
-            seL4_RISCV_4K_Page, seL4_PageBits, account, &error, &cookie);
+        /* A mega page where the volume serves one: this path moves one frame's worth per
+         * call, so the frame's size *is* the granularity, and a 2 MiB frame moves 512 times
+         * what a page does. The loader beside this one already reads images that way
+         * (libs/freestanding/aegir-mem/src/child_vspace.cc:370 -- seL4_RISCV_Mega_Page). A
+         * volume that refuses a large frame is asked for a page instead, and one that
+         * serves no frames at all leaves the inline path below to take over. */
+        seL4_CPtr frame = g_allocator->alloc_object(
+            seL4_RISCV_Mega_Page, seL4_LargePageBits, account, &error, &cookie);
+        uint32_t frame_bits = seL4_LargePageBits;
+        uint64_t chunk = 1ull << seL4_LargePageBits;
+        if (frame == 0) {
+            frame = g_allocator->alloc_object(
+                seL4_RISCV_4K_Page, seL4_PageBits, account, &error, &cookie);
+            frame_bits = seL4_PageBits;
+            chunk = aegir::volume::kFrameBytes;
+        }
         if (frame != 0) {
             aegir::vfs::Volume source(in->volume);
             aegir::vfs::Volume dest(out->volume);
             while (total < count) {
                 uint64_t got = 0;
                 bool eof = false;
-                if (!source.read_frame(in->handle, position, aegir::volume::kFrameBytes, 0,
-                                       frame, aegir::volume::kFrameBitsMin, got, eof) ||
+                if (!source.read_frame(in->handle, position, chunk, 0,
+                                       frame, frame_bits, got, eof) ||
                     got == 0) {
+                    /* A volume that will not serve this frame -- a mega page is the
+                     * refusal to expect -- is asked for a page instead, once, at the same
+                     * position: a refused read consumes nothing, so the bytes are still
+                     * there to ask for again. */
+                    if (frame_bits == seL4_LargePageBits && total == 0) {
+                        g_allocator->free_object(cookie, seL4_LargePageBits);
+                        frame = g_allocator->alloc_object(
+                            seL4_RISCV_4K_Page, seL4_PageBits, account, &error, &cookie);
+                        if (frame == 0) {
+                            break;
+                        }
+                        frame_bits = seL4_PageBits;
+                        chunk = aegir::volume::kFrameBytes;
+                        continue;
+                    }
                     break;
                 }
                 uint64_t written = 0;
@@ -1931,7 +1960,7 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
                     break;
                 }
             }
-            g_allocator->free_object(cookie, seL4_PageBits);
+            g_allocator->free_object(cookie, frame_bits);
         }
     }
     if (total > 0) {

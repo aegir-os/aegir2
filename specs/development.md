@@ -137,6 +137,17 @@ So the next thing to make fast — a *speed* question, not a timeout one — is 
 path's granularity, and second whether a command's stderr should reach the serial at all,
 since a long command that narrates itself into the grid is one the acceptance cannot see.
 
+**First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
+through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
+it now asks for a **mega** page (`seL4_RISCV_Mega_Page` with `seL4_LargePageBits` — the same
+frame the image loader maps blocks with at
+`libs/freestanding/aegir-mem/src/child_vspace.cc:370`), and falls back to a page for a
+volume that refuses a large frame: a refused read consumes nothing, so the same position is
+asked for again, and the frame is freed with the size it was taken at. Verified on
+`aegir-8g-smp4`: the DOS acceptance's `copy` step still fires and the chain behind it still
+runs (`dir`, `type`), so nothing regressed. It does not unblock the link — the link *reads*
+its inputs and `read()` has no frame path of its own — which is the next piece.
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
