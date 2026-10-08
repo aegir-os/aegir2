@@ -385,6 +385,34 @@ unprinted, reproduced with no instrumentation in the build at all -- so that low
 bound is load-bearing and its reason has to be found before the arena grows: what the
 seed protects is the next question, not a bigger number.
 
+**Its cause is now known, and it is ours twice over.** `Scratch` keeps its own
+allocation cursor -- `vspace.cc:66-67` sets `next_ = base_` and `map` walks *up* from
+there (`next_ += kPage`, `:140`) -- while the arena descends from `scratch.limit()`.
+An 8 MiB seed keeps the two apart; an arena that takes the window's floor starts *on
+top of the scratch's first pages*, so the bulk-write frame (`files.cc:132`'s
+`g_scratch->map(frame)`) is mapped inside the heap and handed out again as heap
+memory. Self-corruption, and it lands wherever writes happen -- which is where that
+run died. The seed is likewise a per-program constant (`kHeapBytes = 8 << 20` in
+`aegir-print`, `aegir-env-smoke` and `aegir-cxx-smoke`; `4 << 20` in `aegir-fs-smoke`;
+`16 << 20` in `aegir-cc`), and it bounds the arena's *address range*, while the untyped
+behind it is already grown on demand.
+
+So the fix parts the two cursors rather than picking a number: the arena's *floor*
+descends on demand toward the scratch's live frontier (`Scratch::next()`, already
+exposed, `vspace.h:112`), and the frame record's *origin* is fixed at the window's
+base so no key ever moves -- which is exactly what the chunked record was built for.
+
+**Tried, and backed out: the growth hangs the memory client.** With the floor
+descending on demand and the record re-keyed to a fixed origin, the link's
+`Out of memory` is gone -- the refusal and the `ld.lld:` error both disappear -- and
+the run reaches the file client's marker. Then `posix-memory-test` is *started* and
+never prints again: no fault, no `MEMORY_FAIL` line, five cues short. The suspects are
+narrow. The record's chunk lookup (`chunk->frames[index - chunk->first]`, heap.cc:725)
+now spans a quarter-million keys for an arena at the window's top with an origin at its
+base, and moving the floor *inside* the allocation path changes `mmap_ - brk_` under
+the very allocations that are growing the record. That is the next thing to
+understand; the attempt is reverted so the tree stands where it is green.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
