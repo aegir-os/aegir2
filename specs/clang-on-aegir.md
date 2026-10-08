@@ -433,6 +433,22 @@ not print and the session's script stops there (55 cues short, and that run's
 Reading that run's tail -- where `SCRATCH:hello` would be spawned, and what the shell
 reports there -- is the next step, not more heap surgery.
 
+**And the growth's mechanism is now named: the window's two users are on a collision
+course.** With the floor allowed to descend, every POSIX marker passes, no fault
+appears, the link's `Out of memory` never returns, `ld.lld` prints no error at all --
+and yet `cc` *starts* (`launcher: command started Sys:Development/C/cc`) and never
+finishes, so the shell never reaches the link. The reason is the direction the two
+cursors move: `Scratch::map` walks *up* from `scratch.base()` and raises `limit_` as it
+goes, while the arena descends from `scratch.limit()`. Leaving the frontier one page of
+headroom only postpones the meeting -- the scratch's cursor keeps rising and the arena's
+floor has been lowered, so they meet. Most programs never use enough scratch to reach
+that point; a compiler reading a 47 MiB sysroot does.
+
+So the fix is neither a number nor a gap: the window's two users need *one* allocator,
+so a page is handed out once and to one owner -- the scratch's frames from the arena, or
+the arena's pages from the scratch. That is a change in `libs/freestanding/aegir-mem`
+and `libs/hosted/aegir-heap` together, and it is where this stands.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
