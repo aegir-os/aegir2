@@ -155,11 +155,18 @@ mappings, and both — 54 cues missing each time, the same wall. What the runs d
   continuously (`memory: mem split bits 26 split` down to `bits 21`, ~1032 lines a session). The
   runner counts console cues, not service logs, so it reports "the guest stopped talking" while
   the guest is mid-sentence.
-- **The instrument that should report a link's duration does not work yet.** A `date` either side
-  of the link in `Sys:S/Development-Acceptance` prints nothing to the log — while the `echo`
-  markers beside it do, and the `date`s the compile already brackets itself with do not appear
-  either. So the link's duration is still unknown, and that needs looking at before the acceptance
-  can report its own timeline.
+- **The instrument that should report a link's duration does not work, and the reason is a DOS
+  command that is broken.** A `date` either side of the link prints nothing while the `echo`
+  markers beside it do, and the run says why: `terminal: command exited 10`. `date`
+  (`apps/hosted/aegir-date`) reads an args spec — `aegir::args::read("DATE", argc - 1, argv + 1)`
+  — and, when it is not satisfied, prints usage to stderr and returns 10, so a bare `date` never
+  reaches the clock and never prints a time. That is a bug in the command, not in the mirror:
+  `sys_write` routes fd 2 to the console stream exactly as fd 1
+  (`libs/hosted/aegir-heap/src/heap.cc`, `if (fd == 1 || fd == 2)`), and the stream server mirrors
+  what it is handed. It fails in the DOS acceptance's own `date` step too — that test only ever
+  checked that the command *started*, so nothing noticed. The `date`s are out of the acceptance
+  again: until `date` works, the link's duration is unknown, and the phases the `echo` markers
+  report are what a run has.
 - **The untyped churn is not ours.** 1032-1049 lines in all four configurations, bits 31 down to
   21, so the read and mapping changes did not add it — and since the link fails in all four, it is
   not what separates them either.

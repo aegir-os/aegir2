@@ -260,14 +260,10 @@ AEGIR_BFS_TREE = [
         # on the startup's last line, when the shell is free again.
         ("file", "Development-Acceptance",
          b"echo AEGIR_ACCEPTANCE_COMPILING\n"
-         b"date\n"
          b"Sys:Development/C/cc --target=riscv64-unknown-elf"
          b" -c Sys:Development/hello.c -o SCRATCH:hello.o\n"
-         b"date\n"
          b"echo AEGIR_ACCEPTANCE_COMPILED\n"
-         b"date\n"
          b"execute Sys:Development/link.sh\n"
-         b"date\n"
          b"echo AEGIR_ACCEPTANCE_LINKED\n"
          b"SCRATCH:hello\n"),
         
