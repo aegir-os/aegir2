@@ -115,11 +115,21 @@ its 57 MiB and linking, which the runner's 300 s window cannot span.
 
 That window is deliberately small and it stays small: a timer is a guess, while a guest
 that reports is a fact — which is why `Sys:S/Development-Acceptance` reports between its
-commands rather than asking for a longer wait. The next thing to measure is therefore the
-*load*: the spawner maps a child's image through the volume's `read-frame`, one call per
-frame, and `frame_bits` comes from the caller
-(`libs/hosted/aegir-spawn-service/src/service_launch.cc:216`). Whether a 57 MiB program is
-loaded in page-sized calls is the question to answer before any allowance is widened.
+commands rather than asking for a longer wait.
+
+**What the link does, measured since.** The load is *not* the cost, so no allowance is
+owed it: a child's image is mapped in **mega pages** where the filesystem can serve a
+large `read-frame` (`libs/freestanding/aegir-mem/src/child_vspace.cc:354-385`), which is
+~29 calls for lld's 57 MiB, and the typed `ld.lld --version` step takes seconds (its
+`command started` line to the acceptance's next cue is about twenty console lines). What
+stops the run is that the link produces *nothing at all* after
+`launcher: command started Sys:Development/C/ld.lld`: `link.sh` runs it with `--verbose`
+(`scripts/run_target.py:737-746`), whose whole purpose is to print the paths it searches
+and the files it opens, and none of that arrives, nor does the `AEGIR_ACCEPTANCE_LINKED`
+echo after it. So the link is a *hang*, not slowness — and it completed in an earlier run
+(the one that printed `AEGIR_HELLO_OK`), so it is not deterministic either. That is the
+next thing to name: lld, the crt objects and the archive it opens, against the allocator
+the memory arc just reworked.
 
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
