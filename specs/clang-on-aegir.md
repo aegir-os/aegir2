@@ -522,6 +522,23 @@ allocation -- a `map_page` trace or the heap's dispatch trace over `cxxsmoke`'s 
 past it. The four instruments used so far were all pointed at the allocator's
 bookkeeping, and every one of them came back clean.
 
+**Then the reading -- not another instrument -- found the one line all three had in
+common: the bound.** `Scratch::initialise` wires `grow_nodes_from_window` into the
+allocator *and* sets `may_grow_ = tables != nullptr`, so in a heap process `limit_` is
+not a wall: it moves as `map()` grows the window. The committed `sys_munmap` bounded its
+release with `base < base_ || base < brk_ || base + bytes > limit_`; **all three failing
+variants replaced that with a page-alignment check alone**. Without it a stray `munmap`
+-- its length running past the window's end -- is accepted into the free list, and the
+next `mmap` hands back a run whose *last page* is the one at `limit_ + 0xf`. That is
+where all five services died, in all three variants, because the removed line was the one
+thing they shared.
+
+So the next attempt is small and reasoned: reservations from the window's top
+(`Scratch::reserve` with `high_` walking down, seeded in `initialise` and `adopt`), the
+heap reserving its arena and its mmaps through it, its own region list keeping the reuse
+-- **and `sys_munmap`'s bound restored against the window the heap was *given*** (recorded
+at `init`), because the live `limit_` grows under it and bounds nothing.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
