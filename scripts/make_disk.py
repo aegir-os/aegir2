@@ -223,6 +223,19 @@ AEGIR_BFS_TREE = [
         # press; the same reason the command files are typed one per step).
         ("file", "Halt-Test",
          b"run wait 99999\nbreak x name wait\nexecute Sys:S/Control-Test\n"),
+
+        # The acceptance's own script (specs/clang-on-aegir.md:203-205): the device
+        # compiles a source with clang, links it with lld, and runs the result. It is a
+        # script and not a line of the session's startup because it takes minutes, and a
+        # startup that takes minutes has the shell busy while the runner types the DOS
+        # acceptance into it -- which drops those keys (this file's own note above, and
+        # specs/memory.md). The runner types one `execute Sys:S/Development-Acceptance`
+        # on the startup's last line, when the shell is free again.
+        ("file", "Development-Acceptance",
+         b"Sys:Development/C/cc --target=riscv64-unknown-elf"
+         b" -c Sys:Development/hello.c -o SCRATCH:hello.o\n"
+         b"execute Sys:Development/link.sh\n"
+         b"SCRATCH:hello\n"),
         
         # The session's services, as data (specs/session.md): auth reads the
         # user's Home:S/session.manifest first, then this. `authority` is always
@@ -546,6 +559,13 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # `ld.lld --version` and not bare `lld`: lld takes its flavour from the name
         # it is invoked under. clang is deployed but not invoked yet: it runs and
         # returns 1 in silence on the guest, which is Phase 3's open item.
+        # The startup must stay *fast*: the runner types the DOS acceptance into this
+        # shell afterwards, and a key typed while the shell is still running a script is
+        # dropped (run_target's press; the key queue is 8 deep -- scripts/make_disk.py's
+        # own note about the command files). So the compiler is *not* run here: only its
+        # `--version`, which proves it loaded, and the acceptance itself is typed later
+        # from `Sys:S/Development-Acceptance` (its cue is the last line below, which the
+        # guest prints when this script has finished and the shell is free again).
         tree = _with_startup(tree, b"Sys:Development/C/posix-test\n"
                                    b"Sys:Development/C/posix-path-test\n"
                                    b"Sys:Development/C/posix-file-test\n"
@@ -553,7 +573,8 @@ def aegir_tree(commands, datatypes, development=()) -> list:
                                    b"Sys:Development/C/posix-env-test\n"
                                    b"Sys:Development/C/aegir-big\n"
                                    b"Sys:Development/C/cc --version\n"
-                                   b"Sys:Development/C/ld.lld --version\n")
+                                   b"Sys:Development/C/ld.lld --version\n"
+                                   b"echo AEGIR_DEVELOPMENT_READY\n")
     return tree
 
 

@@ -1785,6 +1785,17 @@ TARGETS: dict[str, Target] = {
             # and the step after the link is the one left (specs/clang-on-aegir.md).
             QmpStep(r"clang version 20"),
             QmpStep(r"LLD 20"),
+            # The acceptance itself (specs/clang-on-aegir.md:203-205), typed rather than
+            # run from the session's startup: it takes minutes, and a startup that takes
+            # minutes keeps the shell busy while the runner types the DOS acceptance into
+            # it -- which drops those keys (scripts/make_disk.py's note, specs/memory.md).
+            # The startup's own last line says it has finished and the shell is free, so
+            # that line is the cue; the script it runs compiles the source with clang,
+            # links it with lld, and runs the result, and its lines run in order -- so the
+            # marker below is only reached if all three worked.
+            QmpStep(r"AEGIR_DEVELOPMENT_READY",
+                    press="execute Sys:S/Development-Acceptance\n"),
+            QmpStep(r"AEGIR_HELLO_OK"),
             # The scale acceptance's deliberately huge command runs after it
             # (specs/memory.md): its line is the proof that a program tens of
             # megabytes long came up through the whole spawn path with every
