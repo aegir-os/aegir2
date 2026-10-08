@@ -381,6 +381,16 @@ reserve against, and any release can only accept what the ledger says was handed
 This is the piece to build first; the rest of the merge is arithmetic that the ledger
 makes checkable instead of arguable.
 
+**Landed** (`libs/hosted/aegir-heap/src/heap.cc`): `mmap` records every run it issues, and
+`munmap` releases only a recorded run, whole. `mprotect` deliberately keeps its arena
+bound rather than asking the record -- the ledger says what `mmap` *issued*, and the
+heap's pages are not all mmap runs. Asking the record there broke the C++ smoke's TCB
+check, because a thread's clone needs a protection change on heap memory, and it took a
+dozen runs to see for a reason worth keeping: `sys_mprotect` traced only *successes*, so
+a refused protection change was invisible while the log looked clean. Both of its
+refusals are traced now. Measured green: `CXX_SMOKE_OK` (and its `std::thread` check)
+pass, zero refusals of either kind, `PASS aegir-8g-smp4 booted`, `RUN_EXIT=0`.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.

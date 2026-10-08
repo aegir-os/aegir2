@@ -163,6 +163,84 @@ void *grow_node_region(void *context, unsigned *bytes) noexcept
     return reinterpret_cast<void *>(page);
 }
 
+/* The record: every run `mmap` has handed out, so that "was this ours?" is answered
+ * rather than inferred (specs/memory.md, "The record"). `munmap` removes an entry or
+ * refuses. Every memory failure this arc was a release of something the heap did not
+ * own -- a run the window could not take, a page past the window's end, the free list's
+ * own nodes -- and each was arithmetic on `base_`, `brk_`, `limit_` or alignment
+ * standing in for the question.
+ *
+ * It is a record of what `mmap` *issues*, not a claim about the whole arena: `mprotect`
+ * keeps its own bound, because the frame behind an arena page is what the invocation
+ * names and the heap's pages are not all mmap runs. Narrowing that check to this record
+ * is exactly what broke the C++ smoke's TCB check -- silently, because a refused
+ * protection change was not traced (measured: with the record's one extra page and no
+ * record, the run is green).
+ *
+ * The entries live in pages carved below the cursor, the same way the free list's nodes
+ * are (grow_node_region), so there is no capacity to choose and none to exceed. */
+struct Run {
+    uintptr_t base;
+    uintptr_t bytes;
+};
+
+Run *g_runs = nullptr;
+uint32_t g_run_count = 0;
+uint32_t g_run_capacity = 0;
+
+bool grow_run_record() noexcept
+{
+    if (!ready_ || mmap_ - brk_ < kPageBytes) {
+        return false;
+    }
+    uintptr_t const page = mmap_ - kPageBytes;
+    if (!map_page(page)) {
+        return false;
+    }
+    auto *const more = reinterpret_cast<Run *>(page);
+    uint32_t const count = static_cast<uint32_t>(kPageBytes / sizeof(Run));
+    for (uint32_t i = 0; i < count; ++i) {
+        more[i] = Run{0, 0};
+    }
+    for (uint32_t i = 0; i < g_run_count; ++i) {
+        more[i] = g_runs[i];
+    }
+    g_runs = more;
+    g_run_capacity = count;
+    mmap_ = page;
+    return true;
+}
+
+void record_run(uintptr_t base, uintptr_t bytes) noexcept
+{
+    if (g_run_count == g_run_capacity && !grow_run_record()) {
+        return;
+    }
+    g_runs[g_run_count].base = base;
+    g_runs[g_run_count].bytes = bytes;
+    ++g_run_count;
+}
+
+/* The entry for a run that starts exactly at `base`, or -1. A run is what `mmap`
+ * returned, so its start address is the key -- nothing else identifies it. */
+int find_run(uintptr_t base) noexcept
+{
+    for (uint32_t i = 0; i < g_run_count; ++i) {
+        if (g_runs[i].base == base) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void forget_run(int index) noexcept
+{
+    if (index < 0 || static_cast<uint32_t>(index) >= g_run_count) {
+        return;
+    }
+    g_runs[index] = g_runs[--g_run_count];
+}
+
 /* The frame behind each mapped page of the arena, so that mprotect can name it
  * again: a mapping's rights change by issuing the Map invocation at the same
  * address (kernel/manual/parts/vspace.tex:294), and that invocation names the
@@ -654,6 +732,10 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     } else {
         trace("mmap", base, needed);
     }
+    /* The run is ours from here on, whether it was carved fresh or handed back by the
+     * free list: recorded, so `munmap` asks the record instead of reasoning from bounds
+     * (specs/memory.md, "The record"). */
+    record_run(base, needed);
     return static_cast<long>(base);
 }
 
@@ -673,15 +755,17 @@ long sys_munmap(void *addr, size_t length) noexcept
     }
     uintptr_t const base = reinterpret_cast<uintptr_t>(addr);
     uintptr_t const bytes = align_up(length);
-    /* The heap's whole region, not the mmap cursor: the cursor only ever moves
-     * down, so a region mapped earlier sits above it and is still ours to
-     * release. The break, which grows up, never reaches a released region --
-     * it is bounded by the cursor -- so a release below it is a caller bug. */
-    if ((base & (kPageBytes - 1)) != 0 || base < base_ || base < brk_ ||
-        base + bytes > limit_) {
+    /* The record answers "was this ours?". The bounds this used to reason from --
+     * `base_`, `brk_`, `limit_`, alignment -- each admitted a range the heap did not
+     * own, and one of them released a run whose last page sat at `limit_ + 0xf` for
+     * the next caller (specs/memory.md, "The record"). A run is released only when
+     * `mmap` handed it out, whole. */
+    int const at = find_run(base);
+    if (at < 0 || g_runs[at].bytes != bytes) {
         trace("munmap-refused", base, bytes);
         return -EINVAL;
     }
+    forget_run(at);
     if (!g_free_regions.give(base, bytes)) {
         trace("munmap-refused", base, bytes);
         return -EINVAL;
@@ -739,7 +823,12 @@ bool set_rights(uintptr_t address, size_t length, seL4_CapRights_t rights) noexc
 /* SYS_mprotect: a mapping's protection, changed in place (specs/posix.md). The
  * whole range must be one the arena mapped, because the frame behind each page is
  * what the invocation names; a page it never mapped is ENOMEM, as a kernel would
- * say for a range it cannot back. */
+ * say for a range it cannot back.
+ *
+ * Deliberately not the record: the ledger says what `mmap` *issued*, and the heap's
+ * pages are not all mmap runs -- narrowing this check to it broke the C++ smoke's TCB
+ * check silently. Both refusals are traced, because a resolution that is never written
+ * down is how that took a dozen runs to find (specs/memory.md, "The record"). */
 long sys_mprotect(void *addr, size_t length, int prot) noexcept
 {
     if (!ready_ || addr == nullptr || length == 0 ||
@@ -749,9 +838,11 @@ long sys_mprotect(void *addr, size_t length, int prot) noexcept
     uintptr_t const address = reinterpret_cast<uintptr_t>(addr);
     uintptr_t const needed = align_up(length);
     if (address < base_ || address + needed > limit_) {
+        trace("mprotect-refused", address, needed);
         return -ENOMEM;
     }
     if (!set_rights(address, needed, rights_for(prot))) {
+        trace("mprotect-refused", address, needed);
         return -ENOMEM;
     }
     trace("mprotect", address, needed);
