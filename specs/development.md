@@ -147,6 +147,32 @@ link's silence means is therefore that lld never *printed at all*: it is either 
 before its own first output. The way to tell is the guest's job, not a timer's: a `date` on
 either side of the link, the shape the compile already has in `Sys:S/Development-Acceptance`.
 
+**Where the link stands, after the measuring.** It never finishes inside the runner's window, in
+*every* configuration tried: page mappings and page reads (the baseline), framed reads, mega
+mappings, and both — 54 cues missing each time, the same wall. What the runs did say:
+
+- **The guest is not silent.** While the link runs it prints the memory service's untyped traffic
+  continuously (`memory: mem split bits 26 split` down to `bits 21`, ~1032 lines a session). The
+  runner counts console cues, not service logs, so it reports "the guest stopped talking" while
+  the guest is mid-sentence.
+- **The instrument that should report a link's duration does not work yet.** A `date` either side
+  of the link in `Sys:S/Development-Acceptance` prints nothing to the log — while the `echo`
+  markers beside it do, and the `date`s the compile already brackets itself with do not appear
+  either. So the link's duration is still unknown, and that needs looking at before the acceptance
+  can report its own timeline.
+- **The untyped churn is not ours.** 1032-1049 lines in all four configurations, bits 31 down to
+  21, so the read and mapping changes did not add it — and since the link fails in all four, it is
+  not what separates them either.
+- **The dispatch trace is not a neutral instrument here.** With `-DAEGIR_HEAP_TRACE` on, the run
+  gets *less* far — 114 cues missing against 54 — because every mapping is narrated to the serial.
+  Its tail showed the last process doing small anonymous mappings (0x1000, 0x2000), which is a
+  linker working rather than a linker stopped.
+
+So the link is working, and slowly, and what it waits on is below the granularity this arc has
+changed: the system's allocation path under a malloc-heavy program. That is where the next piece
+starts — and the trace is reverted rather than left on, because it costs every run more than it
+tells.
+
 **First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
 through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
 it now asks for a **mega** page (`seL4_RISCV_Mega_Page` with `seL4_LargePageBits` — the same
