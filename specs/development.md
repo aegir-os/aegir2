@@ -200,6 +200,23 @@ link's 300 s window, 54 cues missing). So:
   (the scratch cursor, the arena's reservation from the window's top, or the untyped the
   allocation takes per process) — not whether `read()` can be framed at all.
 
+**And the isolation run names it: the allocation, not the read.** A third build held the large
+frame but asked for a *page* per call — `g_read_frame_bytes = aegir::volume::kFrameBytes`
+against the frame's own `1ull << bits` — which keeps the 2 MiB of untyped the frame holds for
+the process's life and takes the 2 MiB *read* out of the filesystem's path. It broke
+identically: **27 `command started` lines against 47 in the working run**, the five POSIX
+markers missing, 152 cues missing.
+
+So a large *frame* is not what this path cannot have — a large *allocation per process* is.
+Every hosted process that reads a file would hold 2 MiB of untyped for its life, and the pool
+that commands are *spawned* from starves: the session's startup ran no command at all, which is
+the shortage `aegir-big` exists to work around (`specs/memory.md`) and the same one that ends
+the acceptance's link.
+
+The read path's granularity is therefore **blocked, not wrong**: it cannot have a mega frame
+until a departed process's memory is returned, or the spawn path's pool grows. That is the
+piece to do first, and it is one fix for both — the link's `Out of memory` and this.
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
