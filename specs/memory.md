@@ -354,6 +354,33 @@ had never used, so a reader that knows only `cnode_bits` is undisturbed.
 `l2 = 12`. A class is released when its open closes, so a viewer's classes give
 their slots back (`specs/datatypes.md`'s phase 2f).
 
+## The record: what was handed out, and nothing else
+
+Every memory failure this arc had one shape: something was released, or handed out,
+that the allocator never owned. `munmap` gave back a run the window could not take; the
+free list's own nodes were written where nothing was mapped; a release whose length ran
+past the window's end was accepted and the next `mmap` handed back the page at
+`limit_ + 0xf`. None of it was a sizing problem, and none of it was arithmetic that
+could be corrected by a better bound -- `mmap`, `munmap` and `mprotect` were *inferring*
+ownership from `base_`, `brk_`, `limit_` and page alignment, and every inference was
+wrong somewhere. `specs/clang-on-aegir.md`'s Phase 3 has all four, with the runs that
+ended them.
+
+So the question gets an answer instead of an inference. **`mmap` records every run it
+hands out -- `(base, pages)` -- and `munmap` and `mprotect` accept nothing that is not in
+that record.** A release of an unrecorded range is `EINVAL`, not a region returned to a
+free list; a protection change on an unrecorded page is refused. The record's storage is
+the self-hosting shape the heap's region list already uses (`grow_node_region`), so there
+is no capacity to choose and no fixed ceiling.
+
+That record is also the spine of *one* allocator rather than two. With a single ledger of
+what is out, the arena, the streaming frames and the allocator's node pool stop being
+three tenants inferring a boundary and become clients of one owner: `Scratch::reserve`'s
+two ends -- the window's top for reservations, its base for streaming -- get a ledger to
+reserve against, and any release can only accept what the ledger says was handed out.
+This is the piece to build first; the rest of the merge is arithmetic that the ledger
+makes checkable instead of arguable.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
