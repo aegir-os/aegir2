@@ -163,6 +163,11 @@ void *grow_node_region(void *context, unsigned *bytes) noexcept
     return reinterpret_cast<void *>(page);
 }
 
+/* TEMPORARY: the dispatch trace, so a refused mapping, a protected page or a failed
+ * frame is visible in the run that asks why a thread cannot be created
+ * (specs/memory.md, "The record"). Reverted once known. */
+#define AEGIR_HEAP_TRACE 1
+
 /* The record: every run `mmap` has handed out, so that "was this ours?" is answered
  * rather than inferred (specs/memory.md, "The record"). `munmap` removes an entry or
  * refuses. Every memory failure this arc was a release of something the heap did not
@@ -379,9 +384,12 @@ bool map_page(uintptr_t address) noexcept
         return false;
     }
     /* Remembered so that mprotect can name the frame again (the chunk record
-     * above). Every arena page is recorded; a page outside the arena cannot
-     * happen here, and would simply not be. */
-    if (address >= base_ && address < limit_) {
+     * above). Every page the heap maps is recorded -- a run reserved from the
+     * window's top sits *below* the arena, so the bound is the window, not the
+     * arena: an arena bound is what made mprotect refuse a thread's guard page,
+     * which killed the C++ smoke's TCB (specs/memory.md, "The record"). */
+    if (g_scratch != nullptr && address >= g_scratch->base() &&
+        address < g_scratch->limit()) {
         /* Indexed from the arena's *top*, which never moves. A floor that can
          * descend is the wrong thing to measure from: an arena at the window's top
          * then lands at a quarter-million-scale index, the record spreads over
@@ -556,15 +564,30 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
      * rather than refused (AGENTS.md: no arbitrary or hardcoded limits). What
      * bounded that before -- a frame record sized from the arena at init -- is
      * chunked now, so a large arena costs nothing until it is used. */
-    uintptr_t const top = align_down(scratch.limit());
-    uintptr_t const floor = top > align_up(bytes) ? top - align_up(bytes) : 0;
-    base_ = floor > align_up(scratch.base()) ? floor : align_up(scratch.base());
-    if (base_ >= top || base_ < scratch.base()) {
+    /* The arena is a *reservation* from the window's top: `Scratch::reserve` walks its
+     * reservation cursor down from there, so the arena sits beside the frames a service
+     * maps as it starts instead of enclosing them, and a later run can be reserved the
+     * same way rather than carved from a fixed arena (specs/memory.md). A seed larger
+     * than the window is a request for the window, not a demand: growing it for an
+     * arena reservation carries the heap onto pages nothing has mapped (measured: every
+     * fault landed one page past a boot service's window). `bytes` is the run `brk`
+     * starts in, not a ceiling on what the process may map (AGENTS.md: no arbitrary or
+     * hardcoded limits). */
+    if (bytes < kPageBytes) {
         return false;
     }
-    limit_ = top;
+    uint32_t const wanted = static_cast<uint32_t>(align_up(bytes) / kPageBytes);
+    uint32_t const room = static_cast<uint32_t>(
+        (align_down(scratch.limit()) - align_up(scratch.base())) / kPageBytes);
+    uint32_t const seed_pages = wanted < room ? wanted : room;
+    uintptr_t const base = scratch.reserve(seed_pages);
+    if (base == 0) {
+        return false;
+    }
+    base_ = base;
+    limit_ = base + static_cast<uintptr_t>(seed_pages) * kPageBytes;
     brk_ = base_;
-    mmap_ = top;
+    mmap_ = limit_;
     ready_ = true;
     g_free_regions.set_node_source(grow_node_region, nullptr);
     trace("region", base_, limit_);
@@ -708,12 +731,18 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
         base = reinterpret_cast<uintptr_t>(released);
         trace("mmap-reused", base, needed);
     } else {
-        if (needed > mmap_ - brk_) {
+        /* A run reserved from the window's top, not carved from a fixed arena: the
+         * window is what the process has, and its reservation cursor is the only cap.
+         * A run handed back is reserved again from `high_`, or reused from
+         * `g_free_regions` above. This is the bound that said "Out of memory" when a
+         * 97 MiB compiler tried to link (specs/memory.md). */
+        uintptr_t const reserved =
+            g_scratch->reserve(static_cast<unsigned>(needed / kPageBytes));
+        if (reserved == 0) {
             trace("mmap-refused", length, 0);
             return -ENOMEM;
         }
-        base = mmap_ - needed;
-        mmap_ = base;
+        base = reserved;
         for (uintptr_t page = 0; page < needed / kPageBytes; ++page) {
             if (!map_page(base + page * kPageBytes)) {
                 trace("mmap-refused", length, 0);
@@ -770,6 +799,11 @@ long sys_munmap(void *addr, size_t length) noexcept
         trace("munmap-refused", base, bytes);
         return -EINVAL;
     }
+    /* And back to the window: `Scratch::release` takes the run when it ends at the
+     * reservation cursor and does nothing otherwise -- the space is in the heap's list
+     * either way, so a run that is not adjacent is handed out again rather than lost
+     * (specs/memory.md). */
+    g_scratch->release(base, static_cast<unsigned>(bytes / kPageBytes));
     return 0;
 }
 
@@ -805,7 +839,12 @@ seL4_CapRights_t rights_for(int prot) noexcept
 bool set_rights(uintptr_t address, size_t length, seL4_CapRights_t rights) noexcept
 {
     for (uintptr_t at = address; at < address + length; at += kPageBytes) {
-        if (!ready_ || at < base_ || at >= limit_) {
+        /* The window, not the arena: a run reserved from the window's top sits *below*
+         * the arena, and the record indexes it from the same fixed top `map_page` used
+         * when it was written (specs/memory.md, "The record"). An arena bound here is
+         * what refused a thread's guard page and killed the C++ smoke's TCB. */
+        if (!ready_ || g_scratch == nullptr || at < g_scratch->base() ||
+            at >= g_scratch->limit()) {
             return false;
         }
         uint32_t const index = static_cast<uint32_t>((limit_ - at) / kPageBytes);
@@ -837,7 +876,12 @@ long sys_mprotect(void *addr, size_t length, int prot) noexcept
     }
     uintptr_t const address = reinterpret_cast<uintptr_t>(addr);
     uintptr_t const needed = align_up(length);
-    if (address < base_ || address + needed > limit_) {
+    /* The window, not the arena: `mmap` reserves runs from the window's top, which
+     * sits below the arena, and the frame behind each page is what the invocation
+     * names -- `set_rights` looks it up in the record, which now spans the window
+     * (specs/memory.md, "The record"). */
+    if (g_scratch == nullptr || address < g_scratch->base() ||
+        address + needed > g_scratch->limit()) {
         trace("mprotect-refused", address, needed);
         return -ENOMEM;
     }

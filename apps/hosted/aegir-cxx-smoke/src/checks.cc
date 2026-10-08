@@ -17,6 +17,9 @@
 
 #include "checks.h"
 
+#include <cerrno>
+#include <sys/mman.h>
+
 #include <aegir/debug.h>
 
 #include <cstdlib>
@@ -223,6 +226,24 @@ void check_locale()
  * not merely of a return value. */
 void check_thread()
 {
+    /* What musl does for a thread's stack (pthread_create.c:295-301): reserve it
+     * PROT_NONE, then make the usable part writable, tolerating only ENOSYS. Doing the
+     * same three calls here separates "our mmap or mprotect refused" from "the clone
+     * failed" -- a heap fault against a runtime one (specs/memory.md, "The record"). */
+    constexpr size_t kProbeSize = 0x23000;
+    constexpr size_t kProbeGuard = 0x1000;
+    void *const probe = mmap(nullptr, kProbeSize, PROT_NONE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    std::printf("cxx-smoke: probe mmap PROT_NONE %p errno %d\n", probe,
+                probe == MAP_FAILED ? errno : 0);
+    if (probe != MAP_FAILED) {
+        int const rc = mprotect(static_cast<char *>(probe) + kProbeGuard,
+                                kProbeSize - kProbeGuard, PROT_READ | PROT_WRITE);
+        std::printf("cxx-smoke: probe mprotect RW %d errno %d\n", rc, rc == 0 ? 0 : errno);
+        (void)munmap(probe, kProbeSize);
+    }
+    std::fflush(nullptr);
+
     std::mutex guard;
     int counter = 0;
     bool joined = false;
