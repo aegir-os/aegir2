@@ -68,6 +68,9 @@ bool Scratch::initialise(Allocator *tables) noexcept
     /* The large-page region containing the base already has page tables: our
      * image's last page is in it. */
     limit_ = (base_ & ~(kLargePage - 1)) + kLargePage;
+    /* The reservation cursor starts at the window's top and walks down, which is the
+     *  end a long-lived run comes from (reserve). */
+    high_ = limit_;
     return true;
 }
 
@@ -83,6 +86,8 @@ bool Scratch::adopt(seL4_CPtr vspace_root, uintptr_t base, uintptr_t limit,
     base_ = base;
     next_ = base;
     limit_ = limit;
+    /* The reservation cursor: the window's top, walking down (reserve). */
+    high_ = limit;
     if (tables_ != nullptr) {
         static NodeWindow node_window{nullptr, nullptr};
         node_window.allocator = tables_;
@@ -240,15 +245,35 @@ bool Scratch::map_at(uintptr_t address, seL4_CPtr frame,
 uintptr_t Scratch::reserve(unsigned pages) noexcept
 {
     uint64_t const bytes = static_cast<uint64_t>(pages) * kPage;
-    while (next_ + bytes > limit_) {
+    /* A reservation comes from the window's *top* and walks down, while the streaming
+     * allocations (`map`, `map_large`) take the base and walk up: one owner, two ends,
+     * and they stop when they meet. Reserving before mapping is what lets a long-lived
+     * run -- a heap's arena, an mmap -- live *beside* the frames a service maps as it
+     * starts, with neither landing inside the other (specs/memory.md, "one space, one
+     * owner"). A window that may grow -- the root task's -- grows a large page at a
+     * time; a service's does not, because a service *cannot* map past the window it was
+     * given (measured: window-probe, every process, REFUSED). */
+    while (high_ < next_ + bytes) {
         if (!may_grow_) {
             return 0;
         }
         limit_ += kLargePage;
+        high_ += kLargePage;
     }
-    uintptr_t const base = next_;
-    next_ += bytes;
-    return base;
+    high_ -= bytes;
+    return high_;
+}
+
+void Scratch::release(uintptr_t base, unsigned pages) noexcept
+{
+    /* A run that ends at the reservation cursor goes back to it, so a reserve-use-release
+     * rhythm costs the window nothing. Anything else is the caller's to reuse: this class
+     * hands out addresses and owns no frames, so it cannot keep a list of them -- the heap
+     * keeps one and will not reach for more window until that list is empty
+     * (specs/memory.md, "one space, one owner"). */
+    if (base + static_cast<uint64_t>(pages) * kPage == high_) {
+        high_ = base;
+    }
 }
 
 void Scratch::unmap(seL4_CPtr frame) noexcept

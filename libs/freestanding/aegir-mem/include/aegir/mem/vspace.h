@@ -90,6 +90,12 @@ public:
      *  Zero when the window cannot give that many whole pages. */
     uintptr_t reserve(unsigned pages) noexcept;
 
+    /** Give a reserved run back to the window. It is taken back only when it ends at
+     *  the reservation cursor; anything else is the caller's to reuse, because this
+     *  class hands out addresses and owns no frames to keep a list of them in
+     *  (specs/memory.md, "one space, one owner"). */
+    void release(uintptr_t base, unsigned pages) noexcept;
+
     /** Remove one mapping. The frame cap stays ours. Unmapping the *most recently*
      *  mapped frame hands its window page back: filling frames is a strict
      *  map-write-unmap rhythm (child_vspace.cc's populate), and a window that
@@ -133,6 +139,13 @@ private:
     uintptr_t base_;
     uintptr_t next_;
     uintptr_t limit_;
+    /* The window has two ends and one owner: `next_` walks up for the streaming
+     *  allocations (`map`, `map_large`), `high_` walks down for reservations
+     *  (`reserve`), and they stop when they meet. The top is where a long-lived
+     *  run belongs, so an arena or an mmap cannot land inside the frames a service
+     *  maps as it starts -- and a window can hand out more than one run without a
+     *  fixed arena (specs/memory.md, "one space, one owner"). */
+    uintptr_t high_;
     uint64_t mapped_bytes_;
     /* The most recent mapping, so unmap can give its page back (see unmap). */
     seL4_CPtr last_cap_ = 0;

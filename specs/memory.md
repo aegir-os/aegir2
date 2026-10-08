@@ -434,6 +434,42 @@ for and what this whole arc keeps arriving at. The measured constraint on that a
 is now known exactly: **a process cannot map past its window** (`window-probe: REFUSED`,
 every process, green run), so the one space must be *shared*, not *extended*.
 
+## The arc: one space, one owner
+
+Three fixed choices are stacked in the memory path, and each one has now been hit:
+
+- **A process cannot map past its window** (above). Address space cannot be extended, only
+  shared -- so every "grow the window" fix was doomed, and the probe is what says so.
+- **The window's size is the spawner's number** -- `window_base`/`window_bytes` in the
+  bootstrap block, read by `adopt_memory()`; the launcher writes what a nested program gets.
+- **The heap's seed is a constant** -- `kHeapBytes`, 8 MiB for a hosted command, plus a
+  hand-written number in every hosted app. `ld.lld` maps ~45 MiB to link.
+
+Inside that one window live **two tenants**: the heap's arena at the top (placed by
+`map_at`, per that method's own comment) and the scratch's streaming frames from the base
+(`map`/`map_large`). Two cursors, neither able to see the other: giving the arena the whole
+window starves the scratch (measured -- the session's first command fails), and the
+scratch's `map()` growing the window faulted one page past it (also measured).
+
+So the arc is one owner for the one space:
+
+1. **`Scratch` hands out runs and takes them back.** `map`/`map_large` stream from the base
+   up, `reserve` walks down from the top for long-lived runs, and `release` takes a run
+   back when it ends where the reservation cursor is. No growth: the window is what the
+   process was given, and its limit is fixed.
+2. **One free list, kept by the process, not by the window.** The scratch owns addresses and
+   no frames, so it cannot store a list -- an earlier attempt to make it did, and the faults
+   are recorded above. The heap owns frames (its node storage grows on demand through
+   `grow_node_region`) and already keeps one (`g_free_regions`). A released run is reused
+   from that list first and reserved from the window only when the list is empty.
+3. **Then the seed goes.** Once runs are allocated per need, `kHeapBytes` bounds nothing: a
+   program's heap is what it asks for, and the only ceiling left is the window -- the
+   spawner's number, and the last one to remove.
+
+None of it needs a kernel, musl or LLVM change: frames are unbounded through `mem.main`'s
+`kMethodAlloc`, page tables are created on demand, and the three choices above are the only
+limits in the way.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
