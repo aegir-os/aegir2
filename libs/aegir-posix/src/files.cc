@@ -979,6 +979,76 @@ long close(int fd) noexcept
     return 0;
 }
 
+namespace {
+
+/* One read through a frame of the runtime's own, for a read big enough to be worth it.
+ *
+ * The frame is *transient* -- taken for this one read and given straight back -- and that is
+ * the point of it. Its size is the read's granularity, so a mega page moves 512 times what a
+ * page does per call. Holding one, though, is what ended a session's startup: 2 MiB of the
+ * pool commands are spawned from, per process, for the process's life, and nothing returns a
+ * departed command's memory (specs/development.md). Taken for the length of a read, one
+ * process at a time has it, and a program reading a hundred megabytes still gets one call per
+ * 2 MiB.
+ *
+ * Returns the bytes read (0 at end of file), or -1 when no frame could be had or the volume
+ * serves no frames -- in which case the caller runs the path it has always had. The two must
+ * not be confused: a volume that refuses a frame must not look like end of file. */
+long read_framed(Entry &entry, char *out, size_t count) noexcept
+{
+    if (g_allocator == nullptr || g_scratch == nullptr || entry.handle == 0) {
+        return -1;
+    }
+    aegir::mem::Account account{"io", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    void *cookie = nullptr;
+    seL4_CPtr frame = g_allocator->alloc_object(seL4_RISCV_Mega_Page, seL4_LargePageBits,
+                                                account, &error, &cookie);
+    uint32_t bits = seL4_LargePageBits;
+    if (frame == 0) {
+        frame = g_allocator->alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, account, &error,
+                                          &cookie);
+        bits = seL4_PageBits;
+    }
+    if (frame == 0) {
+        return -1;
+    }
+    void *const mapped =
+        bits == seL4_LargePageBits ? g_scratch->map_large(frame) : g_scratch->map(frame);
+    if (mapped == nullptr) {
+        g_allocator->free_object(cookie, bits);
+        return -1;
+    }
+    auto *const window = static_cast<uint8_t *>(mapped);
+    uint64_t const chunk = 1ull << bits;
+    aegir::vfs::Volume volume(entry.volume);
+    size_t total = 0;
+    bool served = false;
+    while (total < count) {
+        uint64_t const want = count - total < chunk ? count - total : chunk;
+        uint64_t got = 0;
+        bool eof = false;
+        if (!volume.read_frame(entry.handle, entry.offset, want, 0, frame, bits, got, eof)) {
+            break;
+        }
+        served = true;
+        if (got == 0) {
+            break;
+        }
+        __builtin_memcpy(out + total, window, static_cast<size_t>(got));
+        entry.offset += got;
+        total += static_cast<size_t>(got);
+        if (eof) {
+            break;
+        }
+    }
+    g_scratch->unmap(frame);
+    g_allocator->free_object(cookie, bits);
+    return served ? static_cast<long>(total) : -1;
+}
+
+}  // namespace
+
 long read(int fd, void *buffer, size_t count) noexcept
 {
     Entry *entry = entry_for(fd);
@@ -986,6 +1056,17 @@ long read(int fd, void *buffer, size_t count) noexcept
         return -EBADF;
     }
     auto *bytes_out = static_cast<char *>(buffer);
+    /* A read worth framing goes through a frame of the runtime's own. The threshold is the
+     * write path's (`count > kWriteMax` there, `kFrameBytes` here): below a frame's worth the
+     * frame costs more than it saves, above it a mega page moves one call's worth per call.
+     * `-1` means no frame could be had, or this volume serves none -- the loop below is then
+     * the path it has always been, which is also what a pipe needs. */
+    if (count > aegir::volume::kFrameBytes) {
+        long const framed = read_framed(*entry, bytes_out, count);
+        if (framed >= 0) {
+            return framed;
+        }
+    }
     size_t total = 0;
     while (total < count) {
         /* `bytes.data` points into the Volume, so it must outlive the copy. */
