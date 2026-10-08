@@ -470,6 +470,27 @@ None of it needs a kernel, musl or LLVM change: frames are unbounded through `me
 `kMethodAlloc`, page tables are created on demand, and the three choices above are the only
 limits in the way.
 
+### What the two-ends design already proves, and what it still breaks (measured)
+
+Status of the arc's two landed pieces, and of the third before it was parked:
+
+- **`Scratch` with two ends, and the streaming cursor stopping at the reservation cursor**
+  (`9c138b81`, `9ecf8592`): landed, build green, behaviour identical for every caller --
+  nothing reserves yet.
+- **The heap as the client** (arena reserved from the top, `mmap` reserving its own runs,
+  `munmap` returning them to the list *and* the window): **the design works**. With it,
+  *no service faults at one page past its window* -- the signature that killed `font`,
+  `fssmoke`, `envsmoke`, `cxxsmoke` and `hello` in every earlier attempt is gone, and
+  `CXX_SMOKE_OK` fires where `cxxsmoke` used to die before its thread check. `AEGIR_POSIX_
+  WAIT_OK`, `PATH_OK` and `FILE_OK` fire too.
+- **What it still breaks**, which is why it is parked rather than landed: `posix-memory-test`
+  exits **12**, and that client's status is `2 + n`, so it is check 10 -- `mprotect` on a page
+  of a run `mmap` reserved. The kernel says so on the way out:
+  `[decodeRISCVFrameInvocation/893 ... "posix-memory-test"]: Virtual add...` (truncated in the
+  log). The next attempt starts there: `map_page`'s frame record is indexed from the arena's
+  `limit_`, and `mmap`'s runs now sit *below* the arena because the arena is reserved first
+  -- so `set_rights` walks an index the record was not built for.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
