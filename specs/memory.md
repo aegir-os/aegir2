@@ -409,6 +409,17 @@ turn into `EAGAIN` -- so the next attempt starts by tracing that, and by checkin
 three refusal counts (`mmap-refused`, `munmap-refused`, `mprotect-refused`) rather than
 the two that happened to be grepped.
 
+**And the placement, not the cursors, is what breaks it: with every growth removed the
+faults are byte-identical.** `reserve` and `map()` now both refuse instead of raising the
+window's end, so nothing claims address space it does not own -- and the same five
+services fault at the same addresses, each exactly one page past its own window
+(`0x4012f00f` for a window ending `0x4012e000`, `0x400fe00f` for one ending `0x400fe000`),
+with `cxxsmoke` dying *before* its thread check, which is why the probe never printed.
+So the cause is neither cursor: it is the placement. Two candidates, and the next attempt
+takes them in order -- `mmap`'s runs coming from the window's top instead of the arena's
+`mmap_`, or the arena-as-reservation itself (`heap::init`) and what the services still
+hold that it no longer covers.
+
 ## What this is not
 
 - **A pager or swap.** The pool is RAM; there is no backing store.
