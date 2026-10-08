@@ -148,6 +148,18 @@ asked for again, and the frame is freed with the size it was taken at. Verified 
 runs (`dir`, `type`), so nothing regressed. It does not unblock the link — the link *reads*
 its inputs and `read()` has no frame path of its own — which is the next piece.
 
+**That piece, its shape named.** `read()` (`libs/aegir-posix/src/files.cc:982`) loops on
+`volume.read_handle(handle, offset, count - total, bytes)` and lets the volume choose how
+much comes back, so a program reading ~100 MB — which is what the linker does with its crt
+objects and the archive — pays the volume's own chunking on every call. The shape to give it
+is the one the *write* side already has, and the copy path just took: a frame of our own
+(the write path's `ensure_write_frame` is the model — allocate, map for our own access, reuse
+across calls), read a frame's worth per call through `read_frame` at **mega** granularity
+where the volume serves it, copy that out to the caller's buffer, and fall back to a page —
+and then to the unchanged inline path — for a volume that refuses. Nothing about it wants a
+wider timeout: the guest reports between commands, and a command that is *fast* reports
+sooner.
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
