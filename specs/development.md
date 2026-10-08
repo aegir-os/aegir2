@@ -160,6 +160,14 @@ and then to the unchanged inline path — for a volume that refuses. Nothing abo
 wider timeout: the guest reports between commands, and a command that is *fast* reports
 sooner.
 
+The write side in the same file is the model to copy, identifiers and all: `g_write_frame`
+and `g_write_frame_map` — one frame, claimed lazily by `ensure_write_frame` and kept for the
+process's life — taken with `g_allocator->alloc_page(account, &error)` and mapped for our own
+access with `g_scratch->map(frame)`, so the bytes can go *in*. A read frame is the same thing
+with the bytes coming *out*: take it at `seL4_RISCV_Mega_Page` with `seL4_LargePageBits` (the
+copy path above shows the page fallback), reuse it across calls rather than per call, and
+`memcpy` each filled frame out to the caller's buffer.
+
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
 is the scale acceptance for the spawn path (`specs/memory.md`) — a program
