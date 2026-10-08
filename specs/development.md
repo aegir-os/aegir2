@@ -65,10 +65,32 @@ Aegir's CMake (`specs/clang-on-aegir.md`'s Phase 1, landed — 97 MiB and 57 MiB
 both static `riscv64` ELFs), and `development_tree` copies them into
 `Sys:Development/C` as `clang` and `cc` (the same program under the name this file
 uses) and as `ld.lld` — the name lld asks for, since it takes its flavour from how
-it is invoked. The session's startup runs `ld.lld --version`, which answers on the
-guest with its own banner and is the dev target's cue; clang runs there and returns
-1 in silence, which is Phase 3's open item (`specs/clang-on-aegir.md`), so its
-invocation waits while its deployment does not.
+it is invoked. Both are invoked now, and clang compiles: see *How far it reaches*
+below. The earlier note here — that clang "returns 1 in silence" — was the state
+before the acceptance was typed step by step, and it is not the state any more.
+
+**The acceptance is typed, step by step — it must not live in the session's startup.**
+A key typed while `Sys:S/Shell-Startup` is running is lost: measured twice, an
+`execute Sys:S/Development-Acceptance` cued on that script's own last line never reached
+the shell, and the guest went on with the demo's gestures while the run waited out its
+quiet timeout. So the startup keeps only what works from a script and is quick (the
+POSIX clients and `aegir-big`), and the dev target types each acceptance action as its
+own step, the way every DOS step already does — click the terminal first, then one
+command, because a cue says a command started, not that the shell will receive the key:
+
+| cue | typed |
+| --- | --- |
+| `demo: filtered A#\? 2` | `Sys:Development/C/cc --version` |
+| `clang version 20` | `Sys:Development/C/ld.lld --version` |
+| `LLD 20` | `execute Sys:S/Development-Acceptance` |
+| `AEGIR_HELLO_OK` | the compiled program's own marker |
+
+The first cue is a demo line, and one no other step uses: the demo is a separate,
+step-paced process, so its lines cannot appear until the startup has finished and the
+runner has paced it there. (`demo: opened AEGIR.TXT` was the obvious choice and is
+already a step's cue — one step per cue, `AGENTS.md`.) `Sys:S/Development-Acceptance`
+reports between its commands (`echo`, and a `date` either side of the compile), so each
+stretch of silence is one command rather than the whole acceptance.
 
 **The startup's order is deliberate.** The POSIX clients and `aegir-big` run first
 and the big programs last: loading a 97 MiB or 57 MiB program spends the spawn
@@ -83,6 +105,21 @@ shape and not yet its content, because the first compile is freestanding.
 The acceptance boots the dedicated target, runs the compiler from the session on
 a known source, spawns the result, and checks a marker — the shape
 `specs/clang-on-aegir.md` states once.
+
+**How far it reaches.** Measured on `aegir-8g-smp4`: the acceptance is typed into the
+shell, `AEGIR_ACCEPTANCE_COMPILING` prints, and `AEGIR_ACCEPTANCE_COMPILED` prints —
+**the device compiles the source**, clang's driver and its cc1 both running on the guest
+with nothing of the host in the loop. What ends the run is one command's silence:
+`AEGIR_ACCEPTANCE_LINKED` never arrives after `COMPILED`, so the stretch is lld loading
+its 57 MiB and linking, which the runner's 300 s window cannot span.
+
+That window is deliberately small and it stays small: a timer is a guess, while a guest
+that reports is a fact — which is why `Sys:S/Development-Acceptance` reports between its
+commands rather than asking for a longer wait. The next thing to measure is therefore the
+*load*: the spawner maps a child's image through the volume's `read-frame`, one call per
+frame, and `frame_bits` comes from the caller
+(`libs/hosted/aegir-spawn-service/src/service_launch.cc:216`). Whether a 57 MiB program is
+loaded in page-sized calls is the question to answer before any allowance is widened.
 
 Beside the compiler, the same session runs `aegir-big`: a command whose loaded
 segment is a generated blob tens of megabytes long (`scripts/gen_blob.py`). It
