@@ -99,6 +99,24 @@ stopped resolving the source it had just written.
 remove at `/` is refused the way any path that names no volume is, because a
 volume is a mount point and `/` is the list of them (below, "What this is not").
 
+**A program asks whether a file is there in two ways, and answering one is not
+answering the other.** `stat` was answered from the first cut; `access` -- and
+`faccessat`, which is what `access` is -- was not, so a linker's existence check came
+back denied for files that were staged, present and readable beside it, with no syscall
+of any kind in any trace: `ld.lld` reported "cannot find linker script" and "unable to
+find library" for paths this layer was never asked about. `faccessat` (riscv64 48) and
+`statx` (291) are answered now, and held to the same answers as the stat family, because
+a program built elsewhere may use any of them (`specs/clang-on-aegir.md`'s Phase 3 has
+the measurements).
+
+**An `*at` call's anchor is a directory, not a formality.** `AT_FDCWD` was the only
+anchor answered at first, on the observation that "the common paths libc++'s filesystem
+makes" pass it. A *linker's* search is the other shape: open a directory, then ask about
+names relative to that descriptor. Every such question was refused with `ENOENT` before
+any path was resolved, which looks exactly like a missing file. The anchor is composed
+now -- the descriptor's own path (`Entry::path`) prefixes the relative name, and a name
+that stands on its own (`/`, or a `Volume:` path) is used as given.
+
 ## The arc
 
 The path view is the first sub-arc, and it has landed: the translation and its
