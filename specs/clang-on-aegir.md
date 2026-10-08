@@ -449,6 +449,20 @@ so a page is handed out once and to one owner -- the scratch's frames from the a
 the arena's pages from the scratch. That is a change in `libs/freestanding/aegir-mem`
 and `libs/hosted/aegir-heap` together, and it is where this stands.
 
+**And `reserve` is the right mechanism, with one thing still missing: the split.**
+`Scratch::reserve(pages)` advances the cursor past a run, which makes the collision
+impossible by construction -- the scratch cannot hand out a page it has already
+reserved. But a window that was *adopted* cannot grow (`may_grow_` is false for it), so
+an arena that reserves the *whole* window leaves the scratch's own frames nowhere to
+go: every `map()` in the process fails, and the session collapses before its clients
+even start (148 cues unprinted). The window is one size for two uses, and *whose* pages
+are whose is a decision the *spawner* makes when it hands the window over -- it already
+carves the untyped, and it is the one place that knows what a command is for. So the
+next step is that decision, made once and written down: an arena portion and a scratch
+portion, agreed at spawn and reserved before either is used, with `reserve` enforcing
+it. That is the "one allocator" this needs -- one place that says who gets what,
+rather than two cursors inferring it.
+
 `apps/aegir-clang-test` is the acceptance service: it runs at boot, compiles a
 known program against the `Sys:Development` sysroot, links it, spawns the
 result, and prints the marker.
