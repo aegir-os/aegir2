@@ -134,8 +134,18 @@ window is what ends the run. Two things make it *look* like nothing is happening
   minutes go.
 
 So the next thing to make fast — a *speed* question, not a timeout one — is the file read
-path's granularity, and second whether a command's stderr should reach the serial at all,
-since a long command that narrates itself into the grid is one the acceptance cannot see.
+path's granularity, and second why a long command's own narration never appears, since the
+acceptance sat through a silent link for its whole window.
+
+**That second one is answered, and it is not stderr.** Measured by reading, not guessing:
+`sys_write` routes fd 1 *and* fd 2 to the console stream (`libs/hosted/aegir-heap/src/heap.cc`,
+`if (fd == 1 || fd == 2)`), and the stream server mirrors everything it is handed to the serial
+(`apps/hosted/aegir-terminal/src/console_stream_server.cc` calls `aegir::debug_write` with the
+text). So a command's stderr reaches the serial exactly as its stdout does, and the earlier note
+here — that stderr "narrates into the grid" and never reaches the log — was wrong. What the
+link's silence means is therefore that lld never *printed at all*: it is either stuck or working
+before its own first output. The way to tell is the guest's job, not a timer's: a `date` on
+either side of the link, the shape the compile already has in `Sys:S/Development-Acceptance`.
 
 **First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
 through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
