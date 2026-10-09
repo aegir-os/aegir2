@@ -59,6 +59,26 @@ BOOT_SUMMARY = re.compile(r"(\d+) ready, (\d+) faulted")
 RECT_CUE = re.compile(r"\brect (\S+) (\d+) (\d+) (\d+) (\d+)")
 
 
+def split_console_lines(buffer: bytes) -> tuple[list[bytes], bytes]:
+    """The complete lines in `buffer`, then what is left of a line still being
+    written -- the remainder, never held back and never dropped.
+
+    The console is split here rather than by Python's text-mode iteration
+    because that blocks until a newline, and the console's line-at-a-time mirror
+    holds exactly that while a program is mid-sentence: a guest that never
+    finishes its line is invisible to a line reader, and this runner reported
+    one as "the guest stopped talking" while it was still writing
+    (specs/console.md). The remainder is what makes that report name the
+    writer instead."""
+    lines: list[bytes] = []
+    while True:
+        end = buffer.find(b"\n")
+        if end < 0:
+            return lines, buffer
+        lines.append(buffer[: end + 1])
+        buffer = buffer[end + 1:]
+
+
 def preflight(target: Target) -> list[str]:
     """What this machine still needs before the target can build or boot, as a
     list of "what (which make command fixes it)". Checked here because the
@@ -910,10 +930,15 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
         cwd=str(build_dir),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        # The console is a byte stream: a kernel abort or a driver writing raw
-        # bytes is still output we want to see, not a reason to crash.
-        errors="replace",
+        # Binary, not text. The console is read as *bytes* and split into lines
+        # by the pump below, because Python's text-mode iteration blocks until a
+        # newline: a writer that never finishes its line was invisible here, and
+        # the console's line-at-a-time mirror holds exactly that while a program
+        # is mid-sentence, so the runner reported "the guest stopped talking"
+        # about a guest that was still writing (specs/console.md, and the
+        # stall this instrument was blind to). Decoding per line with
+        # replacement keeps a kernel abort or a driver's raw bytes readable
+        # instead of crashing the reader.
         start_new_session=True,
     )
     # A `timeout` around *this* script kills us directly, and Python's default handler
@@ -955,12 +980,37 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
         # not wedge it until the outer budget expires (the rule the build's own
         # timeouts keep). `timeout` is that bound, and every line resets it.
         lines: queue.Queue[str | None] = queue.Queue()
+        # What has been read and not yet newline-terminated. A guest mid-line is
+        # *writing*, and a runner that cannot see those bytes reports it as one
+        # that stopped talking -- which is exactly what this arc's stalls were
+        # misdiagnosed as. `shown` is held short so a runaway line cannot make
+        # the report itself the memory problem.
+        unwritten = {"shown": "", "bytes": 0}
+        unwritten_lock = threading.Lock()
 
         def pump() -> None:
+            buffer = b""
             try:
-                for text in stream:
-                    lines.put(text)
+                while True:
+                    chunk = stream.read1(65536)
+                    if not chunk:
+                        break
+                    buffer += chunk
+                    complete, buffer = split_console_lines(buffer)
+                    for text in complete:
+                        lines.put(text.decode("utf-8", "replace"))
+                    with unwritten_lock:
+                        unwritten["shown"] = buffer[:200].decode("utf-8", "replace")
+                        unwritten["bytes"] = len(buffer)
             finally:
+                if buffer:
+                    # A line the writer never finished is still what it said:
+                    # handing it over lets the split-cue join below see a cue
+                    # that a writer's flush left across a line boundary.
+                    lines.put(buffer.decode("utf-8", "replace"))
+                with unwritten_lock:
+                    unwritten["shown"] = ""
+                    unwritten["bytes"] = 0
                 lines.put(None)
 
         threading.Thread(target=pump, daemon=True).start()
@@ -968,11 +1018,26 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             try:
                 line = lines.get(timeout=timeout)
             except queue.Empty:
-                print(
-                    f"    runner: FAIL no console line within {timeout}s -- "
-                    "the guest stopped talking",
-                    flush=True,
-                )
+                with unwritten_lock:
+                    shown = unwritten["shown"]
+                    partial_bytes = unwritten["bytes"]
+                if partial_bytes:
+                    # Bytes are arriving with no newline in them: the guest is
+                    # mid-line, not stopped, and the writer is named by what it
+                    # has said so far. This is its own failure -- a stream the
+                    # runner's reader cannot pace -- not a silent guest.
+                    print(
+                        f"    runner: FAIL no console line within {timeout}s, but the "
+                        f"guest is writing: {partial_bytes} byte(s) with no newline so "
+                        f"far. What it has said: {shown!r}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"    runner: FAIL no console line within {timeout}s -- "
+                        "the guest stopped talking",
+                        flush=True,
+                    )
                 failed = True
                 break
             if line is None:
