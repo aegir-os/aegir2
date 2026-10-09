@@ -224,3 +224,36 @@ keymap). The bureau's Workbench grey is read back where the form stood, the
 samples kept clear of the test bed's surviving window and of the cursor.
 The serial `auth.login` test path stays: the port, not the pixels, is the
 credential check.
+
+## The compositor's cost, measured
+
+A repaint used to walk the window list *for every pixel* of its rectangle, and
+the frame it read on each step belongs to a client, so the access pattern -- not
+the node count -- is where the time went. Measured on the floor target
+(`aegir`, 2 GiB, 2 cores) with a probe in the console itself:
+
+- one terminal window's paint, 560x380 = 213,000 pixels over three windows, was
+  **851,200 list walks** -- `iters` exactly `pixels x (windows + 1)`;
+- the console was **240 of 240** PC samples inside `composite_rect`, with every
+  other process blocked behind it. The acceptance crawled at about ten lines a
+  second and then stopped with its cues unprinted (14 to 45 of them, the count
+  varying with where it died), and an attended boot showed the bare backdrop with
+  no login form, because the console is the compositor too.
+
+The rect is now the backdrop first, then every window over it, bottom to top,
+each copied once a row at a time: the same pixels in the same order (windows are
+opaque, so the topmost coverer still wins), 657,200 pixel writes where it was
+851,200 list walks, and both the window's bytes and the screen's are touched in
+order. `make run` on that target reports `AEGIR_BOOT_OK` in 111-113s, where every
+run with the walk failed.
+
+Two further shapes were tried and measured, and neither is in the tree:
+
+- **composing each row in a cached buffer, then copying the row to the screen
+  once**: green, 111s against 113s -- inside the noise. It adds a copy without
+  removing the window-frame reads, which is where the cost was.
+- **damaging only the rows a write changed**: it cannot help the terminal, whose
+  grid scrolls -- a line printed at the bottom shifts every row, and the view is
+  some 27 rows against thousands of lines in a run, so the damaged set is the
+  whole view by construction. A client whose damage is already its own widget's
+  rectangle gains nothing from it either.
