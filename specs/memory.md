@@ -78,6 +78,43 @@ range). Re-enabling needs the blocks clamped to addresses no other segment owns,
 and a window that can describe a mega frame; until then the loader's capability
 count grows with a segment's pages, which is a *cost*, not a ceiling.
 
+### The fill window is a ceiling, and the acceptance sits on its edge
+
+That "cost, not a ceiling" is true of the loader's *capability* count. It is not
+true of the window the frames are filled through: the child's window is sized by
+the spawn request (`aegir/spawn/process.h`'s `window_page_bits`/`window_frame`),
+`child_vspace.cc`'s page path fills every file page through it one map at a time,
+and a program whose segments need more window pages than the request described
+fails to spawn:
+
+    auth: FAIL spawning session.datatypes: a segment of the program could not be
+    mapped (the window the frame is filled through is full)
+
+Measured on the floor target (`aegir`, 2 GiB, 2 cores) by growing one program's
+binary and nothing else -- the terminal, while a candidate signal for the
+acceptance's typed steps (specs/console.md) was being tried:
+
+| the terminal gained | spawn failures | `make run` |
+|---------------------|----------------|------------|
+| nothing (control)             | 0 | green, 119s |
+| 14 lines of plumbing          | 0 | green, 119s |
+| 5 lines, one empty handler    | 0 | green, 118s |
+| ~60 lines, the handler block  | 5 | red -- the demo dies at `datatypes: open DataTypes:ilbm.datatype` |
+| 68 lines, the whole candidate | 5 | red |
+
+The five are `session.datatypes`, the launcher and the sessions behind them. The
+acceptance then dies at the first `datatypes:` cue it never sees and the runner
+reports "the guest stopped talking" 300s later. **Nothing in the candidate code
+ran**: with those sessions unscheduled there is no shell prompt to announce and no
+window to click, which is why every probe of it came back empty, and why the
+failure looked like it was about focus, handlers or cue matching when it was
+about the loader's window.
+
+So the acceptance as it stands passes with a few lines to spare, and any further
+growth of any image crosses it. The window has to grow on demand, or describe a
+2 MiB frame so a segment's bulk costs one slot instead of 512 -- which is the
+other half of the mega path above, and it is what the next change is for.
+
 ## The service
 
 A service, `memory`, owns one large untyped covering most of the machine and
