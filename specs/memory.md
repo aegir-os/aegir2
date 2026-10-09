@@ -111,9 +111,15 @@ failure looked like it was about focus, handlers or cue matching when it was
 about the loader's window.
 
 So the acceptance as it stands passes with a few lines to spare, and any further
-growth of any image crosses it. The window has to grow on demand, or describe a
-2 MiB frame so a segment's bulk costs one slot instead of 512 -- which is the
-other half of the mega path above, and it is what the next change is for.
+growth of any image crosses it. A window that may grow is not the answer: a
+process cannot map past its window (`window-probe: REFUSED`, every process), and
+the window here is 1 GiB (`aegir-spawn`'s `kWindowBytes`) -- not small. What fills
+it is that the **scratch has two tenants**: the streaming cursor fills a frame at
+the base and walks up, while `reserve` (the heap's arena) takes from the top and
+walks down, and the two meet. The heap grows with every capability the spawner
+allocates for a child's frames, so a bigger child image is a bigger heap, and the
+fill cursor has less room. That is the wall this file's "one space, one owner"
+arc is about (above), and it is the next change -- not a window size.
 
 ## The service
 
