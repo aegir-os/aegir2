@@ -715,39 +715,59 @@ void composite_rect(uint64_t sx, uint64_t sy, uint64_t width,
     }
     uint64_t const ex = sx + width > g_width ? g_width : sx + width;
     uint64_t const ey = sy + height > g_height ? g_height : sy + height;
+    /* The rect as the backdrop first, then every window over it bottom to top:
+     * the pixels the per-pixel walk produced, but each window is copied once,
+     * a row at a time, so the window's bytes and the screen's are both touched
+     * in order. Walking the list inside the pixel loop cost 213,000 x windows
+     * visits for one terminal window's paint -- 851,200 measured for 560x380 --
+     * and every other service waited on it (specs/console.md). */
     for (uint64_t yy = sy; yy < ey; ++yy) {
-        auto *out =
+        auto *const out =
             reinterpret_cast<uint32_t *>(g_screen + yy * g_stride);
-        /* The screen layer's rows, hoisted: the bar's strip and the overlay's
-         * rectangle prime the per-pixel work only where they can apply, so the
-         * common case pays two comparisons (specs/workbench.md). */
+        for (uint64_t xx = sx; xx < ex; ++xx) {
+            out[xx] = kBackdrop;
+        }
+    }
+    for (Window const *w = g_windows; w != nullptr; w = w->next) {
+        if (!w->shown || w->slice == nullptr) {
+            continue;
+        }
+        uint64_t const x0 = w->x > sx ? w->x : sx;
+        uint64_t const x1 = w->x + w->width < ex ? w->x + w->width : ex;
+        uint64_t const y0 = w->y > sy ? w->y : sy;
+        uint64_t const y1 = w->y + w->height < ey ? w->y + w->height : ey;
+        if (x0 >= x1 || y0 >= y1) {
+            continue;
+        }
+        auto const *const backing = reinterpret_cast<uint32_t const *>(
+            w->slice->base + w->offset);
+        for (uint64_t yy = y0; yy < y1; ++yy) {
+            auto *const out =
+                reinterpret_cast<uint32_t *>(g_screen + yy * g_stride);
+            auto const *const row = backing + (yy - w->y) * w->width;
+            for (uint64_t xx = x0; xx < x1; ++xx) {
+                out[xx] = row[xx - w->x];
+            }
+        }
+    }
+    /* The screen layer: the bar and the marked rectangle are the screen's own
+     * top, drawn above every window (specs/workbench.md). */
+    for (uint64_t yy = sy; yy < ey; ++yy) {
+        auto *const out =
+            reinterpret_cast<uint32_t *>(g_screen + yy * g_stride);
         bool const bar_row = g_bar_window != nullptr && yy < g_bar_height;
         bool const layer_row = g_layer_window != nullptr && yy >= g_layer_y &&
                                yy < g_layer_y + g_layer_height;
+        if (!bar_row && !layer_row) {
+            continue;
+        }
         for (uint64_t xx = sx; xx < ex; ++xx) {
-            uint32_t pixel = kBackdrop;
-            for (Window const *w = g_windows; w != nullptr; w = w->next) {
-                if (!w->shown || xx < w->x || xx >= w->x + w->width ||
-                    yy < w->y || yy >= w->y + w->height) {
-                    continue;
-                }
-                Slice const *slice = w->slice;
-                if (slice == nullptr) {
-                    continue;
-                }
-                auto const *backing = reinterpret_cast<uint32_t const *>(
-                    slice->base + w->offset);
-                pixel = backing[(yy - w->y) * w->width + (xx - w->x)];
-            }
-            /* The screen layer: the bar and the marked rectangle are the
-             * screen's own top, drawn above every window (specs/workbench.md). */
             if (bar_row) {
-                pixel = window_pixel(g_bar_window, xx, yy, pixel);
+                out[xx] = window_pixel(g_bar_window, xx, yy, out[xx]);
             }
             if (layer_row && xx >= g_layer_x && xx < g_layer_x + g_layer_width) {
-                pixel = window_pixel(g_layer_window, xx, yy, pixel);
+                out[xx] = window_pixel(g_layer_window, xx, yy, out[xx]);
             }
-            out[xx] = pixel;
         }
     }
 }
