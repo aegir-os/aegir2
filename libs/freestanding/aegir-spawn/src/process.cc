@@ -390,6 +390,11 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         }
         if (!populated) {
             detail_ = why;
+            /* The numbers a placement collision needs (specs/memory.md): the
+             * address the child's mapping failed at, and how far into the child
+             * this spawn had already got. */
+            failed_address_ = vspace.failed_address();
+            child_mapped_end_ = vspace.mapped_end();
             return fail("a segment of the program could not be mapped");
         }
         mapped_until = page_base + static_cast<uintptr_t>(pages) * kPage;

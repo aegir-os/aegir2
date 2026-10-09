@@ -93,10 +93,18 @@ bool ChildVSpace::map_page(uintptr_t address, seL4_CPtr frame, bool writable,
         if (error_out != nullptr) {
             *error_out = error;
         }
+        /* What a collision report needs: which address, and the kernel's own
+         * answer for it (measured: "Virtual address (0xa85000) already mapped",
+         * which arrives here as seL4_DeleteFirst). */
+        failed_address_ = address;
+        failed_error_ = error;
         return false;
     }
     ++mapped_pages_;
     mapped_bytes_ += 1ull << size_bits;
+    if (address + (1ull << size_bits) > mapped_end_) {
+        mapped_end_ = address + (1ull << size_bits);
+    }
     return true;
 }
 

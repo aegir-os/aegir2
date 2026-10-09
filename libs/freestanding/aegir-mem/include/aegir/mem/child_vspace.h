@@ -131,12 +131,29 @@ public:
     unsigned mapped_pages() const noexcept { return mapped_pages_; }
     uint64_t mapped_bytes() const noexcept { return mapped_bytes_; }
 
+    /** Where the last mapping *into the child* failed, and the kernel's answer.
+     *  "A page could not be mapped into the child" does not say which address
+     *  already had something, nor what the kernel objected to, and a placement
+     *  collision cannot be fixed from that: measured, the kernel's own line was
+     *  "Virtual address (0xa85000) already mapped" and nothing in the spawner
+     *  could say what put it there. */
+    uintptr_t failed_address() const noexcept { return failed_address_; }
+    uint64_t failed_error() const noexcept { return static_cast<uint64_t>(failed_error_); }
+
+    /** The highest address mapped into the child so far (its end, not its
+     *  start): a failure below it is a collision with something this very
+     *  spawn already mapped. */
+    uintptr_t mapped_end() const noexcept { return mapped_end_; }
+
 private:
     Allocator &allocator_;
     Scratch &scratch_;
     seL4_CPtr root_;
     unsigned mapped_pages_;
     uint64_t mapped_bytes_;
+    uintptr_t mapped_end_ = 0;
+    uintptr_t failed_address_ = 0;
+    seL4_Error failed_error_ = seL4_NoError;
 };
 
 }  // namespace aegir::mem

@@ -314,6 +314,15 @@ public:
      *  was involved: seL4_NoError when the failure was not the kernel's. */
     uint64_t error() const noexcept { return static_cast<uint64_t>(error_); }
 
+    /** Where a mapping *into the child* last failed, and the highest address the
+     *  child had mapped by then. A refusal at an address below that end is a
+     *  collision with something this very spawn put there; above it, with
+     *  something else. The child's VSpace records both (mem::ChildVSpace) and
+     *  carries them here because a spawner has no writer of its own to say so
+     *  from. */
+    uint64_t failed_address() const noexcept { return failed_address_; }
+    uint64_t child_mapped_end() const noexcept { return child_mapped_end_; }
+
 private:
     bool fail(char const *what) noexcept;
     bool install(uint64_t slot, seL4_CPtr source, seL4_CapRights_t rights,
@@ -360,6 +369,8 @@ private:
     char const *problem_;
     char const *detail_;
     seL4_Error error_;
+    uint64_t failed_address_ = 0;
+    uint64_t child_mapped_end_ = 0;
 };
 
 }  // namespace aegir::spawn

@@ -1649,6 +1649,15 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
             write(detail);
             write(")");
         }
+        /* The two numbers a placement collision needs: the address the child's
+         * mapping failed at, and how far into the child this spawn had got
+         * (specs/memory.md). A refusal at an address below that end is this very
+         * spawn's own doing; above it, somebody else's. */
+        write(" [failed at 0x");
+        aegir::debug_write_hex(spawner.failed_address());
+        write(", child mapped to 0x");
+        aegir::debug_write_hex(spawner.child_mapped_end());
+        write("]");
         write("\n");
         return false;
     }
