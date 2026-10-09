@@ -113,6 +113,24 @@ on (`specs/process.md`). This is the whole of the terminal's remaining line
 knowledge -- from the component that owns the line, instead of a spawn the
 terminal no longer performs.
 
+## A status waits in its own slot
+
+The status of a running line was the one thing left polling: a held *status*
+would have sat in the same slot the command's own held `read` uses -- both belong
+to the same stream -- so the shell came back for it instead, and every ask is a
+call the terminal answers. For the whole life of a command the two of them held a
+core each. That reasoning cost more than it saved: measured on the floor target,
+the shell reached 200,000 polls with no status, and everything that needed the
+CPU, the command included, waited on the pair.
+
+A status now holds a slot of its own, one per kind per caller. `on_wake` answers
+it through `take_status` when the line completes -- by its exit, or by a break,
+whose `finish_break` completes the line when no exit is coming -- and the read's
+slot is untouched beside it, so a command that is reading does not lose its wait.
+A caller whose slot cannot be had is answered "not yet" and polls as before.
+Measured after the change: `AEGIR_BOOT_OK` in 113s, the same as with the poll,
+and the shell's counter stays below 200,000 for the whole run.
+
 ## Where it lands
 
 1. **The library and its tests.** `Receiver`, `Context`, `Reply_holder`,
