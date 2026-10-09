@@ -229,6 +229,13 @@ int main(int argc, char *argv[])
         ++input_lines;
         write("  terminal: ready for line ");
         write_unsigned(input_lines);
+        /* The stream's own badge, not the window's name: a badge is unique to
+         * one stream, while a window's shape is something two terminals can
+         * share. The acceptance learns it from the line that already carries it
+         * (auth's `session started, badge 0x...`) and each typed step cues on
+         * its own (line, shell) pair. */
+        write(" shell ");
+        write_unsigned(shell_badge);
         write("\n");
     };
     server.on_ready = [&](uint64_t caller) {
