@@ -210,6 +210,42 @@ int main(int argc, char *argv[])
      * so the view that draws it must repaint. */
     server.on_change = [terminal]() { terminal->damage(); };
 
+    /* The line the acceptance's typed steps wait for (specs/console.md): the
+     * terminal is worth typing at only when its window has the focus *and* its
+     * shell is asking for a line, because the click that gives the focus and
+     * the keys ride different queues. This is the greeter's own cue, and the
+     * count is what makes each occurrence its own -- a cue that repeats cannot
+     * be two steps' (AGENTS.md). Typing at the wrong moment queues the key
+     * behind the command that just ended, or drops it on a full event ring. */
+    bool input_focused = false;
+    bool input_prompted = false;
+    bool input_announced = false;
+    uint64_t input_lines = 0;
+    auto announce_input = [&]() {
+        if (!input_focused || !input_prompted || input_announced) {
+            return;
+        }
+        input_announced = true;
+        ++input_lines;
+        write("  terminal: ready for line ");
+        write_unsigned(input_lines);
+        write("\n");
+    };
+    server.on_ready = [&](uint64_t caller) {
+        if (caller != shell_badge) {
+            return;
+        }
+        input_prompted = true;
+        input_announced = false;
+        announce_input();
+    };
+    /* The focus arrives from the console, the prompt from the shell: whichever
+     * is second is the moment both hold, and the line is printed once. */
+    window.on_focus_changed = [&](bool focused) {
+        input_focused = focused;
+        announce_input();
+    };
+
     /* The process registry's caller half (specs/process.md): Ctrl-C sets **C**
      * on the foreground line's pids through it. Auth hands the terminal the
      * port when the session manifest names `process.registry` in its needs, so

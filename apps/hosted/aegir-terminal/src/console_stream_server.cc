@@ -147,6 +147,12 @@ void ConsoleStreamServer::begin(uint64_t caller)
         if (on_change) {
             on_change();
         }
+        /* The editor is open, so a key typed from here reaches it rather than
+         * being queued: this is the shell telling the world it can be typed
+         * at (specs/console.md). */
+        if (on_ready) {
+            on_ready(caller);
+        }
     }
 }
 

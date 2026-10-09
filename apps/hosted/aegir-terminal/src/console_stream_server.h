@@ -37,6 +37,14 @@ public:
      * value and knows no view; the handler is the one place both meet. */
     std::function<void()> on_change;
 
+    /* Called when a stream has just begun its line editor -- the shell asking
+     * for its next line, so a key typed now reaches the editor instead of being
+     * queued behind the command that just ended. The terminal prints its
+     * readiness line from this when its window has the focus too, which is the
+     * cue the acceptance's typed steps wait for: the click and the keys ride
+     * different queues, so neither line alone is enough (specs/console.md). */
+    std::function<void(uint64_t caller)> on_ready;
+
     /* Called when the stream has something for its client to read -- input
      * queued, a line ready, a command finished -- so the terminal answers the
      * read that was waiting for it (specs/signal.md). The handler is
