@@ -61,6 +61,14 @@ struct HeldRead {
 };
 
 static std::unordered_map<uint64_t, HeldRead> g_held_reads;
+/* A command's status waits in a slot of its own, not the read's (measured: one
+ * slot for both is why the shell *polled* -- and a poll here is a blocking call
+ * the terminal answers every iteration, so the two of them hold both cores for
+ * the whole life of a command and starve the command, the console and the
+ * volumes it needs; the floor target's editor steps livelocked exactly that
+ * way). Separate slots let a status wait the way a read does, with the
+ * command's own held `read` untouched beside it. */
+static std::unordered_map<uint64_t, HeldRead> g_held_status;
 static bool g_hold_requested = false;
 #include <vector>
 
@@ -335,6 +343,20 @@ int main(int argc, char *argv[])
                 aegir::launch::kMethodRelease, words, 1, answer, 1);
             return reply.error == 0 && reply.count >= 1 ? answer[0] : 0;
         };
+        /* The exit cue, in one place: the immediate answer and the held one
+         * (on_wake) both owe it, and the runner's steps are cued on it. Printed
+         * before the status is released to the shell, so nothing the shell
+         * writes once it has the status can overtake the cue. */
+        auto report_status = [&](uint64_t caller, uint64_t status) {
+            write("  terminal: command exited ");
+            write_unsigned(status);
+            write("\n");
+            if (server.stages(caller) > 1) {
+                write("  terminal: pipeline exited ");
+                write_unsigned(status);
+                write("\n");
+            }
+        };
         app.on_call = [&](uint32_t method, uint64_t const *words, uint32_t count,
                           seL4_Word badge, bool cap_arrived, uint64_t *reply,
                           uint32_t capacity) -> uint32_t {
@@ -359,14 +381,28 @@ int main(int argc, char *argv[])
             }
             if (method == aegir::console::kStreamMethodCommandStatus) {
                 /* The shell reads the line's status, and it is due only when
-                 * every stage has reported (specs/pipe.md, specs/signal.md):
-                 * while the line still runs there is no status to take, and
-                 * the shell polls for it -- a held status would sit in the one
-                 * slot the command's own held `read` is using, because both
-                 * belong to the same stream. Once the line is done, the
-                 * status is the last stage's, and the cue says which. */
+                 * every stage has reported (specs/pipe.md, specs/signal.md).
+                 * While the line still runs there is nothing to take, and the
+                 * reply is *held*, not refused: a caller that is refused comes
+                 * straight back for it, and that is a poll -- a blocking call
+                 * this terminal must answer every iteration. The shell and the
+                 * terminal then hold both cores for the whole life of the
+                 * command, and the command, the console and the volumes it
+                 * needs are starved; measured on the floor target, that is a
+                 * livelock at the editor's steps (the shell's poll seen at 200k
+                 * iterations with the serial gone silent behind it). The status
+                 * waits in a slot of its own (g_held_status) so the command's
+                 * held `read` is untouched, and it is answered from on_wake when
+                 * the line completes -- by its exit, or by a break whose
+                 * finish_break completes the line when no exit is coming. */
                 if (server.in_command(badge) && !server.line_complete(badge)) {
-                    return 0;
+                    /* Cleared before the ask, the way every path that may hold
+                     * does: a stale set from an earlier hold would otherwise
+                     * answer kHoldReply for a hold that was not taken, and the
+                     * caller's reply would then never be sent at all. */
+                    g_hold_requested = false;
+                    server.on_hold(badge, aegir::console::kStreamMethodCommandStatus, 0);
+                    return g_hold_requested ? app.kHoldReply : 0;
                 }
                 g_hold_requested = false;
                 uint32_t const answer =
@@ -375,14 +411,7 @@ int main(int argc, char *argv[])
                     return app.kHoldReply;
                 }
                 if (answer == 1) {
-                    write("  terminal: command exited ");
-                    write_unsigned(reply[0]);
-                    write("\n");
-                    if (server.stages(badge) > 1) {
-                        write("  terminal: pipeline exited ");
-                        write_unsigned(reply[0]);
-                        write("\n");
-                    }
+                    report_status(badge, reply[0]);
                 }
                 return answer;
             }
@@ -447,9 +476,7 @@ int main(int argc, char *argv[])
                     held->second.method == aegir::console::kStreamMethodRead
                         ? server.take_read(caller, held->second.bound, reply,
                                            aegir::ipc::kMaxWords)
-                        : held->second.method == aegir::console::kStreamMethodReadLine
-                              ? server.take_line(caller, reply, aegir::ipc::kMaxWords)
-                              : server.take_status(caller, reply, aegir::ipc::kMaxWords);
+                        : server.take_line(caller, reply, aegir::ipc::kMaxWords);
                 if (n != 0) {
                     held->second.reply.reply(reply, n, 0);
                     g_held_reads.erase(held);
@@ -459,11 +486,38 @@ int main(int argc, char *argv[])
                     g_held_reads.erase(held);
                 }
             }
+            /* And a command's status: the line has completed, so the wait the
+             * shell is sitting in ends here. This is the ordinary way a held
+             * status is answered -- the immediate path answers only the case
+             * where the line was already done when the shell asked -- and the
+             * cue goes out before the reply, as it does there. */
+            auto due = g_held_status.find(caller);
+            if (due != g_held_status.end()) {
+                uint64_t reply[aegir::ipc::kMaxWords];
+                uint32_t const n = server.take_status(caller, reply, aegir::ipc::kMaxWords);
+                if (n != 0) {
+                    report_status(caller, reply[0]);
+                    due->second.reply.reply(reply, n, 0);
+                    g_held_status.erase(due);
+                }
+            }
         };
         /* A read that found nothing waits: save the caller's reply capability
          * and answer it from on_wake when a key or the command's end arrives
-         * (specs/signal.md). */
+         * (specs/signal.md). A command's status waits the same way, in a slot of
+         * its own, so a command holding a read does not take the status's. */
         server.on_hold = [&](uint64_t caller, uint32_t method, uint32_t bound) {
+            auto &table = method == aegir::console::kStreamMethodCommandStatus
+                              ? g_held_status
+                              : g_held_reads;
+            /* One of each kind per caller: a caller is single-threaded, so a
+             * second of the same kind means the first was never answered, and
+             * replacing it would drop that reply for ever. The new call is left
+             * to be answered as "not yet" instead, which leaves its caller to
+             * ask again. */
+            if (table.find(caller) != table.end()) {
+                return;
+            }
             seL4_CPtr const slot = app.alloc_slot();
             if (slot == 0) {
                 return;
@@ -477,7 +531,7 @@ int main(int argc, char *argv[])
             if (!held.reply.save()) {
                 return;
             }
-            g_held_reads[caller] = held;
+            table[caller] = held;
             g_hold_requested = true;
         };
     }
