@@ -773,7 +773,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 press="execute Sys:S/Dos-Wait\n",
             ),
             QmpStep(
-                r"launcher: command started copy",
+                r"launcher: command started makedir",
                 events=TERMINAL_CLICK,
                 # Sys:BIG.TXT is bigger than one envelope, so its copy goes a
                 # frame at a time and, into a Home: directory, through the
