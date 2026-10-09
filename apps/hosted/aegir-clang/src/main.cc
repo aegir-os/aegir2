@@ -21,6 +21,7 @@
  * The exit status is clang's own.
  */
 
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LLVMDriver.h"
 
 // clang's driver entry (projects/llvm-project/clang/tools/driver/driver.cpp:231).
@@ -28,6 +29,15 @@ extern int clang_main(int argc, char **argv, const llvm::ToolContext &tool_conte
 
 int main(int argc, char **argv)
 {
+    /* Seed LLVM's cached answer for "where is this program?" before anything else asks.
+     * getMainExecutable caches its first result, and an early caller inside LLVM passes
+     * argv0 = nullptr -- which on Aegir (no /proc, and a dladdr that answers nothing) caches
+     * the empty string for the whole process. The driver then takes that empty path for the
+     * cc1 it re-executes, forks "", and exits 0 having compiled nothing at all
+     * (specs/development.md's Phase 3 measurements; specs/clang-on-aegir.md's Phase 3).
+     * Asking first, with the name the launcher gave this program, is what makes the cache
+     * answer that name. */
+    (void)llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main));
     llvm::ToolContext const context{argc > 0 && argv[0] != nullptr ? argv[0] : "clang",
                                     nullptr, false};
     return clang_main(argc, argv, context);

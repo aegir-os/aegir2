@@ -211,6 +211,46 @@ acceptance — and it is *narrower* than everything above it. The archive's cost
 reads and the spawn pool are all downstream of an object that was never produced; the link's
 complaint about a section-header string table index was lld being handed a file that isn't there.
 
+**And the fix does not reach the binary -- which is a build matter, not a clang one.** Two patches
+were tried in the vendored LLVM: an `argv[0]` fallback where `dladdr` fails, then the same
+preference at the *top* of `getMainExecutable`, where nothing can bypass it. Each was followed by
+`scripts/build_llvm.sh`, a forced relink (`rm` the binary -- an imported static library's change
+does not otherwise trigger one) and a run. The guest's own words, printed from the harness, never
+moved:
+
+    AEGIR_CLANG_ARGV0 [Sys:Development/C/cc] SELF []
+
+`argv[0]` is right and the answer is still empty, so the patched code is not in the process. The
+timestamps say why: `out/runtime/llvm-install/lib/libLLVMSupport.a` keeps its old time across a
+build that reports success, while the binary beside it is relinked from it. The library is never
+recompiled, so an *edit* to the extracted tree buys nothing.
+
+`scripts/build_llvm.sh`'s own header names the mechanism that does work -- *"the tracked patches
+are already applied by `make deps`"* -- and until the patch travels that way the compile cannot be
+fixed. That is the next step, and it is smaller than everything above it: one tracked patch, and a
+build that notices it.
+
+**And the reason it took three cycles is a build guard.** `scripts/build_llvm.sh` exits early when
+`${INSTALL_DIR}/lib/libclang.a` and `liblldCommon.a` exist — *"LLVM libraries already built for
+aegir"* — so running it against a populated install directory compiles **nothing**: the patch stayed
+out of the archive while the binary beside it was relinked from the old one (October 5th). Removing
+`libclang.a` made the script build again, `libLLVMSupport.a` took that morning's time, and the
+guest's own answer changed:
+
+    "Sys:Development/C/cc" -cc1 -triple riscv64-unknown-unknown-elf -emit-obj ...
+
+`getMainExecutable` now answers, the driver names the program, and cc1 **runs**: `-v` shows
+`(in-process)`, cc1's version banner, and its include search (`ignoring nonexistent directory
+"Sys:Development/lib/clang/20/include"`, `End of search list.`). It then exits **0** and
+`SCRATCH:hello.o` still does not exist — so the question has moved *inside* cc1, and the compile is
+one step from working rather than failing at the first hurdle.
+
+Two things follow for anyone picking this up. The patch is in
+`projects/llvm-project/llvm/lib/Support/Unix/Path.inc` **in the extracted tree only** — until it
+travels as a *tracked* patch (which the header says `make deps` applies), a fresh extraction loses
+it. And a build that finds the libraries present will keep the old behaviour, so `libclang.a` is the
+file to remove to make LLVM compile again.
+
 **First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
 through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
 it now asks for a **mega** page (`seL4_RISCV_Mega_Page` with `seL4_LargePageBits` — the same
