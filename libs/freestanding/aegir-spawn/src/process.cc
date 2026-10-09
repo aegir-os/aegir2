@@ -583,11 +583,26 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         align_up(memory_at + request.memory_bytes, window_frame_bytes);
     /* Everything above the memory and the shared window is the child's, when it
      * is trusted with its own VSpace root: addresses cost nothing, so the
-     * window is generous, and the spawner -- not the child -- is what chose
-     * it. */
-    constexpr uint64_t kWindowBytes = 1ull << 30;
+     * window is the *rest of the child's address space* rather than a number
+     * chosen here. Its end is the architecture's own user top -- the first
+     * address past user memory (riscv64: seL4_UserTop) -- and what the child
+     * puts in it costs memory only as it maps it, page tables included, so the
+     * space is allocated on demand (specs/authority.md: capacity grows on
+     * demand). The extent is clamped only by what the block's Window entry can
+     * say: its size is `Entry::length`, a 32-bit field, which is a limit of the
+     * *format* and not a number anybody picked -- widening that field is what
+     * removes the last of it. */
     uint64_t const window_base =
         request.give_vspace ? shared_window_at + request.window_bytes : 0;
+    uint64_t const window_space =
+        window_base != 0 ? static_cast<uint64_t>(seL4_UserTop) - window_base : 0;
+    uint64_t const window_clamped =
+        window_space < 0xFFFFFFFFull ? window_space : 0xFFFFFFFFull;
+    /* The child adopts the window as a range, so `base + bytes` has to land on a
+     * page: an extent that does not is refused outright -- "the window would not
+     * be adopted", measured on every service when this clamp was not aligned. */
+    uint64_t const window_page_mask = (1ull << seL4_PageBits) - 1ull;
+    uint32_t const window_bytes = static_cast<uint32_t>(window_clamped & ~window_page_mask);
 
     auto *device_cap_entries =
         static_cast<bootstrap::DeviceCapEntry *>(arena_.allocate(
@@ -614,7 +629,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         port_entries,       port_count,            devices_address, request.devices_bytes,
         device_address,     request.device_bytes,  request.device_physical,
         request.untyped_physical, request.untyped_bits, memory_at,
-        binaries_address,   request.binaries_bytes, window_base,    kWindowBytes,
+        binaries_address,   request.binaries_bytes, window_base,    window_bytes,
         device_cap_entries, request.device_grant_count,
         shared_window_address, request.window_bytes, request.window_physical,
         request.badge,
