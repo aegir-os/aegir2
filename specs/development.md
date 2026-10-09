@@ -188,6 +188,29 @@ seconds.
 thing the linker says about its inputs: the object clang wrote is malformed, or lld reads it
 wrongly. The link cannot succeed until that is understood, whatever the archive costs.
 
+**And the A/B's "6 seconds" was a failure, not a fast link.** `dir SCRATCH:hello.o` says the
+object **does not exist** — `dir: cannot list SCRATCH:hello.o`. `AEGIR_ACCEPTANCE_COMPILED` is an
+`echo`, and the script carries on past a non-zero exit (measured earlier in this arc), so the
+compile had been failing invisibly. clang's driver exits **0** and writes nothing, and `-v` shows
+why:
+
+```
+InstalledDir: Sys:Development/C                      <- with -ccc-install-dir given
+ "" -cc1 -triple riscv64-unknown-unknown-elf -emit-obj ...
+```
+
+The program name in the command clang means to run is **empty**. Clang re-executes *itself* to run
+`cc1`, and it finds its own path through LLVM's `GetMainExecutable`, which on Linux reads
+`/proc/self/exe` — Aegir has no `/proc`, so it derives nothing, the fork of `""` goes nowhere, and
+the driver reports success. No `cc1` ever starts, which the launcher confirms: two `cc` launches
+in the whole run, the cued `--version` and the acceptance's compile, and nothing under either.
+
+`-ccc-install-dir` sets `InstalledDir` but not that name, so this is not a flag's problem: **a
+hosted clang has to learn its own path**. That is what stands between this tree and the
+acceptance — and it is *narrower* than everything above it. The archive's cost, the mappings, the
+reads and the spawn pool are all downstream of an object that was never produced; the link's
+complaint about a section-header string table index was lld being handed a file that isn't there.
+
 **First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
 through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
 it now asks for a **mega** page (`seL4_RISCV_Mega_Page` with `seL4_LargePageBits` — the same

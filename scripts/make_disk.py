@@ -261,10 +261,12 @@ AEGIR_BFS_TREE = [
         ("file", "Development-Acceptance",
          b"echo AEGIR_ACCEPTANCE_COMPILING\n"
          b"date\n"
-         b"Sys:Development/C/cc --target=riscv64-unknown-elf"
+         b"Sys:Development/C/cc -v -ccc-install-dir Sys:Development/C"
+         b" --target=riscv64-unknown-elf"
          b" -c Sys:Development/hello.c -o SCRATCH:hello.o\n"
          b"date\n"
          b"echo AEGIR_ACCEPTANCE_COMPILED\n"
+         b"dir SCRATCH:hello.o\n"
          b"date\n"
          b"execute Sys:Development/link.sh\n"
          b"date\n"
