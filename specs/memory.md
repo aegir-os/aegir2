@@ -50,11 +50,33 @@ one `AGENTS.md` forbids.
 
 So no constant on a spawn path is a ceiling. A command's pool is sized from its
 image (`ServiceKit::command_cnode_count`), not a fixed bracket; the allocator
-lays a run down in chunks at the kernel's fan-out limit; the loader maps a large
-segment's bulk as mega pages so the count of capabilities does not grow with
-`size / 4 KiB` either. The only ceiling is `mem.main`, which is the machine. A
-number may be a *floor* -- a seed, a default, a reserved minimum -- and
-`specs/limits.md` is the one place a deliberate cap belongs.
+lays a run down in chunks at the kernel's fan-out limit. The only ceiling is
+`mem.main`, which is the machine. A number may be a *floor* -- a seed, a default,
+a reserved minimum -- and `specs/limits.md` is the one place a deliberate cap
+belongs.
+
+One attempt at the third of those is **off**, because it stopped every session
+program from spawning, and the way it failed is worth keeping. `dd182dfd` mapped a
+segment's aligned bulk as 2 MiB mega pages, so the loader's capability count would
+not grow with `size / 4 KiB`. Two faults, both measured on `aegir-8g-smp4` with the
+dispatch trace armed (`scripts/heap_trace.py`), both mine:
+
+- **A mega frame is not a slot of the window the frames are filled through.** That
+  window is indexed by page (`spawn/process.h`'s `window_page_bits`), so the mega
+  fill reported it full -- *"the window the frame is filled through is full"* -- and
+  the spawn failed.
+- **A mega page covers 2 MiB of *address* space, including pages a neighbouring
+  segment also maps.** The kernel refused the second mapping -- *"Virtual address
+  (0xa85000) already mapped"* (`decodeRISCVFrameInvocation`) -- and `populate()`
+  failed with *"a segment of the program could not be mapped"*.
+
+The result was four failed spawns at boot: the session, its terminal, its file
+manager and the launcher, with only "the launcher" surviving -- so nothing ran.
+The page path is what loaded every program before it, and does again
+(`libs/freestanding/aegir-mem/src/child_vspace.cc` carries both reasons beside the
+range). Re-enabling needs the blocks clamped to addresses no other segment owns,
+and a window that can describe a mega frame; until then the loader's capability
+count grows with a segment's pages, which is a *cost*, not a ceiling.
 
 ## The service
 
