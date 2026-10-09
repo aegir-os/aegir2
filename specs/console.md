@@ -257,3 +257,39 @@ Two further shapes were tried and measured, and neither is in the tree:
   some 27 rows against thousands of lines in a run, so the damaged set is the
   whole view by construction. A client whose damage is already its own widget's
   rectangle gains nothing from it either.
+
+## Where a typed step's cue comes from
+
+The acceptance types into the shell, and a key typed at the wrong moment is lost
+in one of two ways:
+
+- **the console's event ring drops when full** -- `aegir/console.h`'s
+  `kEventRingEntries`, "a full ring drops -- the console never blocks on a
+  client" -- so a terminal slow to drain loses the key outright;
+- **the click and the keys ride different queues**, which this file already says
+  of the greeter's login: a step clicks to give the terminal the focus and then
+  types, and if the key's queue drains first the key goes to whatever window
+  *had* the focus.
+
+The guest knows the safe moment, and it is not "the previous command started",
+which is what the typed steps cue on today -- and why a key lands while the
+command is still running. It is: **the terminal's window has the focus *and* the
+shell has just asked for its next line**, so a key reaches the line editor rather
+than being queued behind the command. Both facts are the terminal's: the focus
+arrives from the console (`Window::on_focus_changed`), the prompt from the
+shell's `kStreamMethodReadLine`.
+
+So the signal is one line, printed by the terminal when both hold:
+
+    terminal: ready for line <n>
+
+`<n>` counts the moments, because a cue that repeats cannot be two steps'
+(AGENTS.md): each typed step cues on its own number, so no two share a trigger.
+The greeter's `greeter: the window has the focus` is the same idea for one step;
+this is its general form.
+
+**Where to hook it, measured.** `ConsoleStreamServer::begin` looks like the place
+-- it is what opens the line editor -- but **nothing calls it**: the editor is
+begun from the server's `kStreamMethodReadLine` path. A run with an `on_ready`
+callback wired to `begin` printed no readiness line at all, which is how that was
+found. The callback belongs where the editor is actually started.
