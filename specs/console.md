@@ -288,8 +288,13 @@ So the signal is one line, printed by the terminal when both hold:
 The greeter's `greeter: the window has the focus` is the same idea for one step;
 this is its general form.
 
-**Where to hook it, measured.** `ConsoleStreamServer::begin` looks like the place
--- it is what opens the line editor -- but **nothing calls it**: the editor is
-begun from the server's `kStreamMethodReadLine` path. A run with an `on_ready`
-callback wired to `begin` printed no readiness line at all, which is how that was
-found. The callback belongs where the editor is actually started.
+**Where to hook it, measured.** `ConsoleStreamServer::begin` *is* on the path --
+the stream's read-line case calls it when the shell asks for a line and the
+editor is not already open (`if (!s->ready && !s->editor->editing()) begin(caller);`,
+and its comment says it is the public one precisely so the prompt is painted).
+An `on_ready` callback on it and a run on the development target printed **no
+readiness line at all**, so the hook's *location* is not what is wrong: the
+terminal's side of the condition is. The terminal's window must have the focus
+(as the console reports it through `Window::on_focus_changed`) for the line to
+print, and one of the two facts never held in that run. The next step prints both
+booleans once, to see which.
