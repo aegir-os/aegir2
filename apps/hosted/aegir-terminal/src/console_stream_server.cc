@@ -86,8 +86,20 @@ uint32_t ConsoleStreamServer::write_stream(uint64_t caller, std::string_view tex
      * no prefix: what the runner matches is what the program printed. Only a
      * stream's writes come through here -- the typed line's echo is the line
      * editor's -- so a run's log gains a command's output and not its own
-     * keystrokes (specs/console.md, specs/posix.md). */
-    aegir::debug_write(text.data(), static_cast<uint32_t>(text.size()));
+     * keystrokes (specs/console.md, specs/posix.md).
+     *
+     * A line at a time, not a write at a time. This handed every write to the
+     * serial, and libc writes a byte at a time, so a byte-at-a-time program cost
+     * one serial write per byte of console output: the whole system crawled,
+     * slow enough that typed input was lost and a run's quiet window expired on
+     * a guest that was working. Holding the partial line costs a reader nothing,
+     * because the runner reads lines. */
+    mirror_.append(text);
+    size_t const end = mirror_.rfind('\n');
+    if (end != std::string::npos) {
+        aegir::debug_write(mirror_.data(), static_cast<uint32_t>(end + 1));
+        mirror_.erase(0, end + 1);
+    }
     if (on_change) {
         on_change();
     }

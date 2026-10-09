@@ -155,6 +155,10 @@ private:
 
     aegir::trinket::TerminalBuffer& buffer_;
     std::unordered_map<uint64_t, Stream> streams_;
+    /* The console's output on its way to the serial, held until a line is complete:
+     * one serial write per line rather than one per write, which is what
+     * write_stream explains (specs/console.md). */
+    std::string mirror_;
 };
 
 }  // namespace aegir::terminal

@@ -359,6 +359,22 @@ bool ChildVSpace::populate_frames(uintptr_t address, unsigned pages, uint64_t fi
     if (mega_low < address + kPage) {
         mega_low = address + kPage;
     }
+    /* The bulk is off, and the page path below does the work. Two things this commit's bulk
+     * mapping got wrong, both measured on aegir-8g-smp4 with the dispatch trace armed, and both
+     * ending in every session program failing to spawn at boot:
+     *
+     *  - a 2 MiB frame is not a slot of the window the frames are filled through. That window is
+     *    indexed by page (spawn/process.h's `window_page_bits`), so a mega fill reports it full:
+     *    "the window the frame is filled through is full" (the lines above).
+     *  - a mega page covers 2 MiB of *address* space, which includes pages a neighbouring segment
+     *    also maps -- so the second mapping is refused by the kernel: "Virtual address (0xa85000)
+     *    already mapped" (decodeRISCVFrameInvocation), and populate() fails with "a segment of the
+     *    program could not be mapped".
+     *
+     * Re-enable by clamping the blocks to addresses no other segment owns, and by giving the
+     * window a way to describe a mega frame (specs/memory.md). Until then the page path is what
+     * loaded every program before this, and it still does. */
+    mega_low = mega_high;
     if (mega_low < mega_high) {
         unsigned const head_end = static_cast<unsigned>((mega_low - address) / kPage);
         unsigned const tail_first = static_cast<unsigned>((mega_high - address) / kPage);
