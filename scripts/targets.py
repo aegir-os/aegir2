@@ -35,6 +35,13 @@ class QmpStep:
     are), then type the keys `press`, one send-key per character, if any."""
 
     trigger: str
+    # A named group in `trigger` to remember, so a later step can cue on a value
+    # the guest chose at run time rather than one written down here: a badge is
+    # unique to a stream, and the readiness line carries the shell's. `{name}` in
+    # a later step's trigger is that remembered text; a step naming one nothing
+    # has captured yet does not fire, so an early line cannot answer for a later
+    # stream.
+    capture: str = ""
     times: int = 1  # how often the action may run; 0 is every match
     press: str | None = None
     # The typist's pace between keys: the terminal's grid keeps up at the

@@ -958,6 +958,10 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # on every one, up to `times` (0: no cap -- a cue that repeats once per
     # session gets an answer per session).
     step_matches = [0] * len(target.qmp_steps)
+    # What a step captured, for the steps whose trigger names it: a value the
+    # guest chose, like the shell's badge, which is unique to one stream
+    # (QmpStep.capture).
+    captures: dict[str, str] = {}
     step_dims: list[tuple[int, int]] = []
     # The guest's rectangles by name (RECT_CUE), and the screen in pixels from
     # the last screendump -- the size the pixel-to-axis map needs. A click that
@@ -1090,17 +1094,28 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             for index, step in enumerate(target.qmp_steps):
                 if step.times != 0 and step_matches[index] >= step.times:
                     continue
-                matched = re.search(step.trigger, stripped) is not None
-                if not matched and previous:
+                # A trigger may name a value the guest chose: `{shell}` is the
+                # badge a step captured earlier. A step naming one nothing has
+                # captured does not fire at all, so a line from one stream cannot
+                # answer for another.
+                pattern = step.trigger
+                wanted = set(re.findall(r"\{(\w+)\}", pattern))
+                if not wanted <= captures.keys():
+                    continue
+                for name in wanted:
+                    pattern = pattern.replace("{" + name + "}", captures[name])
+                found = re.search(pattern, stripped)
+                if found is None and previous:
                     # A cue split at the line boundary: neither half is the cue,
                     # but their join is. A trigger already matched whole in the
                     # previous line fired on that line and must not fire again.
-                    matched = re.search(step.trigger, previous) is None and re.search(
-                        step.trigger, previous + stripped
-                    ) is not None
-                if not matched:
+                    if re.search(pattern, previous) is None:
+                        found = re.search(pattern, previous + stripped)
+                if found is None:
                     continue
                 step_matches[index] += 1
+                if step.capture:
+                    captures[step.capture] = found.group(1)
                 socket_path = build_dir / str(target.qmp_socket)
                 # The screens first, then the key: the key paces the guest's
                 # next step, so everything this step checks must be read
