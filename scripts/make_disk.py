@@ -272,15 +272,6 @@ AEGIR_BFS_TREE = [
          b"date\n"
          b"echo AEGIR_ACCEPTANCE_LINKED\n"
          b"SCRATCH:hello\n"),
-        ("file", "Dos-Wait",
-         # `wait` and `makedir` are one file because `wait` takes a second (C:WAIT with no period)
-         # and a typed line arriving inside that second is lost -- and queueing both lines in one
-         # press does not help, because the console reads one line at a time (measured: 32 cues
-         # stranded behind the dropped key, and a full 300 s quiet timeout, twice). The shell runs
-         # a file's lines in order, so nothing is typed while a command is running -- the reason
-         # Sys:S/Builtin-Test exists, applied to a one-second command (scripts/targets.py).
-         b"wait\n"
-         b"makedir Home:DosTest Home:DosTest2\n"),
         
         # The session's services, as data (specs/session.md): auth reads the
         # user's Home:S/session.manifest first, then this. `authority` is always
