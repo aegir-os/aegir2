@@ -140,7 +140,16 @@ bool ChildVSpace::populate(uintptr_t address, unsigned pages, void const *source
         void *window = scratch_.map(frame);
         if (window == nullptr) {
             if (why != nullptr) {
-                *why = "the window the frame is filled through is full";
+                /* Two ways map() gives nullptr, and they want different fixes:
+                 * the window is exhausted -- no room left between its two
+                 * cursors -- or the kernel refused the mapping, which is a
+                 * missing page table (no memory for it) or an address already
+                 * taken. Saying which is the difference between fixing the
+                 * space and fixing the tables, so ask the window rather than
+                 * guess from one string. */
+                *why = scratch_.free_bytes() == 0
+                           ? "the window the frame is filled through is full"
+                           : "the window would not map the frame";
             }
             return false;
         }

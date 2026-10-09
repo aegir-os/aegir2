@@ -118,6 +118,13 @@ public:
     uintptr_t next() const noexcept { return next_; }
     uint64_t mapped_bytes() const noexcept { return mapped_bytes_; }
 
+    /** Room left between the window's two cursors: the streaming end (`next_`,
+     *  walking up) and the reservation end (`high_`, walking down). Zero means
+     *  the window is exhausted, which is *not* the same as the kernel refusing
+     *  a mapping -- both surface as map() returning nullptr, so a caller that
+     *  wants to say which one happened has to ask. */
+    uint64_t free_bytes() const noexcept { return high_ > next_ ? high_ - next_ : 0; }
+
     /** The VSpace the window lives in: the kernel's name for the root task's,
      *  or the capability a service's spawner granted. A thread builder needs
      *  it to configure a new TCB (aegir/thread.h). */
