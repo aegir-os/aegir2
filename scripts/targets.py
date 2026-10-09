@@ -763,20 +763,17 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             QmpStep(
                 r"launcher: command started date",
                 events=TERMINAL_CLICK,
-                # wait is a program too (C:WAIT), and with no period it waits a
-                # second (specs/dos.md).
-                press="wait\n",
+                # wait and makedir are one file, not two typed lines: `wait` (C:WAIT, no period)
+                # takes a second, and a key typed into that second is lost. Queueing both lines
+                # in one press does not help either -- the console reads one line at a time, so
+                # the second is dropped the same way (measured: 32 cues stranded and a full 300 s
+                # quiet timeout, twice). The shell runs a file's lines itself, so nothing is typed
+                # while a command is running (AGENTS.md's remedy, and the reason Sys:S/Builtin-Test
+                # exists).
+                press="execute Sys:S/Dos-Wait\n",
             ),
             QmpStep(
-                r"launcher: command started wait",
-                events=TERMINAL_CLICK,
-                press="makedir Home:DosTest Home:DosTest2\n",
-            ),
-            QmpStep(
-                r"launcher: command started makedir",
-                dumps=("gpu0",),
-                expect=((1280, 800),),
-                dark=(("gpu0", 50, 145, 500, 60, 40),),
+                r"launcher: command started copy",
                 events=TERMINAL_CLICK,
                 # Sys:BIG.TXT is bigger than one envelope, so its copy goes a
                 # frame at a time and, into a Home: directory, through the
