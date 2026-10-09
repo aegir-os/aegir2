@@ -324,15 +324,22 @@ void *grow_nodes_from_window(void *context, unsigned *bytes) noexcept
         *bytes = 0;
         return nullptr;
     }
-    /* The frame stays mapped: it is the allocator's bookkeeping now, and it
-     * lives as long as the allocator does. */
-    void *const mapped = window->scratch->map(frame);
-    if (mapped == nullptr) {
+    /* The frame stays mapped for as long as the allocator does, so it claims its
+     * address the way the heap claims its arena: reserve a page at the window's
+     * top, then place the frame there by address. Mapping it through the
+     * streaming cursor instead -- which is what this did -- leaves pooled pages
+     * interleaved with the cursor's own, and a spawner's mark-and-rewind then
+     * puts the cursor under one: measured, the kernel answered "Virtual address
+     * (0xa85000) already mapped" and, with the boundary moved a page, the same
+     * refusal one page higher, with the window far from full (specs/memory.md,
+     * "one space, one owner"). */
+    uintptr_t const at = window->scratch->reserve(1);
+    if (at == 0 || !window->scratch->map_at(at, frame)) {
         *bytes = 0;
         return nullptr;
     }
     *bytes = 1u << seL4_PageBits;
-    return mapped;
+    return reinterpret_cast<void *>(at);
 }
 
 }  // namespace aegir::mem
