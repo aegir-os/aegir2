@@ -111,6 +111,10 @@ aegir::limits::Limits g_limits;
 UserRule *g_rules = nullptr;
 uint64_t *g_committed = nullptr;
 uint32_t g_user_count = 0;
+/* Whether a failure to read the limits has been reported. The read is retried
+ * on each user-badged allocation until it succeeds (see main), and one report of
+ * a failure is enough. */
+bool g_limits_reported = false;
 
 uint32_t chunk_free() noexcept
 {
@@ -454,21 +458,21 @@ int main(int argc, char *argv[])
     write(" MiB, chunks of 2 MiB\n");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
 
-    /* The limits (specs/limits.md): read once, resolved per user, and read
-     * after the pool is announced so a filesystem that is still coming up does
-     * not delay the boot set. A boot service that reads Sys: retries, the
-     * idiom auth uses for C: -- and while it waits, nothing user-badged is
-     * allocating yet. */
+    /* The limits (specs/limits.md) are read from the boot's own volume, and
+     * Sys: does not exist until the filesystems behind it are up -- which the
+     * PARTITION MANAGER starts, and the partition manager cannot start them
+     * until this service answers its allocation. So the read cannot happen here:
+     * it happens on the first USER-badged allocation instead, because a system
+     * badge is the superuser and is never limited (specs/authority.md), so
+     * nothing before that needs the rules. Waiting here was a boot-order
+     * deadlock, measured: partmgr's `call_transfer(kMethodAlloc)` never returned
+     * and this service never printed its limits line.
+     *
+     * The read retries on each user allocation until it succeeds (Sys: still
+     * races the boot), and a failure is reported once. */
     aegir::mem::Account config_account{"memory-config", 0, 0, 0};
     aegir::mem::Arena arena(g_pool, g_scratch, config_account);
     aegir::vfs::Namespace space = aegir::vfs::Namespace::find();
-    if (space.valid() && load_config(space, arena)) {
-        write("  memory: limits from Sys:S/limits.manifest, ");
-        write_word(g_user_count);
-        write(" user(s)\n");
-    } else {
-        write("  memory: no limits loaded; the machine is the limit\n");
-    }
 
     for (;;) {
         uint64_t words[aegir::ipc::kMaxWords];
@@ -476,6 +480,17 @@ int main(int argc, char *argv[])
         seL4_Word badge = 0;
         uint32_t const method =
             port.receive_words(words, aegir::ipc::kMaxWords, &count, &badge);
+        if (g_rules == nullptr && method == aegir::memory::kMethodAlloc &&
+            aegir::ipc::is_user_badge(badge)) {
+            if (space.valid() && load_config(space, arena)) {
+                write("  memory: limits from Sys:S/limits.manifest, ");
+                write_word(g_user_count);
+                write(" user(s)\n");
+            } else if (!g_limits_reported) {
+                g_limits_reported = true;
+                write("  memory: no limits loaded; the machine is the limit\n");
+            }
+        }
         switch (method) {
         case aegir::memory::kMethodAlloc:
             answer_alloc(port, words, count, badge);
