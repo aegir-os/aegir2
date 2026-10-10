@@ -28,6 +28,7 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/memory.h>
 #include <aegir/ipc/port.h>
 #include <aegir/nmspace.h>
 #include <aegir/log.h>
@@ -262,6 +263,69 @@ aegir::mem::Allocator g_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 aegir::mem::Account g_account{"devicemgr", 0, 0, 0};
 }  // namespace
+
+/** A chunk for a child this service starts, asked of the memory service through a
+ *  copy of its port badged with the CHILD's own id: the service owns what the
+ *  child is retyped from to that badge, and one release with the badge takes it
+ *  back (specs/memory.md). Returns the chunk's capability in a slot of our own, or
+ *  zero with `error_out` set. `physical_out` is where the chunk is in the machine,
+ *  which a child that maps frames -- or a driver told about them -- has to know:
+ *  no invocation reads an untyped's or a frame's address. */
+seL4_CPtr grant_untyped_to(seL4_CPtr mem_main, uint64_t child_badge, uint32_t bits,
+                           seL4_Error *error_out, uint64_t *physical_out) noexcept
+{
+    if (error_out != nullptr) {
+        *error_out = seL4_NoError;
+    }
+    if (physical_out != nullptr) {
+        *physical_out = 0;
+    }
+    if (mem_main == 0) {
+        if (error_out != nullptr) {
+            *error_out = seL4_InvalidCapability;
+        }
+        return 0;
+    }
+    seL4_CPtr const call = g_objects.alloc_slot();
+    if (call == 0 ||
+        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, call,
+                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
+                        mem_main, aegir::bootstrap::kCNodeBits,
+                        seL4_CapRights_new(1, 1, 0, 1), child_badge) != seL4_NoError) {
+        if (error_out != nullptr) {
+            *error_out = seL4_InvalidCapability;
+        }
+        return 0;
+    }
+    aegir::ipc::Consumer const service(call);
+    uint64_t const request = bits;
+    uint64_t answer[2] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply =
+        service.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2,
+                              &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    if (physical_out != nullptr) {
+        *physical_out = answer[1];
+    }
+    seL4_CPtr const slot = g_objects.alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        /* The chunk is still in the receive slot; drop it, or the next transfer is
+         * refused an occupied slot. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    return slot;
+}
 
 int main(int argc, char *argv[])
 {
@@ -1421,9 +1485,9 @@ int main(int argc, char *argv[])
                 aegir::mem::Account partmgr_account{"partmgr", 0, 0, 0};
                 seL4_Error untyped_error = seL4_NoError;
                 uint64_t partmgr_physical = 0;
-                seL4_CPtr const partmgr_untyped =
-                    g_objects.carve_untyped(kPartmgrUntypedBits, partmgr_account,
-                                            &untyped_error, &partmgr_physical);
+                seL4_CPtr const partmgr_untyped = grant_untyped_to(
+                    static_cast<seL4_CPtr>(mem_main_slot), partmgr_badge,
+                    kPartmgrUntypedBits, &untyped_error, &partmgr_physical);
                 seL4_Error fault_error = seL4_NoError;
                 seL4_CPtr const partmgr_fault =
                     g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
