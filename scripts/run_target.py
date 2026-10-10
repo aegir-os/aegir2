@@ -1133,7 +1133,13 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                 # captured does not fire at all, so a line from one stream cannot
                 # answer for another.
                 pattern = step.trigger
-                wanted = set(re.findall(r"\{(\w+)\}", pattern))
+                # Only a *named* placeholder is one. A quantifier such as `{2}` or
+                # `{5}` belongs to the regex, and reading it as a name skipped the
+                # step outright -- measured: the two net cues (`... mac
+                # [0-9a-f]{2}(:[0-9a-f]{2}){5}, mtu \d+, link up`) never fired
+                # while their lines were in the log the whole time
+                # (/tmp/scoped.log), which is a check that never ran.
+                wanted = set(re.findall(r"\{([A-Za-z_]\w*)\}", pattern))
                 if not wanted <= captures.keys():
                     continue
                 for name in wanted:
