@@ -205,7 +205,16 @@ bool hosts_lookup(char const *name, uint32_t name_length, uint32_t *address) noe
     }
     /* The volume capability was this call's own; drop it so the next resolve
      * into that slot is not refused. */
-    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot, aegir::bootstrap::kCNodeBits);
+    /* The depth for our own-CNode cap: endpoint_depth() answers both cases --
+     * `seL4_WordBits` in the root task, whose cap carries a guard over the high
+     * bits, and `cnode_bits()` in a service, whose cap is a raw copy with guard
+     * zero (specs/authority.md). Passing `kCNodeBits` here was the root task
+     * addressing its own CSpace four bits short: the kernel answered "CNode
+     * operation: Target slot invalid", once per boot service, and the delete's
+     * result was dropped, so the boot stayed green while eighteen slots a
+     * resolver had used were never freed. */
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                      aegir::bootstrap::endpoint_depth());
     return found;
 }
 

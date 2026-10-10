@@ -339,8 +339,11 @@ uint32_t cnode_l1_bits() noexcept;
 
 /** The depth at which a capability in this process's own CSpace is addressed:
  *  `l1 + l2` when the CSpace is two-level, and the own-CNode's radix when it is
- *  single-level (specs/memory.md). The root cap is the guard-zero own-CNode, so
- *  a plain root slot and a plain L2 slot share this depth. */
+ *  single-level (specs/memory.md) -- a plain root slot and a plain L2 slot share
+ *  this depth. The root task is the exception: it has no block, its own-CNode cap
+ *  at kSlotOwnCNode is the kernel's initial CNode cap, which carries a guard over
+ *  the high bits and so resolves plain slots at full word depth
+ *  (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440). */
 uint32_t endpoint_depth() noexcept;
 
 /** The child's current directory, or nullptr when it was given none

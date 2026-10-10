@@ -566,6 +566,20 @@ uint32_t cnode_l1_bits() noexcept
 
 uint32_t endpoint_depth() noexcept
 {
+    Block const *block = find();
+    if (block == nullptr) {
+        /* The root task: no block, and the own-CNode cap at kSlotOwnCNode is the
+         * kernel's initial CNode cap, which carries a guard over the high bits so
+         * plain slots resolve at *full word depth*
+         * (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440). Its
+         * radix is the kernel's, not kCNodeBits -- measured: the director's
+         * CNode is 2^16 slots, and addressing it at kCNodeBits left
+         * bitsRemaining != 0, which the kernel answered "CNode operation: Target
+         * slot invalid", once per boot service. A *service* is the other case:
+         * its own-CNode cap is a raw copy with guard zero and radix cnode_bits(),
+         * and resolves plain slots at that depth. */
+        return seL4_WordBits;
+    }
     uint32_t const l1 = cnode_l1_bits();
     uint32_t const bits = cnode_bits();
     return l1 != 0 ? l1 + bits : bits;

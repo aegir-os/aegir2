@@ -535,11 +535,18 @@ void Allocator::free_piece(Node *node) noexcept
         Node *const sibling = node->sibling;
         Node *const parent = node->parent;
         unlink(sibling);
-        /* Deleting a *slot* addresses it at the CNode's radix, not the
-         * retype's node depth: a service retypes at depth zero but deletes at
-         * its CNode's size (specs/memory.md). */
+        /* Deleting a *slot* addresses it at the depth its own-CNode cap resolves
+         * plain numbers at, not at the retype's node depth -- and that is the
+         * deeper of the two this allocator holds. The root task's cap is the
+         * kernel's initial CNode cap, guarded over the high bits, so it takes the
+         * whole word (cnode_depth_'s default) while its radix is only
+         * initThreadCNodeSizeBits; a service's cap is a raw copy, so its radix
+         * (cnode_size_bits_, `l1 + l2` when two-level) is the deeper one and its
+         * retype depth is zero (specs/memory.md). Taking cnode_size_bits_ alone
+         * was the root task deleting sixteen bits short: the kernel answered
+         * "CNode operation: Target slot invalid", and the result was dropped. */
         seL4_Word const del_depth =
-            cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
+            cnode_depth_ > cnode_size_bits_ ? cnode_depth_ : cnode_size_bits_;
         /* Revoke before delete: a delete leaves the piece's derived caps alive,
          * so a caller that handed the piece back without revoking the objects it
          * retyped from it leaves the memory in use while the merge re-lists the
@@ -572,9 +579,11 @@ void Allocator::ensure_piece_whole(Node *node) noexcept
     /* Revoke deletes every capability derived from the piece's cap, so the
      * piece is childless and the kernel will reset its free index on the next
      * retype (kernel/src/object/untyped.c:182-189). It is a no-op when the
-     * piece is already whole, and it costs no slot. */
+     * piece is already whole, and it costs no slot. The depth is the deeper of
+     * the two the allocator holds, for free_piece's reason: the root task's
+     * guarded cap takes the whole word, a service's raw copy its radix. */
     seL4_Word const del_depth =
-        cnode_size_bits_ != 0 ? cnode_size_bits_ : cnode_depth_;
+        cnode_depth_ > cnode_size_bits_ ? cnode_depth_ : cnode_size_bits_;
     seL4_CNode_Revoke(seL4_CapInitThreadCNode, node->cap, del_depth);
 }
 
