@@ -225,6 +225,16 @@ int main(int argc, char *argv[])
         if (!input_focused || !input_prompted || input_announced) {
             return;
         }
+        /* A command holding the stream is not the shell being ready to be typed
+         * at. The shell asks for its next line as soon as it has launched a
+         * command, so `begin` fires *before* that command has finished reading,
+         * and a key typed on this line goes to the command's input instead of the
+         * shell (measured: `makedir` lost to a running `wait`, /tmp/gate_dev.log).
+         * The stream comes back to the shell when the command's line is done, and
+         * `begin` fires again then, so nothing is announced early. */
+        if (server.in_command(shell_badge)) {
+            return;
+        }
         input_announced = true;
         ++input_lines;
         write("  terminal: ready for line ");

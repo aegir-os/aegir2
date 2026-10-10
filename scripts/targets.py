@@ -909,18 +909,21 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # Protect sets the file's mode; the user owns it, so it is
                 # allowed (specs/bfs.md decision 7).
                 press="protect Home:DosTest/MOVED.TXT rwe\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"launcher: command started protect",
                 events=TERMINAL_CLICK,
                 # info lists the volumes the session may resolve.
                 press="info\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"launcher: command started info",
                 events=TERMINAL_CLICK,
                 # which resolves a command name through the C: assignment.
                 press="which copy\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"launcher: command started which",
@@ -929,11 +932,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # line reads a file through it, so the binding is exercised by
                 # a later command and not only by its own exit.
                 press="assign FOOVOL Sys:\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"launcher: command started assign",
                 events=TERMINAL_CLICK,
                 press="version FOOVOL:VER.TXT\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"launcher: command started version",
@@ -944,6 +949,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # `return code` line (specs/memory.md Phase 5). The background
                 # command is one more process under its own mem.main badge.
                 press="Run aegir-echo background\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"terminal: background command exited 0",
@@ -955,11 +961,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # concurrent spawn and the connection, and the pipeline's exit
                 # (its last stage's) proves the consumer ran to its end.
                 press="type Sys:S/Shell-Startup | aegir-read\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"terminal: pipeline exited",
                 events=TERMINAL_CLICK,
                 press="delete Home:DosTest Home:DosTest2 ALL\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"launcher: command started delete",
@@ -968,6 +976,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # no attributes, so the command names the filesystem and fails
                 # with 10 -- the error path, naming FAT rather than the file.
                 press="filenote FAT16:NOTE.TXT amiga\n",
+                await_shell=True,
             ),
             QmpStep(
                 r"terminal: command exited 10",
@@ -985,6 +994,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # one per step). `x` is a placeholder process argument; NAME
                 # matches.
                 press="execute Sys:S/Halt-Test\n",
+                await_shell=True,
             ),
             # The halt landed: the registry signalled nothing the `wait` would
             # see and asked the launcher to suspend and reap it. No press -- the
@@ -1006,6 +1016,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # which the registry signals with the flag -- drops the frame
                 # between its operations, so the file's second line never runs.
                 press="execute Sys:S/CtrlD-Test\n",
+                await_shell=True,
             ),
             # The shell halted the frame (its cue). Then Newshell
             # (specs/launch.md): the shell asks the launcher for a nested
@@ -1019,6 +1030,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"shell: D, halting the frame",
                 events=TERMINAL_CLICK,
                 press="newshell WINDOW=CON:32/32/560/360/Nested FROM Sys:S/Nested-Startup\n",
+                await_shell=True,
             ),
             QmpStep(r"terminal: nested window"),
             QmpStep(r"launcher: nested terminal started"),
@@ -1043,6 +1055,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 # session's namespace, and opens it in a tab. It comes before the
                 # viewer and closes before it, so the two never share the screen.
                 press="edit Sys:AEGIR.TXT\n",
+                await_shell=True,
             ),
             QmpStep(r"launcher: command started edit"),
             # The editor is up: the block cursor of insert mode at the head of
@@ -1219,7 +1232,8 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # Quit returns the shell its prompt: the viewer is launched where
             # the later steps expect it.
             QmpStep(r"editor: quit", events=TERMINAL_CLICK,
-                    press="view Sys:AEGIR.TXT\n"),
+                    press="view Sys:AEGIR.TXT\n",
+                    await_shell=True),
             QmpStep(r"launcher: command started view"),
             # The viewer is up: its window is its own default (no launcher
             # AEGIR_WINDOW was set), its content is the Workbench grey, and the
@@ -1798,15 +1812,23 @@ TARGETS: dict[str, Target] = {
             # cue in the list -- `demo: opened AEGIR.TXT` was the obvious choice and is
             # already a step's, so this one is used instead; AGENTS.md's rule: one step
             # per cue.)
+            # `await_shell` on each: the cue says a command *started*, and these keys
+            # are a shell line. Measured -- the terminal's key probe showed the keys
+            # arriving while that command still owned the line, so they went to its
+            # stdin and the line never reached the shell (236 of 400 keys in one dev
+            # run). The gate holds them until the shell prompts again.
             QmpStep(r"demo: filtered A#\? 2",
                     events=TERMINAL_CLICK,
-                    press="Sys:Development/C/cc --version\n"),
+                    press="Sys:Development/C/cc --version\n",
+                    await_shell=True),
             QmpStep(r"clang version 20",
                     events=TERMINAL_CLICK,
-                    press="Sys:Development/C/ld.lld --version\n"),
+                    press="Sys:Development/C/ld.lld --version\n",
+                    await_shell=True),
             QmpStep(r"LLD 20",
                     events=TERMINAL_CLICK,
-                    press="execute Sys:S/Development-Acceptance\n"),
+                    press="execute Sys:S/Development-Acceptance\n",
+                    await_shell=True),
             QmpStep(r"AEGIR_HELLO_OK"),
             # The acceptance itself (specs/clang-on-aegir.md:203-205), typed rather than
             # run from the session's startup: it takes minutes, and a startup that takes
@@ -1830,7 +1852,8 @@ TARGETS: dict[str, Target] = {
                     # `execute` went to the demo's window -- it never reached the shell,
                     # while the DOS steps, which click first, all land.
                     events=TERMINAL_CLICK,
-                    press="execute Sys:S/Development-Acceptance\n"),
+                    press="execute Sys:S/Development-Acceptance\n",
+                    await_shell=True),
             QmpStep(r"AEGIR_HELLO_OK"),
             # The scale acceptance's deliberately huge command runs after it
             # (specs/memory.md): its line is the proof that a program tens of
