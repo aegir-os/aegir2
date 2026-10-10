@@ -206,6 +206,16 @@ Rights rights_for(PortGraph::Name name) noexcept
          * spawner's own half is minted from this one by its delegator. */
         return Rights{seL4_AllRights, seL4_CapRights_new(1, 1, 0, 1)};
     }
+    if (name_is(name, "vol.hostfs", 10)) {
+        /* Hostfs registers itself and mints its caller half like NIL:'s, and a
+         * client that resolves the volume gets that mint -- so this owner half
+         * has to carry Write, or the resolved cap cannot be called at all. That
+         * is what the kernel was reporting, once per session: "Attempted to
+         * invoke a read-only endpoint cap #27" (specs/vfs.md). Grant is for
+         * read-frame, as the initrd's: a client hands the volume its buffer
+         * capability, and nothing transfers unless the cap it invokes has it. */
+        return Rights{seL4_CapRights_new(1, 1, 1, 1), seL4_CapRights_new(1, 0, 0, 1)};
+    }
     return Rights{seL4_CanRead, seL4_CapRights_new(1, 0, 0, 1)};
 }
 
