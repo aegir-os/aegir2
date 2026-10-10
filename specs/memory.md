@@ -326,6 +326,50 @@ command pool, the `background-pool`, and the per-command bracket sizes go away;
 there is no fixed bracket, and a command is bounded only by its limits (by
 default, the machine).
 
+## Every grant goes through the service
+
+A **grant** is memory handed to another process to use: a spawner gives a child its
+runtime, its window and the untypeds it retypes from, and a service that starts
+other services gives them theirs. Every grant goes through the memory service. The
+director's own carve and the service itself are the exceptions -- they are what the
+service is made of.
+
+**Who asks, and as whom.** A granter asks through a *copy of `mem.main` badged with
+the receiving child's own id* (`seL4_CNode_Mint`, so the copy carries that badge and
+nothing else). That is what makes the grant the service's: it owns the chunk to that
+badge, and one `release` with the badge takes it back. It is why the launcher's
+runtime source is written the way it is (`command_untyped_source`,
+`libs/hosted/aegir-spawn-service/src/service_kit.cc`), and why the partition manager
+now asks the same way rather than carving each filesystem's grants out of the untyped
+it was delegated.
+
+**The answer says where the memory is.** An allocation answers two words: the chunk's
+size in bits, and its base address in the machine. The second word is not a
+convenience -- there is no invocation that reads an untyped's or a frame's address --
+and a granter has to tell a child, or a driver, where the frames it retypes will land
+(`Request::untyped_physical`, the block manager's clamp to its driver). A grant whose
+address is unknown is legal and means exactly that: zero, and nothing derived from it
+may be named to a device.
+
+**A granter must not wait behind what it is granting.** This is the rule a boot pays
+for. The service reads its limits (`Sys:S/limits.manifest`) through the VFS, and
+`Sys:` is the system volume -- whose filesystems the partition manager starts, which
+it cannot do until the memory service answers its allocation. Reading the limits
+*before* serving therefore deadlocks the boot the moment a granter runs early:
+measured once, `call_transfer(kMethodAlloc)` from the partition manager never
+returned, and the service never printed its limits line, while the same tree without
+the granter's ask printed it. The limits are only needed for a **user** badge -- a
+system badge is the superuser and is never limited (`specs/authority.md`) -- so the
+service serves from its first message and reads them on the first user-badged
+allocation, by which time `Sys:` is up.
+
+**What is not finished.** A grant belongs to the receiving child's badge, and nothing
+yet notices that a child is gone: the process registry's spawner port is the *break*
+path (`kMethodHalt`), not a departure notice, and a spawner that never watches a
+child's exit keeps what the service holds for it. That is correct while the child
+lives -- a filesystem that runs for the machine's life holds its memory for the
+machine's life -- and it is a leak the moment one is restarted.
+
 ## Phases
 
 - **Phase 1 -- the service and the protocol.** Landed. `memory` takes the
