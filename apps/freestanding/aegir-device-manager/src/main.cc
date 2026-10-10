@@ -1081,9 +1081,14 @@ int main(int argc, char *argv[])
                 aegir::mem::Account child_account{binding.name, 0, 0, 0};
                 seL4_Error queue_error = seL4_NoError;
                 uint64_t queue_physical = 0;
-                seL4_CPtr const queue = g_objects.carve_untyped(driver->memory_bits,
-                                                                child_account, &queue_error,
-                                                                &queue_physical);
+                /* From the memory service, asked through a copy of its port badged
+                 * with the DRIVER's own id: the service owns what the driver is
+                 * retyped from to that badge, and one release with the badge takes
+                 * it back (specs/memory.md's "Every grant goes through the
+                 * service"). */
+                seL4_CPtr const queue = grant_untyped_to(
+                    static_cast<seL4_CPtr>(mem_main_slot), 256u + b, driver->memory_bits,
+                    &queue_error, &queue_physical);
                 if (queue == 0) {
                     write_line("FAIL", "no memory for a driver's virtqueue");
                     continue;
