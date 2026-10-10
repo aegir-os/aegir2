@@ -1137,6 +1137,26 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             for index, step in enumerate(target.qmp_steps):
                 if step.times != 0 and step_matches[index] >= step.times:
                     continue
+                if step.await_shell:
+                    # The steps that wait for the shell are a chain in list order:
+                    # the acceptance types one line, waits for the prompt, types
+                    # the next. So one of them may only fire once the one before it
+                    # has. A cue that names a command the guest also prints from
+                    # elsewhere -- a session's own startup script -- would
+                    # otherwise fire on that earlier occurrence, and its keys would
+                    # land at the wrong moment: measured on aegir-8g-smp4, whose
+                    # startup prints `date` three times, so the chain's `date` step
+                    # fired on the script's and `wait` never ran (/tmp/dev4.log).
+                    prior_step = next(
+                        (
+                            j
+                            for j in range(index - 1, -1, -1)
+                            if target.qmp_steps[j].await_shell
+                        ),
+                        None,
+                    )
+                    if prior_step is not None and step_matches[prior_step] == 0:
+                        continue
                 # A trigger may name a value the guest chose: `{shell}` is the
                 # badge a step captured earlier. A step naming one nothing has
                 # captured does not fire at all, so a line from one stream cannot
