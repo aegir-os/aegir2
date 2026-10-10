@@ -847,7 +847,19 @@ void reclaim_session(uint64_t badge, uint32_t direct_badges, seL4_CPtr mark,
     uint64_t released = 0;
     for (uint32_t i = 0; i < direct_badges; ++i) {
         uint64_t const owner = badge + i;
-        (void)mem.call_words(aegir::memory::kMethodRelease, &owner, 1, &released, 1);
+        aegir::ipc::WordsReply const answer =
+            mem.call_words(aegir::memory::kMethodRelease, &owner, 1, &released, 1);
+        /* A refused release is not nothing: the badge keeps every chunk the service
+         * holds for it, and the session's memory does not come back. Say so -- and
+         * note the kernel's own complaint in that case is about the *call*, not the
+         * release ("Attempted to invoke a read-only endpoint cap"). */
+        if (answer.error != 0) {
+            write("      auth: the release for badge ");
+            aegir::debug_write_unsigned(owner);
+            write(" was refused, error ");
+            aegir::debug_write_unsigned(static_cast<uint64_t>(answer.error));
+            write("\n");
+        }
     }
     g_scratch.rewind(scratch_mark);
     g_objects.slot_release(mark);
