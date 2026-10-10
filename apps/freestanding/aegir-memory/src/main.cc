@@ -349,8 +349,9 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     seL4_Error error = seL4_NoError;
     aegir::mem::Account account{"chunk", 0, 0, 0};
     void *cookie = nullptr;
+    uint64_t physical = 0;
     seL4_CPtr const chunk = g_pool.carve_untyped(static_cast<seL4_Word>(wanted_bits),
-                                                 account, &error, nullptr, &cookie);
+                                                 account, &error, &physical, &cookie);
     if (chunk == 0) {
         port.reply_words(nullptr, 0);
         return;
@@ -359,8 +360,11 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     if (limited) {
         g_committed[user] += bytes;
     }
-    uint64_t answer[1] = {wanted_bits};
-    port.reply_cap(answer, 1, chunk);
+    /* The chunk's size, then where it is: a caller that retypes frames out of the
+     * chunk and is asked for their address has no invocation to read it from, so
+     * the service says (specs/memory.md). */
+    uint64_t answer[2] = {wanted_bits, physical};
+    port.reply_cap(answer, 2, chunk);
 }
 
 void answer_release(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,

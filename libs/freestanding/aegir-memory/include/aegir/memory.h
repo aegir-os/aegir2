@@ -21,11 +21,16 @@ constexpr char kPortName[] = "mem.main";
 constexpr uint32_t kPortNameLength = 8;
 
 /** alloc: in the size the caller wants in bits; answer the chunk's size in
- *  bits and one capability, a pristine untyped of that size. The chunk is
- *  owned by the calling capability's badge. The size is the caller's: a
- *  command asks for 2 MiB, a terminal's runtime for 4, and the service grows
- *  the pool as needed. A request larger than the pool is answered with
- *  nothing. */
+ *  bits, where the chunk is in the machine, and one capability, a pristine
+ *  untyped of that size. The chunk is owned by the calling capability's badge.
+ *  The size is the caller's: a command asks for 2 MiB, a terminal's runtime for
+ *  4, and the service grows the pool as needed. A request larger than the pool
+ *  is answered with nothing.
+ *
+ *  The address is the second word because a caller cannot ask the kernel for
+ *  one -- there is no invocation that reads an untyped's or a frame's address --
+ *  and a caller that hands a child frames retyped from the chunk, or tells a
+ *  driver about them, has to know where they landed (specs/memory.md). */
 constexpr uint32_t kMethodAlloc = 1;
 
 /** release: in a badge (0 is the caller's own); answer how many chunks came
