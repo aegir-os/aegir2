@@ -943,6 +943,15 @@ int main(int argc, char *argv[])
             uint64_t clock_slot = 0;
             bool const have_clock =
                 aegir::bootstrap::capability("spawn:clock.main", 16, &clock_slot);
+            /* The memory service, for the filesystems the partition manager
+             * starts: the same delegatable copy as the log and the clock --
+             * unbadged and AllRights, so partmgr can mint a copy per child and
+             * have each grant owned by that child (specs/memory.md; the grant
+             * milestone). Optional: a machine without one keeps partmgr carving
+             * from its own untyped. */
+            uint64_t mem_main_slot = 0;
+            bool const have_mem_main =
+                aegir::bootstrap::capability("spawn:mem.main", 14, &mem_main_slot);
             if (binding_count > 0 && !have_log) {
                 write_line("FAIL", "no delegatable log.main was given");
             }
@@ -1436,7 +1445,11 @@ int main(int argc, char *argv[])
                 uint32_t const registry_rows = registry_endpoint != 0 ? 1 : 0;
                 uint32_t const nmspace_rows = have_nmspace ? 1 : 0;
                 uint32_t const clock_rows = have_clock ? 1 : 0;
-                uint32_t const fixed_rows = 4 + registry_rows + nmspace_rows + clock_rows;
+                /* The memory service rides down to the partition manager the way
+                 * the clock does: one row, when the director granted one. */
+                uint32_t const mem_rows = have_mem_main ? 1 : 0;
+                uint32_t const fixed_rows =
+                    4 + registry_rows + nmspace_rows + clock_rows + mem_rows;
                 auto *ports = static_cast<aegir::spawn::PortGrant *>(
                     arena.allocate(sizeof(aegir::spawn::PortGrant) *
                                    (fixed_rows + bound_count)));
@@ -1514,6 +1527,21 @@ int main(int argc, char *argv[])
                                         aegir::bootstrap::kSlotFirstDeclared + index,
                                         static_cast<seL4_CPtr>(clock_slot), seL4_AllRights,
                                         0, 0};
+                    }
+                    if (mem_rows != 0) {
+                        /* The memory service, for the filesystems partmgr starts:
+                         * the same delegatable copy the log and the clock travel
+                         * as -- unbadged and AllRights -- so partmgr can mint a
+                         * copy per child and have each grant owned by that child
+                         * (specs/memory.md; the grant milestone). Indexed past the
+                         * clock when there is one. */
+                        static char const kSpawnMemGrant[] = "spawn:mem.main";
+                        uint32_t const mem_index =
+                            4 + registry_rows + nmspace_rows + bound_count + clock_rows;
+                        ports[mem_index] = {kSpawnMemGrant, sizeof(kSpawnMemGrant) - 1,
+                                            aegir::bootstrap::kSlotFirstDeclared + mem_index,
+                                            static_cast<seL4_CPtr>(mem_main_slot),
+                                            seL4_AllRights, 0, 0};
                     }
                     /* The windows as frame capabilities, one group per port in
                      * the ports' own order -- the manager's own pages, pages
