@@ -57,6 +57,11 @@ BOOT_SUMMARY = re.compile(r"(\d+) ready, (\d+) faulted")
 # pinned pixel: a line `rect <name> <x> <y> <w> <h>`, screen pixels. A step's
 # `clicks` names one and the runner lands on it wherever the widget is.
 RECT_CUE = re.compile(r"\brect (\S+) (\d+) (\d+) (\d+) (\d+)")
+# The shell saying it is listening, and for which stream: `terminal: ready for
+# line <n> shell <badge>`. A step with keys waits for one of these from the
+# shell it learned (QmpStep.capture), so no key is typed before the shell can
+# read it -- the cue a typed step has never had.
+READY_CUE = re.compile(r"terminal: ready for line \d+ shell (\d+)")
 
 
 def split_console_lines(buffer: bytes) -> tuple[list[bytes], bytes]:
@@ -962,6 +967,15 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # guest chose, like the shell's badge, which is unique to one stream
     # (QmpStep.capture).
     captures: dict[str, str] = {}
+    # The shell's readiness line, newest last: the generation counts them, so a
+    # step can tell "ready now" from "was ready when I matched". The acceptance's
+    # cue says *when* it wants to type; this says whether the guest can hear it
+    # yet, and a step with keys waits for the shell it captured to be ready.
+    ready_gen = 0
+    ready_shell = ""
+    # Steps that matched and have keys to type, held until their shell says it is
+    # ready: (step index, shell badge, the generation when it matched).
+    pending_presses: list[tuple[int, str, int]] = []
     step_dims: list[tuple[int, int]] = []
     # The guest's rectangles by name (RECT_CUE), and the screen in pixels from
     # the last screendump -- the size the pixel-to-axis map needs. A click that
@@ -1091,6 +1105,26 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
             boot_summary = BOOT_SUMMARY.search(stripped)
             if boot_summary:
                 boot_faulted = int(boot_summary.group(2))
+            # The shell saying it is listening: bump the generation, and type any
+            # keys a step is holding for it. A step's own cue still says when the
+            # acceptance wants to type; this is whether the guest can hear it.
+            ready = READY_CUE.search(stripped)
+            if ready:
+                ready_shell = ready.group(1)
+                ready_gen += 1
+                for held in pending_presses[:]:
+                    held_index, held_shell, held_gen = held
+                    if held_shell != ready_shell or ready_gen <= held_gen:
+                        continue
+                    pending_presses.remove(held)
+                    held_step = target.qmp_steps[held_index]
+                    held_socket = build_dir / str(target.qmp_socket)
+                    if not send_key(held_socket, held_step.press, held_step.press_delay):
+                        print(
+                            f"    runner: FAIL a character of '{held_step.press}' has no qcode",
+                            flush=True,
+                        )
+                        failed = True
             for index, step in enumerate(target.qmp_steps):
                 if step.times != 0 and step_matches[index] >= step.times:
                     continue
@@ -1262,7 +1296,14 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                 if step.press is not None:
                     # The guest said it is waiting: type the keys. Events
                     # persist in the driver's posted buffers, so the presses
-                    # are not a race.
+                    # are not a race. When the shell we learned has told us it
+                    # exists but is not listening *now* -- mid-command, or before
+                    # its first prompt -- the keys are held and land when it says
+                    # it is, which is the cue a typed step never had.
+                    shell = captures.get("shell", "")
+                    if step.await_shell and shell and ready_shell != shell:
+                        pending_presses.append((index, shell, ready_gen))
+                        continue
                     if not send_key(socket_path, step.press, step.press_delay):
                         print(
                             f"    runner: FAIL a character of '{step.press}' has no qcode",
@@ -1318,6 +1359,18 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
         # the console's last lines only ever name the last cue it *did* see; the
         # cue that failed is the line that is not there, and pulling it out of a
         # long log by eye is exactly what this saves (specs/testing.md).
+        # Keys a step is still holding for a shell that never said it was ready:
+        # the cue matched, but the keys never landed, and a check that never ran
+        # is not evidence.
+        if pending_presses:
+            print(
+                f"    runner: FAIL {len(pending_presses)} step(s) held their keys: "
+                "the shell never said it was ready",
+                flush=True,
+            )
+            for held_index, _shell, _gen in pending_presses:
+                print(f"      {target.qmp_steps[held_index].trigger}", flush=True)
+            failed = True
         never = [i for i, played in enumerate(step_matches) if played == 0]
         if never:
             print(

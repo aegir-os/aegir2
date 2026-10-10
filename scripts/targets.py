@@ -42,6 +42,12 @@ class QmpStep:
     # has captured yet does not fire, so an early line cannot answer for a later
     # stream.
     capture: str = ""
+    # Whether this step's keys must wait for the shell it captured to say it is
+    # listening. Set on the steps that type into the shell: their own cue says
+    # when the acceptance wants to type, and this says whether the guest can hear
+    # it yet. A step for another client -- the test bed's keys, the greeter's --
+    # leaves it false, because that client's readiness is not the shell's.
+    await_shell: bool = False
     times: int = 1  # how often the action may run; 0 is every match
     press: str | None = None
     # The typist's pace between keys: the terminal's grid keeps up at the
@@ -738,8 +744,18 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # when it is done -- so auth's line after the wait is the proof both
             # the spawn and the handshake worked.
             QmpStep(r"auth: the boot session ran"),
+            # The shell says when it is listening: `terminal: ready for line <n>
+            # shell <badge>`. A step with keys waits for one of these from this
+            # stream before typing, so no key is queued behind the previous
+            # command or dropped on a full event ring -- the cue a typed step has
+            # never had. The badge is which terminal, and a nested one counts from
+            # 1 again, so the badge is what says whose prompt this is; this step
+            # is the one place it is learned. times=0 because every prompt repeats
+            # it and the newest is the one that counts.
+            QmpStep(r"terminal: ready for line \d+ shell (\d+)", capture="shell", times=0),
             QmpStep(
                 r"demo: closed",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # The shell's own words, as one file the runner types with one command:
                 # Sys:S/Builtin-Test holds SetEnv/GetEnv/UnSet/alias/Prompt/Eval/Why and
@@ -758,10 +774,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # the command starting proves the two bound to Execute's argument.
             QmpStep(
                 r"launcher: command started aegir-print",
+                await_shell=True,
                 press="execute Sys:S/Params-Test named-arg\n",
             ),
             QmpStep(
                 r"launcher: command started aegir-echo",
+                await_shell=True,
                 # Interpreter-Test last: its file's built-in Alias makes x stand
                 # for date, and date starting is the proof the interpreter ran
                 # the file in order.
@@ -769,6 +787,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started date",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # wait is a program too (C:WAIT), and with no period it waits a
                 # second (specs/dos.md).
@@ -776,11 +795,13 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started wait",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 press="makedir Home:DosTest Home:DosTest2\n",
             ),
             QmpStep(
                 r"launcher: command started makedir",
+                await_shell=True,
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
@@ -792,6 +813,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started copy",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # `l` is an alias the system's Shell-Startup set (specs/shell.md,
                 # Sys:S/Shell-Startup = `alias l list`), so list starting proves
@@ -800,6 +822,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started list",
+                await_shell=True,
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
@@ -813,6 +836,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started dir",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # Sys:S holds the startup scripts (specs/boot.md); reading one
                 # proves the system's script directory resolves and reads. The
@@ -823,6 +847,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started type",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # `>NIL:` is the Amiga's quiet output (specs/boot.md): search
                 # writes its matches to NIL: and they disappear.
@@ -830,6 +855,7 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started search",
+                await_shell=True,
                 dumps=("gpu0",),
                 expect=((1280, 800),),
                 dark=(("gpu0", 50, 145, 500, 60, 40),),
@@ -838,17 +864,20 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started sort",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 press="join Sys:AEGIR.TXT Sys:AEGIR.TXT AS Home:DosTest/JOINED.TXT\n",
             ),
             QmpStep(
                 r"launcher: command started join",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # LONG.TXT is longer than a window, so more pages it and waits.
                 press="more Sys:LONG.TXT\n",
             ),
             QmpStep(
                 r"launcher: command started more",
+                await_shell=True,
                 events=TERMINAL_CLICK,
                 # more waits on a key read, so Ctrl-C is the console's Break
                 # (specs/process.md Phase 4): the terminal sets **C** on more's
