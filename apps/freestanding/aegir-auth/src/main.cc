@@ -2034,12 +2034,16 @@ bool start_boot_session(aegir::mem::Arena &arena) noexcept
         seL4_EndpointObject, seL4_EndpointBits, account, &error);
     constexpr uint32_t kTerminalUntypedBits = 22;
     uint64_t terminal_untyped_physical = 0;
-    seL4_CPtr const terminal_untyped = g_objects.carve_untyped(
-        kTerminalUntypedBits, account, &error, &terminal_untyped_physical);
+    /* The boot terminal's runtime, from the memory service like the greeter's,
+     * asked through a copy of its port badged with the boot session's id. */
+    seL4_CPtr const terminal_untyped =
+        grant_untyped_to(g_spawn_mem, kBootBadge, kTerminalUntypedBits, &error,
+                         &terminal_untyped_physical);
     constexpr uint32_t kShellPoolBits = 22;
     uint64_t shell_pool_physical = 0;
-    seL4_CPtr const shell_pool = g_objects.carve_untyped(
-        kShellPoolBits, account, &error, &shell_pool_physical);
+    seL4_CPtr const shell_pool =
+        grant_untyped_to(g_spawn_mem, kBootBadge, kShellPoolBits, &error,
+                         &shell_pool_physical);
     if (fault == 0 || boot_status == 0 || terminal_untyped == 0 || shell_pool == 0) {
         write("      auth: FAIL no memory for the boot session\n");
         return false;
