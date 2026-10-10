@@ -233,6 +233,69 @@ seL4_CPtr session_untyped_source(void *context, seL4_Word *size_bits,
     return slot;
 }
 
+/* A child's own pool, asked of the memory service through a copy of its port
+ * badged with the CHILD's own id: the service owns what that child is retyped
+ * from to the badge, and one release with the badge takes it back
+ * (specs/memory.md's "Every grant goes through the service"). Returns the chunk
+ * in a slot of ours, or zero with `error_out` set; `physical_out` is where the
+ * chunk is in the machine, which a child that maps frames -- or is told about
+ * them -- has to know. */
+seL4_CPtr grant_untyped_to(seL4_CPtr mem_main, uint64_t child_badge, uint32_t bits,
+                           seL4_Error *error_out, uint64_t *physical_out) noexcept
+{
+    if (error_out != nullptr) {
+        *error_out = seL4_NoError;
+    }
+    if (physical_out != nullptr) {
+        *physical_out = 0;
+    }
+    if (mem_main == 0) {
+        if (error_out != nullptr) {
+            *error_out = seL4_InvalidCapability;
+        }
+        return 0;
+    }
+    seL4_CPtr const call = g_objects.alloc_slot();
+    if (call == 0 ||
+        seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, call,
+                        aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
+                        mem_main, aegir::bootstrap::cnode_bits(),
+                        seL4_CapRights_new(1, 1, 0, 1), child_badge) != seL4_NoError) {
+        if (error_out != nullptr) {
+            *error_out = seL4_InvalidCapability;
+        }
+        return 0;
+    }
+    aegir::ipc::Consumer const service(call);
+    uint64_t const request = bits;
+    uint64_t answer[2] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply =
+        service.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2,
+                              &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    if (physical_out != nullptr) {
+        *physical_out = answer[1];
+    }
+    seL4_CPtr const slot = g_objects.alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        /* The chunk is still in the receive slot; drop it, or the next transfer is
+         * refused an occupied slot. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::cnode_bits());
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    return slot;
+}
+
 /* What a session spawn needs, kept from the bootstrap block: the initrd's
  * bytes (the binary is looked up by name), the ASID pool the address space
  * comes from, and the ends of auth's own CSpace -- the session pool takes its
@@ -2204,9 +2267,12 @@ void start_greeter(aegir::mem::Arena &arena) noexcept
      * few hundred kilobytes -- where the raw greeter it replaced allocated
      * nothing, so 256 KiB ran out and the greeter died before its form. */
     constexpr uint32_t kGreeterUntypedBits = 20;
-    seL4_CPtr const untyped = g_objects.carve_untyped(kGreeterUntypedBits,
-                                                      greeter_account, &error,
-                                                      &untyped_physical);
+    /* From the memory service, asked through a copy of its port badged with the
+     * greeter's own id: the service owns what the greeter is retyped from to that
+     * badge (specs/memory.md's "Every grant goes through the service"). */
+    seL4_CPtr const untyped = grant_untyped_to(g_spawn_mem, kGreeterBadge,
+                                               kGreeterUntypedBits, &error,
+                                               &untyped_physical);
     if (fault == 0 || untyped == 0) {
         write("      auth: no fault endpoint or untyped for the greeter\n");
         return;
