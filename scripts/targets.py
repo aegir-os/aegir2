@@ -877,7 +877,12 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             ),
             QmpStep(
                 r"launcher: command started more",
-                await_shell=True,
+                # No await_shell here, alone in the chain: `more` is a pager
+                # waiting for a key, so it never exits, the shell never prompts
+                # again, and waiting for a prompt would wait for the very key this
+                # step holds. Its keys go *into* the running command -- Ctrl-C is
+                # the console's Break -- which is the opposite of the other
+                # chain steps, where the keys are the shell's next line.
                 events=TERMINAL_CLICK,
                 # more waits on a key read, so Ctrl-C is the console's Break
                 # (specs/process.md Phase 4): the terminal sets **C** on more's

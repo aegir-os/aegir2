@@ -976,6 +976,12 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     # Steps that matched and have keys to type, held until their shell says it is
     # ready: (step index, shell badge, the generation when it matched).
     pending_presses: list[tuple[int, str, int]] = []
+    # The readiness generation at which the runner last typed *into a shell*.
+    # Recorded only for a step that waits for the shell: another client's keys
+    # (the greeter's, the test bed's) say nothing about whether the shell is busy,
+    # and counting them held the chain's first step forever -- measured, the floor
+    # target produced ONE readiness line and stopped (/tmp/floor2.log).
+    shell_typed_gen: dict[str, int] = {}
     step_dims: list[tuple[int, int]] = []
     # The guest's rectangles by name (RECT_CUE), and the screen in pixels from
     # the last screendump -- the size the pixel-to-axis map needs. A click that
@@ -1119,6 +1125,9 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     pending_presses.remove(held)
                     held_step = target.qmp_steps[held_index]
                     held_socket = build_dir / str(target.qmp_socket)
+                    # Released keys *are* keys typed into that shell, so the next
+                    # gated step waits for the prompt after them.
+                    shell_typed_gen[held_shell] = ready_gen
                     if not send_key(held_socket, held_step.press, held_step.press_delay):
                         print(
                             f"    runner: FAIL a character of '{held_step.press}' has no qcode",
@@ -1307,9 +1316,18 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     # its first prompt -- the keys are held and land when it says
                     # it is, which is the cue a typed step never had.
                     shell = captures.get("shell", "")
-                    if step.await_shell and shell and ready_shell != shell:
-                        pending_presses.append((index, shell, ready_gen))
-                        continue
+                    if step.await_shell and shell:
+                        if shell_typed_gen.get(shell, -1) == ready_gen:
+                            # Nothing has prompted for this shell since we last
+                            # typed into it, so it is still busy with that line:
+                            # hold these keys rather than feed them to the running
+                            # command. A shell idle at its prompt never prompts
+                            # again without input, so "its last readiness line is
+                            # mine" is not enough -- only this shell's own last
+                            # type counts.
+                            pending_presses.append((index, shell, ready_gen))
+                            continue
+                        shell_typed_gen[shell] = ready_gen
                     if not send_key(socket_path, step.press, step.press_delay):
                         print(
                             f"    runner: FAIL a character of '{step.press}' has no qcode",
