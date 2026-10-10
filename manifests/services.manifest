@@ -58,7 +58,7 @@ account   = system
 # a caller half: count and describe ask what the machine is, and open
 # introduces the caller to the driver bound to a row (specs/services.md).
 owns      = devmgr.registry
-needs     = log.main
+needs     = log.main, mem.main
 restart   = always
 # The machine's devices are given to this service and to no other: a device is a
 # capability, so it cannot be handed out to everyone who might want one. No device
