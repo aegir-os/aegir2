@@ -65,6 +65,7 @@ bool Scratch::initialise(Allocator *tables) noexcept
 
     base_ = align_up(start);
     next_ = base_;
+    small_high_ = base_;
     /* The large-page region containing the base already has page tables: our
      * image's last page is in it. */
     limit_ = (base_ & ~(kLargePage - 1)) + kLargePage;
@@ -85,6 +86,7 @@ bool Scratch::adopt(seL4_CPtr vspace_root, uintptr_t base, uintptr_t limit,
     tables_ = tables;
     base_ = base;
     next_ = base;
+    small_high_ = base;
     limit_ = limit;
     /* The reservation cursor: the window's top, walking down (reserve). */
     high_ = limit;
@@ -149,6 +151,11 @@ void *Scratch::map(seL4_CPtr frame) noexcept
     }
     last_cap_ = frame;
     next_ += kPage;
+    /* Grow-only: the page table this mapping created outlives the frame's unmap,
+     * so the 2 MiB region stays the small run's (see the header's small_high_). */
+    if (address + kPage > small_high_) {
+        small_high_ = address + kPage;
+    }
     mapped_bytes_ += kPage;
     return reinterpret_cast<void *>(address);
 }
@@ -158,10 +165,20 @@ void *Scratch::map_large(seL4_CPtr frame) noexcept
     if (frame == 0) {
         return nullptr;
     }
-    /* A mega page lands at a fresh 2 MiB slot: whatever 4 KiB mappings the
-     * window already holds stay below it, and the cursor rounds up past
-     * them. */
+    /* A mega page lands at a fresh 2 MiB slot: whatever 4 KiB mappings the window
+     * already holds stay below it, and the cursor rounds up past them -- and past
+     * the region the small run has entered, because unmapping a frame leaves its
+     * page table behind and the kernel refuses a table where one already sits
+     * ("All objects mapped at this address"; measured: without the floor, the
+     * transfer page's table pinned every call to the window base, 20 times a
+     * boot). Once past that region the cursor is already 2 MiB-aligned, so a run
+     * of mega pages steps by exactly one mega page and stays contiguous -- which a
+     * caller requires (apps/freestanding/aegir-console/src/main.cc checks it). */
     next_ = (next_ + kLargePage - 1) & ~(kLargePage - 1);
+    uintptr_t const small_floor = (small_high_ + kLargePage - 1) & ~(kLargePage - 1);
+    if (next_ < small_floor) {
+        next_ = small_floor;
+    }
     /* The reservation cursor is the streaming cursor's ceiling, for the reason map()
      * gives above: a service cannot map past its window, and the top belongs to
      * reservations. A window that may grow takes the reservation cursor with it. */

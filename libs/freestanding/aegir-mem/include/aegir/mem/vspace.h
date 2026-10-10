@@ -146,6 +146,15 @@ private:
     uintptr_t base_;
     uintptr_t next_;
     uintptr_t limit_;
+    /* The end of the small (4 KiB) run this window has handed out, and never
+     *  rewound. Unmapping a frame gives its page back to `next_`, but the page
+     *  table that mapping created stays, and a large page may not be placed in a
+     *  2 MiB region this has entered -- the kernel refuses a table where one
+     *  already sits ("All objects mapped at this address"). Measured: without it
+     *  the transfer page's table pinned `map_large` to the window base, 20 times
+     *  a boot. Only the streaming small mappings raise it: `map_at` places runs of
+     *  its own (the heap's, at the top) and `reserve` owns the other end. */
+    uintptr_t small_high_;
     /* The window has two ends and one owner: `next_` walks up for the streaming
      *  allocations (`map`, `map_large`), `high_` walks down for reservations
      *  (`reserve`), and they stop when they meet. The top is where a long-lived
