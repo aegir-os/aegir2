@@ -206,7 +206,7 @@ restart   = always
 binary    = aegir-partmgr
 authority = system
 account   = system
-needs     = log.main, vfs.namespace, clock.main
+needs     = log.main, vfs.namespace, clock.main, mem.main
 spawns    = fs.*
 restart   = always
 
