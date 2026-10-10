@@ -51,11 +51,12 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
     /* Seventeen fixed entries -- size, name, account, page bits, devices, device,
      * untyped, binaries, window, shared window, current directory, standard
      * input, standard output, boot flags, the program directory, the child's
-     * badge, its CSpace size -- then one per device capability, then one per
-     * port, because what a process is given is part of who it is. Growing the
-     * block means bumping the version rather than gambling on a layout, and
-     * `entry_count` is what makes that safe for readers that know less. */
-    uint32_t const entries = 17 + contents.device_cap_count + contents.port_count;
+     * badge, its CSpace size, the machine's RAM -- then one per device
+     * capability, then one per port, because what a process is given is part of
+     * who it is. Growing the block means bumping the version rather than
+     * gambling on a layout, and `entry_count` is what makes that safe for
+     * readers that know less. */
+    uint32_t const entries = 18 + contents.device_cap_count + contents.port_count;
     uint64_t const header_size = sizeof(Block) + static_cast<uint64_t>(entries) * sizeof(Entry);
     uint64_t data_size = static_cast<uint64_t>(contents.name_length) +
                          contents.account_length + contents.cwd_length +
@@ -224,6 +225,11 @@ Block *write(void *storage, uint64_t storage_size, Contents const &contents) noe
                   contents.ports[i].size_bits};
         next_offset += contents.ports[i].name_length;
     }
+    /* The machine's RAM (specs/memory.md): the number the spawner was told, so a
+     * child that starts processes passes it on and every window is bounded by what
+     * the machine has rather than by what an address space happens to allow. */
+    block->entries[17 + contents.device_cap_count + contents.port_count] =
+        Entry{EntryKind::MachineBytes, 0, contents.machine_bytes, 0, 0};
     return block;
 }
 
@@ -440,6 +446,21 @@ bool window(uint64_t *base, uint32_t *bytes) noexcept
         }
     }
     return false;
+}
+
+uint64_t machine_bytes() noexcept
+{
+    Block const *block = find();
+    if (block == nullptr) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < block->entry_count; ++i) {
+        Entry const &entry = block->entries[i];
+        if (entry.kind == EntryKind::MachineBytes) {
+            return entry.number;
+        }
+    }
+    return 0;
 }
 
 bool shared_window(uint64_t *address, uint32_t *bytes, uint64_t *physical) noexcept

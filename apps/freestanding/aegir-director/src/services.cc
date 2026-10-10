@@ -679,6 +679,11 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         request.device_physical = mine != nullptr ? mine->address : 0;
         request.untyped_physical = memory_physical;
         request.untyped_bits = memory_bits;
+        /* The machine's RAM, so every window below it is bounded by what the
+         * machine has rather than by what an address space allows
+         * (specs/memory.md: the pool's size is the machine's, not a constant).
+         * The allocator summed the bootinfo's untypeds when it was built. */
+        request.machine_bytes = allocator_.normal_bytes();
         /* A delegated untyped says where it is the same way (specs/authority.md):
          * the block's `untyped` entry is how the service learns both the size and
          * the physical base of the memory its objects come from. A spawner's

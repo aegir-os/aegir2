@@ -550,6 +550,10 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     request.give_vspace = true;
     request.untyped_physical = command_untyped_physical;
     request.untyped_bits = kCommandUntypedBits;
+    /* The machine's RAM, from the block this service was given: it passes on what
+     * it was told, so the window a command gets is bounded by the machine's
+     * memory and not by an address-space constant (specs/memory.md). */
+    request.machine_bytes = aegir::bootstrap::machine_bytes();
     /* The launch request's stack ask (specs/launch.md): zero is the spawner's
      * default, which is what a command gets unless the launcher was asked for
      * more. */

@@ -270,6 +270,14 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     detail_ = "";
     error_ = seL4_NoError;
     cnode_bits_ = request.cnode_bits != 0 ? request.cnode_bits : bootstrap::kCNodeBits;
+    /* The machine's RAM, and every window below this spawn is bounded by it. A
+     * spawner that was told does not have to repeat itself -- the block it was
+     * given carries the number -- and one that says nothing passes on what *it*
+     * was told (specs/memory.md: the pool's size is the machine's, not a
+     * constant). This is why the partition manager's window was adopted again:
+     * the device manager never had to learn the number to pass it on. */
+    uint64_t const machine_bytes =
+        request.machine_bytes != 0 ? request.machine_bytes : bootstrap::machine_bytes();
     char const *why = nullptr;
 
     uint64_t elf_size = 0;
@@ -587,20 +595,20 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     uintptr_t const shared_window_at =
         align_up(memory_at + request.memory_bytes, window_frame_bytes);
     /* Everything above the memory and the shared window is the child's, when it
-     * is trusted with its own VSpace root: addresses cost nothing, so the
-     * window is the *rest of the child's address space* rather than a number
-     * chosen here. Its end is the architecture's own user top -- the first
-     * address past user memory (riscv64: seL4_UserTop) -- and what the child
-     * puts in it costs memory only as it maps it, page tables included, so the
-     * space is allocated on demand (specs/authority.md: capacity grows on
-     * demand). The extent is clamped only by what the block's Window entry can
-     * say: its size is `Entry::length`, a 32-bit field, which is a limit of the
-     * *format* and not a number anybody picked -- widening that field is what
-     * removes the last of it. */
+     * is trusted with its own VSpace root: addresses cost nothing, so the window
+     * is a range, not a number chosen here. Its extent is the machine's RAM -- a
+     * process can never map more than the machine has memory, so the RAM is the
+     * limit (specs/memory.md: the pool's size is the machine's, not a constant) --
+     * and what the child puts in it costs memory only as it maps it, page tables
+     * included, so the space is allocated on demand (specs/authority.md: capacity
+     * grows on demand). Zero `machine_bytes` means the spawner did not know it,
+     * and then the window is empty rather than guessed at: a caller that wants its
+     * child to have a window says how much memory the machine has. What a 32-bit
+     * `Entry::length` can carry still bounds the number, and that is the format's
+     * limit rather than a chosen one. */
     uint64_t const window_base =
         request.give_vspace ? shared_window_at + request.window_bytes : 0;
-    uint64_t const window_space =
-        window_base != 0 ? static_cast<uint64_t>(seL4_UserTop) - window_base : 0;
+    uint64_t const window_space = window_base != 0 ? machine_bytes : 0;
     uint64_t const window_clamped =
         window_space < 0xFFFFFFFFull ? window_space : 0xFFFFFFFFull;
     /* The child adopts the window as a range, so `base + bytes` has to land on a
@@ -640,6 +648,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         request.badge,
         cnode_bits_,
         l1_bits,
+        machine_bytes,
     };
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");

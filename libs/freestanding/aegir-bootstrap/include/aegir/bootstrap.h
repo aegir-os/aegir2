@@ -190,6 +190,12 @@ enum class EntryKind : uint32_t {
      *  cannot be an environment entry. Empty or absent when the spawner
      *  resolved no directory: an initrd binary (specs/environment.md). */
     ProgramDir = 19,
+    /** The machine's RAM, in `number`: what a child's own window may span, and
+     *  what the spawner itself was told by whoever started it (specs/memory.md:
+     *  the pool's size is the machine's, not a constant). A process can never map
+     *  more than the RAM, so the RAM is the extent; absent when the spawner had
+     *  none to say, and then a child's window ends with its own image. */
+    MachineBytes = 20,
 };
 
 struct Entry {
@@ -294,6 +300,10 @@ struct Contents {
      * reads this to address them. It rides in the CNodeBits entry's `length`,
      * which that entry has never used. */
     uint32_t cnode_l1_bits;
+    /* The machine's RAM, as the spawner was told it (specs/memory.md). A child
+     * that starts processes passes it on, and a child's own window spans no more
+     * than this. Zero when the spawner had none to say. */
+    uint64_t machine_bytes;
 };
 
 /** Build a block in memory we can write: `storage` is a page that will be
@@ -315,6 +325,12 @@ char const *name(uint32_t *length) noexcept;
  *  radix its own-CNode cap was built with. `kCNodeBits` when the block did not
  *  say -- the root task, or a block from before the field. */
 uint32_t cnode_bits() noexcept;
+
+/** The machine's RAM as the spawner was told it (specs/memory.md), zero when the
+ *  spawner had none to say. A child that starts processes passes it on, and a
+ *  child's own window spans no more than this: a process can never map more than
+ *  the RAM, so the RAM is the extent. */
+uint64_t machine_bytes() noexcept;
 
 /** The root CNode's radix when this process's CSpace is two-level, and zero
  *  when it is single-level (specs/memory.md). A spawning process reads it to

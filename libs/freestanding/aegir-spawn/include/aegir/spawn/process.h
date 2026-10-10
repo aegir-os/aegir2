@@ -144,6 +144,13 @@ struct Request {
      * Null for a child that may not spawn. */
     void const *binaries = nullptr;
     uint32_t binaries_bytes = 0;
+    /* The machine's RAM, as the spawner knows it. The window a child is given
+     * spans no more address space than the machine has memory: the pool's size is
+     * the machine's, not a constant (specs/memory.md), and a process can never map
+     * more than the RAM, so the RAM is the extent. Zero when the caller did not
+     * say -- then the child's window ends at its own image plus what it was
+     * granted, and nothing is assumed about the machine. */
+    uint64_t machine_bytes = 0;
     /* True when the process is trusted with its own VSpace root: the capability
      * arrives as a port named "vspace", and the block's Window entry says which of
      * the child's own addresses are free for it to map into. RISC-V has no
