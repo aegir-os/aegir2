@@ -76,12 +76,13 @@ int main(int argc, char *argv[])
 
     /* Ask for a chunk. */
     uint64_t const request = aegir::memory::kChunkBits;
-    uint64_t answer[1] = {};
+    /* Two words: the chunk's size, then the chunk's physical address. */
+    uint64_t answer[2] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const alloc =
-        mem.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1,
+        mem.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2,
                           &cap_arrived);
-    if (alloc.error != 0 || alloc.count != 1 || !cap_arrived ||
+    if (alloc.error != 0 || alloc.count < 1 || !cap_arrived ||
         answer[0] != aegir::memory::kChunkBits) {
         fail("alloc answered no chunk");
     }

@@ -469,10 +469,11 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
         return 0;
     }
     uint64_t const request = aegir::memory::kChunkBits;
-    uint64_t answer[1] = {};
+    /* Two words: the chunk's size, then the chunk's physical address. */
+    uint64_t answer[2] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const reply = service.call_transfer(
-        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
         return 0;
     }

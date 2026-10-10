@@ -82,10 +82,11 @@ bool chunk_into(seL4_CPtr slot) noexcept
         return false;
     }
     uint64_t const request = aegir::memory::kChunkBits;
-    uint64_t answer[1] = {};
+    /* Two words: the chunk's size, then the chunk's physical address. */
+    uint64_t answer[2] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const alloc =
-        mem.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1,
+        mem.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2,
                           &cap_arrived);
     return alloc.error == 0 && cap_arrived && aegir::ipc::take_received_cap(slot);
 }

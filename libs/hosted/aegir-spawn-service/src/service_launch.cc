@@ -377,10 +377,12 @@ seL4_CPtr ServiceKit::alloc_child_mem(uint32_t bits)
 {
     aegir::ipc::Consumer const service(command_mem_);
     uint64_t const request = bits;
-    uint64_t answer[1] = {};
+    /* Two words: the service answers the chunk's size and, once it says so, the
+     * chunk's physical address (specs/memory.md). */
+    uint64_t answer[2] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const reply = service.call_transfer(
-        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 1, &cap_arrived);
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
         return 0;
     }
