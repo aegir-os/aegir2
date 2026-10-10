@@ -164,7 +164,7 @@ struct FilesystemType {
  * manager used to mint the same frames for every child. Returns the base frame
  * cap -- consecutive slots, which is what the spawner maps -- and the physical
  * base, or zero. */
-seL4_CPtr carve_window(aegir::mem::Account &account, uint32_t pages,
+seL4_CPtr carve_window(seL4_CPtr mem_call, aegir::mem::Account &account, uint32_t pages,
                        uint64_t *physical_out) noexcept
 {
     /* Untypeds are powers of two, so a window's region is too; round the page
@@ -175,7 +175,11 @@ seL4_CPtr carve_window(aegir::mem::Account &account, uint32_t pages,
     }
     seL4_Error error = seL4_NoError;
     uint64_t physical = 0;
-    seL4_CPtr const untyped = g_objects.carve_untyped(bits, account, &error, &physical);
+    /* From the memory service, like the filesystem's other grants: it owns the
+     * chunk to the child's badge, and it is where this window's address comes
+     * from -- the driver is told that address in the clamp, and no invocation
+     * reads one off a frame (specs/memory.md). */
+    seL4_CPtr const untyped = grant_untyped(mem_call, bits, &error, &physical);
     if (untyped == 0) {
         return 0;
     }
@@ -392,7 +396,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     }
     uint64_t child_window_physical = 0;
     seL4_CPtr const window =
-        carve_window(child_account, window_pages, &child_window_physical);
+        carve_window(mem_call, child_account, window_pages, &child_window_physical);
     constexpr uint32_t kFsMemoryBits = 12; /* one page */
     seL4_Error memory_error = seL4_NoError;
     uint64_t memory_physical = 0;
