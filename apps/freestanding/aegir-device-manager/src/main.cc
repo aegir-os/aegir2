@@ -1137,9 +1137,13 @@ int main(int argc, char *argv[])
                     driver->window_bits >= seL4_LargePageBits ? seL4_LargePageBits
                                                               : seL4_PageBits;
                 seL4_Error window_error = seL4_NoError;
-                seL4_CPtr const window_untyped =
-                    g_objects.carve_untyped(driver->window_bits, child_account,
-                                            &window_error, &window_physical);
+                /* From the memory service, as the queue is: through a copy of its
+                 * port badged with the DRIVER's own id. The address matters most
+                 * here -- the driver is told where this window is, and the frames
+                 * bound into the map follow from it. */
+                seL4_CPtr const window_untyped = grant_untyped_to(
+                    static_cast<seL4_CPtr>(mem_main_slot), 256u + b, driver->window_bits,
+                    &window_error, &window_physical);
                 if (window_untyped == 0) {
                     write_line("FAIL", "no memory for a driver's shared window");
                     continue;
