@@ -27,6 +27,7 @@
 #include <aegir/fsbundle.h>
 #include <aegir/ipc/port.h>
 #include <aegir/log.h>
+#include <aegir/memory.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
@@ -44,6 +45,75 @@ namespace {
  * manager's are -- an Allocator's untyped table is tens of kilobytes, and a
  * spawned process's stack is two pages (specs/userland.md). */
 aegir::mem::Allocator g_objects(nullptr);
+
+/* The memory service's port, found once in main(): every chunk a filesystem is
+ * granted comes from it, asked through that child's own badged copy of it. */
+seL4_CPtr g_mem_main = 0;
+
+/** A chunk for a filesystem, asked of the memory service through `mem_call` -- a
+ *  copy of mem.main's port badged with the CHILD's own badge, so the service owns
+ *  everything the child is retyped from to that badge and one release with it
+ *  takes them all back (specs/memory.md). Partmgr used to carve these out of the
+ *  untyped it was delegated, which made a child's memory partmgr's problem and
+ *  partmgr's pool a ceiling over the filesystems it can start.
+ *
+ *  Returns the chunk's capability in a slot of our own, or zero with `error_out`
+ *  set. `physical_out` is always zero: there is no invocation that reads an
+ *  untyped's address, and nothing a filesystem's runtime is retyped from here is
+ *  named to a device (allocator.h's `adopt_untyped` -- zero means unknown, and
+ *  nothing derived from such a region should be named to one). The window is the
+ *  single grant that does need an address, because the block driver is told it,
+ *  so the window still comes from our own untyped until the service reports the
+ *  chunk's. */
+seL4_CPtr grant_untyped(seL4_CPtr mem_call, uint32_t bits, seL4_Error *error_out,
+                        uint64_t *physical_out) noexcept
+{
+    if (error_out != nullptr) {
+        *error_out = seL4_NoError;
+    }
+    if (physical_out != nullptr) {
+        *physical_out = 0;
+    }
+    if (mem_call == 0) {
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    aegir::ipc::Consumer const service(mem_call);
+    uint64_t const request = bits;
+    /* Two words: the chunk's size, then where the chunk is in the machine. */
+    uint64_t answer[2] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply =
+        service.call_transfer(aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2,
+                              &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    /* Where the chunk is: a filesystem maps frames retyped from these grants and
+     * is told their addresses, and the block driver is told the window's, so a
+     * grant that says nothing useful leaves a filesystem unable to build its
+     * window (specs/memory.md). */
+    if (physical_out != nullptr) {
+        *physical_out = answer[1];
+    }
+    seL4_CPtr const slot = g_objects.alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        /* The chunk is still in the receive slot; drop it, or the next transfer
+         * is refused an occupied slot. */
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::kCNodeBits);
+        if (error_out != nullptr) {
+            *error_out = seL4_NotEnoughMemory;
+        }
+        return 0;
+    }
+    return slot;
+}
 aegir::mem::Scratch g_scratch(nullptr);
 aegir::mem::Account g_account{"partmgr", 0, 0, 0};
 
@@ -300,6 +370,26 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
      * table's shape, one service back -- and reaching it is a loud
      * refusal. */
     aegir::mem::Account child_account{"fs", 0, 0, 0};
+    /* This child's own copy of the memory service's port: every chunk it is
+     * granted is asked for through this copy, so the service owns them to the
+     * CHILD's badge and one release with that badge takes them all back
+     * (specs/memory.md). Minted from the service's own port and badged with the
+     * child's, as the volume's caller half below is minted from its own. */
+    seL4_CPtr mem_call = 0;
+    if (g_mem_main != 0) {
+        mem_call = g_objects.alloc_slot();
+        seL4_Error const mem_mint_error =
+            mem_call == 0
+                ? seL4_InvalidCapability
+                : seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, mem_call,
+                                  aegir::bootstrap::kCNodeBits,
+                                  aegir::bootstrap::kSlotOwnCNode, g_mem_main,
+                                  aegir::bootstrap::kCNodeBits,
+                                  seL4_CapRights_new(1, 1, 0, 1), badge);
+        if (mem_mint_error != seL4_NoError) {
+            mem_call = 0;
+        }
+    }
     uint64_t child_window_physical = 0;
     seL4_CPtr const window =
         carve_window(child_account, window_pages, &child_window_physical);
@@ -307,8 +397,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     seL4_Error memory_error = seL4_NoError;
     uint64_t memory_physical = 0;
     seL4_CPtr const memory_untyped =
-        g_objects.carve_untyped(kFsMemoryBits, child_account, &memory_error,
-                                &memory_physical);
+        grant_untyped(mem_call, kFsMemoryBits, &memory_error, &memory_physical);
     seL4_CPtr memory_frame = 0;
     if (memory_untyped != 0) {
         memory_frame = g_objects.carve_page(memory_untyped, child_account, &memory_error);
@@ -320,8 +409,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     seL4_Error object_error = seL4_NoError;
     uint64_t object_physical = 0;
     seL4_CPtr const object_untyped =
-        g_objects.carve_untyped(kFsObjectBits, child_account, &object_error,
-                                &object_physical);
+        grant_untyped(mem_call, kFsObjectBits, &object_error, &object_physical);
     /* The untyped the window's page tables are retyped from (specs/vfs.md's
      * read-frame): the filesystem is trusted with its own VSpace root and a
      * window of free addresses, and builds the tables over that window itself,
@@ -331,8 +419,7 @@ void start_filesystem(aegir::spawn::Spawner &spawner, seL4_CPtr spawn_log,
     seL4_Error window_error = seL4_NoError;
     uint64_t window_untyped_physical = 0;
     seL4_CPtr const window_untyped =
-        g_objects.carve_untyped(kFsWindowBits, child_account, &window_error,
-                                &window_untyped_physical);
+        grant_untyped(mem_call, kFsWindowBits, &window_error, &window_untyped_physical);
     seL4_Error fault_error = seL4_NoError;
     seL4_CPtr const fault = g_objects.alloc_object(seL4_EndpointObject, seL4_EndpointBits,
                                                    child_account, &fault_error);
@@ -572,6 +659,21 @@ int main(int argc, char *argv[])
 
     aegir::ipc::Consumer const log =
         aegir::ipc::Consumer::find(aegir::log::kPortName, aegir::log::kPortNameLength);
+    /* The memory service (specs/memory.md): every chunk a filesystem is granted is
+     * asked of it through that child's own badged copy of its port, so the grant
+     * is the service's to own and to take back, and not partmgr's delegated pool
+     * (the milestone: grants go through the memory service). Absent is not fatal:
+     * a target without one keeps carving from its own untyped. */
+    /* The delegatable copy the device manager passes down, under the name the
+     * director grants a spawning service for its children -- the same name and
+     * the same mechanism the launcher uses for its own commands
+     * (libs/hosted/aegir-spawn-service/src/service_kit.cc:108). Partmgr is
+     * started by the device manager, so its own manifest `needs` is not what
+     * gives it this: the row the device manager fills is. */
+    uint64_t mem_slot = 0;
+    if (aegir::bootstrap::capability("spawn:mem.main", 14, &mem_slot)) {
+        g_mem_main = static_cast<seL4_CPtr>(mem_slot);
+    }
     if (log.valid()) {
         (void)log.call(aegir::log::kMethodEvent,
                        static_cast<uint64_t>(aegir::log::Event::Starting));
