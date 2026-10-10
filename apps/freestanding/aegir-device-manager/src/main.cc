@@ -1575,7 +1575,13 @@ int main(int argc, char *argv[])
                     request.account_length = 6;
                     request.priority = seL4_MaxPrio - 1;
                     request.ports = ports;
-                    request.port_count = 4 + registry_rows + nmspace_rows + clock_rows + bound_count;
+                    /* The memory row is part of the count, or the row is written
+                     * into the array and never handed over -- measured: partmgr
+                     * read nothing for spawn:mem.main until this included
+                     * mem_rows, and the spawner's own vspace grant then took the
+                     * slot the row would have had. */
+                    request.port_count =
+                        4 + registry_rows + nmspace_rows + clock_rows + mem_rows + bound_count;
                     request.give_vspace = true;
                     /* The filesystem registry and the images it names, as one
                      * bundle: the partition manager picks the service a
