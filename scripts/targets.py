@@ -1244,6 +1244,16 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 expect=((1280, 800),),
                 pixels=(("gpu0", 600, 450, 170, 170, 170),),
                 dark=(("gpu0", 424, 204, 300, 24, 20),),
+                # Close the viewer before the acceptance goes on. It is a foreground
+                # command in the terminal's shell, so while it is up that shell never
+                # prompts again -- measured: after `launcher: command started view`
+                # there was no `terminal: command exited` and no further `ready for
+                # line`, and the steps that come later in a development run had no
+                # prompt to be typed at (/tmp/dev7.log). The viewer takes the place
+                # the editor had -- the dark bar checked just above is its titlebar
+                # -- so the editor's own close rectangle is its close box, the same
+                # idiom the demo's window is closed with below.
+                clicks=(("editor.close", 0.5, 0.5),),
             ),
             # The greeter's login starts the bureau (specs/workbench.md): the
             # trinket full-screen backdrop with the screen title bar across
