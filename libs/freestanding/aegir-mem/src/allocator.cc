@@ -620,7 +620,15 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     seL4_CPtr const slot = alloc_slot();
     if (slot == 0) {
         insert(false, node);
-        *error = seL4_NotEnoughMemory;
+        /* Not `seL4_NotEnoughMemory`: the piece is in hand and the memory is
+         * there -- what ran out is the CSpace. Reporting a memory error here is
+         * how a full CSpace read as memory exhaustion for six runs: the kernel's
+         * own "0 bytes available" from a retype *is* `seL4_NotEnoughMemory`, and
+         * so are `refill`'s and `take`'s refusals above, so one value stood for
+         * four different shortages. `seL4_FailedLookup` is the kernel's own word
+         * for "that slot is not there" (kernel/libsel4/include/sel4/errors.h).
+         * A caller that sees this has a CSpace to grow, not memory to find. */
+        *error = seL4_FailedLookup;
         return 0;
     }
     *error = seL4_Untyped_Retype(node->cap, type, size_bits, seL4_CapInitThreadCNode,

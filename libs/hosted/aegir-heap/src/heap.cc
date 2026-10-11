@@ -411,9 +411,28 @@ bool map_page(uintptr_t address) noexcept
     seL4_CPtr const frame = g_allocator->alloc_object(seL4_RISCV_4K_Page,
                                                       seL4_PageBits, account, &error);
     if (frame == 0) {
+        /* Four conditions, and `alloc_object` reports `seL4_NotEnoughMemory` for
+         * all of them -- no piece in `refill`, a `take` that found nothing, no
+         * free slot, and the kernel refusing the retype with "0 bytes
+         * available" (libs/freestanding/aegir-mem/src/allocator.cc:610-628) --
+         * so the error alone cannot say what a program that dies of
+         * `std::bad_alloc` ran out of. The allocator's own slot counters split
+         * it: a full CSpace is `page-no-slot`, an error the allocator did not
+         * set is the kernel's (`page-kernel-error`), and what is left is no
+         * piece at all. The anonymous mappings mallocng grows a heap with come
+         * through here, not through `map_large_page`, so this is where a link's
+         * last `mmap` burst fails. */
+        if (error != seL4_NoError && error != seL4_NotEnoughMemory) {
+            trace_phase("page-kernel-error");
+        } else if (g_allocator->slots_used() >= g_allocator->slots_total()) {
+            trace_phase("page-no-slot");
+        } else {
+            trace_phase("page-no-piece");
+        }
         return false;
     }
     if (!g_scratch->map_at(address, frame)) {
+        trace_phase("page-map-refused");
         return false;
     }
     /* Remembered so that mprotect can name the frame again (the chunk record above).
@@ -520,10 +539,27 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
     aegir::ipc::WordsReply const reply = service.call_transfer(
         aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
+        /* The service refused, and it refuses silently (`answer_alloc` replies
+         * no words when `chunk_free()` finds no row, or the pool cannot carve).
+         * A program dying of `std::bad_alloc` otherwise says nothing about
+         * which of the two happened (specs/memory.md). */
+        trace_phase("chunk-refused");
         return 0;
     }
     seL4_CPtr const slot = allocator->alloc_slot();
-    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+    /* Two ways to fail here, and the last instrument could not tell them apart
+     * from the one above: no free CNode slot to move the chunk's capability
+     * into, or a move that failed (specs/memory.md). Both are silent, and both
+     * leave the caller to die of `std::bad_alloc`. */
+    if (slot == 0) {
+        trace_phase("slot-refused");
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::endpoint_depth());
+        return 0;
+    }
+    if (!aegir::ipc::take_received_cap(slot)) {
+        trace_phase("cap-move-refused");
         /* The chunk is still in the scratch receive slot; drop it, or the next
          * transfer is refused an occupied slot. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
@@ -826,6 +862,10 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
         uintptr_t const reserved =
             g_scratch->reserve(static_cast<unsigned>(needed / kPageBytes));
         if (reserved == 0) {
+            /* Both of these were invisible in a run's log -- `trace` writes the
+             * debug serial -- so a program that died of `std::bad_alloc` could
+             * not be told from the pool refusing a chunk (specs/memory.md). */
+            trace_phase("mmap-window-refused");
             trace("mmap-refused", length, 0);
             return -ENOMEM;
         }
