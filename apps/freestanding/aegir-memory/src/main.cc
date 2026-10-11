@@ -315,6 +315,14 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     uint64_t const wanted_bits =
         count >= 1 && words[0] != 0 ? words[0] : aegir::memory::kChunkBits;
     if (wanted_bits == 0 || wanted_bits > g_pool_bits) {
+        /* Say which refusal this is: a caller dying of `std::bad_alloc` cannot
+         * tell a spent pool from a spent node table from a full record
+         * (specs/memory.md's markers exist for the same reason). */
+        write("  memory: refused a chunk of ");
+        write_word(wanted_bits);
+        write(" bits; the pool is ");
+        write_word(g_pool_bits);
+        write(" bits\n");
         port.reply_words(nullptr, 0);
         return;
     }
@@ -347,6 +355,9 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
 
     uint32_t const index = chunk_free();
     if (index == kMaxChunks) {
+        write("  memory: refused a chunk: every one of the ");
+        write_word(kMaxChunks);
+        write(" records is held\n");
         port.reply_words(nullptr, 0);
         return;
     }
@@ -357,6 +368,15 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
     seL4_CPtr const chunk = g_pool.carve_untyped(static_cast<seL4_Word>(wanted_bits),
                                                  account, &error, &physical, &cookie);
     if (chunk == 0) {
+        write("  memory: refused a chunk of ");
+        write_word(wanted_bits);
+        write(" bits; the pool's largest free piece is ");
+        write_word(g_pool.largest_free_bits());
+        write(" bits with ");
+        write_word(g_pool.untyped_free());
+        write(" pieces listed and ");
+        write_word(g_pool.untyped_count());
+        write(" nodes in use\n");
         port.reply_words(nullptr, 0);
         return;
     }

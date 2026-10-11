@@ -539,11 +539,22 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
     aegir::ipc::WordsReply const reply = service.call_transfer(
         aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
-        /* The service refused, and it refuses silently (`answer_alloc` replies
-         * no words when `chunk_free()` finds no row, or the pool cannot carve).
-         * A program dying of `std::bad_alloc` otherwise says nothing about
-         * which of the two happened (specs/memory.md). */
+        /* Which refusal: the call answered with a label (`reply.error`) or the
+         * words came back without the capability -- a receive slot that was not
+         * empty, or a reply cap without Grant, which the kernel drops silently
+         * (aegir/ipc/port.h). The service's own refusals now say why they are
+         * (apps/freestanding/aegir-memory), so what is left to name is this
+         * side (specs/memory.md). */
         trace_phase("chunk-refused");
+        aegir::debug_write("      heap:   error ");
+        aegir::debug_write_unsigned(static_cast<uint64_t>(reply.error));
+        aegir::debug_write(", asked ");
+        aegir::debug_write_unsigned(request);
+        aegir::debug_write(" bits, words ");
+        aegir::debug_write_unsigned(static_cast<uint64_t>(reply.count));
+        aegir::debug_write(", cap ");
+        aegir::debug_write(cap_arrived ? "arrived" : "dropped");
+        aegir::debug_write("\n");
         return 0;
     }
     seL4_CPtr const slot = allocator->alloc_slot();
