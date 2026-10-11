@@ -979,6 +979,86 @@ aegir::ipc::Consumer &console_stream() noexcept
     return const_cast<aegir::ipc::Consumer &>(stream);
 }
 
+/* The file-surface calls, and only those: what a compiler or a linker is doing
+ * shows here -- which file it opened, what it read, what it wrote -- while the
+ * memory, synchronisation and socket calls a service spends its idle time in
+ * would bury that, and the console is the slowest thing a program writes to.
+ * `nullptr` means the trace does not follow that call. The numbers are the
+ * dispatcher's own cases below. */
+char const *syscall_name(long number) noexcept
+{
+    switch (number) {
+    case 56: return "openat";
+    case 57: return "close";
+    case 61: return "getdents64";
+    case 62: return "lseek";
+    case 63: return "read";
+    case 64: return "write";
+    case 65: return "readv";
+    case 66: return "writev";
+    case 67: return "pread64";
+    case 68: return "pwrite64";
+    case 71: return "sendfile";
+    case 79: return "newfstatat";
+    case 80: return "fstat";
+    case 291: return "statx";
+    case 48: return "faccessat";
+    case 17: return "getcwd";
+    case 49: return "chdir";
+    case 25: return "fcntl";
+    case 34: return "mkdirat";
+    case 35: return "unlinkat";
+    case 45: return "truncate";
+    case 46: return "ftruncate";
+    case 276: return "renameat2";
+    case 52: return "fchmod";
+    case 53: return "fchmodat";
+    case 5: return "setxattr";
+    case 6: return "lsetxattr";
+    case 7: return "fsetxattr";
+    case 8: return "getxattr";
+    case 9: return "lgetxattr";
+    case 10: return "fgetxattr";
+    case 11: return "listxattr";
+    case 12: return "llistxattr";
+    case 13: return "flistxattr";
+    case 14: return "removexattr";
+    case 15: return "lremovexattr";
+    case 16: return "fremovexattr";
+    default: return nullptr;
+    }
+}
+
+void trace_syscall(long number) noexcept
+{
+    char const *name = syscall_name(number);
+    if (name == nullptr) {
+        /* Nothing to say about this call: the memory, synchronisation and socket
+         * calls a service spends its idle time in. Tracing those would bury the
+         * file traffic that says what a compiler or a linker is doing, and the
+         * console is the slowest thing a program writes to. */
+        return;
+    }
+    char line[64];
+    uint32_t length = 0;
+    for (char const *p = "  heap: "; *p != '\0'; ++p) {
+        line[length++] = *p;
+    }
+    for (char const *p = name; *p != '\0' && length + 1 < sizeof(line); ++p) {
+        line[length++] = *p;
+    }
+    line[length++] = '\n';
+
+    aegir::ipc::Consumer &stream = console_stream();
+    if (stream.valid()) {
+        aegir::console::stream_write(stream, line, length);
+        return;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        seL4_DebugPutChar(line[i]);
+    }
+}
+
 /* The break source the spawner bound to this TCB (specs/process.md): a
  * notification it also handed the registry, which signals it to abort us. The
  * spawner names it `break.source` in the block; a process the spawner gave none
@@ -1316,6 +1396,7 @@ long vsyscall(long sysnum, ...) noexcept
 {
     va_list ap;
     va_start(ap, sysnum);
+    trace_syscall(sysnum);
     long ret = -ENOSYS;
     switch (sysnum) {
     case 214: /* SYS_brk */
