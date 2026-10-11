@@ -167,12 +167,24 @@ int main(int argc, char *argv[])
         fail("the untyped would not be remembered");
     }
     uint64_t const first_free = first_free_slot();
-    /* The depth is zero because these are our own slots: at depth zero the
-     * destination of a retype is the CNode (kernel/src/object/untyped.c). */
-    g_objects.adopt_slots(static_cast<seL4_CPtr>(first_free),
-                          (1u << aegir::bootstrap::kCNodeBits) -
-                              static_cast<uint32_t>(first_free),
-                          0, aegir::bootstrap::kCNodeBits);
+    uint32_t const l2 = aegir::bootstrap::cnode_bits();
+    uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
+    if (l1 != 0) {
+        /* A two-level service: its plain slots live in the L2 CNode at its root
+         * slot 0 (specs/memory.md's "Growing the CSpace on demand"). Adopted as
+         * a flat range instead, the retype destination is derived from the slot
+         * (`retype_node_index`) and lands in root slots -- a different CNode --
+         * which the kernel answers "Target slot invalid". Measured: net raised
+         * exactly that on the run where commands were given a level one. */
+        g_objects.adopt_slots_level_two(static_cast<seL4_CPtr>(first_free),
+                                        (1u << l2) - static_cast<uint32_t>(first_free), l1, l2,
+                                        0);
+    } else {
+        /* The depth is zero because these are our own slots: at depth zero the
+         * destination of a retype is the CNode (kernel/src/object/untyped.c). */
+        g_objects.adopt_slots(static_cast<seL4_CPtr>(first_free),
+                              (1u << l2) - static_cast<uint32_t>(first_free), 0, l2);
+    }
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -180,7 +192,7 @@ int main(int argc, char *argv[])
     }
     seL4_SetCapReceivePath(aegir::bootstrap::kSlotOwnCNode,
                            static_cast<seL4_CPtr>(first_free),
-                           aegir::bootstrap::kCNodeBits);
+                           aegir::bootstrap::endpoint_depth());
 
     /* The port's side of lwIP: the heap it grows from, the allocator its
      * blocking objects come out of, and the thread builder the tcpip thread is
@@ -215,8 +227,8 @@ int main(int argc, char *argv[])
     seL4_CPtr const tick_cap = tick_object != 0 ? g_objects.alloc_slot() : 0;
     if (tick_object == 0 || tick_cap == 0 ||
         seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, tick_cap,
-                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
-                        tick_object, aegir::bootstrap::kCNodeBits,
+                        aegir::bootstrap::endpoint_depth(), aegir::bootstrap::kSlotOwnCNode,
+                        tick_object, aegir::bootstrap::endpoint_depth(),
                         seL4_CapRights_new(0, 0, 1, 1),
                         aegir::lwip::kTickBit) != seL4_NoError) {
         fail("the tick notification could not be made");
