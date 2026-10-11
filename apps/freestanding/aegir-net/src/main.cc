@@ -83,8 +83,14 @@ void write_line(char const *label, char const *text) noexcept
  * allocator's slot cursor is not atomic (allocator.h makes no claim, and
  * allocator.cc has no locking): two threads sharing one hand each other the
  * same slot, and the kernel reports the second occupant rather than the
- * mistake. This one is the process's own -- the bring-up and the control port's
- * thread -- and it is the half that keeps the untyped the manifest granted. */
+ * mistake. The one below is the process's own -- the bring-up and the control
+ * port's thread -- and it is the half that keeps the untyped the manifest
+ * granted.
+ *
+ * The split is an argument about that cursor, not a fix for the four seL4
+ * messages a two-level `net` was blamed for: those came from `aegir-net-show`,
+ * the `net` *command*, at the same two addresses with and without it, so no run
+ * has yet shown the two cursors collide. */
 aegir::mem::Allocator g_objects(nullptr);
 /* The lwIP half's: the tcpip thread retypes its notifications and endpoints and
  * grows lwIP's heap out of it, and the socket and link threads do the same
