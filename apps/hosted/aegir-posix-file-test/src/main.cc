@@ -58,6 +58,15 @@ constexpr char const *kDirectory = "/SCRATCH/POSIX.DIR";
 constexpr char const *kFile = "/SCRATCH/POSIX.DIR/FILE.TXT";
 constexpr char const *kRenamed = "/SCRATCH/POSIX.DIR/RENAMED.TXT";
 
+/* A file of its own for the offset-write checks, so the sequence above is
+ * untouched by them and a failure still names one check. */
+constexpr char const *kOverwriteFile = "/SCRATCH/OVERWRITE.TXT";
+
+/* What an overwrite puts over the text's first bytes -- a different opening
+ * from the original's, so a write that landed at the end of the file instead
+ * cannot read back as the right thing. */
+char const *const kOverwrite = "POSIX";
+
 /* Longer than a volume block, so the write crosses the block boundary the
  * volume's own write has to handle rather than fitting in one short hold. */
 char const *const kText =
@@ -95,6 +104,46 @@ bool reads_text(char const *path, char const *want)
     (void)close(fd);
     size_t const length = strlen(want);
     return got == static_cast<ssize_t>(length) && memcmp(buffer, want, length) == 0;
+}
+
+/* Whether `path` holds `replaced` over the original's first bytes and the
+ * original's own tail after it, and is no longer than the original: an
+ * overwrite changes bytes, never the length. A write that landed at the end of
+ * the file instead leaves the head alone and makes the file longer, so both
+ * halves of this catch it. */
+bool reads_overwritten(char const *path, char const *replaced, char const *original)
+{
+    int const fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return false;
+    }
+    char buffer[256];
+    ssize_t const got = read(fd, buffer, sizeof(buffer));
+    (void)close(fd);
+    size_t const want = strlen(original);
+    size_t const edge = strlen(replaced);
+    if (got != static_cast<ssize_t>(want) || edge > want) {
+        return false;
+    }
+    return memcmp(buffer, replaced, edge) == 0 &&
+           memcmp(buffer + edge, original + edge, want - edge) == 0;
+}
+
+/* Whether the byte at `at` in `path` is `want`. */
+bool reads_byte(char const *path, long at, char want)
+{
+    int const fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return false;
+    }
+    if (lseek(fd, at, SEEK_SET) != at) {
+        (void)close(fd);
+        return false;
+    }
+    char got = 0;
+    ssize_t const count = read(fd, &got, 1);
+    (void)close(fd);
+    return count == 1 && got == want;
 }
 
 /* Whether `path` names nothing at all: a name that was removed has to read as
@@ -154,6 +203,42 @@ int main()
             "fstat size is what was written");
     require(close(fd) == 0, "close after writing");
     require(reads_text(kFile, kText), "read the file back whole");
+
+    /* A write at an offset the descriptor names, which is what a compiler asks
+     * for when it patches a file it has already written: seek back, write over
+     * what is there, read it back. The bytes land where the descriptor's cursor
+     * is (specs/vfs.md's write), so the head changes and the length does not --
+     * and `lseek(fd, 0, SEEK_END)` still reports the text's own length, which a
+     * write that landed at the end of the file cannot. LLVM's ELF writer asks
+     * for exactly this to fix up an object file's section-header fields
+     * (projects/llvm-project/llvm/lib/Support/raw_ostream.cpp's pwrite_impl is
+     * seek, write, seek), so an object whose header stays zero is what this
+     * costs: `ld.lld: error: SCRATCH:hello.o: section header string table index
+     * 1 does not exist`, because the header still says there are no sections. */
+    fd = open(kOverwriteFile, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    require(fd >= 0, "create /SCRATCH/OVERWRITE.TXT");
+    require(write(fd, kText, length) == static_cast<ssize_t>(length), "write it whole");
+    require(lseek(fd, 0, SEEK_SET) == 0, "lseek to its start");
+    require(write(fd, kOverwrite, strlen(kOverwrite)) ==
+                static_cast<ssize_t>(strlen(kOverwrite)),
+            "overwrite its first bytes");
+    require(lseek(fd, 0, SEEK_END) == static_cast<long>(length),
+            "lseek SEEK_END is still the text's length");
+    require(close(fd) == 0, "close after the overwrite");
+    require(reads_overwritten(kOverwriteFile, kOverwrite, kText),
+            "the overwrite landed at the start and the file did not grow");
+
+    /* And pwrite, which names the offset itself: the byte changes where it says
+     * without the descriptor's cursor moving under the caller. */
+    fd = open(kOverwriteFile, O_RDWR);
+    require(fd >= 0, "reopen for pwrite");
+    require(pwrite(fd, "!", 1, static_cast<off_t>(length - 1)) == 1,
+            "pwrite the text's last byte");
+    require(lseek(fd, 0, SEEK_CUR) == 0, "pwrite did not move the descriptor's cursor");
+    require(close(fd) == 0, "close after pwrite");
+    require(reads_byte(kOverwriteFile, static_cast<long>(length - 1), '!'),
+            "pwrite's byte is the one at the offset it named");
+    require(unlink(kOverwriteFile) == 0, "unlink /SCRATCH/OVERWRITE.TXT");
 
     /* Truncate through the descriptor, then by name: both spellings reach the
      * volume's own truncate, and the file is the shorter thing afterwards. */
