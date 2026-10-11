@@ -804,8 +804,18 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
                 }
                 ++page;
             }
+            bool mega_reported = false;
             while (page + kMegaPages <= needed / kPageBytes &&
                    (base + page * kPageBytes) % kMega == 0) {
+                if (!mega_reported) {
+                    /* The 2 MiB path engaged. If `mmap-filling` never follows this,
+                     * the stall is inside this loop; if this line never appears at
+                     * all, the mapping is going a page at a time -- the tens of
+                     * thousands of round trips the comment above describes, which is
+                     * the shape a hang takes when it is really grinding. */
+                    trace_phase("mmap-mega");
+                    mega_reported = true;
+                }
                 if (!map_large_page(base + page * kPageBytes)) {
                     trace("mmap-refused", length, 0);
                     return -ENOMEM;
