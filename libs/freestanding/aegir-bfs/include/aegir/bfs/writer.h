@@ -278,9 +278,17 @@ private:
     uint8_t zero_[kMaxBlockSize] = {};
     uint8_t attr_[kMaxBlockSize] = {};
 
-    /* A node holds far fewer than this many entries; the arrays are members,
-     * not locals, because a split runs on a service stack. */
-    static constexpr uint32_t kMaxNodeEntries = 200;
+    /* A freshly built tree -- the header and one node -- for the two places that
+     * create one. A member for the same reason the arrays below are: a tree is
+     * the size of the node, and the node size is the disk builder's, so it has no
+     * business on a service stack. */
+    uint8_t tree_[kTreeNodeSize * 2] = {};
+
+    /* One node's own capacity, from the format rather than a number standing on
+     * its own: the fixed part, then two bytes of key lengths and eight of value
+     * per entry (aegir/bfs/bplustree.h's node_info). The arrays are members, not
+     * locals, because a split runs on a service stack. */
+    static constexpr uint32_t kMaxNodeEntries = (kTreeNodeSize - 28) / (2 + 8);
     uint8_t const *g_keys_[kMaxNodeEntries] = {};
     uint16_t g_lengths_[kMaxNodeEntries] = {};
     uint64_t g_values_[kMaxNodeEntries] = {};

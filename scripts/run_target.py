@@ -657,6 +657,18 @@ def development_tree(build_dir: Path) -> Path:
         built = build_dir / "apps/hosted" / program
         if built.is_file():
             shutil.copy2(built, root / "C" / name)
+    # clang's own builtin headers (stddef.h, stdint.h ...). The driver derives its
+    # resource directory from the install directory it is given -- `-ccc-install-dir
+    # Sys:Development/C` puts them at `Sys:Development/lib/clang/<version>/include`
+    # -- and without them a compile starts with an empty include search list and
+    # stops without writing an object or saying why (measured: cc1 reports every
+    # directory it wanted as nonexistent, /tmp/devI.log). The version comes from the
+    # toolchain's own path rather than being written down here.
+    for clang_include in sorted(
+            pins.ROOT.glob("third_party/toolchain/*/lib/clang/*/include")):
+        destination = root / "lib" / "clang" / clang_include.parent.name / "include"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(clang_include, destination, dirs_exist_ok=True)
     # The scale acceptance's deliberately huge command (specs/memory.md) travels
     # beside the compiler: it runs at session start, and a spawn-path cap that
     # creeps back fails on it by name.

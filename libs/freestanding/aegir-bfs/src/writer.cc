@@ -704,10 +704,9 @@ bool Writer::create_blocks(uint64_t parent_block, char const *name,
         return false;
     }
     if (directory) {
-        uint8_t tree[kTreeNodeSize * 2];
-        build_dir_tree(tree, block, volume_->to_block(parent_run));
-        if (!volume_->write_stream_raw(stream_, data::kBytes, 0, tree,
-                                       sizeof(tree))) {
+        build_dir_tree(tree_, block, volume_->to_block(parent_run));
+        if (!volume_->write_stream_raw(stream_, data::kBytes, 0, tree_,
+                                       sizeof(tree_))) {
             (void)allocator_.free(tree_run);
             (void)allocator_.free(inode_run);
             return false;
@@ -1606,10 +1605,9 @@ bool Writer::attr_dir(uint64_t inode_block, int64_t time,
         (void)allocator_.free(inode_run);
         return false;
     }
-    uint8_t tree[kTreeNodeSize * 2];
-    build_empty_tree(tree);
-    if (!volume_->write_stream_raw(stream_, data::kBytes, 0, tree,
-                                   sizeof(tree))) {
+    build_empty_tree(tree_);
+    if (!volume_->write_stream_raw(stream_, data::kBytes, 0, tree_,
+                                   sizeof(tree_))) {
         (void)allocator_.free(tree_run);
         (void)allocator_.free(inode_run);
         return false;

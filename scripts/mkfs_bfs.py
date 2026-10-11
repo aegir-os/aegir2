@@ -183,48 +183,160 @@ def _inode(*, run: bytes, mode: int, parent: bytes, attributes: bytes,
     return bytes(inode)
 
 
-def _tree(entries: list[tuple[bytes, int]]) -> bytes:
-    """A directory's B+tree: a header at stream offset 0 and a leaf root node
-    at offset NODE. The entries are (name, inode block), already sorted by
-    BFS's string comparison (bytewise, shorter-prefix first)."""
-    keys = [name for name, _ in entries]
-    values = [value for _, value in entries]
-    all_key_length = sum(len(key) for key in keys)
-    used = _align8(28 + all_key_length) + len(keys) * (2 + 8)
-    if used > NODE:
-        raise ValueError("directory does not fit one B+tree node")
+# One node's own capacity, from the format rather than a number standing on its
+# own: the fixed part, then two bytes of key lengths and eight of value per entry
+# (aegir/bfs/bplustree.h's node_info). The guest's writer sizes its arrays by the
+# same formula (writer.h's kMaxNodeEntries), so a tree built here is one it can
+# maintain -- which is what the two figures were trying to say when they were both
+# the constant 200.
+MAX_ENTRIES = (NODE - 28) // (2 + 8)
 
-    tree = bytearray(NODE * 2)
-    _w32(tree, 0, BPLUSTREE_MAGIC)
-    _w32(tree, 4, NODE)
-    _w32(tree, 8, 1)  # max_number_of_levels
-    _w32(tree, 12, BPLUSTREE_STRING_TYPE)
-    _w64(tree, 16, NODE)  # root_node_pointer
-    _w64(tree, 24, 0xFFFFFFFFFFFFFFFF)  # free_node_pointer: none
-    _w64(tree, 32, NODE * 2)  # maximum_size
 
-    base = NODE
-    _w64(tree, base, 0xFFFFFFFFFFFFFFFF)  # left_link
-    _w64(tree, base + 8, 0xFFFFFFFFFFFFFFFF)  # right_link
-    _w64(tree, base + 16, 0xFFFFFFFFFFFFFFFF)  # overflow_link -> a leaf
-    _w16(tree, base + 24, len(keys))
-    _w16(tree, base + 26, all_key_length)
+def _fits(count: int, key_bytes: int) -> bool:
+    """Whether one node holds `count` entries whose keys total `key_bytes`."""
+    return count <= MAX_ENTRIES and _align8(28 + key_bytes) + count * (2 + 8) <= NODE
 
-    at = base + 28
-    for key in keys:
-        tree[at : at + len(key)] = key
+
+def _plan(entries: list[tuple[bytes, int]]) -> list[tuple[int, int, int]]:
+    """Which of `entries` each node of one level holds: (first index, count, key
+    bytes), filling one node and then beginning the next."""
+    plan: list[tuple[int, int, int]] = []
+    first = 0
+    key_bytes = 0
+    for index, (key, _) in enumerate(entries):
+        if index > first and not _fits(index - first + 1, key_bytes + len(key)):
+            plan.append((first, index - first, key_bytes))
+            first = index
+            key_bytes = 0
+        key_bytes += len(key)
+    plan.append((first, len(entries) - first, key_bytes))
+    return plan
+
+
+def _node_bytes(entries: list[tuple[bytes, int]], first: int, count: int,
+                key_bytes: int, left: int, right: int, overflow: int,
+                values: list[int] | None = None) -> bytes:
+    """One node: its three links, the keys packed in order, the array of
+    cumulative key lengths, then the array of values. `left` and `right` are the
+    sibling nodes' offsets; `overflow` is none for a leaf and, for an internal
+    node, the child past the last key (src/volume.cc's `dir_find` follows it)."""
+    node = bytearray(NODE)
+    _w64(node, 0, left)
+    _w64(node, 8, right)
+    _w64(node, 16, overflow)
+    _w16(node, 24, count)
+    _w16(node, 26, key_bytes)
+    at = 28
+    for index in range(first, first + count):
+        key = entries[index][0]
+        node[at : at + len(key)] = key
         at += len(key)
-    at = base + _align8(28 + all_key_length)
+    at = _align8(28 + key_bytes)
     # The key-length array holds cumulative offsets, not individual lengths:
     # Haiku's _InsertKey adds and KeyAt subtracts (BPlusTree.cpp).
     cumulative = 0
-    for key in keys:
-        cumulative += len(key)
-        _w16(tree, at, cumulative)
+    for index in range(first, first + count):
+        cumulative += len(entries[index][0])
+        _w16(node, at, cumulative)
         at += 2
-    for value in values:
-        _w64(tree, at, value)
+    for index in range(first, first + count):
+        value = values[index] if values is not None else entries[index][1]
+        _w64(node, at, value)
         at += 8
+    return bytes(node)
+
+
+def _tree(entries: list[tuple[bytes, int]], values: list[int] | None = None,
+          duplicates: list[tuple[int, list[int]]] = (),
+          data_type: int = BPLUSTREE_STRING_TYPE) -> bytes:
+    """A B+tree: a header at stream offset 0, then its nodes. The entries are
+    (key, value), already in the tree's own order.
+
+    A tree bigger than one node is built the shape the guest's writer maintains,
+    so it can go on being written: the leaves hold the entries and are joined by
+    their right links, so a directory can be walked in order (`src/volume.cc`'s
+    `dir_entry` walks them that way), and one or more levels above hold, for
+    every child but the last, that child's greatest key with the child's offset
+    -- the convention an internal node follows, and the one the writer's own
+    split builds (`dir_find`: a child past the last key is the overflow link;
+    `split_leaf` in writer.cc).
+
+    `values` overrides the entries' own values when the caller has patched them
+    (an index's leaf names a duplicate node), and `duplicates` are those groups:
+    (the value's index, its values), laid out after the leaves as chains."""
+    keys = [key for key, _ in entries]
+    if values is None:
+        values = [value for _, value in entries]
+
+    nodes: list[bytes] = []  # index i is written at offset NODE * (i + 1)
+
+    leaves = _plan(entries)
+    leaf_offsets = [NODE * (number + 1) for number in range(len(leaves))]
+
+    # The duplicate nodes live after the leaves, so a leaf value that names one
+    # is patched only once its offset is known.
+    linked = list(values)
+    offset = NODE * (1 + len(leaves))
+    duplicate_nodes: list[bytes] = []
+    for position, group in duplicates:
+        first_duplicate = offset
+        for at in range(0, len(group), MAX_ENTRIES):
+            chunk = group[at : at + MAX_ENTRIES]
+            rest = (offset + NODE if at + MAX_ENTRIES < len(group)
+                    else 0xFFFFFFFFFFFFFFFF)
+            node = bytearray(NODE)
+            _w64(node, 0, 0xFFFFFFFFFFFFFFFF)  # left_link
+            _w64(node, 8, rest)  # right_link: the rest of the group
+            _w64(node, 16, len(chunk))  # count
+            for index, value in enumerate(chunk):
+                _w64(node, 24 + index * 8, value)
+            duplicate_nodes.append(bytes(node))
+            offset += NODE
+        linked[position] = _make_link(2, first_duplicate)  # 2: a duplicate node
+
+    for number, (first, count, key_bytes) in enumerate(leaves):
+        nodes.append(_node_bytes(
+            entries, first, count, key_bytes,
+            0xFFFFFFFFFFFFFFFF if number == 0 else leaf_offsets[number - 1],
+            0xFFFFFFFFFFFFFFFF if number + 1 == len(leaves)
+            else leaf_offsets[number + 1],
+            0xFFFFFFFFFFFFFFFF, linked))
+    nodes.extend(duplicate_nodes)
+
+    # The levels above the leaves: one entry per child, its greatest key and its
+    # offset. A node keeps every child but the last as an entry, and the last as
+    # its overflow child.
+    level = [(keys[first + count - 1], leaf_offsets[number])
+             for number, (first, count, _) in enumerate(leaves)]
+    root = leaf_offsets[0]
+    depth = 1
+    while len(level) > 1:
+        plan = _plan(level)
+        next_offsets = [NODE * (2 + len(nodes) + number)
+                        for number in range(len(plan))]
+        for number, (first, count, _) in enumerate(plan):
+            children = level[first : first + count]
+            nodes.append(_node_bytes(
+                level, first, count - 1,
+                sum(len(key) for key, _ in children[:-1]),
+                0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, children[-1][1]))
+        level = [(level[first + count - 1][0], next_offsets[number])
+                 for number, (first, count, _) in enumerate(plan)]
+        root = next_offsets[0]
+        depth += 1
+
+    total = NODE * (1 + len(nodes))
+    tree = bytearray(total)
+    _w32(tree, 0, BPLUSTREE_MAGIC)
+    _w32(tree, 4, NODE)
+    _w32(tree, 8, depth)  # max_number_of_levels
+    _w32(tree, 12, data_type)
+    _w64(tree, 16, root)  # root_node_pointer
+    _w64(tree, 24, 0xFFFFFFFFFFFFFFFF)  # free_node_pointer: none
+    _w64(tree, 32, total)  # maximum_size: the header and every node
+    for number, node in enumerate(nodes):
+        base = NODE * (number + 1)
+        tree[base : base + len(node)] = node
     return bytes(tree)
 
 
@@ -254,59 +366,89 @@ def _typed_tree(data_type: int, entries: list[tuple[bytes, int]]) -> bytes:
         else:
             groups.append([key, [value]])
 
-    duplicate_nodes: list[tuple[int, list[int]]] = []
-    offset = NODE * 2
     keys: list[bytes] = []
     values: list[int] = []
+    duplicates: list[tuple[int, list[int]]] = []  # value index, and its group
     for key, group in groups:
         group.sort()
         keys.append(key)
-        if len(group) == 1:
-            values.append(group[0])
-        else:
-            if len(group) > NUM_DUPLICATE_VALUES:
-                raise ValueError("index duplicate array too long for one node")
-            duplicate_nodes.append((offset, group))
-            values.append(_make_link(2, offset))  # 2: a duplicate node
-            offset += NODE
+        values.append(group[0])
+        if len(group) > 1:
+            duplicates.append((len(values) - 1, group))
 
-    total = NODE * (2 + len(duplicate_nodes))
+    # Which entries each leaf holds. An index bigger than one node is a chain of
+    # leaves joined by their right links -- the shape the service already walks
+    # (src/volume.cc's index_walk follows kRightLink, specs/bfs.md) -- and the
+    # duplicate nodes live after the leaves, so their offsets are known only once
+    # the leaves are: hence the links patched below.
+    def fits(count: int, key_bytes: int) -> bool:
+        return _align8(28 + key_bytes) + count * (2 + 8) <= NODE
+
+    leaves: list[tuple[int, int, int]] = []  # first index, count, key bytes
+    first = 0
+    key_bytes = 0
+    for index, key in enumerate(keys):
+        if not fits(index - first + 1, key_bytes + len(key)) and index > first:
+            leaves.append((first, index - first, key_bytes))
+            first = index
+            key_bytes = 0
+        key_bytes += len(key)
+    leaves.append((first, len(keys) - first, key_bytes))
+
+    # The duplicate nodes, a chain of them when a key has more values than one
+    # node holds -- the shape the service walks (src/volume.cc's index_walk
+    # follows kRightLink through them, specs/bfs.md). Their offsets are known only
+    # once the leaves are, so the leaf's link to the first is patched here.
+    duplicate_nodes: list[tuple[int, int, list[int]]] = []  # offset, right, values
+    offset = NODE * (1 + len(leaves))
+    for position, group in duplicates:
+        first = offset
+        chunks = [group[at : at + NUM_DUPLICATE_VALUES]
+                  for at in range(0, len(group), NUM_DUPLICATE_VALUES)]
+        for number, chunk in enumerate(chunks):
+            right = (offset + NODE if number + 1 < len(chunks)
+                     else 0xFFFFFFFFFFFFFFFF)
+            duplicate_nodes.append((offset, right, chunk))
+            offset += NODE
+        values[position] = _make_link(2, first)  # 2: a duplicate node
+
+    total = offset
     tree = bytearray(total)
     _w32(tree, 0, BPLUSTREE_MAGIC)
     _w32(tree, 4, NODE)
-    _w32(tree, 8, 1)  # max_number_of_levels
+    _w32(tree, 8, 1)  # max_number_of_levels: one level, the leaves
     _w32(tree, 12, data_type)
-    _w64(tree, 16, NODE)  # root_node_pointer
+    _w64(tree, 16, NODE)  # root_node_pointer: the first leaf
     _w64(tree, 24, 0xFFFFFFFFFFFFFFFF)  # free_node_pointer: none
-    _w64(tree, 32, total)  # maximum_size
+    _w64(tree, 32, total)  # maximum_size: the header, the leaves, the duplicates
 
-    all_key_length = sum(len(key) for key in keys)
-    if _align8(28 + all_key_length) + len(keys) * (2 + 8) > NODE:
-        raise ValueError("index does not fit one B+tree node")
+    for number, (first, count, key_bytes) in enumerate(leaves):
+        base = NODE * (number + 1)
+        _w64(tree, base,
+             0xFFFFFFFFFFFFFFFF if number == 0 else NODE * number)  # left_link
+        _w64(tree, base + 8,
+             NODE * (number + 2) if number + 1 < len(leaves)
+             else 0xFFFFFFFFFFFFFFFF)  # right_link
+        _w64(tree, base + 16, 0xFFFFFFFFFFFFFFFF)  # overflow_link -> a leaf
+        _w16(tree, base + 24, count)
+        _w16(tree, base + 26, key_bytes)
+        at = base + 28
+        for key in keys[first : first + count]:
+            tree[at : at + len(key)] = key
+            at += len(key)
+        at = base + _align8(28 + key_bytes)
+        cumulative = 0
+        for key in keys[first : first + count]:
+            cumulative += len(key)
+            _w16(tree, at, cumulative)
+            at += 2
+        for value in values[first : first + count]:
+            _w64(tree, at, value)
+            at += 8
 
-    base = NODE
-    _w64(tree, base, 0xFFFFFFFFFFFFFFFF)  # left_link
-    _w64(tree, base + 8, 0xFFFFFFFFFFFFFFFF)  # right_link
-    _w64(tree, base + 16, 0xFFFFFFFFFFFFFFFF)  # overflow_link -> a leaf
-    _w16(tree, base + 24, len(keys))
-    _w16(tree, base + 26, all_key_length)
-    at = base + 28
-    for key in keys:
-        tree[at : at + len(key)] = key
-        at += len(key)
-    at = base + _align8(28 + all_key_length)
-    cumulative = 0
-    for key in keys:
-        cumulative += len(key)
-        _w16(tree, at, cumulative)
-        at += 2
-    for value in values:
-        _w64(tree, at, value)
-        at += 8
-
-    for duplicate_offset, group in duplicate_nodes:
+    for duplicate_offset, right, group in duplicate_nodes:
         _w64(tree, duplicate_offset, 0xFFFFFFFFFFFFFFFF)  # left_link
-        _w64(tree, duplicate_offset + 8, 0xFFFFFFFFFFFFFFFF)  # right_link
+        _w64(tree, duplicate_offset + 8, right)  # right_link: the rest of the group
         _w64(tree, duplicate_offset + 16, len(group))  # count
         dat = duplicate_offset + 24
         for value in group:

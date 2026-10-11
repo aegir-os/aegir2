@@ -50,7 +50,13 @@ constexpr uint32_t kModeStrIndex = 0x01000000;  /* S_STR_INDEX */
 
 /** The B+tree's magic. */
 constexpr uint32_t kTreeMagic = 0x69f6c2e8;
-constexpr uint32_t kTreeNodeSize = 1024; /* BPLUSTREE_NODE_SIZE, hard-coded */
+/* The node size Aegir's volumes are built with. The header carries it and a
+ * reader honours what it finds there, but a *writer* has to name one to create a
+ * tree, and its arrays are statically sized for the entries a node can hold -- so
+ * this is the largest node the writer will meet, and it is the size the disk
+ * builder writes (scripts/mkfs_bfs.py's NODE). The reader, the builder and the
+ * writer all said different things once; specs/bfs.md records the one figure. */
+constexpr uint32_t kTreeNodeSize = 4096;
 constexpr uint32_t kNumArrayBlocks = 4;  /* NUM_ARRAY_BLOCKS */
 constexpr uint32_t kDoubleIndirectArraySize = 4096; /* DOUBLE_INDIRECT_ARRAY_SIZE */
 

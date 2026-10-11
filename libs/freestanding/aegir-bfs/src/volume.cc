@@ -661,11 +661,22 @@ bool Volume::dir_find(Inode const &dir, char const *name, uint32_t length,
             }
         }
         if (overflow == kNullLink) {
-            if (!equal) {
+            if (equal) {
+                *inode_block = le64(tree_ + values_at + child * 8);
+                return true;
+            }
+            /* Not in this leaf. A directory bigger than one node is a chain of
+             * leaves joined by their right links (scripts/mkfs_bfs.py's _tree,
+             * specs/bfs.md), so the name may be in a later one: follow the link
+             * and let the loop search that node, exactly as `dir_entry` walks a
+             * directory's leaves. The `offset + node_size > maximum` test above
+             * is what bounds the walk -- the chain lives inside the stream. */
+            int64_t const right = le64_signed(tree_ + node::kRightLink);
+            if (right == kNullLink || right == static_cast<int64_t>(kFreeLink)) {
                 return false;
             }
-            *inode_block = le64(tree_ + values_at + child * 8);
-            return true;
+            offset = static_cast<uint64_t>(right);
+            continue;
         }
         offset = child == count
                      ? static_cast<uint64_t>(overflow)
