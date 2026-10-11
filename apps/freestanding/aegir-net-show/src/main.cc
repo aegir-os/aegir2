@@ -103,7 +103,8 @@ uint32_t read_path(char const *path, uint32_t path_length, char *out,
             break;
         }
     }
-    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot, aegir::bootstrap::kCNodeBits);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                      aegir::bootstrap::endpoint_depth());
     return total;
 }
 
@@ -134,7 +135,8 @@ bool write_path(char const *path, uint32_t path_length, char const *value,
              written == value_length;
         (void)volume.close(handle);
     }
-    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot, aegir::bootstrap::kCNodeBits);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                      aegir::bootstrap::endpoint_depth());
     return ok;
 }
 
