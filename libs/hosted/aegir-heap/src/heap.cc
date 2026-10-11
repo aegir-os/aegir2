@@ -1025,6 +1025,18 @@ char const *syscall_name(long number) noexcept
     case 14: return "removexattr";
     case 15: return "lremovexattr";
     case 16: return "fremovexattr";
+    /* The memory calls too, and they are here because they are where a linker
+     * was found to stop: after `fstat` of `Sys:Development/Libs/sysroot.a`, lld
+     * makes no further file call at all -- no read, no pread64, no close -- and
+     * the log carries only memory allocations from then on (/tmp/devV.log). So
+     * the call it is inside is one of these, and a trace that skipped them named
+     * everything except the answer. */
+    case 222: return "mmap";
+    case 214: return "brk";
+    case 215: return "munmap";
+    case 216: return "mremap";
+    case 226: return "mprotect";
+    case 233: return "madvise";
     default: return nullptr;
     }
 }
