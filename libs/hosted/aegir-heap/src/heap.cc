@@ -726,6 +726,13 @@ long sys_brk(uintptr_t new_break) noexcept
     return static_cast<long>(brk_);
 }
 
+/* A phase of the dispatcher's own work, to the log the run reads (defined beside
+ * `trace_syscall` below, where the console stream is in scope). `trace()` writes
+ * the debug serial instead, which a run's log never sees, and it marks only the
+ * *ends* of a mapping -- so a program stuck inside one leaves nothing at all.
+ * That is how a stall in `mmap` stayed invisible. */
+void trace_phase(char const *phase) noexcept;
+
 /* SYS_mmap: anonymous private mappings, which is what mallocng asks for, and a
  * file's bytes when the mapping names one -- what LLVM's MemoryBuffer does for
  * every input object file, which specs/clang-on-aegir.md calls the load-bearing
@@ -814,6 +821,10 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
         }
     }
     if (file_backed) {
+        /* The mapping's pages are in place; what follows is the file's bytes. A
+         * stall that never reaches this line is the page mapping above (a 50 MB
+         * archive is twenty-five thousand pages), and one after it is the fill. */
+        trace_phase("mmap-filling");
         long const filled =
             files::pread(fd, reinterpret_cast<void *>(base), needed, offset);
         if (filled < 0) {
@@ -1057,6 +1068,28 @@ void trace_syscall(long number) noexcept
         line[length++] = *p;
     }
     for (char const *p = name; *p != '\0' && length + 1 < sizeof(line); ++p) {
+        line[length++] = *p;
+    }
+    line[length++] = '\n';
+
+    aegir::ipc::Consumer &stream = console_stream();
+    if (stream.valid()) {
+        aegir::console::stream_write(stream, line, length);
+        return;
+    }
+    for (uint32_t i = 0; i < length; ++i) {
+        seL4_DebugPutChar(line[i]);
+    }
+}
+
+void trace_phase(char const *phase) noexcept
+{
+    char line[64];
+    uint32_t length = 0;
+    for (char const *p = "  heap: "; *p != '\0'; ++p) {
+        line[length++] = *p;
+    }
+    for (char const *p = phase; *p != '\0' && length + 1 < sizeof(line); ++p) {
         line[length++] = *p;
     }
     line[length++] = '\n';
