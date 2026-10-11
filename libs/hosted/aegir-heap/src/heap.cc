@@ -120,6 +120,14 @@ namespace aegir::heap {
  * landed in. */
 namespace files = aegir::posix::files;
 
+/* The phase log, to the console stream a run reads (defined beside
+ * `trace_syscall` below, where that stream is in scope). It is declared here,
+ * above the anonymous namespace, because the mapping helpers *inside* that
+ * namespace (`map_page`, `map_large_page`) are the ones that report which step
+ * a stall happened at -- and a declaration placed in there would name a
+ * different function from the one defined here, not a forward declaration. */
+void trace_phase(char const *phase) noexcept;
+
 namespace {
 
 /* The heap's state, static like the allocator's (specs/userland.md): a
@@ -247,19 +255,38 @@ void forget_run(int index) noexcept
 /* The frame behind each mapped page of the arena, so that mprotect can name it
  * again: a mapping's rights change by issuing the Map invocation at the same
  * address (kernel/manual/parts/vspace.tex:294), and that invocation names the
- * frame, which map_page would otherwise drop. 512 frames to a page, one chunk per
- * 512 pages of the arena, and a chunk is mapped the first time a page in its
- * range is mapped -- so the record costs what is *used*. Sizing a table from the
+ * frame, which map_page would otherwise drop. One chunk per page of arena
+ * indices, and a chunk is mapped the first time a page in its range is mapped
+ * -- so the record costs what is *used*. Sizing a table from the
  * whole arena at init was tried and cost the launcher the untyped it spawns
  * commands with (measured: "spawn: FAIL no untyped for the command's runtime"),
- * because a launcher's window is large. */
-constexpr uint32_t kFramesPerChunk = kPageBytes / sizeof(seL4_CPtr);
+ * because a launcher's window is large.
+ *
+ * A chunk is one page, and `next`/`first` are its head: the frame array takes what
+ * the page has left after them. Sizing the array from the whole page
+ * (kPageBytes / sizeof(seL4_CPtr)) made it exactly a page, so its last two
+ * entries ran past the page `frame_chunk` maps for it -- and chunks are reserved
+ * one page below each other from the window's top, so that page is the previous
+ * chunk, whose `next` and `first` those two entries then zeroed and overwrote
+ * with a frame cap (specs/memory.md). */
+struct FrameChunk;
+
+struct FrameChunkHead {
+    FrameChunk *next;
+    uint32_t first; /* the arena page index this chunk starts at */
+};
+
+constexpr uint32_t kFramesPerChunk =
+    (kPageBytes - sizeof(FrameChunkHead)) / sizeof(seL4_CPtr);
 
 struct FrameChunk {
     FrameChunk *next;
     uint32_t first; /* the arena page index this chunk starts at */
     seL4_CPtr frames[kFramesPerChunk];
 };
+
+static_assert(sizeof(FrameChunk) <= kPageBytes,
+              "a frame chunk must fit the one page frame_chunk maps for it");
 
 FrameChunk *g_frame_chunks = nullptr;
 
@@ -280,10 +307,16 @@ FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
      * one source for everything the heap places (specs/memory.md, "one space, one
      * owner"). Carved off `mmap_` this landed inside the arena and the kernel answered
      * "Virtual address ... already mapped". */
+    /* Making a chunk is a mapping's own work: it runs while the caller is
+     * recording a frame, and it allocates through the same allocator the
+     * caller just used. Where a mapping's log ends between "chunk-create" and
+     * "chunk-frame" is which of those three steps never came back. */
+    trace_phase("chunk-create");
     uintptr_t const page = g_scratch->reserve(1);
     if (page == 0) {
         return nullptr;
     }
+    trace_phase("chunk-page");
     aegir::mem::Account account{"heap", 0, 0, 0};
     seL4_Error error = seL4_NoError;
     seL4_CPtr const frame =
@@ -291,6 +324,7 @@ FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
     if (frame == 0 || !g_scratch->map_at(page, frame)) {
         return nullptr;
     }
+    trace_phase("chunk-frame");
     auto *chunk = reinterpret_cast<FrameChunk *>(page);
     chunk->next = g_frame_chunks;
     chunk->first = index - (index % kFramesPerChunk);
@@ -423,14 +457,24 @@ bool map_large_page(uintptr_t address) noexcept
     constexpr uintptr_t kMegaPages = kMega / kPageBytes;
     aegir::mem::Account account{"heap", 0, 0, 0};
     seL4_Error error = seL4_NoError;
+    /* Where a 2 MiB page waits, step by step, because this is the path a linker's
+     * first archive mapping takes and it is where that link stopped. A log ending
+     * after "mega-alloc" was waiting on the allocator, which asks the memory
+     * service for an untyped once its own pool is empty (runtime_untyped_source);
+     * one ending after "mega-map" was waiting on the kernel's mapping call; one
+     * ending after "mega-frames" was in the 512-entry record below, which can
+     * itself ask for a frame chunk. */
+    trace_phase("mega-alloc");
     seL4_CPtr const frame = g_allocator->alloc_object(seL4_RISCV_Mega_Page,
                                                       seL4_LargePageBits, account, &error);
     if (frame == 0) {
         return false;
     }
+    trace_phase("mega-map");
     if (!g_scratch->map_at(address, frame)) {
         return false;
     }
+    trace_phase("mega-frames");
     if (g_scratch != nullptr && address >= g_scratch->base() && address < g_scratch->limit()) {
         for (uintptr_t page = 0; page < kMegaPages; ++page) {
             uint32_t const index =
@@ -439,6 +483,7 @@ bool map_large_page(uintptr_t address) noexcept
                 chunk->frames[index - chunk->first] = frame;
             }
         }
+        trace_phase("mega-recorded");
     }
     return true;
 }
@@ -820,6 +865,7 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
                     trace("mmap-refused", length, 0);
                     return -ENOMEM;
                 }
+                trace_phase("mega-mapped");
                 page += kMegaPages;
             }
         }
