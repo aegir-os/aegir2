@@ -1720,7 +1720,24 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
                 r"output: command done",
                 press="<win-space>",
             ),
-            QmpStep(r"bureau: screen shortcut"),
+            QmpStep(
+                r"bureau: screen shortcut",
+                # The acceptance stops with the Bureau's Execute requester up, and
+                # the requester holds the focus -- so the terminal never announces
+                # another prompt, and a step cued on its readiness line can never
+                # start (measured: no `ready for line` after this point and a
+                # development run's typed commands were all dropped, /tmp/dev9.log).
+                # A click on the terminal settles the desktop: it dismisses the
+                # requester and gives the terminal the focus, and focus is what makes
+                # the terminal announce its next prompt -- `on_focus_changed` calls
+                # `announce_input`, which is gated on focus on purpose, because the
+                # click that gives the focus and the keys ride different queues
+                # (apps/hosted/aegir-terminal/src/main.cc:213-264). Measured effect:
+                # a development run reaches `terminal: ready for line 29` where it
+                # previously stopped at 28 (/tmp/devA.log), and the floor target is
+                # unchanged (28 lines, PASS aegir booted, 0 seL4 messages).
+                events=TERMINAL_CLICK,
+            ),
         ),
     )
 
