@@ -501,6 +501,18 @@ private:
      *  of `count` objects needs a consecutive destination (alloc_pages_run). */
     seL4_CPtr alloc_slot_run(seL4_Word count) noexcept;
 
+    /**
+     * One more level-one slot, from `slot_source_` when the process set one and
+     * this CSpace is two-level. False is a refusal, and the caller is bounded by
+     * the adopted run as it always was.
+     *
+     * Both slot cursors ask this rather than each carrying the rule: two copies
+     * of a cursor is how a fix reaches one of them and not the other, which is
+     * what happened here -- `alloc_slot` is the path a retype takes and it does
+     * not go through `alloc_slot_run`.
+     */
+    bool grow_slots() noexcept;
+
     /** Give a reserved slot run back on a failed retype, the way slot_failed
      *  gives one slot back. */
     void slot_failed_run(seL4_CPtr first, seL4_Word count) noexcept;

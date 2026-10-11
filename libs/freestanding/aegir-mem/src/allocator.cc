@@ -195,6 +195,23 @@ void Allocator::unlink(Node *node) noexcept
     node->free = 0;
 }
 
+/* One more level-one slot, when this CSpace may grow. The source is the
+ * process's business (`set_slot_source`); what the allocator owns is where the
+ * new L2 CNode sits. `slots_end_` is the first index the adopted run does not
+ * cover, and a run is laid down consecutively (specs/memory.md), so the CNode
+ * for it lands on that encoded index's level-one slot and the cursor extends
+ * over the L2's worth of indices. A single-level CSpace has no level one to add
+ * to, so it stays bounded by what it was given, as it always was. */
+bool Allocator::grow_slots() noexcept
+{
+    if (level_two_bits_ == 0 || slot_source_ == nullptr ||
+        !slot_source_(slot_source_context_, slots_end_)) {
+        return false;
+    }
+    slots_end_ += static_cast<seL4_CPtr>(1) << level_two_bits_;
+    return true;
+}
+
 seL4_CPtr Allocator::alloc_slot() noexcept
 {
     if (slot_pool_ != nullptr) {
@@ -209,7 +226,7 @@ seL4_CPtr Allocator::alloc_slot() noexcept
         ++slots_used_;
         return --slots_next_;
     }
-    if (slots_next_ >= slots_end_) {
+    if (slots_next_ >= slots_end_ && !grow_slots()) {
         return 0;
     }
     ++slots_used_;
@@ -680,18 +697,8 @@ seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
             return 0;
         }
     }
-    if (slots_next_ + count > slots_end_) {
-        /* The adopted range is spent. A two-level CSpace whose process set a
-         * source gets one more L2 CNode and the cursor extends over it
-         * (`set_slot_source`: adding L2 CNodes rather than being sized to fit,
-         * bootstrap.h's kCNodeBits). A single-level CSpace has no level one to
-         * add to, and a two-level one without a source is bounded by what the
-         * spawner laid down -- both get zero, as before. */
-        if (level_two_bits_ == 0 || slot_source_ == nullptr ||
-            !slot_source_(slot_source_context_, slots_end_)) {
-            return 0;
-        }
-        slots_end_ += static_cast<seL4_CPtr>(1) << level_two_bits_;
+    if (slots_next_ + count > slots_end_ && !grow_slots()) {
+        return 0;
     }
     seL4_CPtr const first = slots_next_;
     slots_next_ += count;
