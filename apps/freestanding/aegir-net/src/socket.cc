@@ -302,7 +302,7 @@ void drop_window(seL4_CPtr window) noexcept
         return;
     }
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, window,
-                      aegir::bootstrap::kCNodeBits);
+                      aegir::bootstrap::endpoint_depth());
     slot_put(window);
 }
 
@@ -443,7 +443,7 @@ void deliver(Socket *socket, uint32_t source, uint32_t source_port,
                 }
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                                   static_cast<seL4_CPtr>(window),
-                                  aegir::bootstrap::kCNodeBits);
+                                  aegir::bootstrap::endpoint_depth());
                 slot_put(static_cast<seL4_CPtr>(window));
                 seL4_SetMR(0, take);
                 seL4_Send(held, seL4_MessageInfo_new(0, 0, 0, 1));
@@ -573,7 +573,7 @@ void recv_timeout(void *argument) noexcept
         /* A window recv: end-of-stream, so the window is dropped and the answer
          * is the one word a bulk read expects. */
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, static_cast<seL4_CPtr>(window),
-                          aegir::bootstrap::kCNodeBits);
+                          aegir::bootstrap::endpoint_depth());
         slot_put(static_cast<seL4_CPtr>(window));
     } else if (socket->kind == kUdp) {
         seL4_SetMR(1, 0);
@@ -937,7 +937,7 @@ void do_close(void *argument) noexcept
     uintptr_t const window = __atomic_exchange_n(&socket->held_window, 0, __ATOMIC_ACQ_REL);
     if (window != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, static_cast<seL4_CPtr>(window),
-                          aegir::bootstrap::kCNodeBits);
+                          aegir::bootstrap::endpoint_depth());
         slot_put(static_cast<seL4_CPtr>(window));
     }
     if (socket->raw != nullptr) {
@@ -1315,7 +1315,7 @@ void serve_recv_window(ipc::Owner &port, Socket *socket, seL4_CPtr window,
         return;
     }
     seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
-    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    seL4_Word const depth = aegir::bootstrap::endpoint_depth();
     seL4_CPtr const slot = slot_get();
     if (slot == 0 || seL4_CNode_SaveCaller(root, slot, depth) != seL4_NoError) {
         if (slot != 0) {
@@ -1352,7 +1352,7 @@ void serve_recv(ipc::Owner &port, Socket *socket, uint32_t timeout, bool with_po
                 uint64_t *words) noexcept
 {
     seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
-    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    seL4_Word const depth = aegir::bootstrap::endpoint_depth();
     uint32_t count = 0;
     if (take_pending(socket, words, &count, with_port)) {
         port.reply_words(words, count);
@@ -1393,7 +1393,7 @@ void serve_accept(ipc::Owner &port, Socket *socket, uint32_t timeout) noexcept
         return;
     }
     seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
-    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    seL4_Word const depth = aegir::bootstrap::endpoint_depth();
     seL4_CPtr const slot = slot_get();
     if (slot == 0 || seL4_CNode_SaveCaller(root, slot, depth) != seL4_NoError) {
         if (slot != 0) {
@@ -1424,7 +1424,7 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
                    uint32_t timeout) noexcept
 {
     seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
-    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    seL4_Word const depth = aegir::bootstrap::endpoint_depth();
     seL4_CPtr const slot = slot_get();
     if (slot == 0 || seL4_CNode_SaveCaller(root, slot, depth) != seL4_NoError) {
         if (slot != 0) {
@@ -1483,7 +1483,7 @@ void serve_connect(ipc::Owner &port, Socket *socket, uint32_t address, uint32_t 
         aegir::halt();
     }
     seL4_CPtr const root = aegir::bootstrap::kSlotOwnCNode;
-    seL4_Word const depth = aegir::bootstrap::kCNodeBits;
+    seL4_Word const depth = aegir::bootstrap::endpoint_depth();
 
     for (;;) {
         uint64_t words[kMaxPayloadWords + 4] = {0};
