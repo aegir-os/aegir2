@@ -865,7 +865,7 @@ Resolution resolve_path(uint64_t badge, char const *path, uint32_t path_length,
     Binding const *binding = find_binding(badge, path, colon);
     if (binding == nullptr) {
         write("  vfs: ");
-        write(path, colon);
+        write(path, path_length);
         write(": no such volume\n");
         return {Resolved::None, nullptr, nullptr, 0};
     }
