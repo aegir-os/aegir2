@@ -1747,6 +1747,46 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
 # with its own lines as the cue.
 _AEGIR_8G_SMP4 = _aegir(8192, 4, "aegir-8g-smp4")
 
+# Where the development commands are typed (specs/development.md): in the typed
+# DOS block, before the step that creates the nested terminal. There the session
+# terminal is the only one, the shell prompts after every command, and the focus
+# is already the terminal's -- the conditions every working typed step relies on.
+# Appended after the acceptance's GUI phase instead, they were typed at a terminal
+# that no longer held the focus and their keys raced the click that tried to take
+# it back (the two ride different queues,
+# apps/hosted/aegir-terminal/src/main.cc:213-264), so `Sys:Development/C/
+# posix-test` never reached the shell at all (/tmp/devA.log).
+DEVELOPMENT_BEFORE = r"shell: D, halting the frame"
+# The shell saying it is asking for a line: what a press wants to wait for.
+SHELL_READY = r"terminal: ready for line \d+ shell {shell}"
+
+
+def with_development_steps(steps: tuple, development: tuple) -> tuple:
+    """The acceptance's steps with the development commands spliced in before
+    `DEVELOPMENT_BEFORE`, so they are typed exactly like the DOS commands around
+    them. Refuses a list with no such step rather than silently appending them at
+    the end, where they do not work.
+
+    That step is split for this target alone: the `shell: D` line is printed as
+    the command above it ends, and the commands spliced in here keep the step's
+    gate closed while they run, so a step that both watches for the line and types
+    on it is *skipped* -- and the line never comes again (measured: 27 cues never
+    printed, /tmp/devB.log). Watching is ungated and costs nothing; typing waits
+    for the shell's readiness line, which says what the press actually needs. The
+    shared list keeps the single step, because there the gate is already open when
+    the line arrives.
+    """
+    for index, step in enumerate(steps):
+        if step.trigger == DEVELOPMENT_BEFORE:
+            watch = replace(step, events=(), press=None, await_shell=False)
+            type_ = replace(step, trigger=SHELL_READY)
+            return steps[:index] + development + (watch, type_) + steps[index + 1:]
+    raise SystemExit(
+        f"no step in the acceptance cues on {DEVELOPMENT_BEFORE!r}, so the "
+        "development commands have no place to be typed"
+    )
+
+
 TARGETS: dict[str, Target] = {
     # The floor of the envelope: the smallest machine Aegir supports, and where
     # capacity problems are meant to show up first.
@@ -1810,7 +1850,7 @@ TARGETS: dict[str, Target] = {
     "aegir-8g-smp4": replace(
         _AEGIR_8G_SMP4,
         development=True,
-        qmp_steps=_AEGIR_8G_SMP4.qmp_steps + (
+        qmp_steps=with_development_steps(_AEGIR_8G_SMP4.qmp_steps, (
             # The compiler runs at session start (specs/development.md); its own
             # lines are the cue, so nothing is typed for it.
             # specs/clang-on-aegir.md's Phase 1/3, as programs on the volume: `cc`
@@ -1844,80 +1884,100 @@ TARGETS: dict[str, Target] = {
             # arriving while that command still owned the line, so they went to its
             # stdin and the line never reached the shell (236 of 400 keys in one dev
             # run). The gate holds them until the shell prompts again.
-            QmpStep(r"demo: filtered A#\? 2",
+            # Each acceptance command is its own step, typed into the session's
+            # shell and cued on the line the *previous* command printed, so every
+            # one of them is verifiable on its own (specs/development.md). None of
+            # this lives in the session's startup any more: a key typed while that
+            # script runs is lost -- measured, an `execute` cued on the script's
+            # own last line never reached the shell at all -- and a startup that
+            # carried the acceptance kept the shell busy for minutes while the
+            # runner typed into it (scripts/make_disk.py, specs/memory.md).
+            #
+            # The order is the disk's own: the POSIX clients and `aegir-big` first,
+            # the compiler and linker last, because loading a 97 MiB or 57 MiB
+            # program spends the spawn path's untyped and nothing yet reclaims a
+            # departed command's -- so a big program placed before `aegir-big` makes
+            # `aegir-big` fail (specs/clang-on-aegir.md).
+            # Cued on the shell's own readiness line: the step is chained behind
+            # the acceptance's last typed step (the gate) and types at the prompt
+            # that follows the empty line the acceptance's final step sends -- a
+            # command that has just completed, which is the state every working
+            # typed step here relies on.
+            QmpStep(r"terminal: ready for line \d+ shell {shell}",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/posix-test\n",
+                    await_shell=True),
+            # The POSIX process surface's acceptance (specs/posix.md): a plain
+            # program spawns a child with posix_spawn and waits with wait4, so the
+            # runtime's POSIX face is proven by a process that knows nothing of
+            # Aegir. Markers, not exit statuses, are the cues: a failed check exits
+            # non-zero and leaves its marker unprinted, which is how a run fails.
+            QmpStep(r"AEGIR_POSIX_WAIT_OK",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/posix-path-test\n",
+                    await_shell=True),
+            # The path view's acceptance (specs/posix.md's first sub-arc): opens
+            # `/AEGIR/AEGIR.TXT` through the view, browses `/` and the current
+            # directory.
+            QmpStep(r"AEGIR_POSIX_PATH_OK",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/posix-file-test\n",
+                    await_shell=True),
+            # The file sub-arc's acceptance (specs/posix.md): the writing half of
+            # the surface -- create, write, read back, truncate, rename, remove on
+            # the scratchpad volume through the view.
+            QmpStep(r"AEGIR_POSIX_FILE_OK",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/posix-memory-test\n",
+                    await_shell=True),
+            # The memory sub-arc's acceptance (specs/posix.md): a file's bytes
+            # through a read-only mapping, an anonymous mapping written through,
+            # mprotect and munmap.
+            QmpStep(r"AEGIR_POSIX_MEMORY_OK",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/posix-env-test\n",
+                    await_shell=True),
+            # apps/hosted/aegir-posix-env-test: the environment-and-time sub-arc
+            # (specs/posix.md) -- getenv/setenv/environ, uname, sysconf, and a clock
+            # that moves across a nanosleep.
+            QmpStep(r"AEGIR_POSIX_ENV_OK",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/aegir-big\n",
+                    await_shell=True),
+            # The scale acceptance's deliberately huge command (specs/memory.md):
+            # its line is the proof that a program tens of megabytes long came up
+            # through the whole spawn path with every byte in place, so a cap that
+            # creeps back fails here by name. Once it has run, the compiler can load:
+            # it is the big program the ordering above protects.
+            QmpStep(r"AEGIR_BIG_OK \d+ bytes, every byte the pattern",
                     events=TERMINAL_CLICK,
                     press="Sys:Development/C/cc --version\n",
                     await_shell=True),
+            # specs/clang-on-aegir.md's Phase 1/3: `cc` is clang and `ld.lld` is lld,
+            # and each answers with its own banner, so the banner is the cue. clang
+            # is typed rather than run from the startup, and its return of 1 is not a
+            # failure here: what the run proves is that a 97 MiB program loaded on
+            # the guest and answered.
             QmpStep(r"clang version 20",
                     events=TERMINAL_CLICK,
                     press="Sys:Development/C/ld.lld --version\n",
                     await_shell=True),
+            # `ld.lld --version` and not bare `lld`: lld takes its flavour from the
+            # name it is invoked under (scripts/make_disk.py).
             QmpStep(r"LLD 20",
                     events=TERMINAL_CLICK,
                     press="execute Sys:S/Development-Acceptance\n",
                     await_shell=True),
-            QmpStep(r"AEGIR_HELLO_OK"),
-            # The acceptance itself (specs/clang-on-aegir.md:203-205), typed rather than
-            # run from the session's startup: it takes minutes, and a startup that takes
-            # minutes keeps the shell busy while the runner types the DOS acceptance into
-            # it -- which drops those keys (scripts/make_disk.py's note, specs/memory.md).
-            # The startup's own last line says it has finished and the shell is free, so
-            # that line is the cue; the script it runs compiles the source with clang,
-            # links it with lld, and runs the result, and its lines run in order -- so the
-            # marker below is only reached if all three worked.
-            # The cue is the last startup command's *start*, not the script's last
-            # line: a key typed while the shell is still finishing its startup script
-            # can be lost. Measured, that is what happened -- in one run the
-            # acceptance's `execute` never reached the shell and the demo's gestures ran
-            # instead, where the run before it reached the shell and printed
-            # AEGIR_HELLO_OK. Cueing on the command the shell launches is the idiom the
-            # DOS chain uses for every one of its typed lines, and it holds.
-            QmpStep(r"launcher: command started Sys:Development/C/ld.lld",
-                    # Click the terminal first, as every DOS step does: the cue says a
-                    # command started, not that the shell will receive the key. Measured,
-                    # by the time this fires the demo has the focus, and the typed
-                    # `execute` went to the demo's window -- it never reached the shell,
-                    # while the DOS steps, which click first, all land.
-                    events=TERMINAL_CLICK,
-                    press="execute Sys:S/Development-Acceptance\n",
-                    await_shell=True),
-            QmpStep(r"AEGIR_HELLO_OK"),
-            # The scale acceptance's deliberately huge command runs after it
-            # (specs/memory.md): its line is the proof that a program tens of
-            # megabytes long came up through the whole spawn path with every
-            # byte in place, so a cap that creeps back fails here by name.
-            QmpStep(r"AEGIR_BIG_OK \d+ bytes, every byte the pattern"),
-            # The POSIX process surface's acceptance (specs/posix.md): a plain
-            # program spawns a child with posix_spawn and waits with wait4, so
-            # the runtime's POSIX face is proven by a process that knows nothing
-            # of Aegir.
-            QmpStep(r"AEGIR_POSIX_WAIT_OK"),
-            # The path view's acceptance (specs/posix.md's first sub-arc): a
-            # plain program that opens `/AEGIR/AEGIR.TXT` through the view,
-            # browses `/` and the current directory, and prints
-            # AEGIR_POSIX_PATH_OK. The marker is the cue rather than an exit
-            # status: the session's Shell-Startup is a script, and a script stops
-            # at the first command that exits non-zero, so a non-zero success
-            # status made this client the last startup line that could ever run.
-            QmpStep(r"AEGIR_POSIX_PATH_OK"),
-            # The file sub-arc's acceptance (specs/posix.md): the writing half of
-            # the surface -- it creates, writes, reads back, truncates, renames
-            # and removes on the scratchpad volume through the view, and prints
-            # AEGIR_POSIX_FILE_OK. A failed check exits non-zero (2+n names the
-            # check), leaving its marker unprinted, which is how the run fails.
-            QmpStep(r"AEGIR_POSIX_FILE_OK"),
-            # The memory sub-arc's acceptance (specs/posix.md): a file's bytes
-            # through a read-only mapping, an anonymous mapping written through,
-            # mprotect and munmap. Same shape as the other clients -- no Aegir
-            # call of its own, and its marker is the cue (a failed check exits
-            # 2+n, leaving it unprinted, which is how the run fails).
-            QmpStep(r"AEGIR_POSIX_MEMORY_OK"),
-            # apps/hosted/aegir-posix-env-test: the environment-and-time sub-arc
-            # (specs/posix.md) -- getenv/setenv/environ, uname, sysconf, and a
-            # clock that moves across a nanosleep. Same shape as the others: no
-            # Aegir call of its own, and its marker is the cue.
-            QmpStep(r"AEGIR_POSIX_ENV_OK"),
-        ),
+            # The acceptance itself (specs/clang-on-aegir.md:203-205) is the script
+            # the step above runs: it compiles the source with clang, links it with
+            # lld, and runs the result, and its lines run in order -- so this marker
+            # is only reached if all three worked.
+            # Gated like the steps that type: it is the development block's last
+            # step, so the acceptance's next typed step (the nested terminal) is
+            # chained behind it and the run fails where the failure is rather than
+            # typing on past it. It has no press, so the hold has nothing to defer.
+            QmpStep(r"AEGIR_HELLO_OK", await_shell=True),
+        )),
     ),
     "sel4test": Target(
         name="sel4test",

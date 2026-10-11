@@ -602,17 +602,14 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # `--version`, which proves it loaded, and the acceptance itself is typed later
         # from `Sys:S/Development-Acceptance` (its cue is the last line below, which the
         # guest prints when this script has finished and the shell is free again).
-        # The startup stays *fast*, and carries nothing the acceptance needs: the runner
-        # types each acceptance step instead (scripts/targets.py), because a key typed
-        # while this script is running is lost -- measured, an `execute ...` cued on the
-        # script's own last line never reached the shell at all. What is left here is what
-        # works from a script and is quick: the POSIX clients and the scale acceptance.
-        tree = _with_startup(tree, b"Sys:Development/C/posix-test\n"
-                                   b"Sys:Development/C/posix-path-test\n"
-                                   b"Sys:Development/C/posix-file-test\n"
-                                   b"Sys:Development/C/posix-memory-test\n"
-                                   b"Sys:Development/C/posix-env-test\n"
-                                   b"Sys:Development/C/aegir-big\n")
+        # The startup carries none of the acceptance any more: the runner types every
+        # step instead, one command per QmpStep (scripts/targets.py), because a key
+        # typed while this script is running is *lost* -- measured, an `execute ...`
+        # cued on the script's own last line never reached the shell at all, and the
+        # vCPU sampler then showed the guest sitting in its idle loop while the run
+        # waited out its quiet timeout. What a target's disk may put here is what
+        # works from a script, is quick, and is no part of what the acceptance must
+        # verify.
     return tree
 
 
