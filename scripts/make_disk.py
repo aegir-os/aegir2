@@ -251,28 +251,6 @@ AEGIR_BFS_TREE = [
          b"set value env-substituted\n"
          b"execute Sys:S/Subst-Test\n"),
 
-        # The acceptance's own script (specs/clang-on-aegir.md:203-205): the device
-        # compiles a source with clang, links it with lld, and runs the result. It is a
-        # script and not a line of the session's startup because it takes minutes, and a
-        # startup that takes minutes has the shell busy while the runner types the DOS
-        # acceptance into it -- which drops those keys (this file's own note above, and
-        # specs/memory.md). The runner types one `execute Sys:S/Development-Acceptance`
-        # on the startup's last line, when the shell is free again.
-        ("file", "Development-Acceptance",
-         b"echo AEGIR_ACCEPTANCE_COMPILING\n"
-         b"date\n"
-         b"Sys:Development/C/cc -v -ccc-install-dir Sys:Development/C"
-         b" --target=riscv64-unknown-elf"
-         b" -c Sys:Development/hello.c -o SCRATCH:hello.o\n"
-         b"date\n"
-         b"echo AEGIR_ACCEPTANCE_COMPILED\n"
-         b"dir SCRATCH:hello.o\n"
-         b"date\n"
-         b"execute Sys:Development/link.sh\n"
-         b"date\n"
-         b"echo AEGIR_ACCEPTANCE_LINKED\n"
-         b"SCRATCH:hello\n"),
-        
         # The session's services, as data (specs/session.md): auth reads the
         # user's Home:S/session.manifest first, then this. `authority` is always
         # user -- a session service runs as the session's user class, never the
@@ -599,17 +577,16 @@ def aegir_tree(commands, datatypes, development=()) -> list:
         # shell afterwards, and a key typed while the shell is still running a script is
         # dropped (run_target's press; the key queue is 8 deep -- scripts/make_disk.py's
         # own note about the command files). So the compiler is *not* run here: only its
-        # `--version`, which proves it loaded, and the acceptance itself is typed later
-        # from `Sys:S/Development-Acceptance` (its cue is the last line below, which the
-        # guest prints when this script has finished and the shell is free again).
-        # The startup carries none of the acceptance any more: the runner types every
-        # step instead, one command per QmpStep (scripts/targets.py), because a key
-        # typed while this script is running is *lost* -- measured, an `execute ...`
-        # cued on the script's own last line never reached the shell at all, and the
-        # vCPU sampler then showed the guest sitting in its idle loop while the run
-        # waited out its quiet timeout. What a target's disk may put here is what
-        # works from a script, is quick, and is no part of what the acceptance must
-        # verify.
+        # `--version`, which proves it loaded.
+        # The startup carries none of the acceptance: the runner types every step
+        # instead, one command per QmpStep (scripts/targets.py), and the acceptance is
+        # not a script at all -- a script suited it badly, because a key typed while a
+        # script is running is *lost* (measured: an `execute ...` cued on the script's
+        # own last line never reached the shell, and the vCPU sampler then showed the
+        # guest sitting in its idle loop while the run waited out its quiet timeout),
+        # and because it hides which of its commands failed. What a target's disk may
+        # put here is what works from a script, is quick, and is no part of what the
+        # acceptance must verify.
     return tree
 
 

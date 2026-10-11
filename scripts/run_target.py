@@ -62,6 +62,22 @@ RECT_CUE = re.compile(r"\brect (\S+) (\d+) (\d+) (\d+) (\d+)")
 # shell it learned (QmpStep.capture), so no key is typed before the shell can
 # read it -- the cue a typed step has never had.
 READY_CUE = re.compile(r"terminal: ready for line \d+ shell (\d+)")
+# Values the runner itself knows and a step's *press* may name as `{name}` -- the
+# link command line the development acceptance types, for instance, which is built
+# from what the sysroot actually staged (`development_tree` below). A trigger does
+# not use these: a trigger names what the *guest* chose (`{shell}`), and a regex is
+# no place for a command line.
+SUBSTITUTIONS: dict[str, str] = {}
+
+
+def substituted(text: str, captures: dict[str, str]) -> str:
+    """`text` with every `{name}` it names replaced -- the guest's own captures
+    first (a shell badge), then what the runner knows (the link command)."""
+    values = {**SUBSTITUTIONS, **captures}
+    for name in re.findall(r"\{([A-Za-z_]\w*)\}", text):
+        if name in values:
+            text = text.replace("{" + name + "}", values[name])
+    return text
 
 
 def split_console_lines(buffer: bytes) -> tuple[list[bytes], bytes]:
@@ -758,7 +774,11 @@ def development_tree(build_dir: Path) -> Path:
     head = ("crt0.o", "crti.o", "crtbegin.o", "stand-up.o")
     tail = ("crtend.o", "crtn.o")
     bodies = sorted(n for n in staged if n.endswith(".a") and n != "libgcc.a")
-    (root / "link.sh").write_text(
+    # The link the acceptance types, generated from what is actually staged instead
+    # of written into a script for the guest to execute: a script hides which
+    # command failed, and the acceptance's commands are each their own step
+    # (specs/development.md). The step that types it names this with `{link}`.
+    SUBSTITUTIONS["link"] = (
         # --verbose while this fault is open: it prints lld's own search paths and
         # what it opens, which the layer's trace cannot show -- lld asks this
         # filesystem nothing at all about -T or -l: (specs/clang-on-aegir.md).
@@ -770,7 +790,7 @@ def development_tree(build_dir: Path) -> Path:
         + " ".join(f"-l:{n}" for n in bodies)
         + " "
         + " ".join(path_of(n) for n in tail if n in staged)
-        + f" -l:libgcc.a\n"
+        + " -l:libgcc.a"
     )
 
     # The source the acceptance compiles, staged beside the sysroot (specs/).
@@ -1128,9 +1148,10 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                     # Released keys *are* keys typed into that shell, so the next
                     # gated step waits for the prompt after them.
                     shell_typed_gen[held_shell] = ready_gen
-                    if not send_key(held_socket, held_step.press, held_step.press_delay):
+                    held_keys = substituted(held_step.press, captures)
+                    if not send_key(held_socket, held_keys, held_step.press_delay):
                         print(
-                            f"    runner: FAIL a character of '{held_step.press}' has no qcode",
+                            f"    runner: FAIL a character of '{held_keys}' has no qcode",
                             flush=True,
                         )
                         failed = True
@@ -1348,9 +1369,13 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                             pending_presses.append((index, shell, ready_gen))
                             continue
                         shell_typed_gen[shell] = ready_gen
-                    if not send_key(socket_path, step.press, step.press_delay):
+                    # A press may name what the runner knows (`{link}`) as well as
+                    # what the guest chose (`{shell}`), so it is resolved here, just
+                    # before the keys go out.
+                    keys = substituted(step.press, captures)
+                    if not send_key(socket_path, keys, step.press_delay):
                         print(
-                            f"    runner: FAIL a character of '{step.press}' has no qcode",
+                            f"    runner: FAIL a character of '{keys}' has no qcode",
                             flush=True,
                         )
                         failed = True

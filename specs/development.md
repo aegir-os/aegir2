@@ -69,28 +69,51 @@ it is invoked. Both are invoked now, and clang compiles: see *How far it reaches
 below. The earlier note here — that clang "returns 1 in silence" — was the state
 before the acceptance was typed step by step, and it is not the state any more.
 
-**The acceptance is typed, step by step — it must not live in the session's startup.**
-A key typed while `Sys:S/Shell-Startup` is running is lost: measured twice, an
+**The acceptance is typed, step by step — it must not live in the session's startup,
+and it must not be a script the runner asks the shell to run.** A key typed while
+`Sys:S/Shell-Startup` is running is lost: measured twice, an
 `execute Sys:S/Development-Acceptance` cued on that script's own last line never reached
 the shell, and the guest went on with the demo's gestures while the run waited out its
-quiet timeout. So the startup keeps only what works from a script and is quick (the
-POSIX clients and `aegir-big`), and the dev target types each acceptance action as its
-own step, the way every DOS step already does — click the terminal first, then one
-command, because a cue says a command started, not that the shell will receive the key:
+quiet timeout. A script also hides which of its commands failed, and every command here
+has a line that says which one it was, so each is its own step, typed the way every DOS
+step already does — click the terminal first, then one command, because a cue says a
+command started, not that the shell will receive the key. Script *execution* stays
+covered, by the DOS block's own `execute Sys:S/*-Test` steps: that is the shell being
+tested, and this is the development acceptance.
+
+The commands are spliced into the DOS block, in front of the step that creates the nested
+terminal, not appended after the acceptance's window work — there the terminal no longer
+holds the focus and the keys race the click that tries to take it back. The link command
+belongs to the runner: it names the sysroot's own crt objects and archives, so it is built
+from what was actually staged and reaches the step through `{link}`, the substitution that
+carries the shell's badge.
 
 | cue | typed |
 | --- | --- |
-| `demo: filtered A#\? 2` | `Sys:Development/C/cc --version` |
+| `AEGIR_POSIX_ENV_OK` | `Sys:Development/C/aegir-big` |
+| `AEGIR_BIG_OK \d+ bytes, every byte the pattern` | `Sys:Development/C/cc --version` |
 | `clang version 20` | `Sys:Development/C/ld.lld --version` |
-| `LLD 20` | `execute Sys:S/Development-Acceptance` |
+| `LLD 20` | `echo AEGIR-ACCEPTANCE-COMPILING` |
+| `AEGIR-ACCEPTANCE-COMPILING` | the compile, alone: `cc -v -ccc-install-dir Sys:Development/C --target=riscv64-unknown-elf -c Sys:Development/hello.c -o SCRATCH:hello.o` |
+| `terminal: ready for line \d+ shell {shell}` | `echo AEGIR-ACCEPTANCE-COMPILED` — the compile's report, on the prompt that follows it |
+| `AEGIR-ACCEPTANCE-COMPILED` | `dir SCRATCH:hello.o` |
+| `hello\.o` | the link (`{link}`), alone |
+| `terminal: ready for line \d+ shell {shell}` | `echo AEGIR-ACCEPTANCE-LINKED` — the link's report, cued the same way |
+| `AEGIR-ACCEPTANCE-LINKED` | `SCRATCH:hello` |
 | `AEGIR_HELLO_OK` | the compiled program's own marker |
 
-The first cue is a demo line, and one no other step uses: the demo is a separate,
-step-paced process, so its lines cannot appear until the startup has finished and the
-runner has paced it there. (`demo: opened AEGIR.TXT` was the obvious choice and is
-already a step's cue — one step per cue, `AGENTS.md`.) `Sys:S/Development-Acceptance`
-reports between its commands (`echo`, and a `date` either side of the compile), so each
-stretch of silence is one command rather than the whole acceptance.
+The markers the runner *types* are hyphenated: the guest's keymap has no qcode for `_`, so a
+press carrying one is refused part-way and the tail of that line is lost — measured, and it
+stopped this chain at its first step. A marker a *program* prints keeps its underscores,
+because nothing types those.
+
+One press is one line: a key typed while a command is running is dropped from the guest's
+eight-deep key queue, so a press carrying a command *and* its report loses the report — the
+same limitation `Halt-Test`'s own step records. A command that succeeds in silence, which
+clang does, is followed by the shell's prompt, and the prompt is what the report waits for;
+the shell's completion line would be a cue every command prints, and the DOS block already
+keys its own `42` and `77` off it (`AGENTS.md`). The readiness line serves three steps in
+this target, in this order, and the gate keeps each behind the one before it.
 
 **The startup's order is deliberate.** The POSIX clients and `aegir-big` run first
 and the big programs last: loading a 97 MiB or 57 MiB program spends the spawn

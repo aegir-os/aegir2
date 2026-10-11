@@ -1964,14 +1964,75 @@ TARGETS: dict[str, Target] = {
                     await_shell=True),
             # `ld.lld --version` and not bare `lld`: lld takes its flavour from the
             # name it is invoked under (scripts/make_disk.py).
+            # The markers the runner *types* are hyphenated, not underscored: the
+            # guest's keymap has no qcode for `_`, so a press carrying one is refused
+            # part-way and the tail of the line is lost -- measured, and it stopped
+            # the chain at the first of these steps: `a character of 'echo
+            # AEGIR_ACCEPTANCE_COMPILING' has no qcode` (/tmp/devH.log). Markers a
+            # *program* prints (`AEGIR_POSIX_*`, `AEGIR_HELLO_OK`) keep their
+            # underscores, because nothing types those.
             QmpStep(r"LLD 20",
                     events=TERMINAL_CLICK,
-                    press="execute Sys:S/Development-Acceptance\n",
+                    press="echo AEGIR-ACCEPTANCE-COMPILING\n",
                     await_shell=True),
-            # The acceptance itself (specs/clang-on-aegir.md:203-205) is the script
-            # the step above runs: it compiles the source with clang, links it with
-            # lld, and runs the result, and its lines run in order -- so this marker
-            # is only reached if all three worked.
+            # The acceptance itself (specs/clang-on-aegir.md:203-205): the device
+            # compiles the source with clang, links it with lld and runs the result.
+            # Every one of those commands is typed here like any other DOS command --
+            # no script is executed for it. A script would hide which command failed,
+            # and there is nothing in this one that a step cannot say; the shell's own
+            # script handling stays covered by the DOS block's `execute
+            # Sys:S/*-Test` steps, which is where script execution belongs.
+            # The compile, on its own: one press is one line, because a key typed
+            # while a command runs is dropped from the guest's eight-deep queue
+            # (this file's own note on `Halt-Test`), so a press carrying the compile
+            # and its report loses the report.
+            QmpStep(r"AEGIR-ACCEPTANCE-COMPILING",
+                    events=TERMINAL_CLICK,
+                    press="Sys:Development/C/cc -v -ccc-install-dir Sys:Development/C"
+                          " --target=riscv64-unknown-elf"
+                          " -c Sys:Development/hello.c -o SCRATCH:hello.o\n",
+                    await_shell=True),
+            # The report's cue is the shell's *prompt*, not a line of its output:
+            # clang is silent when it succeeds, and the completion line it does print
+            # on failure is generic -- the DOS block keys its own `42` and `77` off
+            # the terminal's form of it, and one cue is one step's (AGENTS.md). The
+            # readiness line says exactly what this step needs -- the shell is at a
+            # prompt again -- and the gate keeps it behind the compile.
+            QmpStep(r"terminal: ready for line \d+ shell {shell}",
+                    events=TERMINAL_CLICK,
+                    press="echo AEGIR-ACCEPTANCE-COMPILED\n",
+                    await_shell=True),
+            # The compile's own report: the file listing is the proof the object was
+            # written, and a failure here names the compile rather than the link.
+            QmpStep(r"AEGIR-ACCEPTANCE-COMPILED",
+                    events=TERMINAL_CLICK,
+                    press="dir SCRATCH:hello.o\n",
+                    await_shell=True),
+            # The link, typed (specs/clang-on-aegir.md's Phase 3): the command line
+            # names the sysroot's own crt objects and archives, so the runner builds
+            # it from what it staged and substitutes it here. It used to be written
+            # into a link.sh for the guest to execute -- a script the harness made.
+            # The link, on its own: one press is one line, for the same reason as the
+            # compile above.
+            QmpStep(r"hello\.o",
+                    events=TERMINAL_CLICK,
+                    press="{link}\n",
+                    await_shell=True),
+            # Its report, cued on the prompt that follows the link, exactly as the
+            # compile's is: lld's own output is its business, and the prompt is what
+            # says the shell has the line back.
+            QmpStep(r"terminal: ready for line \d+ shell {shell}",
+                    events=TERMINAL_CLICK,
+                    press="echo AEGIR-ACCEPTANCE-LINKED\n",
+                    await_shell=True),
+            # The linked program, run: its own marker is the last thing the
+            # acceptance prints, and the step below is the one that checks it. That
+            # marker is the *program's*, so it keeps its underscores.
+            QmpStep(r"AEGIR-ACCEPTANCE-LINKED",
+                    events=TERMINAL_CLICK,
+                    press="SCRATCH:hello\n",
+                    await_shell=True),
+            # The marker is only reached if all three commands worked.
             # Gated like the steps that type: it is the development block's last
             # step, so the acceptance's next typed step (the nested terminal) is
             # chained behind it and the run fails where the failure is rather than
