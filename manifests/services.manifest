@@ -226,7 +226,12 @@ binary     = aegir-net
 authority  = system
 account    = system
 owns       = net.control, net.socket
-needs      = log.main, devmgr.registry, timer.main
+# mem.main is what the tcpip thread's own allocator will grow from. Two threads
+# sharing one allocator hand each other the same slot -- the allocator's cursor
+# is not atomic (allocator.h) -- and the second owner needs a chunk of its own
+# to carve rather than one the first is already splitting. The prose above
+# already calls mem.main the later source; this makes it reachable.
+needs      = log.main, devmgr.registry, timer.main, mem.main
 maps       = true
 memory_kib = 8192
 restart    = always
