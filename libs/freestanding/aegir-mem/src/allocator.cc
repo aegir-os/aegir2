@@ -875,6 +875,17 @@ void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word dep
 void Allocator::adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Word l1,
                                       seL4_Word l2, seL4_Word cnode_index) noexcept
 {
+    /* No level one is the single-level shape, and taking it here is the point:
+     * a program hands over the numbers its block gave it and is adopted right
+     * whether it is a service or a command, instead of each stand-up deciding
+     * for itself. Every one that decided wrongly adopted a two-level CSpace as
+     * a flat range -- `DataTypes:ilbm.datatype` invoked four null caps for it,
+     * because its retypes had landed in root slots and the slots it then used
+     * were empty. */
+    if (l1 == 0) {
+        adopt_slots(first, count, 0, l2);
+        return;
+    }
     level_two_bits_ = l2;
     /* Both CNodes have guard zero, so a cap op addresses an L2 slot at
      * l1 + l2, while a retype names the L2 CNode cap at depth l1 against the

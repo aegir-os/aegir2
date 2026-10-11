@@ -75,7 +75,8 @@ bool adopt_memory()
                                        untyped_physical);
     if (ok) {
         uint32_t const bits = aegir::bootstrap::cnode_bits();
-        g_objects->adopt_slots(first_free, (1u << bits) - first_free, 0, bits);
+        g_objects->adopt_slots_level_two(first_free, (1u << bits) - first_free,
+                                         aegir::bootstrap::cnode_l1_bits(), bits, 0);
         ok = g_scratch->adopt(static_cast<seL4_CPtr>(vspace_slot),
                               static_cast<uintptr_t>(window_base),
                               static_cast<uintptr_t>(window_base + window_bytes), g_objects);

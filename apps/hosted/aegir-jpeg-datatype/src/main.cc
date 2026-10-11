@@ -109,7 +109,7 @@ void drop_transfer() noexcept
 {
     if (g_transfer_slot != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_transfer_slot,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
     }
 }
 
@@ -233,8 +233,9 @@ bool adopt_memory()
         }
     }
     uint64_t const total_slots = 1ull << aegir::bootstrap::cnode_bits();
-    g_objects.adopt_slots(first_free, total_slots - first_free, 0,
-                          aegir::bootstrap::cnode_bits());
+    g_objects.adopt_slots_level_two(first_free, total_slots - first_free,
+                                    aegir::bootstrap::cnode_l1_bits(),
+                                    aegir::bootstrap::cnode_bits(), 0);
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {

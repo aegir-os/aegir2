@@ -96,7 +96,7 @@ void Object::reset() noexcept
     manager_ = aegir::ipc::Consumer();
     if (send_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, send_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         send_ = 0;
     }
     if (page_ != nullptr && frame_ != 0) {
@@ -105,7 +105,7 @@ void Object::reset() noexcept
     }
     if (frame_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         frame_ = 0;
     }
     class_ = aegir::ipc::Consumer();
@@ -228,7 +228,7 @@ Object new_object(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch
     }
     if (!started) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, endpoint,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         return Object{};
     }
     object.class_ = aegir::ipc::Consumer(endpoint);
@@ -301,8 +301,8 @@ bool Object::read(Decoded &into)
     send_ = allocator_->alloc_slot();
     if (send_ == 0 ||
         seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, send_,
-                        aegir::bootstrap::cnode_bits(), aegir::bootstrap::kSlotOwnCNode,
-                        frame_, aegir::bootstrap::cnode_bits(),
+                        aegir::bootstrap::endpoint_depth(), aegir::bootstrap::kSlotOwnCNode,
+                        frame_, aegir::bootstrap::endpoint_depth(),
                         seL4_AllRights) != seL4_NoError) {
         return false;
     }
@@ -345,12 +345,12 @@ bool Object::read(Decoded &into)
     }
     if (send_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, send_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         send_ = 0;
     }
     if (frame_ != 0) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame_,
-                          aegir::bootstrap::cnode_bits());
+                          aegir::bootstrap::endpoint_depth());
         frame_ = 0;
     }
     if (!ok || at != total) {

@@ -121,8 +121,9 @@ bool adopt_memory()
               g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
                                       untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0,
-                          aegir::bootstrap::kCNodeBits);
+        g_objects.adopt_slots_level_two(
+            first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free,
+            aegir::bootstrap::cnode_l1_bits(), aegir::bootstrap::cnode_bits(), 0);
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),
                              static_cast<uintptr_t>(window_base + window_bytes), &g_objects);

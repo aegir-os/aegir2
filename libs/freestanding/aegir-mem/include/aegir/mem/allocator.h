@@ -266,6 +266,15 @@ public:
      * `node_depth = l1`, `node_offset = offset`). `first`/`count` are offsets
      * within that L2 CNode, and the cursor commits slots in `(cnode_index, *)`
      * only -- adding a CNode is the caller's (specs/memory.md).
+     *
+     * An `l1` of zero is the *single-level* shape -- the process has no level
+     * one, so its own-CNode cap is the CNode itself and this is exactly
+     * `adopt_slots` -- which is why a program can hand its block's
+     * `cnode_l1_bits`/`cnode_bits` straight here and be right either way. Six
+     * stand-ups decided the shape for themselves and adopted a two-level CSpace
+     * as a flat range; the caps their retypes made landed in root slots, and a
+     * command invoking one it had just made is how `DataTypes:ilbm.datatype`
+     * raised four `Attempted to invoke a null cap` a run.
      */
     void adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Word l1,
                                seL4_Word l2, seL4_Word cnode_index) noexcept;
