@@ -26,6 +26,7 @@
 #include <aegir/lwip/port.h>
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/memory.h>
 #include <aegir/net.h>
 #include <aegir/netcontrol.h>
 #include <aegir/registry.h>
@@ -76,17 +77,78 @@ void write_line(char const *label, char const *text) noexcept
 }
 
 /* Static, not local: the allocator carries the tables of what it handed out,
- * and they must outlive every object retyped from them. */
+ * and they must outlive every object retyped from them.
+ *
+ * Two of them, because two of this process's threads allocate and an
+ * allocator's slot cursor is not atomic (allocator.h makes no claim, and
+ * allocator.cc has no locking): two threads sharing one hand each other the
+ * same slot, and the kernel reports the second occupant rather than the
+ * mistake. This one is the process's own -- the bring-up and the control port's
+ * thread -- and it is the half that keeps the untyped the manifest granted. */
 aegir::mem::Allocator g_objects(nullptr);
+/* The lwIP half's: the tcpip thread retypes its notifications and endpoints and
+ * grows lwIP's heap out of it, and the socket and link threads do the same
+ * while this thread serves the control port. Its memory is a chunk of its own
+ * from mem.main -- two allocators carving one untyped is the same bug with more
+ * ways to happen -- and its slots are the other half of the CSpace. */
+aegir::mem::Allocator g_lwip_objects(nullptr);
 aegir::mem::Scratch g_scratch(nullptr);
 aegir::mem::Account g_account{"net", 0, 0, 0};
+aegir::mem::Account g_lwip_account{"net.lwip", 0, 0, 0};
 
-/* lwIP's heap source (aegir/lwip/port.h): retype a run of pages out of the
- * stack's untyped, map them into its own window, and answer the region. lwIP
- * asks for more only when it has no free block big enough, so this is the heap
- * growing on demand -- no MEM_SIZE, and a later source can be mem.main. The run
- * is a power of two pages because one retype fills a consecutive slot run
- * (allocator.h's alloc_pages_run). */
+/* mem.main's port, and the size to ask it for (aegir/memory.h): the lwIP half
+ * grows in the unit this process was granted, so an ask the grant could have
+ * satisfied is satisfiable here too. Both are set once, before anything
+ * allocates out of that half. */
+seL4_CPtr g_mem_call = 0;
+uint32_t g_chunk_bits = 0;
+
+/* The lwIP half's untyped source (specs/memory.md): ask mem.main for another
+ * chunk when that allocator's free lists hold no piece big enough, and hand the
+ * capability back for it to adopt. This is the console's shape
+ * (console_untyped_source), with the one difference the split makes: the slot
+ * the chunk is kept in is drawn from the allocator being served, so neither
+ * half ever moves the other's cursor. The chunk rides the reply into the
+ * scratch receive slot and is moved straight out of it, because a second
+ * transfer onto an occupied slot is refused. */
+seL4_CPtr net_untyped_source(void *context, seL4_Word *size_bits,
+                             uint64_t *paddr) noexcept
+{
+    static_cast<void>(context);
+    if (g_mem_call == 0) {
+        return 0;
+    }
+    aegir::ipc::Consumer const service(g_mem_call);
+    uint64_t const request = g_chunk_bits;
+    uint64_t answer[2] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply = service.call_transfer(
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
+    if (reply.error != 0 || !cap_arrived) {
+        return 0;
+    }
+    seL4_CPtr const slot = g_lwip_objects.alloc_slot();
+    if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
+                          aegir::bootstrap::kSlotReceiveCap,
+                          aegir::bootstrap::endpoint_depth());
+        return 0;
+    }
+    *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0] : g_chunk_bits);
+    /* The chunk's physical base, which the service answers beside its size: no
+     * invocation reads an untyped's address, and a caller that later points a
+     * device at memory retyped from this chunk has to be told it
+     * (specs/memory.md). */
+    *paddr = reply.count >= 2 ? answer[1] : 0;
+    return slot;
+}
+
+/* lwIP's heap source (aegir/lwip/port.h): retype a run of pages out of the lwIP
+ * half's memory, map them into this process's window, and answer the region.
+ * lwIP asks for more only when it has no free block big enough, so this is the
+ * heap growing on demand -- no MEM_SIZE, and mem.main is where the rest of it
+ * comes from. The run is a power of two pages because one retype fills a
+ * consecutive slot run (allocator.h's alloc_pages_run). */
 void *heap_source(void *context, uint32_t bytes, uint32_t *got_bytes) noexcept
 {
     static_cast<void>(context);
@@ -99,7 +161,7 @@ void *heap_source(void *context, uint32_t bytes, uint32_t *got_bytes) noexcept
         return nullptr;
     }
     seL4_Error error = seL4_NoError;
-    seL4_CPtr const run = g_objects.alloc_pages_run(pages, g_account, &error);
+    seL4_CPtr const run = g_lwip_objects.alloc_pages_run(pages, g_lwip_account, &error);
     if (run == 0) {
         return nullptr;
     }
@@ -169,22 +231,37 @@ int main(int argc, char *argv[])
     uint64_t const first_free = first_free_slot();
     uint32_t const l2 = aegir::bootstrap::cnode_bits();
     uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
+    /* The CSpace is split between the two allocators: this process's own half
+     * draws its slots upward from the first free one, the lwIP half's draws
+     * downward from the end of the CNode, and the two cursors meet only when the
+     * CSpace is genuinely full -- so neither can hand out a slot the other is
+     * using while anything is left (allocator.h's adopt_slots_down). The middle
+     * is this process's budget halved, and the budget is the block's, so it is
+     * derived rather than chosen here. */
+    seL4_CPtr const slots_end = static_cast<seL4_CPtr>(1) << l2;
+    seL4_CPtr const slots_free = slots_end - static_cast<seL4_CPtr>(first_free);
+    seL4_CPtr const mine = slots_free / 2;
     if (l1 != 0) {
         /* A two-level service: its plain slots live in the L2 CNode at its root
          * slot 0 (specs/memory.md's "Growing the CSpace on demand"). Adopted as
          * a flat range instead, the retype destination is derived from the slot
          * (`retype_node_index`) and lands in root slots -- a different CNode --
-         * which the kernel answers "Target slot invalid". Measured: net raised
-         * exactly that on the run where commands were given a level one. */
-        g_objects.adopt_slots_level_two(static_cast<seL4_CPtr>(first_free),
-                                        (1u << l2) - static_cast<uint32_t>(first_free), l1, l2,
-                                        0);
+         * which the kernel answers "Target slot invalid". Both halves' slots are
+         * plain slots of that one L2 CNode, so the split below is the same
+         * one. */
+        g_objects.adopt_slots_level_two(static_cast<seL4_CPtr>(first_free), mine, l1, l2, 0);
     } else {
         /* The depth is zero because these are our own slots: at depth zero the
          * destination of a retype is the CNode (kernel/src/object/untyped.c). */
-        g_objects.adopt_slots(static_cast<seL4_CPtr>(first_free),
-                              (1u << l2) - static_cast<uint32_t>(first_free), 0, l2);
+        g_objects.adopt_slots(static_cast<seL4_CPtr>(first_free), mine, 0, l2);
     }
+    /* The lwIP half, from the top down. The depth is where the CNode its slots
+     * live in is reached -- zero for a single-level process, `l1` for the L2
+     * CNode at root slot 0 of a two-level one -- and the radix is how deep a cap
+     * op on one of those slots addresses it, which is endpoint_depth() in either
+     * shape (bootstrap.h). */
+    g_lwip_objects.adopt_slots_down(static_cast<seL4_CPtr>(first_free) + mine, slots_free - mine,
+                                    l1, aegir::bootstrap::endpoint_depth());
     if (!g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                          static_cast<uintptr_t>(window_base),
                          static_cast<uintptr_t>(window_base + window_bytes), &g_objects)) {
@@ -194,12 +271,27 @@ int main(int argc, char *argv[])
                            static_cast<seL4_CPtr>(first_free),
                            aegir::bootstrap::endpoint_depth());
 
+    /* The lwIP half's memory comes from mem.main rather than out of this
+     * process's grant (specs/net.md): two allocators carving one untyped is the
+     * same bug with more ways to happen, and the grant is this thread's. The
+     * chunk is asked for in the unit the grant was given in, so an ask this
+     * process's own memory could have satisfied is satisfiable here too. */
+    uint64_t mem_slot = 0;
+    if (!aegir::bootstrap::capability("mem.main", 8, &mem_slot)) {
+        fail("no mem.main was given to me, and the lwIP half grows from it");
+    }
+    g_mem_call = static_cast<seL4_CPtr>(mem_slot);
+    g_chunk_bits = untyped_bits;
+    g_lwip_objects.set_untyped_source(net_untyped_source, nullptr);
+
     /* The port's side of lwIP: the heap it grows from, the allocator its
      * blocking objects come out of, and the thread builder the tcpip thread is
-     * made with. */
+     * made with. All three are the lwIP half's -- every thread built here
+     * allocates out of it -- while the control port's thread keeps the
+     * allocator this process's own objects came from. */
     aegir::lwip::set_heap_source(heap_source, nullptr);
-    aegir::lwip::set_objects(g_objects, g_account);
-    static aegir::thread::Builder builder(g_objects, g_scratch, g_account);
+    aegir::lwip::set_objects(g_lwip_objects, g_lwip_account);
+    static aegir::thread::Builder builder(g_lwip_objects, g_scratch, g_lwip_account);
     /* The tcpip thread faults to the same endpoint as this service's own thread
      * (`kSlotFaultEndpoint`, the one our spawner installed, badged with our
      * badge): a thread fault is then *reported* to our supervisor exactly as the
@@ -255,7 +347,7 @@ int main(int argc, char *argv[])
      * window mapped into ours, and a netif and a receive thread added. An
      * interface starts down -- only a configuration brings it up (specs/net.md)
      * -- with the device's own MAC, MTU and link state. */
-    aegir::net::Authority authority{g_objects, g_scratch, g_account, builder, where};
+    aegir::net::Authority authority{g_lwip_objects, g_scratch, g_lwip_account, builder, where};
     unsigned const links = aegir::net::add_links(authority);
     aegir::debug_write("      net: ");
     aegir::debug_write_unsigned(links);
