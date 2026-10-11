@@ -681,7 +681,17 @@ seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
         }
     }
     if (slots_next_ + count > slots_end_) {
-        return 0;
+        /* The adopted range is spent. A two-level CSpace whose process set a
+         * source gets one more L2 CNode and the cursor extends over it
+         * (`set_slot_source`: adding L2 CNodes rather than being sized to fit,
+         * bootstrap.h's kCNodeBits). A single-level CSpace has no level one to
+         * add to, and a two-level one without a source is bounded by what the
+         * spawner laid down -- both get zero, as before. */
+        if (level_two_bits_ == 0 || slot_source_ == nullptr ||
+            !slot_source_(slot_source_context_, slots_end_)) {
+            return 0;
+        }
+        slots_end_ += static_cast<seL4_CPtr>(1) << level_two_bits_;
     }
     seL4_CPtr const first = slots_next_;
     slots_next_ += count;

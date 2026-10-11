@@ -302,6 +302,31 @@ public:
     }
 
     /**
+     * One more L2 CNode, covering the slot indices from `first` onward -- the
+     * first the adopted range does not cover. True once the capability is in
+     * the CSpace's level one, and the allocator's cursor extends over it by
+     * `1 << level_two_bits_` indices; false is a refusal and the caller gets
+     * zero as it always did.
+     *
+     * This is `untyped_source_`'s shape for the other resource a growing
+     * process runs out of. Memory grows through a source, and "a process whose
+     * CSpace must grow is given `cspace_l1_bits` ... and adds L2 CNodes rather
+     * than being sized to fit" (`bootstrap.h`'s kCNodeBits) -- but the adding
+     * had no hook, so a CSpace was only ever what the spawner laid down. A
+     * linker's runtime allocation is not its image, and `alloc_slot` returning
+     * zero is how that ended a link.
+     *
+     * Set only by a two-level process: a single-level CSpace has no level one
+     * to add to, so it never asks and behaves exactly as before.
+     */
+    using SlotSource = bool (*)(void *context, seL4_CPtr first);
+    void set_slot_source(SlotSource source, void *context) noexcept
+    {
+        slot_source_ = source;
+        slot_source_context_ = context;
+    }
+
+    /**
      * An ASID pool, for a process that will build address spaces of its own.
      *
      * Not `alloc_object`: the kernel makes a pool from an *untyped* rather than by
@@ -531,6 +556,8 @@ private:
      * was handed at spawn. */
     UntypedSource untyped_source_ = nullptr;
     void *untyped_context_ = nullptr;
+    SlotSource slot_source_ = nullptr;
+    void *slot_source_context_ = nullptr;
     Trace trace_ = nullptr;
     void *trace_context_ = nullptr;
     /* A small built-in region, so an allocator whose caller does not adopt one
