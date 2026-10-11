@@ -143,9 +143,18 @@ bool Builder::prepare(Placement const &where, void (*entry)(void *), void *argum
      * CNode's guard: a service's own-CNode cap is a raw copy whose guard covers
      * the bits the CNode does not index, and a thread with a different guard
      * would resolve the same slot number to a different capability
-     * (aegir/bootstrap.h explains). */
+     * (aegir/bootstrap.h explains).
+     *
+     * `WordBits - endpoint_depth()` is what makes the guard follow the
+     * process's *shape*: a two-level process resolves its plain slots at
+     * `l1 + l2` (specs/memory.md's "Growing the CSpace on demand"), so its guard
+     * is `l1` bits shorter than a single-level one's. Built from `cnode_bits()`
+     * alone, every plain slot this thread resolved landed at the wrong depth --
+     * which the kernel answers `CNode operation: Target slot invalid`, and it
+     * names the TCB rather than the offending call. Measured: that is what kept
+     * net's tcpip thread from coming up after its clients were already clean. */
     seL4_Word const cspace_guard =
-        seL4_CNode_CapData_new(0, seL4_WordBits - bootstrap::cnode_bits()).words[0];
+        seL4_CNode_CapData_new(0, seL4_WordBits - bootstrap::endpoint_depth()).words[0];
     error = seL4_TCB_Configure(tcb, where.fault_endpoint, where.cspace_root, cspace_guard,
                                where.vspace_root, 0,
                                reinterpret_cast<seL4_Word>(ipc_memory), ipc_frame);
