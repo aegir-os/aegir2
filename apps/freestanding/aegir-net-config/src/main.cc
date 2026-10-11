@@ -234,7 +234,7 @@ bool read_manifest(aegir::vfs::Namespace &space, netconfig::Manifest &manifest) 
         }
     }
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, static_cast<seL4_CPtr>(slot),
-                      aegir::bootstrap::kCNodeBits);
+                      aegir::bootstrap::endpoint_depth());
     return ok && manifest.finish();
 }
 
