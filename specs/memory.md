@@ -455,6 +455,21 @@ gets a **two-level** CSpace instead (`Request.cspace_l1_bits != 0`):
   a CNode, because one retype names one. The bound on a command is its image and
   the machine, never a single CNode.
 
+`cspace_l1_bits` is on for a command now (`ServiceKit::start_command`, and a
+nested terminal already had one). A command's objects are not its image, and a
+single-level CSpace -- the run of CNodes sized from the image -- ended the link
+with a `std::bad_alloc` whose heap markers named a slot shortage rather than
+memory (`page-no-slot`, or `page-kernel-error` where the kernel refuses the
+retype). A run with it on is what the audit answers to: the programs that still
+name `kCNodeBits` where they should name `endpoint_depth()` are
+`aegir-device-manager` (:292-293, :321) and `aegir-fs-fat` (many), and
+`aegir-net-show`'s two were the four messages a two-level `net` command raised
+(`Target slot invalid` ×3, `Destination not empty` ×1, from its Delete at depth
+12 missing the slot and the volume cap left in it). Two of the messages that
+same run raises are not this class: `auth`'s
+`RISCVPageTableMap: All objects mapped at this address` (1) and four
+`Attempted to invoke a null cap #17/#18/#22/#23` from `DataTypes:ilbm.datatype`.
+
 The block carries `l1` in the CNodeBits entry's `length` field, which that entry
 had never used, so a reader that knows only `cnode_bits` is undisturbed.
 

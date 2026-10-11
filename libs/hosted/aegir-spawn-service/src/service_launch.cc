@@ -550,6 +550,19 @@ bool ServiceKit::start_command(Command const &command, Started *out)
     request.fault_endpoint = fault_endpoint_;
     request.badge = badge;
     request.give_vspace = true;
+    /* A command's CSpace is two-level (specs/memory.md's "Growing the CSpace on
+     * demand"): a command's objects are not its image -- a linker's runtime is
+     * many times it -- and a single-level CSpace is only ever the run of CNodes
+     * the spawner sized from the image (`command_cnode_count`), so a program
+     * whose runtime allocates more dies of `std::bad_alloc` a layer up while its
+     * memory is fine (`page-no-slot` in the heap's markers, then the kernel
+     * refusing the retype: `page-kernel-error`). Its level one is this process's
+     * shape, and the growth half is `grow_slots` in aegir-command; this is the
+     * switch that was waiting for every cap op in a command's own CSpace to name
+     * `endpoint_depth()` rather than a hard-coded `cnode_bits()`
+     * (a50e3c6e, 8e86d7e7, 3a38b2cb, 9498019a, 10fb7674). */
+    request.cnode_bits = cnode_l2_ != 0 ? static_cast<uint32_t>(cnode_l2_) : 12;
+    request.cspace_l1_bits = cnode_l1_ != 0 ? static_cast<uint32_t>(cnode_l1_) : 8;
     request.untyped_physical = command_untyped_physical;
     request.untyped_bits = kCommandUntypedBits;
     /* The machine's RAM, from the block this service was given: it passes on what
