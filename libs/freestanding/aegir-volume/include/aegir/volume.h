@@ -32,10 +32,10 @@
  *     word, the handle; zero is the refusal -- a bad path, an existing
  *     name without create, a read-only volume. Truncate frees the file's
  *     old chain the moment the open answers.
- *   - `write`: a handle and bytes, packed after the count. The bytes land
- *     at the cursor, the cursor advances, and the file extends when the
- *     cursor crosses its end. The answer is the count written; less than
- *     asked is the refusal.
+ *   - `write`: a handle, an offset, and bytes, packed after the count. The
+ *     bytes land at the offset, and the file extends when the write crosses
+ *     its end. The answer is the count written; less than asked is the
+ *     refusal.
  *   - `close`: a handle. The answer is 1, or 0 when the handle was not
  *     one; the row is freed and the serial is never reused.
  *
@@ -64,7 +64,7 @@ constexpr uint32_t kMethodList = 2; /* in: path words, index; answer: name words
  * -- a handle named by any other badge is not one -- and its serial is never
  * reused. Zero is never a handle: it is open's refusal. */
 constexpr uint32_t kMethodOpen = 3;  /* in: path words, mode flags; answer: handle */
-constexpr uint32_t kMethodWrite = 4; /* in: handle, count, bytes; answer: written */
+constexpr uint32_t kMethodWrite = 4; /* in: handle, offset, count, bytes; answer: written */
 constexpr uint32_t kMethodClose = 5; /* in: handle; answer: 1, or 0 */
 /* mkdir: a path. The directory it names is made, and every missing
  * component on the way -- the mmd shape, because "ensure the home exists"
@@ -153,11 +153,12 @@ constexpr uint32_t kFrameBytes = 1u << 12;
 constexpr uint32_t kFrameBitsMin = 12;
 constexpr uint32_t kFrameBitsMax = 21;
 
-/* write-frame: read-frame's mirror. Words: a handle, how many bytes to write,
- * and how far into the frame they start. One capability rides beside the words:
- * a 4 KiB frame of the caller's own, filled already, whose bytes the
- * filesystem maps, copies out, and writes at the handle's cursor. */
-constexpr uint32_t kMethodWriteFrame = 26; /* in: handle, count, frame offset; + 1 frame cap */
+/* write-frame: read-frame's mirror. Words: a handle, the offset in the file,
+ * how many bytes to write, and how far into the frame they start. One
+ * capability rides beside the words: a 4 KiB frame of the caller's own, filled
+ * already, whose bytes the filesystem maps, copies out, and writes at the
+ * offset. */
+constexpr uint32_t kMethodWriteFrame = 26; /* in: handle, offset, count, frame offset; + 1 frame cap */
 
 /** open's mode flags. */
 constexpr uint64_t kOpenCreate = 1;   /* no such name: make the file */

@@ -170,10 +170,11 @@ public:
                     uint64_t frame_offset, seL4_CPtr frame, uint32_t frame_bits,
                     uint64_t &count, bool &eof) noexcept;
 
-    /** read-frame's mirror: write up to `capacity` bytes of `frame` at the
-     *  handle's cursor (volume::kMethodWriteFrame). */
-    bool write_frame(uint64_t handle, uint64_t capacity, uint64_t frame_offset,
-                     seL4_CPtr frame, uint64_t &count) noexcept;
+    /** read-frame's mirror: write up to `capacity` bytes of `frame` at
+     *  `offset` in the file, starting `frame_offset` bytes into the frame
+     *  (volume::kMethodWriteFrame). `count` is how many bytes were written. */
+    bool write_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
+                     uint64_t frame_offset, seL4_CPtr frame, uint64_t &count) noexcept;
 
     /**
      * Open for reading (volume::kOpenRead), returning the handle. A volume
@@ -228,7 +229,12 @@ public:
     /* The write side (specs/vfs.md): handles, the only per-client state a
      * filesystem holds. Zero is never a handle, and one is never reused. */
     uint64_t open(char const *path, uint32_t length, uint64_t flags) noexcept;
-    bool write(uint64_t handle, void const *bytes, uint32_t count,
+    /** Write `count` bytes at `offset` in the file (volume::kMethodWrite): the
+     *  bytes land at `offset` and the file extends when the write crosses its
+     *  end, the offset named on the call rather than a cursor the volume keeps
+     *  (specs/vfs.md's write), so a caller can seek back and overwrite. False
+     *  when the volume refused; `written` is how many bytes it took. */
+    bool write(uint64_t handle, uint64_t offset, void const *bytes, uint32_t count,
                uint64_t *written = nullptr) noexcept;
     bool close(uint64_t handle) noexcept;
     bool make_directory(char const *path, uint32_t length) noexcept;

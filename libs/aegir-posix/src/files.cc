@@ -1177,7 +1177,8 @@ long write(int fd, void const *buffer, size_t count) noexcept
             __builtin_memcpy(g_write_frame_map, bytes_in + total, chunk);
             uint64_t written = 0;
             if (!aegir::vfs::Volume(entry->volume)
-                     .write_frame(entry->handle, chunk, 0, g_write_frame, written) ||
+                     .write_frame(entry->handle, entry->offset + total, chunk, 0,
+                                  g_write_frame, written) ||
                 written == 0) {
                 break;
             }
@@ -1185,11 +1186,12 @@ long write(int fd, void const *buffer, size_t count) noexcept
         }
         if (total > 0) {
             /* A write moves the descriptor's cursor (POSIX), which is the mirror
-             * lseek answers from: the volume's handle keeps its own place, so
-             * this is bookkeeping the layer owes the program. Without it,
-             * lseek(fd, 0, SEEK_CUR) after a write answered 0 -- measured by the
-             * file sub-arc's client, whose seventh check is exactly that
-             * (specs/posix.md). pwrite is the one that must not move it. */
+             * lseek answers from and the offset every write now names on the
+             * wire: the layer keeps it because the volume keeps no cursor of its
+             * own. Without it, lseek(fd, 0, SEEK_CUR) after a write answered 0
+             * -- measured by the file sub-arc's client, whose seventh check is
+             * exactly that (specs/posix.md). pwrite is the one that must not
+             * move it. */
             entry->offset += total;
             return static_cast<long>(total);
         }
@@ -1201,7 +1203,8 @@ long write(int fd, void const *buffer, size_t count) noexcept
                                                      : aegir::volume::kWriteMax);
         uint64_t written = 0;
         if (!aegir::vfs::Volume(entry->volume)
-                 .write(entry->handle, bytes_in + total, chunk, &written)) {
+                 .write(entry->handle, entry->offset + total, bytes_in + total, chunk,
+                        &written)) {
             break;
         }
         if (written == 0) {
@@ -2031,10 +2034,11 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
                     break;
                 }
                 uint64_t written = 0;
-                if (!dest.write_frame(out->handle, got, 0, frame, written) ||
+                if (!dest.write_frame(out->handle, out->offset, got, 0, frame, written) ||
                     written == 0) {
                     break;
                 }
+                out->offset += written;
                 position += written;
                 total += static_cast<size_t>(written);
                 if (eof) {
@@ -2067,11 +2071,12 @@ long sendfile(int out_fd, int in_fd, long *offset, size_t count) noexcept
         }
         uint64_t written = 0;
         if (!aegir::vfs::Volume(out->volume)
-                 .write(out->handle, bytes.data, static_cast<uint32_t>(bytes.count),
-                        &written) ||
+                 .write(out->handle, out->offset, bytes.data,
+                        static_cast<uint32_t>(bytes.count), &written) ||
             written == 0) {
             break;
         }
+        out->offset += bytes.count;
         position += bytes.count;
         total += bytes.count;
         if (bytes.eof) {

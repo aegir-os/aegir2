@@ -394,20 +394,21 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
                   uint64_t badge) noexcept
 {
     uint64_t written = 0;
-    if (count < 2) {
+    if (count < 3) {
         port.reply_words(&written, 1);
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    uint64_t const bytes = words[1];
+    uint64_t const bytes = words[2];
     if (handle == nullptr || handle->kind != kHandleWrite || handle->pipe == 0 ||
         bytes > aegir::volume::kWriteMax ||
-        count < 2 + static_cast<uint32_t>((bytes + 7) / 8)) {
+        count < 3 + static_cast<uint32_t>((bytes + 7) / 8)) {
         port.reply_words(&written, 1);
         return;
     }
     Pipe &pipe = g_pipes[handle->pipe - 1];
-    auto const *data = reinterpret_cast<uint8_t const *>(words + 2);
+    /* The offset word (words[1]) is ignored: a pipe appends at its end. */
+    auto const *data = reinterpret_cast<uint8_t const *>(words + 3);
     written = pipe_append(pipe, data, static_cast<uint32_t>(bytes));
     port.reply_words(&written, 1);
 }

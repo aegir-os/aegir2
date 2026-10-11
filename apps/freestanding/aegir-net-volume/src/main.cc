@@ -533,25 +533,27 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     port.reply(handle != nullptr ? handle->serial : 0);
 }
 
-/* write: a handle and bytes. The bytes append at the handle's cursor; the
- * whole buffered text is applied at close. The answer is the count taken. */
+/* write: a handle, an offset and bytes. The bytes append at the end of the
+ * handle's buffered value -- the offset is named on the wire like any write,
+ * but this view appends; the whole buffered text is applied at close. The
+ * answer is the count taken. */
 void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                   uint64_t badge) noexcept
 {
-    if (count < 2) {
+    if (count < 3) {
         port.reply(0);
         return;
     }
-    uint32_t const length = static_cast<uint32_t>(words[1]);
+    uint32_t const length = static_cast<uint32_t>(words[2]);
     Handle *const handle = handle_lookup(words[0], badge);
-    if (handle == nullptr || length > (count - 2) * 8 ||
+    if (handle == nullptr || length > (count - 3) * 8 ||
         length > sizeof(handle->value) - handle->length) {
         port.reply(0);
         return;
     }
     for (uint32_t i = 0; i < length; ++i) {
         handle->value[handle->length + i] =
-            static_cast<char>((words[2 + i / 8] >> (8 * (i % 8))) & 0xff);
+            static_cast<char>((words[3 + i / 8] >> (8 * (i % 8))) & 0xff);
     }
     handle->length += length;
     port.reply(length);

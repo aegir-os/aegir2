@@ -88,11 +88,13 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
 /* write: accepted and dropped. The request is the handle, then the count. */
 void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count) noexcept
 {
-    if (count < 2) {
+    if (count < 3) {
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const written = words[1];
+    /* The offset word (words[1]) is dropped with the bytes: a null device has
+     * nowhere to put them. The count (words[2]) is what it reports as taken. */
+    uint64_t const written = words[2];
     port.reply_words(&written, 1);
 }
 

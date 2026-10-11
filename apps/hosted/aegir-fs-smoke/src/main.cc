@@ -280,7 +280,7 @@ int main(int argc, char *argv[])
                 volume.open(resolved.rest, resolved.rest_length,
                             aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate);
             bool const wrote = handle != 0 &&
-                               volume.write(handle, text, sizeof(text) - 1) &&
+                               volume.write(handle, 0, text, sizeof(text) - 1) &&
                                volume.close(handle);
             char buffer[sizeof(text)] = {};
             uint32_t const have = wrote ? read_prefix(volume, resolved.rest,

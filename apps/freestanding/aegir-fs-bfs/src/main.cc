@@ -420,8 +420,8 @@ constexpr uint8_t kHandleRead = 3;
 
 /* One open file or query. The serial is the handle the client names; it is
  * never reused. The badge is whose it is. A file's inode block is where the
- * writes land and its cursor is the byte offset; a query's text is what it
- * evaluates and its cursor is the block the scan resumes at. */
+ * writes land; a query's text is what it evaluates and its cursor is the block
+ * the scan resumes at. */
 struct Handle {
     uint64_t serial;
     uint64_t badge;
@@ -677,45 +677,46 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
                   uint64_t badge) noexcept
 {
     uint64_t written = 0;
-    if (count < 2) {
+    if (count < 3) {
         port.reply_words(&written, 1);
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    uint64_t const bytes = words[1];
+    uint64_t const offset = words[1];
+    uint64_t const bytes = words[2];
     aegir::bfs::Inode inode;
     if (handle == nullptr || handle->kind != kHandleFile ||
         !g_volume.read_inode(handle->inode_block, &inode) ||
         !permits(badge, inode, kPermWrite) || bytes > aegir::volume::kWriteMax ||
-        count < 2 + static_cast<uint32_t>((bytes + 7) / 8)) {
+        count < 3 + static_cast<uint32_t>((bytes + 7) / 8)) {
         port.reply_words(&written, 1);
         return;
     }
-    auto const *data = reinterpret_cast<uint8_t const *>(words + 2);
-    if (g_writer.write(handle->inode_block, handle->cursor, data,
+    auto const *data = reinterpret_cast<uint8_t const *>(words + 3);
+    if (g_writer.write(handle->inode_block, offset, data,
                        static_cast<uint32_t>(bytes), inode_time())) {
-        handle->cursor += bytes;
         written = bytes;
     }
     port.reply_words(&written, 1);
 }
 
-/* write-frame: read-frame's mirror (specs/vfs.md's scaling path). A handle, a
- * count and a frame offset, plus one capability -- the caller's own 4 KiB
- * frame, filled. */
+/* write-frame: read-frame's mirror (specs/vfs.md's scaling path). A handle, an
+ * offset, a count and a frame offset, plus one capability -- the caller's own
+ * 4 KiB frame, filled. */
 void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                         uint64_t badge, bool cap_arrived) noexcept
 {
     uint64_t written = 0;
-    if (count < 3 || !cap_arrived || !g_map_ready) {
+    if (count < 4 || !cap_arrived || !g_map_ready) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
         port.reply_words(&written, 1);
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    uint64_t wanted = words[1];
-    uint64_t const frame_offset = words[2];
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    uint64_t const frame_offset = words[3];
     aegir::bfs::Inode inode;
     if (handle == nullptr || handle->kind != kHandleFile ||
         frame_offset >= aegir::volume::kFrameBytes ||
@@ -738,12 +739,11 @@ void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t
         wanted = room;
     }
     auto const *data = reinterpret_cast<uint8_t const *>(g_map_base) + frame_offset;
-    bool const ok = wanted == 0 || g_writer.write(handle->inode_block, handle->cursor, data,
+    bool const ok = wanted == 0 || g_writer.write(handle->inode_block, offset, data,
                                                   static_cast<uint32_t>(wanted), inode_time());
     g_map_window.unmap(frame);
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
     if (ok) {
-        handle->cursor += wanted;
         written = wanted;
     }
     port.reply_words(&written, 1);

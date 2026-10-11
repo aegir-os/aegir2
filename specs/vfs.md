@@ -198,8 +198,9 @@ long name first and the 8.3 name second, ASCII-case-folded (specs/fat.md).
   (`specs/trinket/file_requester.md`).
 
 Writes are a different shape, because a usable userspace API is one: a
-program opens a file and then streams, and asking it to re-walk the path and
-name the offset on every call is an API nobody writes against twice. So the
+program opens a file and then streams, and asking it to re-walk the path on
+every call is an API nobody writes against twice. A write names its offset,
+as a read does — but not the path, which the open resolved. So the
 write side has **handles** — the only per-client state a filesystem holds:
 
 - **open** — words: path, mode flags (`read`, `create`, `truncate`). The walk
@@ -209,11 +210,11 @@ write side has **handles** — the only per-client state a filesystem holds:
   read-open is served by a read-only volume — that is the read side's whole
   point. A write-open with `truncate` frees the file's old chain at once: what
   the file was is gone the moment the open answers.
-- **write** — words: handle, inline bytes, bounded by the envelope like a
-  read's answer. The bytes land at the handle's cursor and the cursor
-  advances; a write that crosses the end of the file extends it. Reply: the
-  count written — less than asked is the refusal (a full volume, a broken
-  chain).
+- **write** — words: handle, offset, inline bytes, bounded by the envelope
+  like a read's answer. The bytes land at the offset the call names — the
+  volume keeps no cursor of its own — and a write that crosses the end of the
+  file extends it. Reply: the count written — less than asked is the refusal
+  (a full volume, a broken chain).
 - **close** — words: handle. Reply: 1, or 0 when the handle was not one.
   The row is freed; the handle's serial is never reused.
 - **mkdir** — words: a path. Creates the directory the path names, and
@@ -242,9 +243,9 @@ write side has **handles** — the only per-client state a filesystem holds:
 - **truncate** — words: a path and a size. The file's chain is cut to the
   size (the tail clusters freed) or grown to it (fresh zeroed clusters), and
   its slot's size is patched. Any handle already open on the file learns the
-  new size and has its cursor clamped, so a later write lands inside the file
-  the caller now has. Reply: 1, or 0 — not found, a directory, a read-only
-  volume, or a size past the format's 32-bit size field. This is what
+  new size, so a write at an offset inside it lands where the caller expects.
+  Reply: 1, or 0 — not found, a directory, a read-only volume, or a size past
+  the format's 32-bit size field. This is what
   `std::filesystem::resize_file` and `ftruncate` stand on (`specs/cxx.md`
   step 5); the runtime answers `truncate` through it and `ftruncate` through
   the fd's own path.

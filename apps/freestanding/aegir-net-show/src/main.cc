@@ -130,7 +130,7 @@ bool write_path(char const *path, uint32_t path_length, char const *value,
     bool ok = false;
     if (handle != 0) {
         uint64_t written = 0;
-        ok = volume.write(handle, value, value_length, &written) &&
+        ok = volume.write(handle, 0, value, value_length, &written) &&
              written == value_length;
         (void)volume.close(handle);
     }

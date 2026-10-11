@@ -13,9 +13,9 @@
  * is the whole reason the transport exists (specs/9p.md).
  *
  * A read path is stateless: walk from the attached root, open, read, clunk. A
- * write path is a handle -- the serial, its badge, the server fid and the
- * cursor -- held in a table retyped from the service's untyped, so a write
- * continues where the last one left off and a close or a reap clunks the fid.
+ * write path is a handle -- the serial, its badge and the server fid, each
+ * write naming its own offset -- held in a table retyped from the service's
+ * untyped, so a close or a reap clunks the fid.
  * The same core functions serve the volume port and the self-test, so what the
  * boot proves is what a command reaches.
  */
@@ -82,14 +82,13 @@ char g_child[aegir::nmspace::kPathMax + 256];
 
 /* The write side's handle table, retyped from the service's untyped and mapped
  * into our window: each row is one open file -- the serial the client names,
- * whose badge it is, the server fid, and the write cursor. The table's bound is
- * the grant, and reaching it is a refusal, never a quiet overwrite
+ * whose badge it is, and the server fid. The table's bound is the grant, and
+ * reaching it is a refusal, never a quiet overwrite
  * (specs/vfs.md). */
 struct Handle {
     uint64_t serial;
     uint64_t badge;
     uint32_t fid;
-    uint64_t cursor;
 };
 
 uint8_t *g_handles = nullptr;
@@ -126,7 +125,6 @@ Handle *handle_alloc(uint64_t badge) noexcept
             rows[i].serial = ++g_handle_serial;
             rows[i].badge = badge;
             rows[i].fid = 0;
-            rows[i].cursor = 0;
             return rows + i;
         }
     }
@@ -359,18 +357,17 @@ bool do_read_handle(uint64_t serial, uint64_t badge, uint64_t offset, uint32_t w
     return true;
 }
 
-uint32_t do_write(uint64_t serial, uint64_t badge, uint8_t const *bytes,
+uint32_t do_write(uint64_t serial, uint64_t badge, uint64_t offset, uint8_t const *bytes,
                   uint32_t count) noexcept
 {
     Handle *handle = handle_lookup(serial, badge);
     if (handle == nullptr) {
         return 0;
     }
-    int32_t const written = g_client.write(handle->fid, handle->cursor, bytes, count);
+    int32_t const written = g_client.write(handle->fid, offset, bytes, count);
     if (written <= 0) {
         return 0;
     }
-    handle->cursor += static_cast<uint64_t>(written);
     return static_cast<uint32_t>(written);
 }
 
@@ -778,24 +775,25 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     port.reply_words(&handle, 1);
 }
 
-/* write: a handle and the bytes packed after the count. */
+/* write: a handle, an offset and the bytes packed after the count. */
 void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                   uint64_t badge) noexcept
 {
-    if (count < 2) {
+    if (count < 3) {
         port.reply_words(nullptr, 0);
         return;
     }
     uint64_t const handle = words[0];
-    uint64_t const bytes_count = words[1];
+    uint64_t const offset = words[1];
+    uint64_t const bytes_count = words[2];
     if (bytes_count > aegir::volume::kWriteMax ||
-        count < 2 + (bytes_count + 7) / 8) {
+        count < 3 + (bytes_count + 7) / 8) {
         port.reply_words(nullptr, 0);
         return;
     }
-    auto const *bytes = reinterpret_cast<uint8_t const *>(words + 2);
+    auto const *bytes = reinterpret_cast<uint8_t const *>(words + 3);
     uint32_t const written =
-        do_write(handle, badge, bytes, static_cast<uint32_t>(bytes_count));
+        do_write(handle, badge, offset, bytes, static_cast<uint32_t>(bytes_count));
     uint64_t const answer[1] = {written};
     port.reply_words(answer, 1);
 }
@@ -1227,7 +1225,7 @@ int main(int argc, char *argv[])
                     aegir::volume::kOpenCreate | aegir::volume::kOpenTruncate, 0);
         uint32_t written = 0;
         if (handle != 0) {
-            written = do_write(handle, 0, reinterpret_cast<uint8_t const *>(kText),
+            written = do_write(handle, 0, 0, reinterpret_cast<uint8_t const *>(kText),
                                text_length);
             (void)do_close(handle, 0);
         }

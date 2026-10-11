@@ -297,19 +297,20 @@ uint64_t vol_open(seL4_CPtr port, char const *path, uint32_t path_length,
 }
 
 uint64_t vol_write(seL4_CPtr port, uint64_t handle, uint8_t const *bytes,
-                   uint32_t count) noexcept
+                   uint32_t count, uint64_t offset = 0) noexcept
 {
     aegir::ipc::Consumer volume(port);
-    uint64_t out[2 + aegir::volume::kWriteMax / 8];
+    uint64_t out[3 + aegir::volume::kWriteMax / 8];
     out[0] = handle;
-    out[1] = count;
-    auto *packed = reinterpret_cast<uint8_t *>(out + 2);
+    out[1] = offset;
+    out[2] = count;
+    auto *packed = reinterpret_cast<uint8_t *>(out + 3);
     for (uint32_t i = 0; i < count; ++i) {
         packed[i] = bytes[i];
     }
     uint64_t in[1];
     aegir::ipc::WordsReply const answer =
-        volume.call_words(aegir::volume::kMethodWrite, out, 2 + (count + 7) / 8, in, 1);
+        volume.call_words(aegir::volume::kMethodWrite, out, 3 + (count + 7) / 8, in, 1);
     if (answer.error != 0 || answer.count != 1) {
         return ~0ULL;
     }
@@ -1162,7 +1163,7 @@ int main(int argc, char *argv[])
             for (uint32_t i = 0; i < n; ++i) {
                 bytes[i] = pattern_at(off + i);
             }
-            ok = vol_write(bfs_write_volume, handle, bytes, n) == n;
+            ok = vol_write(bfs_write_volume, handle, bytes, n, off) == n;
             off += n;
         }
         ok = ok && vol_close(bfs_write_volume, handle) == 1;
@@ -1499,12 +1500,14 @@ int main(int argc, char *argv[])
             chunk[i] = pattern_at(kSpanChunk + i);
         }
         ok = ok &&
-             vol_write(bfs_write_volume, handle, chunk, kSpanChunk) == kSpanChunk;
+             vol_write(bfs_write_volume, handle, chunk, kSpanChunk, kSpanChunk) ==
+                 kSpanChunk;
         for (uint32_t i = 0; i < kSpanChunk; ++i) {
             chunk[i] = pattern_at(2 * kSpanChunk + i);
         }
         ok = ok &&
-             vol_write(bfs_write_volume, handle, chunk, kSpanChunk) == kSpanChunk &&
+             vol_write(bfs_write_volume, handle, chunk, kSpanChunk, 2 * kSpanChunk) ==
+                 kSpanChunk &&
              vol_close(bfs_write_volume, handle) == 1 &&
              read_and_check_pattern(bfs_write_volume, kSpanPath,
                                     sizeof(kSpanPath) - 1, 3 * kSpanChunk);
@@ -1797,7 +1800,8 @@ int main(int argc, char *argv[])
                 first[i] = pattern_at(i);
             }
             ok = vol_write(scratch_volume, handle, first, sizeof(first)) == sizeof(first) &&
-                 vol_write(scratch_volume, handle, bytes, sizeof(bytes)) == sizeof(bytes) &&
+                 vol_write(scratch_volume, handle, bytes, sizeof(bytes), sizeof(first)) ==
+                     sizeof(bytes) &&
                  vol_close(scratch_volume, handle) == 1;
         }
         if (!ok) {
@@ -2125,7 +2129,7 @@ int main(int argc, char *argv[])
         bool ok = handle != 0 &&
                   vol_write(scratch_volume, handle, bytes, sizeof(bytes)) ==
                       sizeof(bytes) &&
-                  vol_write(scratch_volume, handle, bytes, 300) == 300 &&
+                  vol_write(scratch_volume, handle, bytes, 300, sizeof(bytes)) == 300 &&
                   vol_close(scratch_volume, handle) == 1;
         ok = ok && vol_truncate(scratch_volume, kTrunc, sizeof(kTrunc) - 1, 300) == 1 &&
              read_and_check_pattern(scratch_volume, kTrunc, sizeof(kTrunc) - 1, 300);
@@ -2164,7 +2168,8 @@ int main(int argc, char *argv[])
                 first[i] = pattern_at(i);
             }
             ok = vol_write(f16_volume, handle, first, sizeof(first)) == sizeof(first) &&
-                 vol_write(f16_volume, handle, bytes, sizeof(bytes)) == sizeof(bytes) &&
+                 vol_write(f16_volume, handle, bytes, sizeof(bytes), sizeof(first)) ==
+                     sizeof(bytes) &&
                  vol_close(f16_volume, handle) == 1;
         }
         /* A subdirectory on FAT16: the fixed root gives the slot, the chain

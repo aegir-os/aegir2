@@ -1116,9 +1116,10 @@ void answer_open(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     port.reply_words(&handle, 1);
 }
 
-/* Append `bytes` of `data` at the handle's cursor, a sector at a time, and
- * update the dirent's size and first cluster. Returns how many bytes were
- * written. The inline write and the frame write share this. */
+/* Write `bytes` of `data` at the handle's cursor -- which the caller has set to
+ * the request's offset -- a sector at a time, and update the dirent's size and
+ * first cluster. Returns how many bytes were written. The inline write and the
+ * frame write share this. */
 uint64_t write_bytes(Handle *handle, uint8_t const *data, uint64_t bytes) noexcept
 {
     uint64_t written = 0;
@@ -1175,37 +1176,40 @@ void answer_write(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
                   uint64_t badge) noexcept
 {
     uint64_t written = 0;
-    if (count < 2) {
+    if (count < 3) {
         port.reply_words(&written, 1);
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    uint64_t const bytes = words[1];
+    uint64_t const offset = words[1];
+    uint64_t const bytes = words[2];
     if (handle == nullptr || handle->kind != kHandleFile ||
-        bytes > aegir::volume::kWriteMax || count < 2 + (bytes + 7) / 8) {
+        bytes > aegir::volume::kWriteMax || count < 3 + (bytes + 7) / 8) {
         port.reply_words(&written, 1);
         return;
     }
-    auto const *data = reinterpret_cast<uint8_t const *>(words + 2);
+    auto const *data = reinterpret_cast<uint8_t const *>(words + 3);
+    handle->cursor = offset;
     written = write_bytes(handle, data, bytes);
     port.reply_words(&written, 1);
 }
 
-/* write-frame: read-frame's mirror. A handle, a count and a frame offset, plus
- * one capability -- the caller's own 4 KiB frame, filled. */
+/* write-frame: read-frame's mirror. A handle, an offset, a count and a frame
+ * offset, plus one capability -- the caller's own 4 KiB frame, filled. */
 void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
                         uint64_t badge, bool cap_arrived) noexcept
 {
     uint64_t written = 0;
-    if (count < 3 || !cap_arrived || !g_map_ready) {
+    if (count < 4 || !cap_arrived || !g_map_ready) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
         port.reply_words(&written, 1);
         return;
     }
     Handle *handle = handle_lookup(words[0], badge);
-    uint64_t wanted = words[1];
-    uint64_t const frame_offset = words[2];
+    uint64_t const offset = words[1];
+    uint64_t wanted = words[2];
+    uint64_t const frame_offset = words[3];
     if (handle == nullptr || handle->kind != kHandleFile ||
         frame_offset >= aegir::volume::kFrameBytes) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
@@ -1224,6 +1228,7 @@ void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t
     if (wanted > room) {
         wanted = room;
     }
+    handle->cursor = offset;
     written = write_bytes(handle,
                           reinterpret_cast<uint8_t const *>(g_map_base) + frame_offset,
                           wanted);

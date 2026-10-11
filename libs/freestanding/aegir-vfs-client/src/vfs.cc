@@ -398,13 +398,13 @@ bool Volume::open_read(char const *path, uint32_t length, uint64_t &handle,
     return true;
 }
 
-bool Volume::write_frame(uint64_t handle, uint64_t capacity, uint64_t frame_offset,
-                         seL4_CPtr frame, uint64_t &count) noexcept
+bool Volume::write_frame(uint64_t handle, uint64_t offset, uint64_t capacity,
+                         uint64_t frame_offset, seL4_CPtr frame, uint64_t &count) noexcept
 {
     uint64_t const wanted = capacity < volume::kFrameBytes ? capacity : volume::kFrameBytes;
-    uint64_t request[3] = {handle, wanted, frame_offset};
+    uint64_t request[4] = {handle, offset, wanted, frame_offset};
     aegir::ipc::WordsReply const reply =
-        port_.call_transfer(volume::kMethodWriteFrame, request, 3, frame, reply_,
+        port_.call_transfer(volume::kMethodWriteFrame, request, 4, frame, reply_,
                             aegir::ipc::kMaxWords, nullptr);
     if (reply.error != 0 || reply.count < 1) {
         return false;
@@ -498,23 +498,24 @@ uint64_t Volume::open(char const *path, uint32_t length, uint64_t flags) noexcep
     return answer[0];
 }
 
-bool Volume::write(uint64_t handle, void const *bytes, uint32_t count,
+bool Volume::write(uint64_t handle, uint64_t offset, void const *bytes, uint32_t count,
                    uint64_t *written) noexcept
 {
     if (count > volume::kWriteMax) {
         return false;
     }
-    uint64_t request[2 + volume::kWriteMax / 8];
+    uint64_t request[3 + volume::kWriteMax / 8];
     request[0] = handle;
-    request[1] = count;
-    auto *packed = reinterpret_cast<uint8_t *>(request + 2);
+    request[1] = offset;
+    request[2] = count;
+    auto *packed = reinterpret_cast<uint8_t *>(request + 3);
     auto const *source = static_cast<uint8_t const *>(bytes);
     for (uint32_t i = 0; i < count; ++i) {
         packed[i] = source[i];
     }
     uint64_t answer[1];
     aegir::ipc::WordsReply const reply =
-        port_.call_words(volume::kMethodWrite, request, 2 + (count + 7) / 8, answer, 1);
+        port_.call_words(volume::kMethodWrite, request, 3 + (count + 7) / 8, answer, 1);
     if (reply.error != 0 || reply.count != 1) {
         return false;
     }

@@ -1735,12 +1735,12 @@ void union_read_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t 
  * The union handle names the member, whose own handle the union substitutes,
  * and the caller's filled frame capability rides through to the member the way
  * a read-frame's does -- so writing into a union destination (`Home:`) is one
- * call a page, not the several an inline write needs. Words: handle, count,
- * frame offset. */
+ * call a page, not the several an inline write needs. Words: handle, offset,
+ * count, frame offset. */
 void union_write_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
                        uint64_t const *words, uint32_t count, bool cap_arrived) noexcept
 {
-    if (count < 3 || !cap_arrived) {
+    if (count < 4 || !cap_arrived) {
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap, aegir::bootstrap::kCNodeBits);
         port.reply_words(nullptr, 0);
@@ -1756,10 +1756,10 @@ void union_write_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const payload[3] = {row->member_handle, words[1], words[2]};
+    uint64_t const payload[4] = {row->member_handle, words[1], words[2], words[3]};
     uint64_t answer[aegir::ipc::kMaxWords];
     uint32_t const reply_count =
-        member_transfer_call(member, badge, aegir::volume::kMethodWriteFrame, payload, 3,
+        member_transfer_call(member, badge, aegir::volume::kMethodWriteFrame, payload, 4,
                              g_carry_slot, answer, aegir::ipc::kMaxWords);
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, g_carry_slot,
                       aegir::bootstrap::kCNodeBits);
@@ -1771,12 +1771,12 @@ void union_write_frame(aegir::ipc::Owner &port, Binding const *binding, uint64_t
 }
 
 /* write, forwarded: the union handle names the member, whose own handle the
- * union substitutes before the call; the client's count and bytes are
+ * union substitutes before the call; the client's offset, count and bytes are
  * unchanged. */
 void union_write(aegir::ipc::Owner &port, Binding const *binding, uint64_t badge,
                  uint64_t const *words, uint32_t count) noexcept
 {
-    if (count < 2) {
+    if (count < 3) {
         port.reply_words(nullptr, 0);
         return;
     }

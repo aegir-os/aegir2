@@ -70,19 +70,20 @@ uint64_t vol_open(seL4_CPtr port, char const *path, uint32_t path_length,
 }
 
 uint64_t vol_write(seL4_CPtr port, uint64_t handle, uint8_t const *bytes,
-                   uint32_t count) noexcept
+                   uint32_t count, uint64_t offset = 0) noexcept
 {
     aegir::ipc::Consumer volume(port);
-    uint64_t out[2 + aegir::volume::kWriteMax / 8];
+    uint64_t out[3 + aegir::volume::kWriteMax / 8];
     out[0] = handle;
-    out[1] = count;
-    auto *packed = reinterpret_cast<uint8_t *>(out + 2);
+    out[1] = offset;
+    out[2] = count;
+    auto *packed = reinterpret_cast<uint8_t *>(out + 3);
     for (uint32_t i = 0; i < count; ++i) {
         packed[i] = bytes[i];
     }
     uint64_t in[1];
     aegir::ipc::WordsReply const answer =
-        volume.call_words(aegir::volume::kMethodWrite, out, 2 + (count + 7) / 8, in, 1);
+        volume.call_words(aegir::volume::kMethodWrite, out, 3 + (count + 7) / 8, in, 1);
     if (answer.error != 0 || answer.count != 1) {
         return 0;
     }
