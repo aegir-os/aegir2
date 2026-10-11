@@ -69,10 +69,20 @@ bool adopt_memory() noexcept
         return false;
     }
     uint64_t const first_free = first_free_slot();
-    g_objects.adopt_slots(static_cast<seL4_CPtr>(first_free),
-                          (1u << aegir::bootstrap::kCNodeBits) -
-                              static_cast<uint32_t>(first_free),
-                          0, aegir::bootstrap::kCNodeBits);
+    /* Two-level when the block gave this command a level one: its plain slots
+     * live in the L2 CNode at its root slot 0 (specs/memory.md's "Growing the
+     * CSpace on demand"), and a flat range would put the retypes in root slots
+     * -- the caps land where nothing looks for them. */
+    uint32_t const l2 = aegir::bootstrap::cnode_bits();
+    uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
+    if (l1 != 0) {
+        g_objects.adopt_slots_level_two(static_cast<seL4_CPtr>(first_free),
+                                        (1u << l2) - static_cast<uint32_t>(first_free), l1, l2,
+                                        0);
+    } else {
+        g_objects.adopt_slots(static_cast<seL4_CPtr>(first_free),
+                              (1u << l2) - static_cast<uint32_t>(first_free), 0, l2);
+    }
     return g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                            static_cast<uintptr_t>(window_base),
                            static_cast<uintptr_t>(window_base + window_bytes), &g_objects);
@@ -217,8 +227,8 @@ int main(int argc, char *argv[])
     seL4_CPtr const window_cap = g_objects.alloc_slot();
     if (frame == 0 || window_cap == 0 ||
         seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, window_cap,
-                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
-                        frame, aegir::bootstrap::kCNodeBits,
+                        aegir::bootstrap::endpoint_depth(), aegir::bootstrap::kSlotOwnCNode,
+                        frame, aegir::bootstrap::endpoint_depth(),
                         seL4_AllRights) != seL4_NoError) {
         write_line("FAIL", "tcpbulk: the window would not be carved");
         finish(1);

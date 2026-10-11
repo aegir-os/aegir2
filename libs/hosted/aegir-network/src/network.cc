@@ -86,8 +86,8 @@ bool ensure_window() noexcept
     seL4_CPtr const copy = g_window_allocator->alloc_slot();
     if (frame == 0 || copy == 0 ||
         seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, copy,
-                        aegir::bootstrap::kCNodeBits, aegir::bootstrap::kSlotOwnCNode,
-                        frame, aegir::bootstrap::kCNodeBits,
+                        aegir::bootstrap::endpoint_depth(), aegir::bootstrap::kSlotOwnCNode,
+                        frame, aegir::bootstrap::endpoint_depth(),
                         seL4_AllRights) != seL4_NoError) {
         return false;
     }

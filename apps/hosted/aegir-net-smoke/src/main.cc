@@ -70,8 +70,18 @@ bool adopt_memory()
               g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
                                       untyped_physical);
     if (ok) {
-        g_objects.adopt_slots(first_free, (1u << aegir::bootstrap::kCNodeBits) - first_free, 0,
-                              aegir::bootstrap::kCNodeBits);
+        /* Two-level when the block gave this command a level one: its plain
+         * slots live in the L2 CNode at root slot 0, not in a flat range
+         * (specs/memory.md's "Growing the CSpace on demand"). Measured: the
+         * flat form made netsmoke invoke a null cap -- the retype destination is
+         * derived from the slot, so the caps landed in root slots instead. */
+        uint32_t const l2 = aegir::bootstrap::cnode_bits();
+        uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
+        if (l1 != 0) {
+            g_objects.adopt_slots_level_two(first_free, (1u << l2) - first_free, l1, l2, 0);
+        } else {
+            g_objects.adopt_slots(first_free, (1u << l2) - first_free, 0, l2);
+        }
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),
                              static_cast<uintptr_t>(window_base + window_bytes), &g_objects);
