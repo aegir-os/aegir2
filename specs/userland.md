@@ -237,6 +237,20 @@ lives as long as the system does, and still the wrong amount for three things:
   dies of `std::bad_alloc` however well its CSpace grows, because returning is what is
   missing, not growing. It is the reason a command can be given a two-level CSpace, grow it
   correctly, and still fill up: growth is bounded by nothing, and so is the fill.
+  **Measured again with the refusal's numbers in the log (`page-slot-refused`):**
+  `code 6 slots 3046 of 3045 cursor 3073 can-grow no pool no l1 0 l2 13` -- the linking
+  command's CSpace is *single-level* (`l1 0`), so `slots_can_grow()` is false and growth was
+  never reachable; the range is spent; and no slot pool owns it, so nothing recycles either.
+  The cursors and the count are already printed; the pool is not.
+  **Decided (user, this arc): reclamation first.** The heap is where the fix lands, because
+  it already has the data: the chunk records every frame it maps (`chunk->frames`, heap.cc),
+  and the allocator's cursor can be named before a run is mapped (`Allocator::slot_mark`).
+  So a mapping records the mark it began at, and a release deletes the frames' caps
+  (`seL4_CNode_Delete` at `endpoint_depth()`) and calls `Allocator::slot_release(mark)`,
+  which rewinds the cursor over exactly those slots. The scattered case -- slots a run does
+  not sit on top of -- is what a `SlotPool` is for, and the pool's adoption has precedent
+  (`aegir-memory`, and the spawner's pool for departing children, `service_kit.cc`); that
+  comes second, since LIFO map/unmap is what `mallocng`'s churn actually does.
 - **a service that restarts another.** `restart = always` is in the manifest and means
   nothing until the supervisor can hand a dead service's *slots* back rather than leaking
   them one restart at a time -- its memory already comes back through `mem.main`, so the
