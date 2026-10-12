@@ -197,29 +197,42 @@ uint32_t Owner::receive_words(uint64_t *words, uint32_t capacity, uint32_t *coun
         *count = arrived;
     }
     uint32_t const method = length > kMethodMr ? seL4_GetMR(kMethodMr) : 0;
-    /* One line per *distinct* caller-and-method pair, and only for a **user**
-     * badge's calls: a service's own chatter is not what a stuck acceptance is
-     * about, and it is what buried the two probes before this one. Measured:
-     * with the badge filter absent the run printed 14 528 of these, almost all
-     * service-to-service; and the linker's own 31 calls to the memory service
-     * printed *nothing*, because "the pair changed" only remembers the last pair
-     * and its call always followed the same other caller. A user caller's pairs
-     * are few, so a change-only gate is safe for them. */
-    static uint64_t seen_from = 0;
-    static uint32_t seen_method = 0;
-    if (aegir::ipc::is_user_badge(sender) &&
-        (sender != seen_from || method != seen_method)) {
-        seen_from = sender;
-        seen_method = method;
-        uint64_t owner = 0;
-        static_cast<void>(bootstrap::badge(&owner));
-        aegir::debug_write("      ipc: recv method ");
-        aegir::debug_write_unsigned(method);
-        aegir::debug_write(" at ");
-        aegir::debug_write_unsigned(owner);
-        aegir::debug_write(" from ");
-        aegir::debug_write_unsigned(sender);
-        aegir::debug_write("\n");
+    /* Which caller-and-method pairs this service has already said out loud -- a
+     * *window*, not one remembered pair and not the whole history. Both of those
+     * failed measurably: a print per call buried the console (2.6 M lines, and
+     * the guest stopped reaching the link), and a single remembered pair hid the
+     * linker entirely -- all 31 of its asks to `mem.main` were consecutive, so
+     * only the first was "a change". The window's size decides only how much
+     * *repetition* is suppressed: the first sight of any pair always prints, so a
+     * caller that repeats after other traffic re-enters it and is seen. Only a
+     * user badge's calls, because a service's own chatter is not what a stuck
+     * acceptance is about. */
+    constexpr uint32_t kWindow = 8;
+    static uint64_t seen_from[kWindow] = {};
+    static uint32_t seen_method[kWindow] = {};
+    static uint32_t seen_next = 0;
+    if (aegir::ipc::is_user_badge(sender)) {
+        bool known = false;
+        for (uint32_t i = 0; i < kWindow; ++i) {
+            if (seen_from[i] == sender && seen_method[i] == method) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            seen_from[seen_next] = sender;
+            seen_method[seen_next] = method;
+            seen_next = (seen_next + 1) % kWindow;
+            uint64_t owner = 0;
+            static_cast<void>(bootstrap::badge(&owner));
+            aegir::debug_write("      ipc: recv method ");
+            aegir::debug_write_unsigned(method);
+            aegir::debug_write(" at ");
+            aegir::debug_write_unsigned(owner);
+            aegir::debug_write(" from ");
+            aegir::debug_write_unsigned(sender);
+            aegir::debug_write("\n");
+        }
     }
     return method;
 }
