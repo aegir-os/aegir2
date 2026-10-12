@@ -1175,6 +1175,43 @@ long sys_munmap(void *addr, size_t length) noexcept
         trace("munmap-refused", base, bytes);
         return -EINVAL;
     }
+    /* And the *slots* go back with the memory. This is the piece `specs/userland.md`
+     * calls the wall: `mallocng` maps and unmaps as it grows and shrinks a heap, and
+     * until now a release gave back the memory and none of the slots, so a CSpace
+     * sized at spawn filled up however well it could grow -- measured at the link,
+     * `page-slot-refused code 6 slots 3046 of 3045 cursor 3073 can-grow no pool no
+     * l1 0 l2 13`: a single-level CSpace, spent, with nothing to recycle.
+     *
+     * The frames are what a mapping spends -- one slot per page, and 25 600 of them
+     * for a compiler's input -- and the chunk already records every one of them, so
+     * the release walks the same lookup `mprotect` does. Deleting the capability empties
+     * the slot (`endpoint_depth()` is the depth this CSpace's own CNode cap is at, the
+     * same as `map_page` uses when it retypes into one), and `slot_release(lowest)`
+     * hand the cursor back the slots when the run's frames are the ones it took last --
+     * which is LIFO map/unmap, the shape a churning allocator actually has. The
+     * scattered case is for a `SlotPool`, and that comes second. */
+    seL4_CPtr lowest = 0;
+    for (uintptr_t offset = 0; offset < bytes; offset += kPageBytes) {
+        uintptr_t const address = base + offset;
+        if (address < g_scratch->base() || address >= g_scratch->limit()) {
+            continue;
+        }
+        uint32_t const index = static_cast<uint32_t>((limit_ - address) / kPageBytes);
+        FrameChunk *const chunk = frame_chunk(index, false);
+        if (chunk == nullptr || chunk->frames[index - chunk->first] == 0) {
+            continue;
+        }
+        seL4_CPtr const frame = chunk->frames[index - chunk->first];
+        chunk->frames[index - chunk->first] = 0;
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
+                          aegir::bootstrap::endpoint_depth());
+        if (lowest == 0 || frame < lowest) {
+            lowest = frame;
+        }
+    }
+    if (lowest != 0) {
+        g_allocator->slot_release(lowest);
+    }
     /* And back to the window: `Scratch::release` takes the run when it ends at the
      * reservation cursor and does nothing otherwise -- the space is in the heap's list
      * either way, so a run that is not adjacent is handed out again rather than lost
