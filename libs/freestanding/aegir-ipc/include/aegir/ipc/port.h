@@ -39,6 +39,7 @@
 
 #include <stdint.h>
 
+#include <aegir/debug.h>
 #include <aegir/ipc/badge.h>
 
 extern "C" {

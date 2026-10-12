@@ -1914,6 +1914,17 @@ long vsyscall(long sysnum, ...) noexcept
         break;
     }
     va_end(ap);
+    /* The exit side of the trace. In one line: a program that stops after
+     * `heap: mmap` cannot be told from one inside that call, because the trace
+     * names every call on its way in and nothing on its way out -- and a wedge
+     * is a call that never returns, which is an absence, and an absence is not
+     * attributable. `trace_syscall` names the call at the entry; this names it at
+     * the exit, and together they say which call the program is *in*. */
+    if (char const *const done = syscall_name(sysnum)) {
+        aegir::debug_write("      heap: done ");
+        aegir::debug_write(done);
+        aegir::debug_write("\n");
+    }
     return ret;
 }
 
