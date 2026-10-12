@@ -165,6 +165,34 @@ Owner Owner::find(char const *name, uint32_t length) noexcept
 uint32_t Owner::receive(uint64_t *word, seL4_Word *badge) noexcept
 {
     seL4_Word sender = 0;
+    /* A wait *and* its return, because one without the other is the difference
+     * between a service doing its job and a service that has stopped. Measured
+     * both ways: a bare entry print made the logger -- which waits between every
+     * record -- the busiest line in the log and told us nothing about who was
+     * stuck; and the run ends with the console frozen and host CPU at zero, which
+     * a *returning* waiter never causes. So the last line of a dead run has to be
+     * an unmatched `wait`, and the culprit is whoever owns it. Only the first
+     * sight of each (event, owner, method) triple prints, so an idling service is
+     * one line and a new waiter is news -- the same window as the caller probe. */
+    constexpr uint32_t kWindow = 8;
+    static uint64_t seen_owner[kWindow] = {};
+    static uint32_t seen_next = 0;
+    uint64_t owner = 0;
+    static_cast<void>(bootstrap::badge(&owner));
+    bool known = false;
+    for (uint32_t i = 0; i < kWindow; ++i) {
+        if (seen_owner[i] == owner) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) {
+        seen_owner[seen_next] = owner == 0 ? 1 : owner;
+        seen_next = (seen_next + 1) % kWindow;
+        aegir::debug_write("      ipc: wait at ");
+        aegir::debug_write_unsigned(owner);
+        aegir::debug_write("\n");
+    }
     seL4_MessageInfo_t const info = seL4_Recv(capability_, &sender);
     if (badge != nullptr) {
         *badge = sender;
