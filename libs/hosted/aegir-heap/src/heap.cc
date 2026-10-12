@@ -954,6 +954,14 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
             return -ENOMEM;
         }
         base = reserved;
+        /* Which side of `reserve` the call died on. The entry trace shows the
+         * call and nothing else: no `mmap-reused` (so this is the reserve path),
+         * no `mmap-mega`, no refusal -- and the page loops carry no marker of
+         * their own, so the last call in a dead run cannot be told from one that
+         * stopped in the reserve. This one line splits it: `mmap-reserved` and
+         * silence after it means the stall is in the page mapping, silence
+         * without it means the window cursor never came back. */
+        trace_phase("mmap-reserved");
         /* A file-backed run is filled with the file's bytes and then read by whatever asked
          * for it. A compiler's input -- a hundred megabytes of it -- was 25,600 frame retypes
          * and 25,600 mappings here, one page at a time, which is where a linker's minutes went
