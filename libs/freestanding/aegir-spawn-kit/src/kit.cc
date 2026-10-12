@@ -234,6 +234,15 @@ uint32_t launcher_ports(Kit const &kit, Child const &child, PortGrant *out, uint
     }
     (void)put(out, capacity, n++, "spawn:mem.main", 14, kit.mem_main,
               seL4_CapRights_new(1, 1, 0, 1), 0, 0, false, false);
+    /* Its *own* `mem.main`, badged with the child's id: a launcher's heap grows
+     * through it, as a command's does. Without it the child had only the
+     * unbadged `spawn:mem.main` source it mints its own children from, while
+     * `runtime_untyped_source` looks for the name `mem.main` -- so a session
+     * terminal's 4 MiB seed was its ceiling and it died of `page-no-piece`
+     * (specs/memory.md). Granted here rather than appended by hand at each
+     * launcher-shaped spawn, which is how `spawn_launcher` alone had it. */
+    (void)put(out, capacity, n++, aegir::memory::kPortName, aegir::memory::kPortNameLength,
+              kit.mem_main, seL4_CapRights_new(1, 1, 0, 1), child.badge, 0, false, false);
     (void)put(out, capacity, n++, "asid-pool", 9, kit.asid_pool, seL4_AllRights, 0, 0,
               false, false);
     (void)put(out, capacity, n++, "spawn:log.main", 14, kit.log,

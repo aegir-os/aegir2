@@ -738,7 +738,7 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     /* The nested terminal's account, named once: its staging and its break
      * source are charged to this process's own badge (specs/auth.md). */
     aegir::mem::Account account{"terminal", 0, 0, 0};
-    /* launcher_ports fills up to 16 grants and a nested terminal appends its
+    /* launcher_ports fills up to 17 grants and a nested terminal appends its
      * launch half; size past both. */
     aegir::spawn::PortGrant ports[24];
     uint32_t port_count = aegir::spawn::launcher_ports(kit_, child, ports, 24);

@@ -956,11 +956,8 @@ bool spawn_launcher(aegir::mem::Allocator &mem, aegir::mem::Account &account,
                     aegir::bootstrap::kSlotFirstDeclared + count, launch_port,
                     seL4_CapRights_new(1, 1, 0, 1), 0, 0};
     ++count;
-    /* Its own badged mem.main: its heap grows through it, as a command's does. */
-    ports[count] = {aegir::memory::kPortName, aegir::memory::kPortNameLength,
-                    aegir::bootstrap::kSlotFirstDeclared + count, kit.mem_main,
-                    seL4_CapRights_new(1, 1, 0, 1), spec.badge, 0};
-    ++count;
+    /* Its own badged mem.main is granted by `launcher_ports` now, in the one
+     * place the port layout is decided. */
     /* The bureau.menu *source* (specs/workbench.md): the launcher mints each of
      * its commands a caller half from it, so a launched program can register
      * the menus the screen bar shows while it is active -- the Workbench model,
@@ -1629,7 +1626,7 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
             }
         }
         child.launcher = true;
-        count = aegir::spawn::launcher_ports(kit, child, ports, 16);
+        count = aegir::spawn::launcher_ports(kit, child, ports, 22);
         ports[count] = {aegir::launch::kPortName, aegir::launch::kPortNameLength,
                         aegir::bootstrap::kSlotFirstDeclared + count, launch_port,
                         seL4_CapRights_new(1, 1, 0, 1), badge, 0};
