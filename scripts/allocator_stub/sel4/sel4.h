@@ -154,6 +154,14 @@ inline unsigned g_collisions = 0;
 inline unsigned g_invalid = 0;
 inline bool g_log = false;
 
+/** Whether the model holds a live cap at `cap` (an encoded L2 slot, or a kernel
+ *  root cap the model handed out). Tests use it to check a cap an allocator
+ *  returned is real. */
+inline bool valid_cap(seL4_CPtr cap)
+{
+    return cap < kMaxCaps && g_caps[cap].valid;
+}
+
 inline seL4_CPtr take_root()
 {
     return g_next_root++;
@@ -345,9 +353,19 @@ inline seL4_Error seL4_Untyped_Retype(seL4_CPtr service, seL4_Word type,
                                       seL4_Word node_offset, seL4_Word num_objects)
 {
     static_cast<void>(root);
-    static_cast<void>(num_objects);
-    return host_sel4::untyped_retype(service, type, size_bits, node_index, node_depth,
-                                     node_offset);
+    /* The kernel fills `num_objects` consecutive destination slots, consuming
+     * that many objects from the untyped (kernel/src/object/untyped.c). A run is
+     * exactly this, so the model must too, or `alloc_pages_run` looks like one
+     * frame. */
+    seL4_Error result = seL4_NoError;
+    for (seL4_Word i = 0; i < num_objects; ++i) {
+        result = host_sel4::untyped_retype(service, type, size_bits, node_index,
+                                           node_depth, node_offset + i);
+        if (result != seL4_NoError) {
+            return result;
+        }
+    }
+    return result;
 }
 
 inline seL4_Error seL4_CNode_Delete(seL4_CPtr node, seL4_CPtr cap, seL4_Word depth)

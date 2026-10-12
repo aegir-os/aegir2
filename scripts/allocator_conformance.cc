@@ -529,6 +529,73 @@ bool freed_slot_is_reused_holds()
     return c == a;
 }
 
+/* A child's spawn (specs/authority.md; aegir-spawn's process.cc and
+ * child_vspace.cc): the image is one run of consecutive frames taken from a
+ * single piece, and the child's own objects -- a root CNode, an L2 CNode, a TCB,
+ * a notification, an endpoint -- are distinct capabilities in the same CSpace.
+ * The run's frames must be consecutive and go back whole, and no object may land
+ * on the run's slots. This is the use every process makes, and it is the run
+ * path the suite did not touch. */
+bool child_spawn_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(4, 12);
+    g_chunks = 0;
+    g_chunk_bits = 22;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const seed = host_sel4::make_root_untyped(26);
+    if (!allocator.adopt_untyped(seed, 26, 0)) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+    allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
+    alignas(64) static unsigned char pool[1 << 16];
+    static NodeWindow window;
+    window = NodeWindow{&allocator, pool, sizeof(pool), 0};
+    allocator.set_node_source(plain_nodes, &window);
+
+    unsigned const before_collisions = host_sel4::collisions();
+    seL4_Error error = seL4_NoError;
+    void *cookie = nullptr;
+
+    seL4_CPtr objs[5];
+    objs[0] = allocator.alloc_object(seL4_CapTableObject, 8, g_account, &error, &cookie);
+    objs[1] = allocator.alloc_object(seL4_CapTableObject, 12, g_account, &error, &cookie);
+    objs[2] = allocator.alloc_object(seL4_TCBObject, 10, g_account, &error, &cookie);
+    objs[3] = allocator.alloc_object(seL4_NotificationObject, 5, g_account, &error, &cookie);
+    objs[4] = allocator.alloc_object(seL4_EndpointObject, 4, g_account, &error, &cookie);
+    for (seL4_CPtr const cap : objs) {
+        if (cap == 0 || !host_sel4::valid_cap(cap)) {
+            return false;
+        }
+    }
+    for (unsigned i = 0; i < 5; ++i) {
+        for (unsigned j = i + 1; j < 5; ++j) {
+            if (objs[i] == objs[j]) {
+                return false; /* one object overwrote another */
+            }
+        }
+    }
+
+    void *run_cookie = nullptr;
+    seL4_CPtr const first = allocator.alloc_pages_run(8, g_account, &error, &run_cookie);
+    if (first == 0) {
+        return false;
+    }
+    /* The image's frames are consecutive capabilities... */
+    for (seL4_Word i = 0; i < 8; ++i) {
+        if (!host_sel4::valid_cap(first + i)) {
+            return false;
+        }
+    }
+    /* ...and the run is one piece, so giving it back returns it whole. */
+    if (!allocator.free_object(run_cookie, seL4_PageBits + 3)) {
+        return false;
+    }
+    return host_sel4::collisions() == before_collisions;
+}
+
 }  // namespace
 
 int main()
@@ -562,6 +629,9 @@ int main()
            "a deep split triggers growth instead of failing for slots");
 
     expect(freed_slot_is_reused_holds(), "a freed slot is handed out again before the cursor moves");
+
+    /* The use every process makes: an image run and the child's own objects. */
+    expect(child_spawn_holds(), "a child's image run and its objects are distinct and the run goes back whole");
 
     host_sel4::reset();
 
