@@ -756,6 +756,29 @@ def development_tree(build_dir: Path) -> Path:
             check=True)
         shutil.rmtree(members)
 
+    # `pthread`, because the runtimes build records it as a dependent library
+    # (scripts/build_libcxx.sh:11 links musl's pthread) and musl keeps the pthread
+    # objects *inside* libc.a, so the name resolved to nothing. Measured at the link:
+    #   ld.lld: error: Sys:Development/Libs/sysroot.a(libunwind__libunwind.cpp.o):
+    #   unable to find library from dependent library specifier: pthread
+    # So the name gets a file of its own -- libc.a's pthread members, extracted by
+    # name -- which is what `-lpthread` means on a libc that bundles it. Only those
+    # members: a copy of the whole archive would double the sysroot's 46 MB for a
+    # name that is answered by a fraction of it (specs/development.md).
+    musl_libc = runtime / "musl-install" / "lib" / "libc.a"
+    if llvm_ar is not None and musl_libc.is_file():
+        listed = subprocess.run([llvm_ar, "t", str(musl_libc)],
+                                capture_output=True, text=True, check=True).stdout
+        wanted = [m for m in sorted(listed.split()) if "pthread" in m]
+        if wanted:
+            alone = libs / "pthread-members"
+            alone.mkdir()
+            subprocess.run([llvm_ar, "x", str(musl_libc), *wanted], cwd=alone,
+                           check=True)
+            subprocess.run([llvm_ar, "rcs", str(libs / "libpthread.a"),
+                            *sorted(alone.iterdir())], check=True)
+            shutil.rmtree(alone)
+
     for name in ("crt0.o", "crti.o", "crtn.o"):
         shutil.copy2(build_dir / "lib" / name, libs / name)
     shutil.copy2(build_dir / "aegir-eh-frame.lds", libs / "aegir-eh-frame.lds")
