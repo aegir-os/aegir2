@@ -580,6 +580,9 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
                                                          : aegir::memory::kChunkBits);
+    aegir::debug_write("      heap: chunk-got ");
+    aegir::debug_write_unsigned(*size_bits);
+    aegir::debug_write(" bits\n");
     *paddr = 0;
     return slot;
 }
