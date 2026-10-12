@@ -159,3 +159,25 @@
   source re-entrancy plus a CSpace filling with mapping slots). The numbers of the first rule
   are what make that one line instead of one night; the second half is to state the wall in
   the commit that fixes it, so a returning symptom is not re-litigated from scratch.
+- **A print is an IPC, and never inside a message-setup window.** `debug_write` in a hosted
+  program goes out through the console port -- a `Consumer::call_transfer` -- so a print placed
+  *inside* `call_transfer`, between the message registers being written and the `seL4_Call`
+  that sends them, sends the log message instead of the caller's. Measured, and it was a
+  *probe* that did it: 10 583 `vfs: Initrd:users.db: no such volume` lines in a 29-second run,
+  the guest at 115% CPU, and the VFS reporting that files it had were missing because every
+  request arrived with a corrupted payload. Print where the payload does not yet exist -- the
+  receive side has already returned its message, the top of a call is before its registers --
+  or not at all. A diagnostic that changes what it measures is worse than no diagnostic.
+- **A probe must be bounded and complete at once, and the key decides which.** Entry per call
+  printed 2.6 M lines and slowed the guest until the run timed out, so the probe became the
+  thing under test; "the pair changed" printed once and hid the thirty-one calls that mattered;
+  a window of pairs prints 345 lines and misses nothing that is new. The key is what counts as
+  news -- the `(caller, method)` pair for a caller probe, the owner for a waiter -- and a
+  user-badge filter that hides a service hides exactly the service that stopped.
+- **Idle CPU and a silent log are one signal, and the harness should record both.** A guest with
+  no output is indistinguishable from a guest that has finished, and that difference is the
+  whole answer: measured, the console stopped at line 33 901 and the QEMU process accumulated
+  0.00 s of CPU for the next two minutes while the runner waited out its cue timeout, so "the
+  link never finishes" and "the machine stopped" looked identical in the log alone. Sample the
+  guest's CPU beside the console position every few seconds and carry both into the run's
+  verdict, so neither a person nor an agent has to have been watching `ps` at the right moment.
