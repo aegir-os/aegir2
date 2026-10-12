@@ -1641,11 +1641,50 @@ long vsyscall(long sysnum, ...) noexcept
     case 214: /* SYS_brk */
         ret = sys_brk(static_cast<uintptr_t>(va_arg(ap, unsigned long)));
         break;
-    case 222: /* SYS_mmap */
-        ret = sys_mmap(va_arg(ap, void *), va_arg(ap, size_t),
-                       va_arg(ap, int), va_arg(ap, int), va_arg(ap, int),
-                       va_arg(ap, off_t));
+    case 222: /* SYS_mmap */ {
+        /* Thrash, named. A workload that releases a mapping and immediately asks
+         * for the same length again gets the same address back, and a run that
+         * goes quiet has exactly that shape in its last lines: 989 lines of
+         * paired `heap: mmap` / `heap: done mmap` / `munmap` / `done munmap` with
+         * no IPC in any of them, ending mid-pair. So "the guest went idle" is
+         * really "this process is re-making the same region, over and over", and
+         * a bare count of mmaps cannot tell churn from growth -- hence an address
+         * *and* a length, and this process's own badge, the way `chunk-got`
+         * carries it. Printed at 8 repeats and on every doubling after that: the
+         * shape of the churn is the point, not each of its turns. */
+        void *const addr = va_arg(ap, void *);
+        size_t const length = va_arg(ap, size_t);
+        int const prot = va_arg(ap, int);
+        int const flags = va_arg(ap, int);
+        int const fd = va_arg(ap, int);
+        off_t const offset = va_arg(ap, off_t);
+        static uintptr_t last_at = 0;
+        static uint64_t last_length = 0;
+        static uint64_t repeats = 0;
+        ret = sys_mmap(addr, length, prot, flags, fd, offset);
+        if (ret > 0 && static_cast<uintptr_t>(ret) == last_at &&
+            static_cast<uint64_t>(length) == last_length) {
+            ++repeats;
+            if (repeats == 8 || (repeats & (repeats - 1)) == 0) {
+                uint64_t owner = 0;
+                static_cast<void>(aegir::bootstrap::badge(&owner));
+                aegir::debug_write("      heap: thrash ");
+                aegir::debug_write_unsigned(static_cast<uint64_t>(length));
+                aegir::debug_write(" bytes at ");
+                aegir::debug_write_unsigned(static_cast<uint64_t>(ret));
+                aegir::debug_write(" x");
+                aegir::debug_write_unsigned(repeats);
+                aegir::debug_write(" from ");
+                aegir::debug_write_unsigned(owner);
+                aegir::debug_write("\n");
+            }
+        } else {
+            last_at = static_cast<uintptr_t>(ret);
+            last_length = static_cast<uint64_t>(length);
+            repeats = 1;
+        }
         break;
+    }
     case 226: /* SYS_mprotect */
         ret = sys_mprotect(va_arg(ap, void *), va_arg(ap, size_t), va_arg(ap, int));
         break;
