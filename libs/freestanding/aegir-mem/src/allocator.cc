@@ -207,7 +207,13 @@ void Allocator::unlink(Node *node) noexcept
  * as it always was. */
 bool Allocator::grow_slots() noexcept
 {
-    if (level_two_bits_ == 0 || !slots_may_grow_) {
+    /* One growth at a time. The growth's own allocations -- the node source's
+     * frame and page tables -- come back through `alloc_slot`, which grows when
+     * the cursor is spent; without this guard two nested growths both choose the
+     * same root slot and the second retypes onto the first (the stub's
+     * `collision`; the kernel's "destination slot is occupied"). The nested
+     * caller then falls back to the reserve the caller-side `alloc_slot` keeps. */
+    if (level_two_bits_ == 0 || !slots_may_grow_ || growing_slots_) {
         return false;
     }
     /* Only at a CNode boundary. A run that ends mid-CNode is a spawner's
@@ -219,14 +225,49 @@ bool Allocator::grow_slots() noexcept
     if ((slots_end_ & mask) != 0) {
         return false;
     }
+    /* The first level-one slot above every CNode in use: the allocator's own
+     * growth and a spawner's command CNodes both retype through
+     * `alloc_cnode_at_l1`, which records the slot, so a growth cannot land on a
+     * command's CNode. `slots_end_ >> l2` is where this allocator's run ends;
+     * `level_one_high_` may be higher because a spawner took the slots above it
+     * (a terminal's heap and its shell share level one). */
+    seL4_Word l1_slot = static_cast<seL4_Word>(slots_end_) >> level_two_bits_;
+    if (l1_slot < level_one_high_) {
+        l1_slot = level_one_high_;
+    }
     Account account{"cspace", 0, 0, 0};
     seL4_Error error = seL4_NoError;
-    seL4_Word const l1_slot = static_cast<seL4_Word>(slots_end_) >> level_two_bits_;
-    if (alloc_cnode_at_l1(level_two_bits_, l1_slot, account, &error) == 0) {
+    growing_slots_ = true;
+    seL4_CPtr const cnode = alloc_cnode_at_l1(level_two_bits_, l1_slot, account, &error);
+    growing_slots_ = false;
+    if (cnode == 0) {
+        if (trace_ != nullptr) {
+            trace_(trace_context_, "grow-refused", static_cast<unsigned>(l1_slot),
+                   static_cast<uint64_t>(error), node_free_ == 0, slots_end_);
+        }
         return false;
     }
-    slots_end_ += static_cast<seL4_CPtr>(1) << level_two_bits_;
+    /* The cursor continues in the new CNode; the slots between the old end and
+     * it belong to whatever took them (a command's CNode), so it skips them. */
+    slots_end_ = static_cast<seL4_CPtr>(l1_slot + 1) << level_two_bits_;
+    seL4_CPtr const start = static_cast<seL4_CPtr>(l1_slot) << level_two_bits_;
+    if (slots_next_ < start) {
+        slots_next_ = start;
+    }
     return true;
+}
+
+seL4_CPtr Allocator::take_free_slot() noexcept
+{
+    SlotEntry *entry = free_slots_;
+    if (entry == nullptr) {
+        return 0;
+    }
+    free_slots_ = entry->next;
+    /* Recycle the entry rather than abandoning it. */
+    entry->next = free_slot_entries_;
+    free_slot_entries_ = entry;
+    return entry->slot;
 }
 
 seL4_CPtr Allocator::alloc_slot() noexcept
@@ -234,36 +275,31 @@ seL4_CPtr Allocator::alloc_slot() noexcept
     if (slot_pool_ != nullptr) {
         return slot_pool_->alloc(slot_owner_);
     }
-    /* A *caller* stops short of the slots a growth *transaction* runs in, because
-     * a caller that took the last ones leaves every growth path unable to start.
-     * The transaction is not one allocation: a split retypes its two halves into
-     * two slots (`refill_inner`); a caller's source parks the capability it
-     * brought back in one (`runtime_untyped_source`); and growing the *piece
-     * table* -- which is what a spent pool means -- maps a frame and the page
-     * tables that carry it (`grow_nodes_from_window` -> `alloc_object` ->
-     * `Scratch::map`), which is four or more. Measured at the link, and it cost a
-     * night: `slots 4071 of 4071, largest free 20 bits, l1 8, l2 12`, one
-     * allocator by address, its growth refused with not one word -- and the chain
-     * that refuses is nodes -> frame -> slot -> CNode -> piece -> split -> nodes.
-     * So the reserve is a transaction's, the way the node pool's `kReserve` (32,
-     * alloc_node) is a region's: eight is two halves, one receipt, a frame and
-     * three levels of page table. A growth already in progress may spend it
-     * (`growing_`, `sourcing_`), because those users *are* the transaction. */
-    constexpr seL4_Word kReserve = 8;
-    seL4_Word const reserve =
-        level_two_bits_ != 0 && slots_may_grow_ && !growing_ && !sourcing_
-            ? kReserve
-            : 0;
+    /* A freed slot is reused before the cursor moves: a process that maps and
+     * unmaps -- mallocng does both as it grows and shrinks a heap -- then
+     * reuses its CSpace instead of filling it, which is the wall
+     * `specs/userland.md` names. The cursor stays where it is; the freed list
+     * is what remembers the scattered slots a rewind could not reach. */
+    if (seL4_CPtr const reused = take_free_slot(); reused != 0) {
+        ++slots_used_;
+        return reused;
+    }
+    /* No fixed reserve. The split that growth used to keep slots for is now
+     * pre-empted where it happens: `refill` grows (split-free) when the split it
+     * is about to make would out-spend the free slots (`split_slots`), so a
+     * caller taking the last slot cannot wedge growth. Measured with this check
+     * in place and the reserve set to zero, the conformance suite is green -- so
+     * the arbitrary `kReserve` is gone rather than renumbered. */
     /* Descending: the cursor is the lowest slot still free, and the free
      * window is [slots_first_, slots_next_). */
     if (slots_descend_) {
-        if (slots_next_ <= slots_first_ + reserve) {
+        if (slots_next_ <= slots_first_) {
             return 0;
         }
         ++slots_used_;
         return --slots_next_;
     }
-    while (slots_next_ + reserve > slots_end_) {
+    while (slots_next_ >= slots_end_) {
         if (!grow_slots()) {
             return 0;
         }
@@ -276,6 +312,10 @@ seL4_CPtr Allocator::alloc_slot_reserved() noexcept
 {
     if (slot_pool_ != nullptr) {
         return slot_pool_->alloc(slot_owner_);
+    }
+    if (seL4_CPtr const reused = take_free_slot(); reused != 0) {
+        ++slots_used_;
+        return reused;
     }
     if (slots_descend_) {
         if (slots_next_ <= slots_first_) {
@@ -307,7 +347,12 @@ void Allocator::slot_failed(seL4_CPtr slot) noexcept
     if (slots_next_ != 0 && slot + 1 == slots_next_) {
         --slots_next_;
         --slots_used_;
+        return;
     }
+    /* Not the cursor top -- a slot the free list handed out, or one the cursor
+     * passed long ago. Put it back on the list so the next allocation reuses
+     * it, rather than losing it, which is what "allocation-only" meant. */
+    free_slot(slot);
 }
 
 void Allocator::slot_release(seL4_CPtr mark) noexcept
@@ -331,6 +376,45 @@ void Allocator::free_slot(seL4_CPtr slot) noexcept
 {
     if (slot_pool_ != nullptr) {
         slot_pool_->free(slot, slot_owner_);
+        return;
+    }
+    if (slot == 0) {
+        return;
+    }
+    /* The slot goes on a list the cursor does not know about, so the next
+     * `alloc_slot` hands it out again. `slots_used_` follows it, so a refusal
+     * still says how full the CSpace is. A `SlotPool` is the other case: a range
+     * shared by owners. */
+    SlotEntry *entry = free_slot_entries_;
+    if (entry != nullptr) {
+        free_slot_entries_ = entry->next;
+    } else if (free_slot_region_left_ > 0) {
+        entry = &free_slot_region_[--free_slot_region_left_];
+    } else {
+        /* Grow the entry pool from the same window region source the piece tree
+         * uses, as its *own* storage: a freed slot must never consume a node a
+         * piece split needs, which is what starved the link's CNode growth
+         * (`cnode-refill-refused a 17` with a 20-bit piece free). `growing_`
+         * stops the source's own allocation from re-entering this. */
+        if (node_source_ == nullptr || growing_) {
+            return; /* cannot remember it; the slot is lost, as it was before */
+        }
+        growing_ = true;
+        unsigned bytes = 0;
+        void *const region = node_source_(node_context_, &bytes);
+        growing_ = false;
+        if (region == nullptr || bytes < sizeof(SlotEntry)) {
+            return;
+        }
+        free_slot_region_ = static_cast<SlotEntry *>(region);
+        free_slot_region_left_ = bytes / static_cast<unsigned>(sizeof(SlotEntry));
+        entry = &free_slot_region_[--free_slot_region_left_];
+    }
+    entry->slot = slot;
+    entry->next = free_slots_;
+    free_slots_ = entry;
+    if (slots_used_ > 0) {
+        --slots_used_;
     }
 }
 
@@ -347,6 +431,8 @@ void Allocator::reset() noexcept
     node_used_ = 0;
     node_free_ = node_capacity_;
     growing_ = false;
+    free_slots_ = nullptr;
+    level_one_high_ = 0;
     for (unsigned i = 0; i < node_capacity_; ++i) {
         node_region_[i].next = free_nodes_;
         free_nodes_ = &node_region_[i];
@@ -426,19 +512,53 @@ Allocator::Piece Allocator::piece_state(void *cookie) const noexcept
 
 bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 {
+    /* A split spends two slots per level (`refill_inner`). If the CSpace cannot
+     * spare them, grow first: growth adds a CNode, which costs no slot, and the
+     * split then has room. Growth is split-free (`refill_exact`), so this cannot
+     * re-enter itself. Measured: the link's `cnode-refill-refused a 17 ... slots
+     * 8161 of 8167` was exactly this split with too few slots. */
+    if (!device && slots_may_grow_ && free_slots() < split_slots(size_bits)) {
+        (void)grow_slots();
+    }
     if (refill_inner(device, size_bits)) {
         return true;
     }
     /* The free lists hold nothing at any size. Ask the source for another
      * untyped, adopt it, and search again (specs/memory.md). Device memory has
      * no source: it comes from the bootinfo or nowhere. */
-    if (device || !grow_from_source()) {
+    if (device || !grow_from_source(0)) {
         return false;
     }
     return refill_inner(device, size_bits);
 }
 
-bool Allocator::grow_from_source() noexcept
+bool Allocator::refill_exact(bool device, seL4_Word size_bits) noexcept
+{
+    if (refill_inner(device, size_bits)) {
+        return true;
+    }
+    if (device || !grow_from_source(size_bits)) {
+        return false;
+    }
+    return refill_inner(device, size_bits);
+}
+
+unsigned Allocator::split_slots(seL4_Word size_bits) const noexcept
+{
+    unsigned const largest = largest_free_bits();
+    if (largest <= size_bits) {
+        return 0;
+    }
+    return (largest - static_cast<unsigned>(size_bits)) * 2u;
+}
+
+unsigned Allocator::free_slots() const noexcept
+{
+    unsigned const total = static_cast<unsigned>(slots_end_ - slots_first_);
+    return total > slots_used_ ? total - slots_used_ : 0;
+}
+
+bool Allocator::grow_from_source(seL4_Word want_bits) noexcept
 {
     /* One grow at a time. The source allocates in the caller's process -- the
      * chunk's capability is moved into a slot the *allocator* hands out -- so a
@@ -455,7 +575,7 @@ bool Allocator::grow_from_source() noexcept
     sourcing_ = true;
     seL4_Word size_bits = 0;
     uint64_t physical = 0;
-    seL4_CPtr const cap = untyped_source_(untyped_context_, &size_bits, &physical);
+    seL4_CPtr const cap = untyped_source_(untyped_context_, want_bits, &size_bits, &physical);
     bool const adopted =
         cap != 0 && size_bits != 0 && adopt_untyped(cap, size_bits, physical);
     sourcing_ = false;
@@ -793,17 +913,10 @@ seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
             return 0;
         }
     }
-    /* The same reserve a caller's single `alloc_slot` keeps, and for the same
-     * reason: a *run* is a caller's allocation too -- the heap's frames come
-     * through here (`alloc_pages_run`) -- and taking the last slots leaves
-     * growth nowhere to start. Measured twice: with the reserve in `alloc_slot`
-     * alone the link's refusal was unchanged, because its frames arrive here.
-     * Two copies of one rule is how one of them goes unpatched; a member
-     * constant is what this wants, and until then both copies say three, which
-     * is a split's two halves and a receipt. */
-    seL4_Word const reserve =
-        level_two_bits_ != 0 && slots_may_grow_ ? 3 : 0;
-    if (slots_next_ + count > slots_end_ - reserve && !grow_slots()) {
+    /* A run is a caller's allocation too, and the split its pages need is
+     * pre-empted by `refill`'s slot check, so no fixed reserve is kept here
+     * either. */
+    if (slots_next_ + count > slots_end_ && !grow_slots()) {
         return 0;
     }
     seL4_CPtr const first = slots_next_;
@@ -963,6 +1076,7 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth,
     cnode_depth_ = depth;
     cnode_size_bits_ = static_cast<unsigned>(radix);
     level_two_bits_ = 0;
+    level_one_high_ = 0;
     slots_may_grow_ = false;
 }
 
@@ -977,6 +1091,7 @@ void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word dep
     cnode_depth_ = depth;
     cnode_size_bits_ = static_cast<unsigned>(radix);
     level_two_bits_ = 0;
+    level_one_high_ = 0;
     slots_may_grow_ = false;
 }
 
@@ -1012,6 +1127,9 @@ void Allocator::adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Wor
     slots_descend_ = false;
     slots_used_ = 0;
     slots_may_grow_ = growable;
+    /* Root slot `cnode_index` holds this allocator's L2 CNode; the first free
+     * level-one slot is the one after it. */
+    level_one_high_ = cnode_index + 1;
 }
 
 seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,
@@ -1094,8 +1212,12 @@ seL4_CPtr Allocator::alloc_cnode_at_l1(seL4_Word l2_bits, seL4_Word l1_slot,
     unsigned const wanted = object_bits(seL4_CapTableObject, l2_bits);
     last_request_bits_ = static_cast<unsigned>(l2_bits);
     last_candidate_bits_ = 0;
-    if (!refill(false, wanted)) {
+    if (!refill_exact(false, wanted)) {
         *error = seL4_NotEnoughMemory;
+        if (trace_ != nullptr) {
+            trace_(trace_context_, "cnode-refill-refused", static_cast<unsigned>(wanted), 0,
+                   node_free_ == 0, l1_slot);
+        }
         return 0;
     }
     Node *const node = take(false, wanted);
@@ -1112,8 +1234,17 @@ seL4_CPtr Allocator::alloc_cnode_at_l1(seL4_Word l2_bits, seL4_Word l1_slot,
                                  seL4_CapInitThreadCNode, seL4_CapInitThreadCNode, 0,
                                  l1_slot, 1);
     if (*error != seL4_NoError) {
+        if (trace_ != nullptr) {
+            trace_(trace_context_, "cnode-retype-refused", static_cast<unsigned>(l1_slot),
+                   static_cast<uint64_t>(*error), false, 0);
+        }
         free_node(node);
         return 0;
+    }
+    /* Every CNode retype into level one is recorded here, so `grow_slots` knows
+     * which root slots a spawner's command CNodes took (specs/memory.md). */
+    if (l1_slot + 1 > level_one_high_) {
+        level_one_high_ = l1_slot + 1;
     }
     if (cookie != nullptr) {
         *cookie = node;

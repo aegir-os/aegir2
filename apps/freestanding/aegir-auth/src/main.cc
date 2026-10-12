@@ -1680,6 +1680,13 @@ bool spawn_service(SessionService const &spec, uint32_t user, uint32_t range_bas
     request.fault_endpoint = fault;
     request.badge = badge;
     request.cnode_bits = spec.cspace_bits;
+    /* A launcher-shaped session service (the terminal) gets a level one like the
+     * session launcher: its commands then take their own L2 CNodes, and its own
+     * allocator owns its whole first CNode for a heap instead of reserving a
+     * tail for a single-level spawn pool. That tail is what filled -- a
+     * terminal's heap is its own, and `slots 3044 of 3044` is the tail's size
+     * (specs/memory.md). */
+    request.cspace_l1_bits = spec.launcher ? 8 : 0;
     request.give_vspace = spec.maps;
     request.untyped_physical = untyped_physical;
     request.untyped_bits = spec.memory_bits;

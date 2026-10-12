@@ -171,10 +171,14 @@ theme-preview: check-theme ## alias for check-theme: render the theme and write 
 theme-preset: ## regenerate the theme's artwork table from MUI's XEN preset (host)
 	$(PYTHON) scripts/convert_prefs.py
 
-build: ## configure and build Aegir's own root task
+# The allocator's host conformance is a *build prerequisite*: an allocator change
+# that breaks an invariant fails the build in seconds, not a ten-minute QEMU boot
+# (specs/allocator.md). Every allocator change this arc is verified here first,
+# and any new invariant gets a case that fails before the fix and passes after.
+build: check-allocator ## configure and build Aegir's own root task
 	timeout $(BUILD_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-only --build-timeout $(BUILD_TIMEOUT)
 
-run: ## boot Aegir under QEMU, stopping once it reports online
+run: check-allocator ## boot Aegir under QEMU, stopping once it reports online
 	timeout $(RUN_TIMEOUT) $(PYTHON) scripts/run_target.py --target $(TARGET) --build-timeout $(BUILD_TIMEOUT)
 
 # run-ui is attended: QEMU's GTK window shows the gpu heads (one tab each),

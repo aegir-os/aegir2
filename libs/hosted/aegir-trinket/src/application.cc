@@ -96,8 +96,13 @@ bool adopt_memory() {
         uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
         uint32_t const l2 = aegir::bootstrap::cnode_bits();
         /* The block's own numbers, one call: the allocator takes `l1 == 0` as
-         * the single-level shape and grows its own level one otherwise. */
-        g_objects.adopt_slots_level_two(first_free, reserved_slot_base() - first_free,
+         * the single-level shape and grows its own level one otherwise. A
+         * two-level toolkit owns its whole first CNode, because its commands get
+         * their own L2 CNodes in level one; a single-level one must keep the
+         * tail for the spawn pool that shares the CNode with it. */
+        uint64_t const cspace_end =
+            l1 != 0 ? (1ull << l2) : reserved_slot_base();
+        g_objects.adopt_slots_level_two(first_free, cspace_end - first_free,
                                         l1, l2, 0);
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),

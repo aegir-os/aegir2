@@ -65,18 +65,22 @@ unsigned g_chunks = 0;
  * invariant under test. */
 unsigned g_chunk_bits = 21;
 
-seL4_CPtr source(void *, seL4_Word *bits, uint64_t *paddr)
+seL4_CPtr source(void *, seL4_Word want_bits, seL4_Word *bits, uint64_t *paddr)
 {
     if (g_chunks >= kChunks) {
         return 0;
     }
     /* A grown chunk arrives like the memory service's: a size and no address
      * (`command_untyped_source` answers zero), so the allocator has no order to
-     * keep for it. Only the seed the process was started with has one. */
+     * keep for it. Only the seed the process was started with has one. The
+     * memory service honors the requested width (aegir-memory's alloc handler),
+     * so `want_bits != 0` is a request for exactly that. */
     *paddr = 0;
     ++g_chunks;
-    *bits = g_chunk_bits;
-    return host_sel4::make_root_untyped(g_chunk_bits);
+    unsigned const width =
+        want_bits != 0 ? static_cast<unsigned>(want_bits) : g_chunk_bits;
+    *bits = width;
+    return host_sel4::make_root_untyped(width);
 }
 
 /* What the allocator is asked for: the shapes a spawn's staging uses -- CNodes,
@@ -431,6 +435,100 @@ bool two_level_growth_holds()
            host_sel4::invalid() == before_invalid && allocator.check_free_lists() == 0;
 }
 
+/* A CNode-sized allocation (17 bits) whose split from the seed is deeper than
+ * the CSpace's remaining slots must still succeed: the allocator can add a CNode,
+ * which costs no slot, so slot pressure has to trigger growth *before* a split,
+ * never wedge it. This is the link's `cnode-refill-refused a 17 ... slots 8161 of
+ * 8167` as a unit. */
+bool split_under_slot_pressure_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(4, 12);
+    g_chunks = 0;
+    g_chunk_bits = 21;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const root = host_sel4::make_root_untyped(22);
+    if (!allocator.adopt_untyped(root, 22, 0)) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+
+    constexpr seL4_Word kFirst = 20;
+    constexpr seL4_Word kL2Bits = 12;
+    constexpr seL4_Word kL1Bits = 4;
+    constexpr seL4_Word kL2Total = seL4_Word{1} << kL2Bits;
+    allocator.adopt_slots_level_two(kFirst, kL2Total - kFirst, kL1Bits, kL2Bits, 0, true);
+
+    /* Hold slots until few are left, without growing: the state a process
+     * reaches when its mappings have spent them. The seed is still a whole
+     * 22-bit piece, so a CNode's split from it is five levels (ten slots). */
+    while (allocator.slots_total() - allocator.slots_used() > 6) {
+        if (allocator.alloc_slot_for_growth() == 0) {
+            break;
+        }
+    }
+    unsigned const before_collisions = host_sel4::collisions();
+    unsigned const before_invalid = host_sel4::invalid();
+
+    seL4_Error error = seL4_NoError;
+    void *cookie = nullptr;
+    seL4_CPtr const cap =
+        allocator.alloc_object(seL4_CapTableObject, 12, g_account, &error, &cookie);
+    return cap != 0 && host_sel4::collisions() == before_collisions &&
+           host_sel4::invalid() == before_invalid;
+}
+
+/* A plain region source: the free list's entry pool grows the same way the
+ * piece tree's node pool does, and the heap wires the same window mapper to
+ * both. */
+void *plain_nodes(void *context, unsigned *bytes)
+{
+    auto *const window = static_cast<NodeWindow *>(context);
+    unsigned const chunk = 4096;
+    if (window->used + chunk > window->capacity) {
+        *bytes = 0;
+        return nullptr;
+    }
+    unsigned char *const region = window->pool + window->used;
+    window->used += chunk;
+    *bytes = chunk;
+    return region;
+}
+
+/* A freed slot is handed out again before the cursor moves, so a process that
+ * maps and unmaps reuses its CSpace instead of filling it (specs/userland.md).
+ * This is the free-list half of the release. */
+bool freed_slot_is_reused_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(4, 12);
+    g_chunks = 0;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const root = host_sel4::make_root_untyped(22);
+    if (!allocator.adopt_untyped(root, 22, 0)) {
+        return false;
+    }
+    allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
+
+    alignas(64) static unsigned char pool[1 << 16];
+    static NodeWindow window;
+    window = NodeWindow{&allocator, pool, sizeof(pool), 0};
+    allocator.set_node_source(plain_nodes, &window);
+
+    seL4_CPtr const a = allocator.alloc_slot();
+    seL4_CPtr const b = allocator.alloc_slot();
+    if (a == 0 || b == 0 || a == b) {
+        return false;
+    }
+    allocator.free_slot(a);
+    seL4_CPtr const c = allocator.alloc_slot();
+    /* The cursor had not moved back, so a free list is the only thing that can
+     * return `a`. */
+    return c == a;
+}
+
 }  // namespace
 
 int main()
@@ -458,6 +556,12 @@ int main()
     /* The CSpace half: a two-level process grows under slot pressure without a
      * caller-supplied reserve. This is the class the acceptance kept finding. */
     expect(two_level_growth_holds(), "a two-level process grows its CSpace under slot pressure");
+
+    /* A split deeper than the CSpace's remaining slots must grow, not wedge. */
+    expect(split_under_slot_pressure_holds(),
+           "a deep split triggers growth instead of failing for slots");
+
+    expect(freed_slot_is_reused_holds(), "a freed slot is handed out again before the cursor moves");
 
     host_sel4::reset();
 

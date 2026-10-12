@@ -585,15 +585,21 @@ aegir::ipc::Consumer &memory_port() noexcept
  * next page, page table or mmap from it. The capability rides the reply into
  * the scratch receive slot and is moved into a slot of the allocator's own,
  * because it must stay addressable for every object retyped from it later. */
-seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
-                                 uint64_t *paddr) noexcept
+seL4_CPtr runtime_untyped_source(void *context, seL4_Word want_bits,
+                                 seL4_Word *size_bits, uint64_t *paddr) noexcept
 {
     auto *const allocator = static_cast<aegir::mem::Allocator *>(context);
     aegir::ipc::Consumer &service = memory_port();
     if (allocator == nullptr || !service.valid()) {
         return 0;
     }
-    uint64_t const request = aegir::memory::kChunkBits;
+    /* The caller may ask for exactly what it needs (the allocator's growth asks
+     * for a CNode's size, so the piece arrives whole and needs no split, which
+     * is how adding a CNode costs no slot); zero asks for the default chunk,
+     * which is what the frame path wants. The service honors the width
+     * (aegir-memory's alloc handler). */
+    uint64_t const request =
+        want_bits != 0 ? static_cast<uint64_t>(want_bits) : aegir::memory::kChunkBits;
     /* Two words: the chunk's size, then the chunk's physical address. */
     uint64_t answer[2] = {};
     bool cap_arrived = false;
@@ -1196,24 +1202,22 @@ long sys_munmap(void *addr, size_t length) noexcept
         return -EINVAL;
     }
     /* The run's frames are the slots a mapping spent, and they go back with the
-     * memory. INSTRUMENTED FIRST, because this was landed three times and each
-     * time the guest fell from ~65 000 lines to ~2 150 with the refusal markers
-     * at zero, and nothing said *which* release did it (specs/userland.md, "a
-     * used slot is still allocation-only"). The two markers below name every
-     * run: `begin` before anything is unmapped and `release` after the walk, so
-     * if the guest stops inside the walk the last unmatched `begin` is the run,
-     * and if it stops in the rewind the last `release` is. Each carries the
-     * process badge, because the console interleaves every program and the
-     * badges are what tell two heaps apart (`trace_tag`'s own lesson).
-     *
-     * The order is the lesson of the first attempt: the kernel unmaps a frame
-     * when its capability is deleted (vspace.h's note; objecttype.c), so
+     * memory. The order is the lesson of the first attempt: the kernel unmaps a
+     * frame when its capability is deleted (vspace.h's note; objecttype.c), so
      * deleting first removes mappings the program is still running on. The
      * mapping comes out first (`Scratch::unmap`), then the capability, then the
-     * slot. `slot_release` hands the cursor back only when the run's frames are
-     * the ones it took last (`lowest + released == slot_mark()`): slots between
-     * there and the cursor need not be this run's, and rewinding over them hands
-     * the same slot out twice. The scattered case is a `SlotPool`'s job. */
+     * slot -- and the slot goes on the allocator's freed list, not back to the
+     * cursor. A rewind cannot reach it: the run's frames sit scattered among
+     * page tables and records, and `rewind` never fired a single time in the
+     * instrumented run (`rewind no`). The freed list reuses them wherever they
+     * are (specs/userland.md).
+     *
+     * The two markers name every run: `munmap-begin` before anything is unmapped
+     * and `munmap-release` after the walk, each with the process badge, because
+     * the console interleaves every program and the badges are what tell two
+     * heaps apart. They were added because this release was landed three times
+     * and each time the guest fell from ~65 000 lines to ~2 150 with the refusal
+     * markers at zero and nothing said *which* release did it. */
     {
         uint64_t badge = 0;
         static_cast<void>(aegir::bootstrap::badge(&badge));
@@ -1227,7 +1231,6 @@ long sys_munmap(void *addr, size_t length) noexcept
         aegir::debug_write_unsigned(badge);
         aegir::debug_write("\n");
     }
-    seL4_CPtr lowest = 0;
     unsigned released = 0;
     for (uintptr_t offset = 0; offset < bytes; offset += kPageBytes) {
         uintptr_t const address = base + offset;
@@ -1244,10 +1247,10 @@ long sys_munmap(void *addr, size_t length) noexcept
         g_scratch->unmap(frame);
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
                           aegir::bootstrap::endpoint_depth());
+        /* The capability is gone, so the slot is empty and the allocator may
+         * hand it out again (specs/userland.md). */
+        g_allocator->free_slot(frame);
         ++released;
-        if (lowest == 0 || frame < lowest) {
-            lowest = frame;
-        }
     }
     {
         uint64_t badge = 0;
@@ -1260,23 +1263,9 @@ long sys_munmap(void *addr, size_t length) noexcept
         aegir::debug_write_unsigned(bytes / kPageBytes);
         aegir::debug_write(" frames ");
         aegir::debug_write_unsigned(released);
-        aegir::debug_write(" lowest ");
-        aegir::debug_write_unsigned(lowest);
-        aegir::debug_write(" mark ");
-        aegir::debug_write_unsigned(g_allocator != nullptr ? g_allocator->slot_mark() : 0);
-        aegir::debug_write(" rewind ");
-        aegir::debug_write(lowest != 0 && released == bytes / kPageBytes &&
-                                   lowest + static_cast<seL4_CPtr>(released) ==
-                                       g_allocator->slot_mark()
-                               ? "yes"
-                               : "no");
         aegir::debug_write(" badge ");
         aegir::debug_write_unsigned(badge);
         aegir::debug_write("\n");
-    }
-    if (lowest != 0 && released == bytes / kPageBytes &&
-        lowest + static_cast<seL4_CPtr>(released) == g_allocator->slot_mark()) {
-        g_allocator->slot_release(lowest);
     }
     /* And back to the window: `Scratch::release` takes the run when it ends at the
      * reservation cursor and does nothing otherwise -- the space is in the heap's list

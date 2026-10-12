@@ -85,6 +85,15 @@ public:
     void slot_release(seL4_CPtr mark) noexcept;
 
     /**
+     * A slot whose capability the kernel has deleted: hand it back so the next
+     * allocation reuses it. With a `SlotPool` adopted the pool takes it; without
+     * one the allocator's own freed list does (specs/userland.md) -- which is
+     * what a process that maps and unmaps needs, because the cursor cannot
+     * rewind over the slots scattered between its frames.
+     */
+    void free_slot(seL4_CPtr slot) noexcept;
+
+    /**
      * Forget every untyped record and the slot range, so the allocator can be
      * re-adopted over a pool a revoke has made whole again (specs/auth.md's
      * Session reclaim). Deletes nothing: the records this drops belong to
@@ -316,7 +325,8 @@ public:
      * with is adopted before the search is retried -- so the shape is
      * "refill, source, refill", not a loop the source can never satisfy.
      */
-    using UntypedSource = seL4_CPtr (*)(void *context, seL4_Word *size_bits, uint64_t *paddr);
+    using UntypedSource = seL4_CPtr (*)(void *context, seL4_Word want_bits,
+                                       seL4_Word *size_bits, uint64_t *paddr);
     void set_untyped_source(UntypedSource source, void *context) noexcept
     {
         untyped_source_ = source;
@@ -490,6 +500,16 @@ private:
         Node *prev;
     };
 
+    /* One freed slot, newest first. Its storage is its *own* growable region
+     * (below), not a piece-tree `Node`: a freed slot must never consume a node a
+     * split needs, or the split that grows the CSpace starves -- measured at the
+     * link, `cnode-refill-refused a 17` with a 20-bit piece free, because the
+     * linker's free churn had taken the nodes the split wanted. */
+    struct SlotEntry {
+        SlotEntry *next;
+        seL4_CPtr slot;
+    };
+
     /** A free node slot, or nullptr when the pool is exhausted. */
     Node *alloc_node() noexcept;
     void free_node(Node *node) noexcept;
@@ -514,7 +534,20 @@ private:
 
     /** Ask `untyped_source_` for a piece and adopt it, false when there is no
      *  source or it answers nothing. */
-    bool grow_from_source() noexcept;
+    bool grow_from_source(seL4_Word want_bits) noexcept;
+
+    /** Make sure `size_bits` has a free piece, asking the source for a piece of
+     *  *exactly* `size_bits` when the free lists hold none. Growth uses this: a
+     *  CNode obtained as a piece already its own size needs no split, so adding a
+     *  CNode costs no slot and cannot wedge on slot pressure (specs/userland.md). */
+    bool refill_exact(bool device, seL4_Word size_bits) noexcept;
+
+    /** The slots a split of `size_bits` from the largest free piece spends: two
+     *  untyped halves per level. Zero when no split is needed. */
+    unsigned split_slots(seL4_Word size_bits) const noexcept;
+
+    /** The slots not in use, the cursor and the freed list together. */
+    unsigned free_slots() const noexcept;
 
     /** Unlink a free piece and mark it allocated, or nullptr when none. */
     Node *take(bool device, seL4_Word size_bits) noexcept;
@@ -569,14 +602,13 @@ private:
      */
     bool grow_slots() noexcept;
 
+    /** Take a slot off the freed list, or zero when it is empty. The node that
+     *  remembered the slot goes back to the node pool. */
+    seL4_CPtr take_free_slot() noexcept;
+
     /** Give a reserved slot run back on a failed retype, the way slot_failed
      *  gives one slot back. */
     void slot_failed_run(seL4_CPtr first, seL4_Word count) noexcept;
-
-    /** A slot whose capability the kernel has deleted: free it in the pool when
-     *  one is adopted (specs/memory.md), and do nothing under the cursor,
-     *  where a freed slot is lost for good (specs/userland.md). */
-    void free_slot(seL4_CPtr slot) noexcept;
 
     /** The offset within its CNode for a slot this allocator handed out: the
      *  slot itself in a single-level CSpace, and the low `level_two_bits_` in a
@@ -634,6 +666,9 @@ private:
      * level-one slots are the live command pool. `adopt_slots_level_two` sets
      * it; a single-level allocator has no level one and never grows. */
     bool slots_may_grow_ = false;
+    /* Whether a split is already being preceded by a growth: `refill`'s slot
+     * check must not re-enter `grow_slots` from inside the growth it triggered. */
+    bool growing_slots_ = false;
     Trace trace_ = nullptr;
     void *trace_context_ = nullptr;
     /* A small built-in region, so an allocator whose caller does not adopt one
@@ -652,6 +687,11 @@ private:
      * process. Which CNode a slot lives in is derived from the slot itself
      * (retype_node_index), so the cursor may span several CNodes. */
     seL4_Word level_two_bits_ = 0;
+    /* The first level-one slot not yet used by a CNode retype. `alloc_cnode_at_l1`
+     * records every one -- the allocator's own growth and a spawner's command
+     * CNodes both go through it -- so `grow_slots` adds the next CNode above the
+     * highest in use rather than colliding with a command's (specs/memory.md). */
+    seL4_Word level_one_high_ = 0;
     seL4_CPtr slots_first_;
     seL4_CPtr slots_next_;
     seL4_CPtr slots_end_;
@@ -663,6 +703,17 @@ private:
      * (specs/memory.md). */
     SlotPool *slot_pool_ = nullptr;
     uint32_t slot_owner_ = 0;
+    /* Slots a caller freed, newest first, so the next `alloc_slot` hands them
+     * out again instead of advancing the cursor. `free_slot_entries_` recycles
+     * the `SlotEntry`s themselves; `free_slot_region_`/`free_slot_region_left_`
+     * are the current growable region they are carved from, drawn from the same
+     * window source as the piece tree but kept as separate storage. A `SlotPool`
+     * (above) is for a range shared by owners; this is the allocator's own reuse
+     * (specs/userland.md). */
+    SlotEntry *free_slots_ = nullptr;
+    SlotEntry *free_slot_entries_ = nullptr;
+    SlotEntry *free_slot_region_ = nullptr;
+    unsigned free_slot_region_left_ = 0;
     uint64_t normal_bytes_;
     uint64_t device_bytes_;
     uint64_t allocated_bytes_;
