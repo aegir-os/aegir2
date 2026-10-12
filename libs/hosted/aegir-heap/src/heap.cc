@@ -445,8 +445,33 @@ bool map_page(uintptr_t address) noexcept
              * caller-side reserve does when the growth cannot start. So the name
              * of this marker is wrong, and the wall is ours rather than the
              * kernel's. */
-            aegir::debug_write("      heap: page-kernel-error code ");
+            /* The name was wrong and the numbers were missing. Wrong, because
+             * code 6 is `seL4_FailedLookup` -- the allocator's own word for "that
+             * slot is not there", set where `alloc_slot()` hands back none -- so
+             * this is not the kernel refusing anything, and three commits of this
+             * arc chased `seL4_DeleteFirst` because of the name. Missing, because
+             * the refusal rule wants the quantity: the cursor's position against
+             * the CSpace's total, whether the allocator could grow at all, whether
+             * a slot pool owns the range, and the CSpace's shape. Measured: this
+             * fires with `slots_used() < slots_total()`, so the counters say there
+             * is room and the cursor handed out nothing -- which is what the
+             * caller-side reserve does when the growth cannot start. */
+            aegir::debug_write("      heap: page-slot-refused code ");
             aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+            aegir::debug_write(" slots ");
+            aegir::debug_write_unsigned(g_allocator->slots_used());
+            aegir::debug_write(" of ");
+            aegir::debug_write_unsigned(g_allocator->slots_total());
+            aegir::debug_write(" cursor ");
+            aegir::debug_write_unsigned(static_cast<uint64_t>(g_allocator->slot_mark()));
+            aegir::debug_write(" can-grow ");
+            aegir::debug_write(g_allocator->slots_can_grow() ? "yes" : "no");
+            aegir::debug_write(" pool ");
+            aegir::debug_write(g_allocator->slots_have_pool() ? "yes" : "no");
+            aegir::debug_write(" l1 ");
+            aegir::debug_write_unsigned(aegir::bootstrap::cnode_l1_bits());
+            aegir::debug_write(" l2 ");
+            aegir::debug_write_unsigned(aegir::bootstrap::cnode_bits());
             aegir::debug_write("\n");
         } else if (g_allocator->slots_used() >= g_allocator->slots_total()) {
             trace_phase("page-no-slot");
