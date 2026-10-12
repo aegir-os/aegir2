@@ -181,3 +181,42 @@
   link never finishes" and "the machine stopped" looked identical in the log alone. Sample the
   guest's CPU beside the console position every few seconds and carry both into the run's
   verdict, so neither a person nor an agent has to have been watching `ps` at the right moment.
+- **A conformance target that is not a prerequisite of the build does not exist.** The
+  allocator's host suite was uncompilable (its stub missing two constants) and then hung
+  (`cnode_revoke` walked all 2^18 caps per merge), and it stayed that way for the whole arc
+  while the class of failure it was written for kept reaching QEMU. `check-allocator` is now a
+  prerequisite of `build` and `run`; a `check-*` that guards a component has to be one, or the
+  gate is prose. It runs in seconds, so the gate costs seconds; the absence of it cost a
+  nine-minute boot per guess.
+- **A case comes from a use, never from the code.** Cases written to reach `allocator.cc`'s
+  branches prove only that the code does what it does -- confirmation bias with a green tick.
+  The case that found the link's bug is `ld.lld`'s own workload (`linker_space_growth_holds`:
+  page frames, 2 MiB frames and page tables, with frees and CSpace growth); the others are a
+  spawn (`child_spawn_holds`), a service's reclaim (`session_reclaim_holds`), a device window,
+  a refused allocation. Coverage is what the uses *leave over* -- a read-out, never a target;
+  written that way, every function in `allocator.cc` was exercised and not one case had been
+  added for a branch.
+- **A case that passes before the fix verifies nothing, and "the suite is green" is not
+  evidence.** `failed_alloc_returns_what_it_took_holds` passed both with and without the change
+  it was written for until it was made to hold exactly one piece, of exactly the wanted size,
+  with no source, so a dropped piece could not be replaced or split for; then it failed
+  without the fix (`the refused object's piece was not returned`) and passed with it. Every
+  case lands *before* its fix, with the failing output in the commit that precedes the fix and
+  the passing run in the fix's own commit. Run it both ways; do not assume the direction.
+- **A host case is a test double, and the double's fidelity is itself under test.** The linker
+  case passed on the "fixed" allocator where the guest refused, and the difference was the
+  model, not the fix: the real source parks the received capability in a slot of the
+  allocator's own (`alloc_slot_for_growth`), so receiving a chunk costs a slot, and `sys_munmap`
+  calls `free_slot`, so an unmap gives one back. Charge what the guest charges. When a host
+  case and the guest disagree on whether something fails, the host is wrong until proven
+  otherwise; the case must reproduce the guest's *signature* -- the same error code, the same
+  marker, the same state -- and not merely fail somewhere. A model that agrees with the code
+  is not a test.
+- **A case's failure names the quantity, and that is the finding.** The linker case printed
+  `slots 20445 of 20460, mark 20480, can-grow` and its event ring's last lines
+  (`cnode-refill-refused bits 17`, `grow-refused`, `alloc-slot-refused`) named two bugs in one
+  run: `grow_slots` jumped `slots_next_` over a spawner's root-slot gap without counting it in
+  `slots_used`, so `slots_total - slots_used` over-reported free room by the gap; and
+  `refill_exact` split before asking the source, so the wasted split spent the slot the
+  source's receipt needed. A case that reports only "failed" is a red tick; the numbers are
+  what make it a finding, and it is the same rule the guest's markers already carry.
