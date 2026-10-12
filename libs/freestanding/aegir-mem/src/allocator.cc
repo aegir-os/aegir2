@@ -217,27 +217,22 @@ seL4_CPtr Allocator::alloc_slot() noexcept
     if (slot_pool_ != nullptr) {
         return slot_pool_->alloc(slot_owner_);
     }
-    /* A *caller* stops short of the slots this allocator's own growth runs in,
-     * because a caller that took the last ones would leave the CSpace unable to
-     * grow at all: a buddy split retypes its two halves into two slots and a
-     * caller's untyped source takes one for the capability it brings back
-     * (`refill_inner`, `runtime_untyped_source`). Measured, which is what this
-     * is for: `ld.lld` at the link reached `slots 4071 of 4071, largest free 20
-     * bits, l1 8, l2 12` -- a full CNode, a megabyte free, two-level all along,
-     * no kernel message -- and its growth could not start because its first step
-     * wanted the slots it was trying to create. Two for a split's halves and one
-     * for a receipt, so the number is the reserve's users, not a chosen bound.
-     *
-     * A growth *already in progress* may spend it, and that is the whole
-     * subtlety: the reserve's owners arrive through this same entry --
-     * `grow_nodes_from_window` carves the frame the piece table lives in
-     * (`alloc_object`, from the node source) and a split's halves come through
-     * `alloc_slot_reserved` -- so a reserve that only callers could not take
-     * would deadlock growth instead of protecting it: a node needs a slot, the
-     * slot needs growth, growth needs a node. `growing_` and `sourcing_` are
-     * exactly "the allocator is spending on itself", so they open the reserve
-     * and nothing else does. */
-    constexpr seL4_Word kReserve = 3;
+    /* A *caller* stops short of the slots a growth *transaction* runs in, because
+     * a caller that took the last ones leaves every growth path unable to start.
+     * The transaction is not one allocation: a split retypes its two halves into
+     * two slots (`refill_inner`); a caller's source parks the capability it
+     * brought back in one (`runtime_untyped_source`); and growing the *piece
+     * table* -- which is what a spent pool means -- maps a frame and the page
+     * tables that carry it (`grow_nodes_from_window` -> `alloc_object` ->
+     * `Scratch::map`), which is four or more. Measured at the link, and it cost a
+     * night: `slots 4071 of 4071, largest free 20 bits, l1 8, l2 12`, one
+     * allocator by address, its growth refused with not one word -- and the chain
+     * that refuses is nodes -> frame -> slot -> CNode -> piece -> split -> nodes.
+     * So the reserve is a transaction's, the way the node pool's `kReserve` (32,
+     * alloc_node) is a region's: eight is two halves, one receipt, a frame and
+     * three levels of page table. A growth already in progress may spend it
+     * (`growing_`, `sourcing_`), because those users *are* the transaction. */
+    constexpr seL4_Word kReserve = 8;
     seL4_Word const reserve =
         level_two_bits_ != 0 && slot_source_ != nullptr && !growing_ && !sourcing_
             ? kReserve
