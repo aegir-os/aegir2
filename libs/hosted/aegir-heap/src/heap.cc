@@ -425,14 +425,26 @@ bool map_page(uintptr_t address) noexcept
         if (error != seL4_NoError && error != seL4_NotEnoughMemory) {
             trace_phase("page-kernel-error");
             /* ...and which one, because the phase name alone is what the refusal
-             * rule calls the bug. The list is short and readable directly from
-             * kernel/libsel4/include/sel4/errors.h: InvalidCapability 1,
-             * IllegalOperation 2, RangeError 3, AlignmentError 5, DeleteFirst 6,
-             * RevokeFirst 7, FailedLookup 9, TruncatedMessage 10. Measured: this
-             * branch is the only refusal a run of the link reaches at all --
-             * `page-no-slot` and `page-no-piece` never print, and the allocator's
-             * own counters (`heap: slots ...`, `chunk-refused`) stay quiet -- so
-             * the kernel, not a budget of ours, is what says no here. */
+             * rule calls the bug. Read from kernel/libsel4/include/sel4/errors.h
+             * rather than remembered: NoError 0, InvalidArgument 1,
+             * InvalidCapability 2, IllegalOperation 3, RangeError 4,
+             * AlignmentError 5, FailedLookup 6, TruncatedMessage 7, DeleteFirst 8,
+             * RevokeFirst 9, NotEnoughMemory 10. Code 6 is therefore
+             * `seL4_FailedLookup`, which is the allocator's own word for "that slot
+             * is not there" -- the value `alloc_object` sets when `alloc_slot()`
+             * hands back none -- and *not* the kernel refusing a retype, which is
+             * what three commits of this arc said it was. A refusal that cannot say
+             * which of these it was is the bug the rule is about.
+             *
+             * This branch is the only refusal a run of the link reaches, and the
+             * value it carries is the allocator's own `seL4_FailedLookup`: the
+             * kernel did not refuse anything. `page-no-slot` and `page-no-piece`
+             * never print and the counters (`heap: slots ...`, `chunk-refused`)
+             * stay quiet, because `slots_used() < slots_total()` -- the cursor
+             * handed out no slot while the CSpace had room, which is what the
+             * caller-side reserve does when the growth cannot start. So the name
+             * of this marker is wrong, and the wall is ours rather than the
+             * kernel's. */
             aegir::debug_write("      heap: page-kernel-error code ");
             aegir::debug_write_unsigned(static_cast<uint64_t>(error));
             aegir::debug_write("\n");
