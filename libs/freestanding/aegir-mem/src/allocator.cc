@@ -674,6 +674,18 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
                                   seL4_Error *error, void **cookie) noexcept
 {
     *error = seL4_NoError;
+    /* Entry marker, paired with `retype-refused` at the retype below. The two
+     * disagree in today's run and that is the open question: `page-kernel-error
+     * code 6` fires exactly once while `retype-refused` never fires at all, so
+     * either this function did not reach its retype for the call that failed, or
+     * the error `map_page` reads was written somewhere else entirely. With this
+     * pair a run says which: entry seen and no refusal means the retype returned
+     * `seL4_NoError` and the 6 came from other work; no entry means the failing
+     * call never arrived here. `a` is the object type, `b` its size bits. */
+    if (trace_ != nullptr) {
+        trace_(trace_context_, "alloc-object", static_cast<unsigned>(type), size_bits,
+               false, 0);
+    }
     unsigned const wanted = object_bits(type, size_bits);
     last_request_bits_ = static_cast<unsigned>(size_bits);
     last_candidate_bits_ = 0;
