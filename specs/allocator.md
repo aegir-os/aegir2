@@ -36,6 +36,22 @@ splitting with that shape.
   cannot be made -- no nodes or no slots -- the whole piece is put back, because
   nothing was spent. The launcher's own allocator (`g_objects`, whose node source
   is the window's `grow_nodes_from_window`) hit this exactly, four times a boot.
+- **A growth path keeps back the slots it needs to run, and may spend them.** A
+  split retypes its two halves into two slots (`refill_inner`) and a caller's
+  untyped source takes one for the capability it brings back, so the CSpace's own
+  growth needs free slots -- and a caller that takes the last of them leaves the
+  CSpace unable to grow at all. Measured: `ld.lld` at the link reached
+  `slots 4071 of 4071, largest free 20 bits, l1 8, l2 12` -- a full CNode, a
+  megabyte free, two-level all along, and no kernel message -- and its growth
+  could not start because its first step wanted the slots it was trying to
+  create. So the cursor keeps a reserve: a caller's `alloc_slot` and
+  `alloc_slot_run` stop short of it, while the allocator's *own* paths -- a
+  split, a retype into a fresh slot, a source's receipt -- are allowed to spend
+  it. The size is the reserve's users rather than a chosen bound: two for a
+  split's halves and one for a receipt. This is the same shape as the node pool's
+  `kReserve`, which the split path already carries, and it is needed *in addition*
+  to the untyped source's re-entrancy guard (`sourcing_`): that stops the source
+  calling itself, this stops a caller taking the room growth runs in.
 - **A multi-page window run is reserved before it is filled.** The arena maps a
   contiguous region for a child's stack or startup frame, and the allocator's
   node storage is mapped through the same window cursor
