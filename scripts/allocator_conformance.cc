@@ -792,6 +792,82 @@ bool failed_alloc_returns_what_it_took_holds()
     return host_sel4::collisions() == 0;
 }
 
+/* A service's frame buffer (datatypes, files, network, font and socket all call
+ * `alloc_page`): one frame, addressable, and two are distinct. */
+bool frame_per_use_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(4, 12);
+    g_chunks = 0;
+    g_chunk_bits = 21;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const seed = host_sel4::make_root_untyped(23);
+    if (!allocator.adopt_untyped(seed, 23, 0)) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+    allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
+
+    unsigned const before_collisions = host_sel4::collisions();
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const a = allocator.alloc_page(g_account, &error, seL4_PageBits);
+    seL4_CPtr const b = allocator.alloc_page(g_account, &error, seL4_PageBits);
+    return a != 0 && b != 0 && a != b && host_sel4::valid_cap(a) &&
+           host_sel4::valid_cap(b) && host_sel4::collisions() == before_collisions;
+}
+
+/* A child's ASID pool (aegir-spawn's `make_asid_pool`): a pool object, from its
+ * own untyped, named by a slot the caller can hand to the child. */
+bool asid_pool_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(0, 12);
+    g_chunks = 0;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const seed = host_sel4::make_root_untyped(20);
+    if (!allocator.adopt_untyped(seed, 20, 0)) {
+        return false;
+    }
+    allocator.adopt_slots(20, 100, 0, 12);
+
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr const pool = allocator.make_asid_pool(g_account, &error);
+    return pool != 0 && host_sel4::valid_cap(pool);
+}
+
+/* The allocator's diagnostics (`untyped_free`, `piece_state`) are a contract too:
+ * tooling and refusals read them, so what they report must match the piece the
+ * caller holds. */
+bool diagnostics_contract_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(0, 12);
+    g_chunks = 0;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const seed = host_sel4::make_root_untyped(20);
+    if (!allocator.adopt_untyped(seed, 20, 0)) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+    allocator.adopt_slots(20, 100, 0, 12);
+
+    unsigned const free_before = allocator.untyped_free();
+    seL4_Error error = seL4_NoError;
+    void *cookie = nullptr;
+    seL4_CPtr const cap =
+        allocator.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, g_account, &error, &cookie);
+    if (cap == 0) {
+        return false;
+    }
+    aegir::mem::Allocator::Piece const piece = allocator.piece_state(cookie);
+    /* The piece the caller holds is exactly a page wide, and it is not free. */
+    return piece.size_bits == seL4_PageBits && !piece.free &&
+           allocator.untyped_free() >= free_before;
+}
+
 }  // namespace
 
 int main()
@@ -838,6 +914,10 @@ int main()
 
     expect(failed_alloc_returns_what_it_took_holds(),
            "a refused retype gives its slot and piece back");
+
+    expect(frame_per_use_holds(), "a service's frame buffer is one addressable frame");
+    expect(asid_pool_holds(), "a child's ASID pool is named by a slot");
+    expect(diagnostics_contract_holds(), "the allocator's diagnostics describe the piece held");
 
     host_sel4::reset();
 

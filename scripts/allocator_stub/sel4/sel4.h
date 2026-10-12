@@ -396,8 +396,12 @@ inline seL4_Error seL4_RISCV_ASIDControl_MakePool(seL4_CPtr control, seL4_CPtr u
     static_cast<void>(control);
     static_cast<void>(untyped);
     static_cast<void>(node_index);
-    static_cast<void>(slot);
     static_cast<void>(depth);
+    /* The pool cap lands in `slot`, so a caller can name it. */
+    if (slot < host_sel4::kMaxCaps) {
+        host_sel4::g_caps[slot] = host_sel4::Cap{true, false, 0, 0, 0, 0};
+        host_sel4::g_live.push_back(slot);
+    }
     return seL4_NoError;
 }
 
