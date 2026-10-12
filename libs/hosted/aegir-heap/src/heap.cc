@@ -574,6 +574,27 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
      * leave the caller to die of `std::bad_alloc`. */
     if (slot == 0) {
         trace_phase("slot-refused");
+        /* Which shortage: a CSpace that is full (slots_used == slots_total) is
+         * the mapping churn -- every frame and page table a mapping takes, and
+         * a release returns none of them -- while a cursor that still has room
+         * means the *growth* was refused: `grow_slots` retypes a CNode, a CNode
+         * needs a piece, and the free lists are spent. The two want different
+         * fixes and a run has to say which (specs/memory.md). */
+        aegir::debug_write("      heap:   slots ");
+        aegir::debug_write_unsigned(allocator->slots_used());
+        aegir::debug_write(" of ");
+        aegir::debug_write_unsigned(allocator->slots_total());
+        aegir::debug_write(", largest free ");
+        aegir::debug_write_unsigned(allocator->largest_free_bits());
+        /* And the *shape* this process adopted: `l1` zero is a single-level
+         * CSpace, which is the one that can only ever be what the spawner laid
+         * down -- so a full 4071-of-4071 with 20 bits free says the two-level
+         * switch never reached this spawn, not that the growth failed. */
+        aegir::debug_write(" bits, l1 ");
+        aegir::debug_write_unsigned(aegir::bootstrap::cnode_l1_bits());
+        aegir::debug_write(", l2 ");
+        aegir::debug_write_unsigned(aegir::bootstrap::cnode_bits());
+        aegir::debug_write("\n");
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
                           aegir::bootstrap::endpoint_depth());
