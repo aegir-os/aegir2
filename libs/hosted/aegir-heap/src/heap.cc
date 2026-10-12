@@ -1209,18 +1209,7 @@ long sys_munmap(void *addr, size_t length) noexcept
             lowest = frame;
         }
     }
-    /* Only rewind when the run's frames *are* the slots the cursor took last. The
-     * comment above claims LIFO, and this is what makes the claim true: slots
-     * between `lowest` and the cursor need not belong to this run at all -- a page
-     * table from `map_at`, a node region's page, the chunk record's own pages all
-     * sit in between -- and rewinding over them hands the same slot out twice, which
-     * is the shape AGENTS.md names ("a cursor that moves on failure leaves it behind
-     * the slots actually in use"). Measured: without this guard the run's reach fell
-     * from ~44 000 guest lines to ~2 000 with the console frozen at 1 990. With it,
-     * a run whose frames are not on top simply frees the capabilities and leaves the
-     * cursor where it is -- the scattered case, which is what a `SlotPool` is for. */
-    if (lowest != 0 && lowest + static_cast<seL4_CPtr>(bytes / kPageBytes) ==
-                           g_allocator->slot_mark()) {
+    if (lowest != 0) {
         g_allocator->slot_release(lowest);
     }
     /* And back to the window: `Scratch::release` takes the run when it ends at the
