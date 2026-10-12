@@ -792,8 +792,20 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
         [](void *context, char const *event, unsigned a, uint64_t b, bool c,
            seL4_CPtr cap) noexcept {
             static_cast<void>(context);
+            /* The badge, because the console interleaves every program and that
+             * made the last four lines of evidence unattributable: `alloc-object`
+             * and `page-kernel-error` sat four lines apart and nothing in either
+             * said whether they were the same heap. Read once, since the env does
+             * not change and this fires tens of thousands of times. */
+            static uint64_t const badge = []() noexcept {
+                uint64_t value = 0;
+                static_cast<void>(aegir::bootstrap::badge(&value));
+                return value;
+            }();
             aegir::debug_write("      heap: trace ");
             aegir::debug_write(event);
+            aegir::debug_write(" badge ");
+            aegir::debug_write_unsigned(badge);
             aegir::debug_write(" a ");
             aegir::debug_write_unsigned(a);
             aegir::debug_write(" b ");
