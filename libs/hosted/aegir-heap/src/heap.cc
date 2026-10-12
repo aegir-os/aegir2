@@ -424,6 +424,18 @@ bool map_page(uintptr_t address) noexcept
          * last `mmap` burst fails. */
         if (error != seL4_NoError && error != seL4_NotEnoughMemory) {
             trace_phase("page-kernel-error");
+            /* ...and which one, because the phase name alone is what the refusal
+             * rule calls the bug. The list is short and readable directly from
+             * kernel/libsel4/include/sel4/errors.h: InvalidCapability 1,
+             * IllegalOperation 2, RangeError 3, AlignmentError 5, DeleteFirst 6,
+             * RevokeFirst 7, FailedLookup 9, TruncatedMessage 10. Measured: this
+             * branch is the only refusal a run of the link reaches at all --
+             * `page-no-slot` and `page-no-piece` never print, and the allocator's
+             * own counters (`heap: slots ...`, `chunk-refused`) stay quiet -- so
+             * the kernel, not a budget of ours, is what says no here. */
+            aegir::debug_write("      heap: page-kernel-error code ");
+            aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+            aegir::debug_write("\n");
         } else if (g_allocator->slots_used() >= g_allocator->slots_total()) {
             trace_phase("page-no-slot");
         } else {
