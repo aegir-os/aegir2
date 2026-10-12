@@ -57,7 +57,7 @@ seL4_CPtr g_command_mem_call = 0;
  * release. The chunk rides the reply into the scratch receive slot and is
  * moved into a slot of the allocator's own, because the spawner must keep
  * retyping from it. */
-seL4_CPtr command_untyped_source(void *context, seL4_Word *size_bits,
+seL4_CPtr command_untyped_source(void *context, seL4_Word want_bits, seL4_Word *size_bits,
                                  uint64_t *paddr) noexcept
 {
     auto *const allocator = static_cast<aegir::mem::Allocator *>(context);
@@ -65,7 +65,8 @@ seL4_CPtr command_untyped_source(void *context, seL4_Word *size_bits,
         return 0;
     }
     aegir::ipc::Consumer const service(g_command_mem_call);
-    uint64_t const request = aegir::memory::kChunkBits;
+    uint64_t const request =
+        want_bits != 0 ? want_bits : aegir::memory::kChunkBits;
     /* Two words: the chunk's size, then the chunk's physical address. */
     uint64_t answer[2] = {};
     bool cap_arrived = false;

@@ -104,7 +104,7 @@ uint32_t g_slice_max_bits = 0;
  * (the terminal's command_untyped_source) -- the reply's chunk rides the
  * scratch receive slot and is moved into a slot the allocator keeps, because
  * the chunk is retyped from for the slice's whole life. */
-seL4_CPtr console_untyped_source(void *context, seL4_Word *size_bits,
+seL4_CPtr console_untyped_source(void *context, seL4_Word want_bits, seL4_Word *size_bits,
                                  uint64_t *paddr) noexcept
 {
     static_cast<void>(context);
@@ -112,8 +112,11 @@ seL4_CPtr console_untyped_source(void *context, seL4_Word *size_bits,
         return 0;
     }
     aegir::ipc::Consumer const service(g_mem_call);
+    /* The width asked for, or this process's slice chunk. */
     uint64_t const request =
-        g_slice_chunk_bits > g_slice_max_bits ? g_slice_chunk_bits : g_slice_max_bits;
+        want_bits != 0 ? want_bits
+                       : (g_slice_chunk_bits > g_slice_max_bits ? g_slice_chunk_bits
+                                                                : g_slice_max_bits);
     uint64_t answer[2] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const reply = service.call_transfer(

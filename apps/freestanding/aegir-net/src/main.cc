@@ -117,7 +117,7 @@ uint32_t g_chunk_bits = 0;
  * half ever moves the other's cursor. The chunk rides the reply into the
  * scratch receive slot and is moved straight out of it, because a second
  * transfer onto an occupied slot is refused. */
-seL4_CPtr net_untyped_source(void *context, seL4_Word *size_bits,
+seL4_CPtr net_untyped_source(void *context, seL4_Word want_bits, seL4_Word *size_bits,
                              uint64_t *paddr) noexcept
 {
     static_cast<void>(context);
@@ -125,7 +125,9 @@ seL4_CPtr net_untyped_source(void *context, seL4_Word *size_bits,
         return 0;
     }
     aegir::ipc::Consumer const service(g_mem_call);
-    uint64_t const request = g_chunk_bits;
+    /* The width asked for, or this process's own chunk. Growth asks for a
+     * CNode's size so the piece arrives whole and needs no split. */
+    uint64_t const request = want_bits != 0 ? want_bits : g_chunk_bits;
     uint64_t answer[2] = {};
     bool cap_arrived = false;
     aegir::ipc::WordsReply const reply = service.call_transfer(

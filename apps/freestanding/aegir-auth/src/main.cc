@@ -195,7 +195,7 @@ void register_child(uint64_t pid, char const *name, uint32_t name_length, char c
  * session's badge. */
 constexpr uint32_t kSessionChunkBits = 22; /* 4 MiB */
 
-seL4_CPtr session_untyped_source(void *context, seL4_Word *size_bits,
+seL4_CPtr session_untyped_source(void *context, seL4_Word want_bits, seL4_Word *size_bits,
                                  uint64_t *paddr) noexcept
 {
     auto *const allocator = static_cast<aegir::mem::Allocator *>(context);
@@ -203,7 +203,8 @@ seL4_CPtr session_untyped_source(void *context, seL4_Word *size_bits,
         return 0;
     }
     aegir::ipc::Consumer const service(g_session_mem_call);
-    uint64_t const request = kSessionChunkBits;
+    /* The width asked for, or the session's own chunk. */
+    uint64_t const request = want_bits != 0 ? want_bits : kSessionChunkBits;
     /* Two words: the chunk's size, then the chunk's physical address. */
     uint64_t answer[2] = {};
     bool cap_arrived = false;
