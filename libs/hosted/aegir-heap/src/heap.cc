@@ -580,9 +580,15 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
                                                          : aegir::memory::kChunkBits);
+    /* The receiver's badge with the chunk: the ask-and-reply pair has to be
+     * attributable per process when a run wedges (specs/memory.md's markers). */
+    uint64_t who = 0;
+    static_cast<void>(aegir::bootstrap::badge(&who));
     aegir::debug_write("      heap: chunk-got ");
     aegir::debug_write_unsigned(*size_bits);
-    aegir::debug_write(" bits\n");
+    aegir::debug_write(" bits, badge ");
+    aegir::debug_write_unsigned(who);
+    aegir::debug_write("\n");
     *paddr = 0;
     return slot;
 }
@@ -1552,6 +1558,20 @@ long vsyscall(long sysnum, ...) noexcept
     va_list ap;
     va_start(ap, sysnum);
     trace_syscall(sysnum);
+    /* The name table leaves the synchronisation and sleep calls silent on
+     * purpose -- they are what a service spends its idle time in
+     * (trace_syscall's own comment) -- but a program that *wedges* wedges in one
+     * of them, and then a run cannot say which call it is in: `ld.lld` stops
+     * after an `mmap` with the machine idle and nothing after it. These few
+     * numbers (futex 98, sched_yield 124, nanosleep 101, clone 220, wait4 260)
+     * are named for that, because a wedge is otherwise an absence, and an
+     * absence is not attributable. */
+    if (sysnum == 98 || sysnum == 124 || sysnum == 101 || sysnum == 220 ||
+        sysnum == 260) {
+        aegir::debug_write("      heap: sync ");
+        aegir::debug_write_unsigned(static_cast<uint64_t>(sysnum));
+        aegir::debug_write("\n");
+    }
     long ret = -ENOSYS;
     switch (sysnum) {
     case 214: /* SYS_brk */

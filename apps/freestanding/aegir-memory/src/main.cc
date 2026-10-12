@@ -388,12 +388,15 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
      * chunk and is asked for their address has no invocation to read it from, so
      * the service says (specs/memory.md). */
     uint64_t answer[2] = {wanted_bits, physical};
-    /* Say it before the reply as well as after: a caller that never wakes says
-     * nothing, so the last line of a run's log has to be able to say which side
-     * of the reply the sending process got to (specs/memory.md). */
+    /* The caller's badge rides the line: a transfer that never completes leaves
+     * a run's log with the asker's own name on it, which is how a process
+     * blocked in a call is told from one blocked somewhere else, and two
+     * programs with one image are told apart (specs/memory.md's markers). */
     write("  memory: replied a chunk of ");
     write_word(wanted_bits);
-    write(" bits\n");
+    write(" bits to ");
+    write_word(badge);
+    write("\n");
     port.reply_cap(answer, 2, chunk);
 }
 
