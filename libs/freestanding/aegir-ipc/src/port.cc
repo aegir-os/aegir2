@@ -103,6 +103,48 @@ WordsReply Consumer::call_transfer(uint32_t method, uint64_t const *out,
     if (out_count > kMaxWords || in_capacity > kMaxWords) {
         return reply;
     }
+    /* The caller's half of the wait pair, printed *before* the payload window
+     * opens. The window is this function's first `seL4_SetMR(kMethodMr, ...)`
+     * through its `seL4_Call`, and a print inside it -- which is what the first
+     * version of this did, right after `set_receive_path()` -- sends the log
+     * message instead of the caller's: 10 583 `vfs: ...: no such volume` lines in
+     * a 29-second run, from a probe. So: before the first `SetMR`, never after it.
+     *
+     * Guarded, because the print is itself a port call that comes back through
+     * here: a console call made by this line would print again, and that print
+     * again. `probing` is the allocator's `growing_` shape -- the caller of a print
+     * is the one that prints. The window key is the (caller, method) pair, so an
+     * idling client is a couple of lines and a new request is news; the last
+     * `ipc: call` with no `ipc: recv` behind it is the request that never came
+     * back, and its badge is the process that stopped. */
+    constexpr uint32_t kWindow = 8;
+    static uint64_t seen_from[kWindow] = {};
+    static uint32_t seen_method[kWindow] = {};
+    static uint32_t seen_next = 0;
+    static bool probing = false;
+    if (!probing) {
+        uint64_t who = 0;
+        static_cast<void>(bootstrap::badge(&who));
+        bool known = false;
+        for (uint32_t i = 0; i < kWindow; ++i) {
+            if (seen_from[i] == who && seen_method[i] == method) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            seen_from[seen_next] = who;
+            seen_method[seen_next] = method == 0 ? 1 : method;
+            seen_next = (seen_next + 1) % kWindow;
+            probing = true;
+            aegir::debug_write("      ipc: call ");
+            aegir::debug_write_unsigned(method);
+            aegir::debug_write(" from ");
+            aegir::debug_write_unsigned(who);
+            aegir::debug_write("\n");
+            probing = false;
+        }
+    }
     seL4_SetMR(kMethodMr, method);
     for (uint32_t i = 0; i < out_count; ++i) {
         seL4_SetMR(kWordMr + i, out[i]);
