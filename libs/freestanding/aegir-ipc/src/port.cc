@@ -22,8 +22,24 @@ constexpr seL4_Word kReplyMr = 0;
  * a plain slot number at `bootstrap::endpoint_depth()` (aegir/bootstrap.h).
  * Setting the path is an IPC-buffer store, not a syscall, so it is done on
  * every call and receive rather than kept as state to get stale. */
+/* The slot a transferred capability lands in is this layer's scratch
+ * (bootstrap.h's kSlotReceiveCap), and it has to be *empty*: the kernel
+ * delivers a capability only into an empty slot and drops it silently when it
+ * is not, which reads a layer up as "the callee sent no capability at all"
+ * (kernel/src/object/cnode.c:895-928). So the layer empties it before every
+ * call and every receive: whatever is there belongs to a caller that did not
+ * take it, and it is the *next* transfer that pays for it.
+ *
+ * Measured, which is what this is for: ld.lld's chunks from mem.main arrived as
+ * answers with no capability (`heap:   error 0, asked 21 bits, words 2, cap
+ * dropped`) while the service was carving and replying, and the link died of
+ * `std::bad_alloc` a layer up. The caller that did not take its reply's
+ * capability is a separate question; this is the layer refusing to be poisoned
+ * by it. */
 void set_receive_path() noexcept
 {
+    seL4_CNode_Delete(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+                      bootstrap::endpoint_depth());
     seL4_SetCapReceivePath(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
                            bootstrap::endpoint_depth());
 }
