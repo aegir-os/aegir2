@@ -382,16 +382,26 @@ bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 
 bool Allocator::grow_from_source() noexcept
 {
-    if (untyped_source_ == nullptr) {
+    /* One grow at a time. The source allocates in the caller's process -- the
+     * chunk's capability is moved into a slot the *allocator* hands out -- so a
+     * process whose CSpace must grow has the source's own `alloc_slot` ask this
+     * for a piece, and unguarded the two call each other forever: each level's
+     * chunk arrives, the next level's transfer takes the receive slot, and no
+     * level ever returns. Measured, which is what this is for: at the link,
+     * `ld.lld` asked mem.main 120 times, received 28, and never finished --
+     * `heap: chunk-ask` and `memory: replied a chunk of 21 bits to <badge>`
+     * alternating with no `heap: chunk-got` between them. */
+    if (untyped_source_ == nullptr || sourcing_) {
         return false;
     }
+    sourcing_ = true;
     seL4_Word size_bits = 0;
     uint64_t physical = 0;
     seL4_CPtr const cap = untyped_source_(untyped_context_, &size_bits, &physical);
-    if (cap == 0 || size_bits == 0) {
-        return false;
-    }
-    return adopt_untyped(cap, size_bits, physical);
+    bool const adopted =
+        cap != 0 && size_bits != 0 && adopt_untyped(cap, size_bits, physical);
+    sourcing_ = false;
+    return adopted;
 }
 
 bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept

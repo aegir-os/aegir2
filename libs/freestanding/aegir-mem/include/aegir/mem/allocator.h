@@ -574,9 +574,14 @@ private:
     void *node_context_;
     /* The untyped source (specs/memory.md): called when the free lists hold no
      * piece at the size wanted, so growth is not bounded by what the process
-     * was handed at spawn. */
+     * was handed at spawn. `sourcing_` is the re-entrancy guard the node pool
+     * has as `growing_`: the source *allocates* -- a caller's source takes a
+     * slot for the capability it brings back -- and on a process whose CSpace
+     * must grow that slot's allocation asks *this* for a piece, so unguarded
+     * the two grow into each other and neither finishes. */
     UntypedSource untyped_source_ = nullptr;
     void *untyped_context_ = nullptr;
+    bool sourcing_ = false;
     SlotSource slot_source_ = nullptr;
     void *slot_source_context_ = nullptr;
     Trace trace_ = nullptr;

@@ -536,6 +536,16 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
     /* Two words: the chunk's size, then the chunk's physical address. */
     uint64_t answer[2] = {};
     bool cap_arrived = false;
+    /* The ask is bracketed too: the service replies to this process's badge and
+     * the receipt is what prints next, so a log that ends between the two says
+     * the call is where the process is, not the move out of the slot. */
+    uint64_t asker = 0;
+    static_cast<void>(aegir::bootstrap::badge(&asker));
+    aegir::debug_write("      heap: chunk-ask ");
+    aegir::debug_write_unsigned(request);
+    aegir::debug_write(" bits, badge ");
+    aegir::debug_write_unsigned(asker);
+    aegir::debug_write("\n");
     aegir::ipc::WordsReply const reply = service.call_transfer(
         aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
