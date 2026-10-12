@@ -1034,11 +1034,10 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     }
     uintptr_t const needed = align_up(length);
     uintptr_t base = 0;
+    bool reused = false;
     if (void *released = g_free_regions.take(needed)) {
-        /* mmap promises zero-filled pages, and a released region is not: the
-         * bytes it holds are the last owner's (specs/memory.md). */
-        memset(released, 0, needed);
         base = reinterpret_cast<uintptr_t>(released);
+        reused = true;
         trace("mmap-reused", base, needed);
     } else {
         /* A run reserved from the window's top (`Scratch::reserve` walks down from
@@ -1065,7 +1064,19 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
          * silence after it means the stall is in the page mapping, silence
          * without it means the window cursor never came back. */
         trace_phase("mmap-reserved");
-        /* A file-backed run is filled with the file's bytes and then read by whatever asked
+    }
+    /* The pages are mapped on *both* paths, and that is the fix the reclamation
+     * needed: a released region gave its frames back -- `sys_munmap` deletes the
+     * capabilities, which unmaps them -- so a reuse must retype and remap them
+     * the way a fresh reservation does. The reuse path used to `memset` the
+     * region without mapping it, because `munmap` deliberately left the frames
+     * mapped; once it did not, the `memset` faulted. Measured: `service 32
+     * (cxxsmoke) faulted on a memory access at 0xff8fb000` in `memset`, at
+     * exactly the base of a run it had just released, and the same shape hit
+     * `font` and `fssmoke`. Mapping first and zeroing after is the order that
+     * holds for both paths.
+     *
+     * A file-backed run is filled with the file's bytes and then read by whatever asked
          * for it. A compiler's input -- a hundred megabytes of it -- was 25,600 frame retypes
          * and 25,600 mappings here, one page at a time, which is where a linker's minutes went
          * (specs/development.md). Its aligned middle goes in 2 MiB frames, the way the image
@@ -1120,7 +1131,12 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
                 return -ENOMEM;
             }
         }
-        trace_phase("mmap-pages-done");
+    trace_phase("mmap-pages-done");
+    if (reused) {
+        /* mmap promises zero-filled pages, and a released region holds the last
+         * owner's bytes (specs/memory.md). Zeroed *after* the frames are back,
+         * because before the reclamation the mapping was still there to write. */
+        memset(reinterpret_cast<void *>(base), 0, needed);
     }
     if (file_backed) {
         /* The mapping's pages are in place; what follows is the file's bytes. A
@@ -1144,12 +1160,16 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     return static_cast<long>(base);
 }
 
-/* SYS_munmap: the pages stay mapped -- the address space is committed to the
- * heap, one carve we do not return -- so an mmap that follows hands back over
- * the same memory. The recycling that matters is musl's own: mallocng's
- * groups reuse the small pieces, and the large individually-mapped ones are
- * rare enough in a GUI that the virtual budget holds. Returning the frames to
- * the kernel is a later refinement, not a correctness need.
+/* SYS_munmap: the run's frames go back with the memory. `mallocng` maps and
+ * unmaps as it grows and shrinks a heap, and every mapping spent a slot per
+ * frame (and per page table), so a release that returned the memory and none of
+ * the slots filled the CSpace however well it could grow -- `page-slot-refused
+ * code 6 slots 3046 of 3045 ... can-grow no` (specs/userland.md, "a used slot is
+ * still allocation-only"). So the frames are unmapped and their capabilities
+ * deleted here, and `sys_mmap`'s reuse path now remaps a region it takes back,
+ * because the frames are no longer there to reuse. The two `munmap-begin` /
+ * `munmap-release` lines name the run and the badge, so a release that breaks a
+ * process is attributable rather than inferred (see specs/memory.md).
  *
  * The DISPATCHER_TRACE line is temporary diagnosis (see sys_mmap). */
 long sys_munmap(void *addr, size_t length) noexcept
@@ -1174,6 +1194,89 @@ long sys_munmap(void *addr, size_t length) noexcept
     if (!g_free_regions.give(base, bytes)) {
         trace("munmap-refused", base, bytes);
         return -EINVAL;
+    }
+    /* The run's frames are the slots a mapping spent, and they go back with the
+     * memory. INSTRUMENTED FIRST, because this was landed three times and each
+     * time the guest fell from ~65 000 lines to ~2 150 with the refusal markers
+     * at zero, and nothing said *which* release did it (specs/userland.md, "a
+     * used slot is still allocation-only"). The two markers below name every
+     * run: `begin` before anything is unmapped and `release` after the walk, so
+     * if the guest stops inside the walk the last unmatched `begin` is the run,
+     * and if it stops in the rewind the last `release` is. Each carries the
+     * process badge, because the console interleaves every program and the
+     * badges are what tell two heaps apart (`trace_tag`'s own lesson).
+     *
+     * The order is the lesson of the first attempt: the kernel unmaps a frame
+     * when its capability is deleted (vspace.h's note; objecttype.c), so
+     * deleting first removes mappings the program is still running on. The
+     * mapping comes out first (`Scratch::unmap`), then the capability, then the
+     * slot. `slot_release` hands the cursor back only when the run's frames are
+     * the ones it took last (`lowest + released == slot_mark()`): slots between
+     * there and the cursor need not be this run's, and rewinding over them hands
+     * the same slot out twice. The scattered case is a `SlotPool`'s job. */
+    {
+        uint64_t badge = 0;
+        static_cast<void>(aegir::bootstrap::badge(&badge));
+        aegir::debug_write("      heap: munmap-begin base ");
+        aegir::debug_write_hex(base);
+        aegir::debug_write(" bytes ");
+        aegir::debug_write_unsigned(bytes);
+        aegir::debug_write(" pages ");
+        aegir::debug_write_unsigned(bytes / kPageBytes);
+        aegir::debug_write(" badge ");
+        aegir::debug_write_unsigned(badge);
+        aegir::debug_write("\n");
+    }
+    seL4_CPtr lowest = 0;
+    unsigned released = 0;
+    for (uintptr_t offset = 0; offset < bytes; offset += kPageBytes) {
+        uintptr_t const address = base + offset;
+        if (address < g_scratch->base() || address >= g_scratch->limit()) {
+            continue;
+        }
+        uint32_t const index = static_cast<uint32_t>((limit_ - address) / kPageBytes);
+        FrameChunk *const chunk = frame_chunk(index, false);
+        if (chunk == nullptr || chunk->frames[index - chunk->first] == 0) {
+            continue;
+        }
+        seL4_CPtr const frame = chunk->frames[index - chunk->first];
+        chunk->frames[index - chunk->first] = 0;
+        g_scratch->unmap(frame);
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
+                          aegir::bootstrap::endpoint_depth());
+        ++released;
+        if (lowest == 0 || frame < lowest) {
+            lowest = frame;
+        }
+    }
+    {
+        uint64_t badge = 0;
+        static_cast<void>(aegir::bootstrap::badge(&badge));
+        aegir::debug_write("      heap: munmap-release base ");
+        aegir::debug_write_hex(base);
+        aegir::debug_write(" bytes ");
+        aegir::debug_write_unsigned(bytes);
+        aegir::debug_write(" pages ");
+        aegir::debug_write_unsigned(bytes / kPageBytes);
+        aegir::debug_write(" frames ");
+        aegir::debug_write_unsigned(released);
+        aegir::debug_write(" lowest ");
+        aegir::debug_write_unsigned(lowest);
+        aegir::debug_write(" mark ");
+        aegir::debug_write_unsigned(g_allocator != nullptr ? g_allocator->slot_mark() : 0);
+        aegir::debug_write(" rewind ");
+        aegir::debug_write(lowest != 0 && released == bytes / kPageBytes &&
+                                   lowest + static_cast<seL4_CPtr>(released) ==
+                                       g_allocator->slot_mark()
+                               ? "yes"
+                               : "no");
+        aegir::debug_write(" badge ");
+        aegir::debug_write_unsigned(badge);
+        aegir::debug_write("\n");
+    }
+    if (lowest != 0 && released == bytes / kPageBytes &&
+        lowest + static_cast<seL4_CPtr>(released) == g_allocator->slot_mark()) {
+        g_allocator->slot_release(lowest);
     }
     /* And back to the window: `Scratch::release` takes the run when it ends at the
      * reservation cursor and does nothing otherwise -- the space is in the heap's list
