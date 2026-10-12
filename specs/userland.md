@@ -228,15 +228,29 @@ a slot lost to a failed allocation is lost for good, and the failure paths give 
 (`Allocator::slot_failed`). A *range* the kernel has emptied by a revoke comes back at once
 (`Allocator::slot_release`), which is what whole-life reclaim uses; a scattered used slot
 does not. That is still the right amount for the root task, where everything allocated
-lives as long as the system does, and still the wrong amount for two things that do not
-exist yet:
+lives as long as the system does, and still the wrong amount for three things:
 
+- **a program whose mappings churn.** `mallocng` maps and unmaps as it grows and shrinks a
+  heap, and every mapping takes a slot per frame and per page table, while releasing it
+  gives back the memory and none of the slots. Measured at the link: `ld.lld` reaches
+  `slots 4071 of 4071, largest free 20 bits` -- a full CNode with a megabyte free -- and
+  dies of `std::bad_alloc` however well its CSpace grows, because returning is what is
+  missing, not growing. It is the reason a command can be given a two-level CSpace, grow it
+  correctly, and still fill up: growth is bounded by nothing, and so is the fill.
 - **a service that restarts another.** `restart = always` is in the manifest and means
   nothing until the supervisor can hand a dead service's *slots* back rather than leaking
   them one restart at a time -- its memory already comes back through `mem.main`, so the
   scattered slots are the missing piece.
 - **a service that reacts to something appearing** -- hot-plug through the device manager,
   which is what USB will need and is a long way off.
+
+The mechanism for the first is in the tree and unwired: `aegir::mem::SlotPool`
+(`libs/freestanding/aegir-mem/include/aegir/mem/slot_pool.h`) with
+`Allocator::adopt_slot_pool`, written for "an allocator that carves and frees untypeds over
+its life -- the memory service -- reuses slots this way". What the allocator lacks is a
+caller that hands a released range back: the heap would record the slots each mapping took
+(its frames, and the page tables the window made for it) and delete them into the pool when
+the mapping goes, which is `seL4_CNode_Delete` per slot, upstream's `vka_cnode_delete`.
 
 When one lands, the missing mechanism is narrow: `seL4_CNode_Delete` for a single used
 slot, which is what upstream's `vka_cnode_delete` does. Memory already has its revoke.

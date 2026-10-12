@@ -108,3 +108,54 @@
   harmless together. A cue that genuinely repeats (once per session, say) is *one* step with
   `times=0`, or a distinct cue per occurrence: when a new step wants an existing cue, the
   writer must print a distinguishing word for it, not reuse the string.
+- **A refusal must name what ran out, with the numbers.** Nothing in this system says "no"
+  in words. The kernel drops a capability destined for an occupied receive slot *silently*
+  (`kernel/src/object/cnode.c:895-928`), a service that cannot carve answers with no words at
+  all, and one `std::bad_alloc` at the link turned out to be four different shortages wearing
+  one message: a spent untyped, a spent node table, a CSpace with no free slot, and a growth
+  path with no piece to retype. Days went into that, because the marker said `page-no-slot`
+  and nothing else. So a refusal writes the quantity that tells them apart -- `slots 4071 of
+  4071, largest free 20 bits, l1 8, l2 12`, `largest free 20 bits with 691 pieces listed and
+  1170 nodes in use` -- the way `aegir-heap`'s phase markers already do. A marker that cannot
+  say which budget ran out *is* the bug; the diagnostic is part of the fix, not an extra.
+- **A process's shape is read from its block, never decided by the program.** Eleven
+  stand-ups adopted a two-level CSpace as a flat range, so their retype destinations landed
+  in root slots while their slots were the L2 CNode's, and `DataTypes:ilbm.datatype` invoked
+  four null caps because of it. One entry point that takes the block's numbers and is correct
+  either way (`Allocator::adopt_slots_level_two` treats `l1 == 0` as the single-level shape)
+  is what stops the twelfth: a per-program `if (l1 != 0)` is how eleven copies happened, and
+  `bootstrap::cnode_l1_bits`/`cnode_bits`/`endpoint_depth` exist so that nobody has to decide.
+- **A path that allocates in its own caller is re-entrancy guarded.** `grow_from_source`
+  called the registered untyped source, the source took a slot *in the caller's process*, and
+  that slot's allocation grew the CSpace, which asked the source again: 120 asks, 28
+  receipts, the machine looping on memory it was being handed and never using. The node pool
+  had carried the guard (`Allocator::growing_`) since it was written; the untyped source had
+  not (`growing_`'s sibling `sourcing_` is now there too). Every "ask for more X" path carries
+  the same flag, because the caller of a source is the one that allocates.
+- **A release returns its slots as well as its memory.** mallocng churns `mmap`/`munmap`;
+  every mapping takes a slot per frame and page table, and a release gives back the memory
+  and none of the slots -- so a CSpace sized at spawn fills up no matter how well it grows,
+  which is the wall `ld.lld` hits at the link whatever the two-level switch does. The
+  mechanism already exists (`SlotPool`, `adopt_slot_pool`, `slot_release`); what is missing
+  is a mapping that records the slots it took and frees them on release
+  (`specs/userland.md`, "a used slot is still allocation-only").
+- **The runner's report must be unmistakable in the log.** Its missing-cue list occupies the
+  last ~115 lines of the console file, unlabelled, after the guest's own output -- so it reads
+  as guest output, and it was read that way: `AEGIR-ACCEPTANCE-LINKED` "printed" three times
+  when the guest had never printed it, which cost an hour of the wrong investigation. The
+  runner labels every listed line (`missing: <cue>`) and writes a machine-readable verdict
+  beside the build (`verdict=FAIL cause=cue-timeout missing=29 last_cue=...`), so neither a
+  person nor an agent has to parse interleaved console text to learn whether a step happened.
+- **A run must say why it ended, and killing a guest is a tool, not a command line.** "The run
+  stopped at `bureau: screen shortcut`" was ambiguous three ways -- guest idle, guest blocked,
+  or guest killed by hand -- and once it was killed by hand: `pkill -f qemu-system` matches the
+  shell running it, because the pattern is in that command line, and it took a live guest
+  mid-link whose truncated log was then read as data. So the harness records the ending
+  (`cause=` above) and `make qemu-kill` matches exactly, refuses while a run is live, and
+  prints what it killed; nobody has to remember a bracket.
+- **When a symptom returns, say which wall it is before re-fixing it.** "I could have sworn
+  this was fixed" was asked twice, fairly, and both times the same symptom had a different
+  cause behind it (`bad_alloc` at the link: first a CSpace sized from the image, later the
+  source re-entrancy plus a CSpace filling with mapping slots). The numbers of the first rule
+  are what make that one line instead of one night; the second half is to state the wall in
+  the commit that fixes it, so a returning symptom is not re-litigated from scratch.
