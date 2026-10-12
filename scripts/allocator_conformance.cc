@@ -68,22 +68,29 @@ unsigned g_chunk_limit = kChunks;
  * invariant under test. */
 unsigned g_chunk_bits = 21;
 
-seL4_CPtr source(void *, seL4_Word want_bits, seL4_Word *bits, uint64_t *paddr)
+seL4_CPtr source(void *context, seL4_Word want_bits, seL4_Word *bits, uint64_t *paddr)
 {
-    if (g_chunks >= g_chunk_limit) {
+    auto *const allocator = static_cast<aegir::mem::Allocator *>(context);
+    if (allocator == nullptr || g_chunks >= g_chunk_limit) {
         return 0;
     }
-    /* A grown chunk arrives like the memory service's: a size and no address
-     * (`command_untyped_source` answers zero), so the allocator has no order to
-     * keep for it. Only the seed the process was started with has one. The
-     * memory service honors the requested width (aegir-memory's alloc handler),
-     * so `want_bits != 0` is a request for exactly that. */
-    *paddr = 0;
+    /* The real source (`heap.cc`'s `runtime_untyped_source`) parks the received
+     * capability in a slot of the allocator's own -- `alloc_slot_for_growth` --
+     * so *receiving a chunk costs the CSpace a slot*. That cost is part of the
+     * growth transaction; leaving it out is what let a host case pass where the
+     * guest refused. A source with nowhere to park the cap answers nothing.
+     * `want_bits != 0` asks for exactly that width (the memory service honors
+     * it); zero asks for the default chunk. */
+    seL4_CPtr const slot = allocator->alloc_slot_for_growth();
+    if (slot == 0) {
+        return 0;
+    }
     ++g_chunks;
     unsigned const width =
         want_bits != 0 ? static_cast<unsigned>(want_bits) : g_chunk_bits;
     *bits = width;
-    return host_sel4::make_root_untyped(width);
+    *paddr = 0;
+    return host_sel4::park_untyped_at(slot, width);
 }
 
 /* What the allocator is asked for: the shapes a spawn's staging uses -- CNodes,
@@ -151,7 +158,7 @@ bool reentrancy_holds()
     if (!allocator.initialise()) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     alignas(64) static unsigned char nodes[512];
     allocator.adopt_nodes(nodes, sizeof(nodes));
     alignas(64) static unsigned char pool[1 << 20];
@@ -187,7 +194,7 @@ bool carve_and_frames_hold()
     if (!allocator.initialise()) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     alignas(64) static unsigned char nodes[512];
     allocator.adopt_nodes(nodes, sizeof(nodes));
     alignas(64) static unsigned char pool[1 << 20];
@@ -247,7 +254,7 @@ bool free_without_revoke_holds()
     if (!allocator.initialise()) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
 
     unsigned const before = host_sel4::refusals();
     for (unsigned i = 0; i < 64; ++i) {
@@ -283,7 +290,7 @@ bool frame_region_holds()
     if (!allocator.initialise()) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
 
     constexpr unsigned kFrames = 4;
     constexpr unsigned kFrameBits = 21;
@@ -388,7 +395,7 @@ bool two_level_growth_holds()
     if (!allocator.adopt_untyped(root, 22, 0)) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
 
     /* The whole first L2 CNode, starting above the fixed slots. */
     constexpr seL4_Word kFirst = 20;
@@ -455,7 +462,7 @@ bool split_under_slot_pressure_holds()
     if (!allocator.adopt_untyped(root, 22, 0)) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
 
     constexpr seL4_Word kFirst = 20;
     constexpr seL4_Word kL2Bits = 12;
@@ -478,6 +485,16 @@ bool split_under_slot_pressure_holds()
     void *cookie = nullptr;
     seL4_CPtr const cap =
         allocator.alloc_object(seL4_CapTableObject, 12, g_account, &error, &cookie);
+    if (cap == 0 || host_sel4::collisions() != before_collisions ||
+        host_sel4::invalid() != before_invalid) {
+        std::printf("  split: cap %llu error %llu slots %u of %u can-grow %d collisions %u "
+                    "invalid %u\n",
+                    static_cast<unsigned long long>(cap), static_cast<unsigned long long>(error),
+                    allocator.slots_used(), allocator.slots_total(),
+                    allocator.slots_can_grow() ? 1 : 0,
+                    host_sel4::collisions() - before_collisions,
+                    host_sel4::invalid() - before_invalid);
+    }
     return cap != 0 && host_sel4::collisions() == before_collisions &&
            host_sel4::invalid() == before_invalid;
 }
@@ -551,7 +568,7 @@ bool child_spawn_holds()
     if (!allocator.adopt_untyped(seed, 26, 0)) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
     alignas(64) static unsigned char pool[1 << 16];
     static NodeWindow window;
@@ -809,7 +826,7 @@ bool frame_per_use_holds()
     if (!allocator.adopt_untyped(seed, 23, 0)) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
 
     unsigned const before_collisions = host_sel4::collisions();
@@ -854,7 +871,7 @@ bool diagnostics_contract_holds()
     if (!allocator.adopt_untyped(seed, 20, 0)) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     allocator.adopt_slots(20, 100, 0, 12);
 
     unsigned const free_before = allocator.untyped_free();
@@ -893,7 +910,7 @@ bool linker_space_growth_holds()
     if (!allocator.adopt_untyped(seed, 26, 0)) {
         return false;
     }
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
     alignas(64) static unsigned char pool[4 << 20];
     static NodeWindow window;
@@ -902,6 +919,7 @@ bool linker_space_growth_holds()
      * through the allocator it serves (`reentrant_nodes`). It consumes slots too,
      * and it is what turned the link's split into a slot shortage. */
     allocator.set_node_source(reentrant_nodes, &window);
+    allocator.set_trace(ring_trace, nullptr);
 
     unsigned const before_collisions = host_sel4::collisions();
     unsigned const before_invalid = host_sel4::invalid();
@@ -929,17 +947,24 @@ bool linker_space_growth_holds()
                 live.push_back(Live{cap, cookie,
                                     aegir::mem::Allocator::object_bits(shape.type,
                                                                        shape.size_bits)});
-            } else if (error == seL4_FailedLookup && allocator.slots_can_grow()) {
-                /* The CSpace could add a CNode and still refused: the wall. */
-                std::printf("  linker: refused at op %u, slots %u of %u, can-grow\n", i,
-                            allocator.slots_used(), allocator.slots_total());
+            } else {
+                std::printf(
+                    "  linker: alloc failed at op %u, error %llu, slots %u of %u, mark %llu, "
+                    "largest %u, can-grow %d; history:\n",
+                    i, static_cast<unsigned long long>(error), allocator.slots_used(),
+                    allocator.slots_total(),
+                    static_cast<unsigned long long>(allocator.slot_mark()),
+                    allocator.largest_free_bits(), allocator.slots_can_grow() ? 1 : 0);
+                dump_ring();
                 refused = true;
             }
         } else {
             std::size_t const index = rng() % live.size();
             Live const entry = live[index];
-            /* The mapping is unmapped: the object's cap goes, then its piece. */
+            /* The mapping is unmapped: the object's cap goes, the *slot* goes
+             * back (`sys_munmap`'s `free_slot`), then its piece. */
             (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, entry.cap, 16);
+            allocator.free_slot(entry.cap);
             (void)allocator.free_object(entry.cookie, entry.wanted);
             live.erase(live.begin() + static_cast<std::ptrdiff_t>(index));
         }
@@ -1029,7 +1054,7 @@ int main()
 
     aegir::mem::Allocator allocator(&info);
     expect(allocator.initialise(), "the bootinfo is adopted");
-    allocator.set_untyped_source(source, nullptr);
+    allocator.set_untyped_source(source, &allocator);
     allocator.set_trace(ring_trace, nullptr);
 
     std::vector<Live> live;

@@ -209,6 +209,19 @@ inline seL4_CPtr make_root_untyped(unsigned bits)
     return cap;
 }
 
+/** An untyped the caller parks at `slot` (the real source moves the capability
+ *  it received into a slot of the allocator's own), so the cap's address is the
+ *  slot. */
+inline seL4_CPtr park_untyped_at(seL4_CPtr slot, unsigned bits)
+{
+    if (slot >= kMaxCaps) {
+        return 0;
+    }
+    g_caps[slot] = Cap{true, true, bits, 0, 0, 0};
+    g_live.push_back(slot);
+    return slot;
+}
+
 inline unsigned refusals() { return g_refusals; }
 inline unsigned retypes() { return g_retypes; }
 inline unsigned orphans() { return g_orphans; }

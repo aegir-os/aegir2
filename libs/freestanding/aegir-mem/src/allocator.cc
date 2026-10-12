@@ -252,6 +252,14 @@ bool Allocator::grow_slots() noexcept
     slots_end_ = static_cast<seL4_CPtr>(l1_slot + 1) << level_two_bits_;
     seL4_CPtr const start = static_cast<seL4_CPtr>(l1_slot) << level_two_bits_;
     if (slots_next_ < start) {
+        /* The slots between the old end and the new CNode belong to whatever
+         * took them (a spawner's command CNode), so they are not this
+         * allocator's to hand out -- count them used. Not counting them makes
+         * `slots_total - slots_used` (and `free_slots`) over-report room by the
+         * gap, and growth is then refused with room apparently free: measured by
+         * `linker_space_growth_holds`, 15 slots over, `slots_used 20445` with
+         * `slots_next_ == slots_end_` and an empty free list. */
+        slots_used_ += static_cast<unsigned>(start - slots_next_);
         slots_next_ = start;
     }
     return true;
@@ -301,6 +309,10 @@ seL4_CPtr Allocator::alloc_slot() noexcept
     }
     while (slots_next_ >= slots_end_) {
         if (!grow_slots()) {
+            if (trace_ != nullptr) {
+                trace_(trace_context_, "alloc-slot-refused", slots_used_,
+                       static_cast<uint64_t>(slots_next_), free_slots_ != nullptr, slots_end_);
+            }
             return 0;
         }
     }
@@ -534,7 +546,13 @@ bool Allocator::refill(bool device, seL4_Word size_bits) noexcept
 
 bool Allocator::refill_exact(bool device, seL4_Word size_bits) noexcept
 {
-    if (refill_inner(device, size_bits)) {
+    /* No split. Growth obtains its CNode this way: either a piece already of the
+     * wanted size, or a chunk asked of the source at exactly that width. Adding a
+     * CNode then costs one slot (the piece's cap) and never the ten a split from a
+     * 22-bit seed would -- and, asking the source *after* a split, the wasted split
+     * consumed the very slots the source then needed. Measured by
+     * `split_under_slot_pressure_holds` and `linker_space_growth_holds`. */
+    if (lists(device)[size_bits] != nullptr) {
         return true;
     }
     if (device || !grow_from_source(size_bits)) {
