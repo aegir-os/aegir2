@@ -442,6 +442,15 @@ public:
         return level_two_bits_ != 0 && slot_source_ != nullptr;
     }
 
+    /** Whether a *pool* owns this allocator's slots. An adopted `slot_pool_`
+     *  answers before any cursor logic (`alloc_slot`'s first branch), so a full
+     *  pool and a full cursor refuse identically -- and then every other number
+     *  in a refusal (`slots_used`/`slots_total`, `slots_can_grow`) describes the
+     *  cursor, which is not what refused. Measured: four allocator-internal
+     *  fixes left the link's refusal byte-identical, which is only possible if
+     *  the code they changed is not the code that refuses. */
+    bool slots_have_pool() const noexcept { return slot_pool_ != nullptr; }
+
     /** One slot for a path that *is* this allocator's growth -- a caller's
      *  untyped source parking the chunk it received, or the node source carving
      *  the frame the piece table lives in. These are the reserve's owners, so

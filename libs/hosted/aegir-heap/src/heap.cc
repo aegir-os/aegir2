@@ -602,6 +602,11 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
          * exactly like a two-level one whose growth is refused. */
         aegir::debug_write(", can-grow ");
         aegir::debug_write(allocator->slots_can_grow() ? "yes" : "no");
+        /* And whether a pool owns the slots, because that branch answers first:
+         * a full pool and a full cursor refuse identically, so without this word
+         * every number above can be a number about the wrong budget. */
+        aegir::debug_write(", pool ");
+        aegir::debug_write(allocator->slots_have_pool() ? "yes" : "no");
         aegir::debug_write("\n");
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
