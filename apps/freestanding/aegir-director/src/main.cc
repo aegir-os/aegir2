@@ -884,6 +884,17 @@ bool boot_services(aegir::spawn::Initrd const &initrd, aegir::manifest::Manifest
     unsigned faulted = 0;
     for (unsigned i = 0; i < boot.started; ++i) {
         seL4_Word badge = 0;
+        /* The wait nothing else can see. This is a raw `seL4_Wait` on a
+         * supervision notification, not a port call and not a traced syscall, so a
+         * director parked here looks exactly like a machine that has stopped:
+         * measured, the console freezes, the CPU goes to zero, and the runner ends
+         * the run on a cue timeout while every other instrument reports nothing
+         * wrong. One line per service, before the wait, so the last line of a dead
+         * run names the service that never reported ready -- and it is bounded by
+         * the boot set, which is a handful. */
+        write("  director: waiting for ");
+        write_name(started[i].name, started[i].name_length);
+        write("\n");
         seL4_Wait(started[i].supervision, &badge);
         write("  ");
         write_name(started[i].name, started[i].name_length);
