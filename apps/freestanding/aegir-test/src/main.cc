@@ -1735,12 +1735,29 @@ int main(int argc, char *argv[])
             }
         }
 
-        ok = ok && query_open(bfs_write_volume, "size >", 6, 0) == 0;
-        ok = ok && query_open(bfs_write_volume, kByName, sizeof(kByName) - 1,
-                              aegir::metadata::kQueryFlagLive) == 0;
-        ok = ok && vol_remove(bfs_write_volume, kQueryPath,
-                              sizeof(kQueryPath) - 1) == 1;
+        /* Three asks behind one message, which is why this line read the same in every
+         * run of an arc without ever being attributed: `FAIL ... did not open, find and
+         * close` cannot tell a malformed body that was accepted from a second live query
+         * that was accepted from a query path that would not come off. The refusal rule
+         * (AGENTS.md) is about exactly this, so each ask answers for itself before the
+         * cue prints -- and both cue strings stay byte-for-byte, because the acceptance
+         * watches them. */
+        bool const malformed_refused =
+            query_open(bfs_write_volume, "size >", 6, 0) == 0;
+        bool const live_refused =
+            query_open(bfs_write_volume, kByName, sizeof(kByName) - 1,
+                       aegir::metadata::kQueryFlagLive) == 0;
+        bool const removed =
+            vol_remove(bfs_write_volume, kQueryPath, sizeof(kQueryPath) - 1) == 1;
+        ok = malformed_refused && live_refused && removed;
         if (!ok) {
+            write("  test:   malformed body refused: ");
+            write(malformed_refused ? "yes" : "no");
+            write(", second live query refused: ");
+            write(live_refused ? "yes" : "no");
+            write(", query path removed: ");
+            write(removed ? "yes" : "no");
+            write("\n");
             write("  test: FAIL BFS queries did not open, find and close\n");
             ++failed;
         } else {
