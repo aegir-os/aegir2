@@ -99,6 +99,22 @@ splitting with that shape.
   same idea retires the other fixed sizes this project has been guessing at
   (`stack_kib`, `delegate_mib`): where a value is derivable from the grant, it
   should be derived.
+  **Audited against this rule.** Four constants were named as the remaining fixed
+  sizes; reading them says two satisfy the rule already and two do not.
+  `Allocator`'s node table is `default_nodes_[CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS * 8]`
+  (`allocator.h`) -- derived from the bootinfo's untyped caps rather than chosen -- and it
+  is a *floor*, not a cap, because a full pool asks `node_source_` for another region
+  "rather than failing" (`allocator.h`:611), which the heap wires at
+  `grow_nodes_from_window` and `grow_node_region`. The reserves (`kReserve` 8 slots and
+  32 nodes) are the size of a *transaction* -- a split's two halves, a source's receipt,
+  a frame with its page-table levels -- measured when the split refusal was traced
+  (`12935103`), and documented where they are set. What does *not* satisfy it is
+  `aegir-memory`'s two tables: `g_nodes[64 KiB]` and `Chunk g_chunk[kMaxChunks]` with
+  `kMaxChunks = 2048`, whose scan returns `kMaxChunks` when full
+  (`apps/freestanding/aegir-memory/src/main.cc`). Those are the capacity tables this rule
+  is about: the record of what a client holds should be sized from the grant `mem.main`
+  was given, or grow on demand -- and until it is, that service has a number chosen by
+  hand, which is what the auditing milestone below exists to make visible.
 - **The public API does not change shape.** `alloc_object`, `carve_untyped`,
   `carve_page`, `device_window`, `adopt_untyped`, `adopt_slots`, `make_asid_pool`
   keep their contracts; the buddy is the internals. `alloc_object` and
