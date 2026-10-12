@@ -27,17 +27,26 @@
 
 #include <array>
 #include <cstdio>
+#include <vector>
 
 typedef uint64_t seL4_Word;
 typedef seL4_Word seL4_CPtr;
 typedef seL4_Word seL4_Error;
 
+/* The kernel's is a macro (`sel4/types.h`), so the allocator's `remaining <
+ * seL4_UntypedRetypeMaxObjects ? remaining : seL4_UntypedRetypeMaxObjects` mixes
+ * a word and an integer, not a word and an enum. */
+#define seL4_UntypedRetypeMaxObjects 256
+
 /* The constants the allocator names. Values are the architecture's only where
  * the allocator compares them; the model uses the names. */
 enum : seL4_Word {
     seL4_NoError = 0,
-    seL4_NotEnoughMemory = 8,
     seL4_InvalidArgument = 1,
+    seL4_InvalidCapability = 2,
+    seL4_FailedLookup = 6,
+    seL4_DeleteFirst = 8,
+    seL4_NotEnoughMemory = 10,
 };
 enum : unsigned {
     seL4_WordBits = 64,
@@ -94,6 +103,9 @@ struct Cap {
 constexpr unsigned kMaxCaps = 1u << 18;
 
 inline std::array<Cap, kMaxCaps> g_caps{};
+/* The caps that have been created, so a revoke walks what exists (a few dozen)
+ * rather than the whole 2^18-cap address space for every level of a merge. */
+inline std::vector<seL4_CPtr> g_live;
 /* Root untypeds the model hands out (a source's chunks) live well above the
  * slots a workload allocates, so a retyped child -- which lands in the slot the
  * allocator named -- never collides with one. */
@@ -128,6 +140,7 @@ inline seL4_CPtr take_root()
 inline void reset()
 {
     g_caps.fill(Cap{});
+    g_live.clear();
     g_next_root = 100000;
     g_refusals = 0;
     g_retypes = 0;
@@ -143,6 +156,7 @@ inline void reset()
 inline void release_all()
 {
     g_caps.fill(Cap{});
+    g_live.clear();
     g_next_root = 100000;
 }
 
@@ -151,6 +165,7 @@ inline seL4_CPtr make_root_untyped(unsigned bits)
 {
     seL4_CPtr const cap = take_root();
     g_caps[cap] = Cap{true, true, bits, 0, 0, 0};
+    g_live.push_back(cap);
     return cap;
 }
 
@@ -231,6 +246,7 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
     }
     g_caps[child] = Cap{true, type == seL4_UntypedObject, static_cast<uint32_t>(size_bits),
                         0, 0, service};
+    g_live.push_back(child);
     return seL4_NoError;
 }
 
@@ -262,9 +278,23 @@ inline seL4_Error cnode_revoke(seL4_CPtr node, seL4_CPtr cap)
     if (cap >= kMaxCaps || !g_caps[cap].valid) {
         return seL4_NoError;
     }
-    for (seL4_CPtr child = 0; child < kMaxCaps; ++child) {
-        if (g_caps[child].valid && g_caps[child].parent == cap) {
-            (void)cnode_revoke(node, child);
+    /* Everything whose parent chain reaches `cap`, deleted once each. Walking
+     * the live set (not the whole cap space) keeps a merge's repeated revokes
+     * cheap; the chain is at most a piece's split depth. */
+    for (seL4_CPtr const child : g_live) {
+        if (child >= kMaxCaps || !g_caps[child].valid || child == cap) {
+            continue;
+        }
+        seL4_CPtr at = g_caps[child].parent;
+        bool derived = false;
+        while (at != 0 && at < kMaxCaps && g_caps[at].valid) {
+            if (at == cap) {
+                derived = true;
+                break;
+            }
+            at = g_caps[at].parent;
+        }
+        if (derived) {
             g_caps[child].valid = false;
         }
     }
