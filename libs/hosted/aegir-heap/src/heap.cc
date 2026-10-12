@@ -1001,12 +1001,23 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
                 page += kMegaPages;
             }
         }
+        /* The anonymous path's pages, bracketed. `mmap-reserved` says the window
+         * cursor returned; this pair says whether the stall is inside the mapping
+         * loop or after it, which is the last question `sys_mmap` can be asked.
+         * Measured: the console stops on `mmap-reserved`, so the call died between
+         * there and the return -- and with the CPU at zero it is one `map_page`
+         * that never came back, not pages ground through one at a time (that shape
+         * burns CPU, and the file-backed branch below is where tens of thousands
+         * of mappings happen). Two lines per call, not one per page: a run maps
+         * tens of thousands and the shape is the point. */
+        trace_phase("mmap-pages");
         for (; page < needed / kPageBytes; ++page) {
             if (!map_page(base + page * kPageBytes)) {
                 trace("mmap-refused", length, 0);
                 return -ENOMEM;
             }
         }
+        trace_phase("mmap-pages-done");
     }
     if (file_backed) {
         /* The mapping's pages are in place; what follows is the file's bytes. A
