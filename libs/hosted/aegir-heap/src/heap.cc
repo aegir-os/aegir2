@@ -567,7 +567,10 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
         aegir::debug_write("\n");
         return 0;
     }
-    seL4_CPtr const slot = allocator->alloc_slot();
+    /* The keep-slot comes from the reserve: this *is* the allocator's growth
+     * (a chunk arriving so a piece exists at all), so it may spend the room a
+     * caller's `alloc_slot` keeps back for exactly this (allocator.h). */
+    seL4_CPtr const slot = allocator->alloc_slot_for_growth();
     /* Two ways to fail here, and the last instrument could not tell them apart
      * from the one above: no free CNode slot to move the chunk's capability
      * into, or a move that failed (specs/memory.md). Both are silent, and both
@@ -594,6 +597,11 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
         aegir::debug_write_unsigned(aegir::bootstrap::cnode_l1_bits());
         aegir::debug_write(", l2 ");
         aegir::debug_write_unsigned(aegir::bootstrap::cnode_bits());
+        /* And what the *allocator* holds, which is the half the block cannot
+         * answer: a level one in the block with a flat allocator behind it looks
+         * exactly like a two-level one whose growth is refused. */
+        aegir::debug_write(", can-grow ");
+        aegir::debug_write(allocator->slots_can_grow() ? "yes" : "no");
         aegir::debug_write("\n");
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
@@ -718,6 +726,18 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
      * handed runs out, the allocator asks mem.main for another chunk. A
      * process not given the port keeps the seed as its ceiling. */
     allocator.set_untyped_source(runtime_untyped_source, &allocator);
+
+    /* And the *node* source, which is the same shape for the allocator's own
+     * bookkeeping (specs/allocator.md: node storage is provided and grown, not a
+     * fixed table). Without it a command has only the built-in floor -- the
+     * compiled-in `default_nodes_` table -- and a full node pool makes the one
+     * refusal that says nothing: `refill_inner` cannot split a piece, finds no
+     * node to remember the halves, and puts the piece back silently, so the
+     * caller's growth reads as "the CSpace is full" with a megabyte free.
+     * Measured at the link: `slots 4071 of 4071, largest free 20 bits, l1 8,
+     * l2 12, can-grow yes`, four times, then `std::bad_alloc`. */
+    static aegir::mem::NodeWindow node_window{&allocator, &scratch};
+    allocator.set_node_source(aegir::mem::grow_nodes_from_window, &node_window);
 
     /* The file layer's capability slots come from the same allocator. */
     files::adopt(allocator, scratch);

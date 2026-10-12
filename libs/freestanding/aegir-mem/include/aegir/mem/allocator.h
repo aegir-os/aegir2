@@ -427,6 +427,31 @@ public:
     unsigned cnode_size_bits() const noexcept { return cnode_size_bits_; }
     unsigned slots_total() const noexcept { return slots_end_ - slots_first_; }
     unsigned slots_used() const noexcept { return slots_used_; }
+    /* Whether this allocator's cursor can grow at all, for a refusal that has to
+     * say *why* it refused rather than that it did: without a level one and a
+     * slot source there is nothing to grow into, and the refusal means "full"
+     * rather than "unable to grow". A caller's `alloc_slot` also leaves the
+     * reserve growth spends (allocator.cc), so a reader can tell a CSpace that
+     * is full from one with room it is not allowed to take. Measured, and this
+     * is why: the link's refusal printed the *block's* shape (`l1 8, l2 12`),
+     * which is what the process was told, and not one word about whether the
+     * allocator acting on it can grow -- so the run could not tell a two-level
+     * process with a working source from a flat one. */
+    bool slots_can_grow() const noexcept
+    {
+        return level_two_bits_ != 0 && slot_source_ != nullptr;
+    }
+
+    /** One slot for a path that *is* this allocator's growth -- a caller's
+     *  untyped source parking the chunk it received, or the node source carving
+     *  the frame the piece table lives in. These are the reserve's owners, so
+     *  they may spend it; a caller's own `alloc_slot` stops short of it
+     *  (allocator.cc). Without this the reserve deadlocks growth instead of
+     *  protecting it: the sources need a slot, the slot needs growth, and growth
+     *  needs the sources. Measured, in that order: `slots 4071 of 4071 ... can-
+     *  grow yes`, refusing four times and then `std::bad_alloc`, after a reserve
+     *  that a *caller* could not spend and a node source that could not get in. */
+    seL4_CPtr alloc_slot_for_growth() noexcept { return alloc_slot_reserved(); }
 
 private:
     /* One piece of an untyped: the capability, its size, where it is, and the
