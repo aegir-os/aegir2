@@ -60,6 +60,10 @@ struct Live {
  * allocation fails, rather than growing forever. */
 constexpr unsigned kChunks = 64;
 unsigned g_chunks = 0;
+/* The source's chunk width. The memory service hands out 21 bits; a test may
+ * widen it to force a split deeper than the slot reserve, which is the
+ * invariant under test. */
+unsigned g_chunk_bits = 21;
 
 seL4_CPtr source(void *, seL4_Word *bits, uint64_t *paddr)
 {
@@ -71,8 +75,8 @@ seL4_CPtr source(void *, seL4_Word *bits, uint64_t *paddr)
      * keep for it. Only the seed the process was started with has one. */
     *paddr = 0;
     ++g_chunks;
-    *bits = 21;
-    return host_sel4::make_root_untyped(21);
+    *bits = g_chunk_bits;
+    return host_sel4::make_root_untyped(g_chunk_bits);
 }
 
 /* What the allocator is asked for: the shapes a spawn's staging uses -- CNodes,
@@ -356,6 +360,77 @@ void ring_trace(void *, char const *event, unsigned size_bits, uint64_t physical
     }
 }
 
+/* The CSpace side (specs/userland.md, specs/memory.md). A two-level process
+ * whose own heap fills its first L2 CNode must grow: growth adds a CNode, which
+ * costs no slot, but `refill` may have to split a chunk to get the CNode's
+ * piece, and *that* spends slots (`refill_inner`'s two halves per level). The
+ * allocator must grow without a refusal. This is the link's
+ * `cnode-refill-refused a 17 ... slots 8161 of 8167`, in seconds. */
+bool two_level_growth_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(4, 12);   /* small l1, the link's l2: a CNode is 17 bits */
+    g_chunks = 0;
+    /* A 24-bit chunk makes `refill(17)` seven levels (14 slots), past any fixed
+     * reserve -- the invariant is that growth must not need a caller-sized
+     * reserve at all, so the split depth is what the case varies. */
+    g_chunk_bits = 24;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const root = host_sel4::make_root_untyped(22);
+    if (!allocator.adopt_untyped(root, 22, 0)) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+
+    /* The whole first L2 CNode, starting above the fixed slots. */
+    constexpr seL4_Word kFirst = 20;
+    constexpr seL4_Word kL2Bits = 12;
+    constexpr seL4_Word kL1Bits = 4;
+    constexpr seL4_Word kL2Total = seL4_Word{1} << kL2Bits;
+    allocator.adopt_slots_level_two(kFirst, kL2Total - kFirst, kL1Bits, kL2Bits, 0, true);
+
+    /* The re-entrant node source: growing the allocator's own bookkeeping also
+     * spends slots, exactly as the link's did. */
+    alignas(64) static unsigned char pool[1 << 20];
+    alignas(64) static unsigned char nodes[512];
+    static NodeWindow window;
+    window = NodeWindow{&allocator, pool, sizeof(pool), 0};
+    allocator.adopt_nodes(nodes, sizeof(nodes));
+    allocator.set_node_source(reentrant_nodes, &window);
+
+    unsigned const before_refusals = host_sel4::refusals();
+    unsigned const before_collisions = host_sel4::collisions();
+    unsigned const before_invalid = host_sel4::invalid();
+    unsigned const before_slots = allocator.slots_total();
+
+    /* Demand more than one CNode of pages, monotonically: no freed slot is in
+     * the free list to spare the split, which is the state the link refused in. */
+    std::vector<Live> live;
+    bool grew = false;
+    for (unsigned i = 0; i < 6000 && !grew; ++i) {
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        seL4_CPtr const cap =
+            allocator.alloc_object(seL4_RISCV_4K_Page, seL4_PageBits, g_account, &error, &cookie);
+        if (cap != 0) {
+            live.push_back(Live{cap, cookie, seL4_PageBits});
+        }
+        grew = allocator.slots_total() > before_slots;
+        if (grew) {
+            std::printf("growth: slots_total %llu -> %llu, used %llu, mark %llu, largest free %u bits\n",
+                        static_cast<unsigned long long>(before_slots),
+                        static_cast<unsigned long long>(allocator.slots_total()),
+                        static_cast<unsigned long long>(allocator.slots_used()),
+                        static_cast<unsigned long long>(allocator.slot_mark()),
+                        allocator.largest_free_bits());
+        }
+    }
+    return grew && host_sel4::refusals() == before_refusals &&
+           host_sel4::collisions() == before_collisions &&
+           host_sel4::invalid() == before_invalid && allocator.check_free_lists() == 0;
+}
+
 }  // namespace
 
 int main()
@@ -379,6 +454,10 @@ int main()
     /* A service asks for frames, not for an untyped it must retype: the region
      * carves, retypes and gives the piece back whole (specs/memory.md). */
     expect(frame_region_holds(), "a frame region gives frames and the piece back whole");
+
+    /* The CSpace half: a two-level process grows under slot pressure without a
+     * caller-supplied reserve. This is the class the acceptance kept finding. */
+    expect(two_level_growth_holds(), "a two-level process grows its CSpace under slot pressure");
 
     host_sel4::reset();
 

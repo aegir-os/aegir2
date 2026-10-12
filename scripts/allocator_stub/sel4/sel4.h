@@ -102,6 +102,28 @@ struct Cap {
 
 constexpr unsigned kMaxCaps = 1u << 18;
 
+/* The process's CSpace shape, set by a test before a two-level case. `l1 == 0`
+ * is single-level, where a plain CPtr is the CNode itself and the index is the
+ * flat cap number. A two-level process holds its objects in an L2 CNode at root
+ * slot `cnode_index`, addressed `(cnode_index << l2) | offset`; the root CNode's
+ * own slots (the L2 caps) are indexed above that range, so a root slot and an L2
+ * offset with the same number cannot collide -- the collision the allocator's
+ * `level_one_high_` exists to avoid, and which the flat stub could not express. */
+inline unsigned g_l1 = 0;
+inline unsigned g_l2 = 12;
+inline void set_shape(unsigned l1, unsigned l2) { g_l1 = l1; g_l2 = l2; }
+inline seL4_CPtr root_slot_base() { return static_cast<seL4_CPtr>(1) << (g_l1 + g_l2); }
+inline seL4_CPtr resolve_cap(seL4_CPtr cap, seL4_Word depth)
+{
+    if (g_l1 == 0) {
+        return cap;
+    }
+    if (depth == g_l1) {
+        return root_slot_base() + cap;
+    }
+    return cap;
+}
+
 inline std::array<Cap, kMaxCaps> g_caps{};
 /* The caps that have been created, so a revoke walks what exists (a few dozen)
  * rather than the whole 2^18-cap address space for every level of a merge. */
@@ -141,6 +163,8 @@ inline void reset()
 {
     g_caps.fill(Cap{});
     g_live.clear();
+    g_l1 = 0;
+    g_l2 = 12;
     g_next_root = 100000;
     g_refusals = 0;
     g_retypes = 0;
@@ -188,7 +212,8 @@ inline unsigned object_bits_for(seL4_Word type, seL4_Word size_bits)
 }
 
 inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word size_bits,
-                                  seL4_CPtr slot)
+                                  seL4_CPtr node_index, seL4_Word node_depth,
+                                  seL4_CPtr node_offset)
 {
     ++g_retypes;
     if (service >= kMaxCaps || !g_caps[service].valid || !g_caps[service].untyped) {
@@ -229,7 +254,13 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
     uint64_t const offset = (uint64_t{free_index} * 16 + width - 1) & ~(width - 1);
     parent.free_index = static_cast<uint32_t>((offset + width) / 16);
     parent.children += 1;
-    seL4_CPtr const child = slot;
+    /* The destination: the root CNode itself when single-level or when a CNode
+     * is retyped into a root slot (`alloc_cnode_at_l1`, depth 0), and the L2
+     * CNode at root slot `node_index` otherwise. */
+    seL4_CPtr const child =
+        g_l1 == 0 ? node_offset
+                  : (node_depth == 0 ? root_slot_base() + node_offset
+                                     : ((node_index << g_l2) | node_offset));
     /* A retype lands in a slot the allocator named; that slot must be free, or
      * the model's cap for it no longer tracks the allocator's piece. The kernel
      * refuses an occupied destination, so a collision here is the allocator
@@ -250,21 +281,22 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
     return seL4_NoError;
 }
 
-inline seL4_Error cnode_delete(seL4_CPtr node, seL4_CPtr cap)
+inline seL4_Error cnode_delete(seL4_CPtr node, seL4_CPtr cap, seL4_Word depth)
 {
     static_cast<void>(node);
-    if (cap >= kMaxCaps || !g_caps[cap].valid) {
+    seL4_CPtr const index = resolve_cap(cap, depth);
+    if (index >= kMaxCaps || !g_caps[index].valid) {
         return seL4_NoError;
     }
-    if (g_caps[cap].children > 0) {
+    if (g_caps[index].children > 0) {
         ++g_orphans;
     }
-    seL4_CPtr const parent = g_caps[cap].parent;
+    seL4_CPtr const parent = g_caps[index].parent;
     if (parent != 0 && parent < kMaxCaps && g_caps[parent].valid &&
         g_caps[parent].children > 0) {
         g_caps[parent].children -= 1;
     }
-    g_caps[cap].valid = false;
+    g_caps[index].valid = false;
     return seL4_NoError;
 }
 
@@ -272,23 +304,24 @@ inline seL4_Error cnode_delete(seL4_CPtr node, seL4_CPtr cap)
  * which leaves them and so leaves the memory in use (kernel/src/kernel/
  * cspace.c `finaliseCap`, `capHasDerived`). The allocator's merge relies on it:
  * a piece can only be whole again when its cap has no children. */
-inline seL4_Error cnode_revoke(seL4_CPtr node, seL4_CPtr cap)
+inline seL4_Error cnode_revoke(seL4_CPtr node, seL4_CPtr cap, seL4_Word depth)
 {
     static_cast<void>(node);
-    if (cap >= kMaxCaps || !g_caps[cap].valid) {
+    seL4_CPtr const index = resolve_cap(cap, depth);
+    if (index >= kMaxCaps || !g_caps[index].valid) {
         return seL4_NoError;
     }
-    /* Everything whose parent chain reaches `cap`, deleted once each. Walking
+    /* Everything whose parent chain reaches `index`, deleted once each. Walking
      * the live set (not the whole cap space) keeps a merge's repeated revokes
      * cheap; the chain is at most a piece's split depth. */
     for (seL4_CPtr const child : g_live) {
-        if (child >= kMaxCaps || !g_caps[child].valid || child == cap) {
+        if (child >= kMaxCaps || !g_caps[child].valid || child == index) {
             continue;
         }
         seL4_CPtr at = g_caps[child].parent;
         bool derived = false;
         while (at != 0 && at < kMaxCaps && g_caps[at].valid) {
-            if (at == cap) {
+            if (at == index) {
                 derived = true;
                 break;
             }
@@ -298,7 +331,7 @@ inline seL4_Error cnode_revoke(seL4_CPtr node, seL4_CPtr cap)
             g_caps[child].valid = false;
         }
     }
-    g_caps[cap].children = 0;
+    g_caps[index].children = 0;
     return seL4_NoError;
 }
 
@@ -312,22 +345,19 @@ inline seL4_Error seL4_Untyped_Retype(seL4_CPtr service, seL4_Word type,
                                       seL4_Word node_offset, seL4_Word num_objects)
 {
     static_cast<void>(root);
-    static_cast<void>(node_index);
-    static_cast<void>(node_depth);
     static_cast<void>(num_objects);
-    return host_sel4::untyped_retype(service, type, size_bits, node_offset);
+    return host_sel4::untyped_retype(service, type, size_bits, node_index, node_depth,
+                                     node_offset);
 }
 
 inline seL4_Error seL4_CNode_Delete(seL4_CPtr node, seL4_CPtr cap, seL4_Word depth)
 {
-    static_cast<void>(depth);
-    return host_sel4::cnode_delete(node, cap);
+    return host_sel4::cnode_delete(node, cap, depth);
 }
 
 inline seL4_Error seL4_CNode_Revoke(seL4_CPtr node, seL4_CPtr cap, seL4_Word depth)
 {
-    static_cast<void>(depth);
-    return host_sel4::cnode_revoke(node, cap);
+    return host_sel4::cnode_revoke(node, cap, depth);
 }
 
 inline seL4_Error seL4_RISCV_ASIDControl_MakePool(seL4_CPtr control, seL4_CPtr untyped,
