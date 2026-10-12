@@ -704,6 +704,20 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     *error = seL4_Untyped_Retype(node->cap, type, size_bits, seL4_CapInitThreadCNode,
                                  retype_node_index(slot), cnode_depth_, slot_offset(slot), 1);
     if (*error != seL4_NoError) {
+        /* Which slot, and at which depth -- the pair that decides whether a
+         * `seL4_DeleteFirst` here is a shape mismatch. The destination above is
+         * `(retype_node_index(slot), cnode_depth_, slot_offset(slot))`: the index
+         * and the offset are decoded *from the slot*, while the depth comes from a
+         * member (`cnode_depth_`, whose default is `seL4_WordBits`) that a process
+         * sets only by adopting slots. So a depth that disagrees with the slot's
+         * encoding names a CNode and offset that are not the ones the cursor handed
+         * out -- and a root slot is where a process's own caps live, every one of
+         * them with children, which is exactly what `DeleteFirst` refuses. The two
+         * numbers on the trace are the depth and the slot; `heap.cc` prints them. */
+        if (trace_ != nullptr) {
+            trace_(trace_context_, "retype-refused", static_cast<unsigned>(cnode_depth_),
+                   static_cast<uint64_t>(slot), false, node->cap);
+        }
         slot_failed(slot);
         /* The piece cannot yield the object, so it is not a usable piece: it is
          * dropped, not put back. Putting a piece back whose retype was refused

@@ -776,6 +776,36 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     static aegir::mem::NodeWindow node_window{&allocator, &scratch};
     allocator.set_node_source(aegir::mem::grow_nodes_from_window, &node_window);
 
+    /* The allocator's own trace, without which every `trace_(...)` inside it is
+     * computed and discarded. Four call sites exist in the allocator (lines 176,
+     * 479, 586, 717) and not one of them had ever printed in a run: this wiring
+     * landed, was lost to a build fallback that reverted two directories at once,
+     * and nothing checked -- so a year of "that path never happens" was really
+     * "that path cannot be seen". The `retype-refused` marker added for the link's
+     * `seL4_DeleteFirst` showed nothing for exactly this reason.
+     *
+     * The fields are positional (`a`, `b`, `c`, `cap`) because each event means
+     * something different by them: the allocator names the event and fills the
+     * numbers in its own order, and a hook that guessed labels would mislabel
+     * every event but one. */
+    allocator.set_trace(
+        [](void *context, char const *event, unsigned a, uint64_t b, bool c,
+           seL4_CPtr cap) noexcept {
+            static_cast<void>(context);
+            aegir::debug_write("      heap: trace ");
+            aegir::debug_write(event);
+            aegir::debug_write(" a ");
+            aegir::debug_write_unsigned(a);
+            aegir::debug_write(" b ");
+            aegir::debug_write_unsigned(b);
+            aegir::debug_write(" c ");
+            aegir::debug_write(c ? "1" : "0");
+            aegir::debug_write(" cap ");
+            aegir::debug_write_unsigned(static_cast<uint64_t>(cap));
+            aegir::debug_write("\n");
+        },
+        nullptr);
+
     /* The file layer's capability slots come from the same allocator. */
     files::adopt(allocator, scratch);
 
