@@ -1175,6 +1175,50 @@ long sys_munmap(void *addr, size_t length) noexcept
         trace("munmap-refused", base, bytes);
         return -EINVAL;
     }
+    /* The run's *pages*, unmapped, and then their capabilities and slots given back.
+     * The order is the whole lesson of the attempt that failed: the kernel unmaps a
+     * frame when its capability is deleted (vspace.h's note; objecttype.c), so
+     * deleting first removes mappings the program is still running on -- measured, that
+     * cost the guest five-sixths of its run (2 153 lines against 64 642) while
+     * `bad_alloc` and the slot refusal both read zero, and the revert is in the
+     * history. So the mapping comes out first (`Scratch::unmap`), then the capability,
+     * then the slot.
+     *
+     * This is the wall `specs/userland.md` names: mallocng maps and unmaps as it grows
+     * and shrinks a heap, every mapping spends a slot per frame -- 25 600 of them for a
+     * compiler's input -- and a release used to return the memory and none of the
+     * slots. The frames are what it spends, and the chunk already records every one, so
+     * this walks the same lookup `mprotect` does. `slot_release` hands the cursor back
+     * those slots only when they are the ones it took last: slots between `lowest` and
+     * the cursor need not be this run's (a page table from `map_at`, a node region's
+     * page, the chunk record's own pages), and rewinding over them would hand the same
+     * slot out twice. The scattered case is what a `SlotPool` is for, and it is next. */
+    seL4_CPtr lowest = 0;
+    unsigned released = 0;
+    for (uintptr_t offset = 0; offset < bytes; offset += kPageBytes) {
+        uintptr_t const address = base + offset;
+        if (address < g_scratch->base() || address >= g_scratch->limit()) {
+            continue;
+        }
+        uint32_t const index = static_cast<uint32_t>((limit_ - address) / kPageBytes);
+        FrameChunk *const chunk = frame_chunk(index, false);
+        if (chunk == nullptr || chunk->frames[index - chunk->first] == 0) {
+            continue;
+        }
+        seL4_CPtr const frame = chunk->frames[index - chunk->first];
+        chunk->frames[index - chunk->first] = 0;
+        g_scratch->unmap(frame);
+        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
+                          aegir::bootstrap::endpoint_depth());
+        ++released;
+        if (lowest == 0 || frame < lowest) {
+            lowest = frame;
+        }
+    }
+    if (lowest != 0 && released == bytes / kPageBytes &&
+        lowest + static_cast<seL4_CPtr>(released) == g_allocator->slot_mark()) {
+        g_allocator->slot_release(lowest);
+    }
     /* And back to the window: `Scratch::release` takes the run when it ends at the
      * reservation cursor and does nothing otherwise -- the space is in the heap's list
      * either way, so a run that is not adjacent is handed out again rather than lost
