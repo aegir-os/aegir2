@@ -226,10 +226,22 @@ seL4_CPtr Allocator::alloc_slot() noexcept
      * bits, l1 8, l2 12` -- a full CNode, a megabyte free, two-level all along,
      * no kernel message -- and its growth could not start because its first step
      * wanted the slots it was trying to create. Two for a split's halves and one
-     * for a receipt, so the number is the reserve's users, not a chosen bound. */
+     * for a receipt, so the number is the reserve's users, not a chosen bound.
+     *
+     * A growth *already in progress* may spend it, and that is the whole
+     * subtlety: the reserve's owners arrive through this same entry --
+     * `grow_nodes_from_window` carves the frame the piece table lives in
+     * (`alloc_object`, from the node source) and a split's halves come through
+     * `alloc_slot_reserved` -- so a reserve that only callers could not take
+     * would deadlock growth instead of protecting it: a node needs a slot, the
+     * slot needs growth, growth needs a node. `growing_` and `sourcing_` are
+     * exactly "the allocator is spending on itself", so they open the reserve
+     * and nothing else does. */
     constexpr seL4_Word kReserve = 3;
     seL4_Word const reserve =
-        level_two_bits_ != 0 && slot_source_ != nullptr ? kReserve : 0;
+        level_two_bits_ != 0 && slot_source_ != nullptr && !growing_ && !sourcing_
+            ? kReserve
+            : 0;
     /* Descending: the cursor is the lowest slot still free, and the free
      * window is [slots_first_, slots_next_). */
     if (slots_descend_) {

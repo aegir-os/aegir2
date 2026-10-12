@@ -451,6 +451,15 @@ public:
      *  the code they changed is not the code that refuses. */
     bool slots_have_pool() const noexcept { return slot_pool_ != nullptr; }
 
+    /** This allocator's own address, so a refusal and a hand-out can be compared
+     *  by identity rather than by arithmetic that looks the same either way. Two
+     *  readings are left for the link's refusal, and no count distinguishes them:
+     *  one allocator whose reserve was somehow zero at the hand-outs, or *two*
+     *  allocators -- the one being asked, and the one that handed out the slots
+     *  the refusal reports. A reserve of three cannot leave `slots_used` at the
+     *  end of the range in the object that prints both of them. */
+    void const *identity() const noexcept { return this; }
+
     /** One slot for a path that *is* this allocator's growth -- a caller's
      *  untyped source parking the chunk it received, or the node source carving
      *  the frame the piece table lives in. These are the reserve's owners, so

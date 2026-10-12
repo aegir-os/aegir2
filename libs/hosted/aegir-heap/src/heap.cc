@@ -545,6 +545,12 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
     aegir::debug_write_unsigned(request);
     aegir::debug_write(" bits, badge ");
     aegir::debug_write_unsigned(asker);
+    /* The allocator this source serves, by address: a refusal prints the
+     * allocator it asked, and the two have to be comparable by identity -- a
+     * chunk received here and a slot refused there are only the same budget if
+     * they are the same object (allocator.h's identity). */
+    aegir::debug_write(", src ");
+    aegir::debug_write_hex(reinterpret_cast<uint64_t>(allocator));
     aegir::debug_write("\n");
     aegir::ipc::WordsReply const reply = service.call_transfer(
         aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
@@ -607,6 +613,8 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word *size_bits,
          * every number above can be a number about the wrong budget. */
         aegir::debug_write(", pool ");
         aegir::debug_write(allocator->slots_have_pool() ? "yes" : "no");
+        aegir::debug_write(", ");
+        aegir::debug_write_hex(reinterpret_cast<uint64_t>(allocator->identity()));
         aegir::debug_write("\n");
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
                           aegir::bootstrap::kSlotReceiveCap,
