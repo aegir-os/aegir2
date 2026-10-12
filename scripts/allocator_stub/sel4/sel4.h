@@ -153,6 +153,12 @@ inline unsigned g_collisions = 0;
  * `seL4_InvalidArgument`; a correct allocator answers zero. */
 inline unsigned g_invalid = 0;
 inline bool g_log = false;
+/* A test that wants a retype of a given type to fail: the next one answers
+ * NotEnoughMemory without consuming. Targeting the type matters -- a split also
+ * retypes, of `seL4_UntypedObject`, so a bare flag fails the split and exercises
+ * `refill`, not the caller's `slot_failed`. */
+inline seL4_Word g_fail_retype_type = ~seL4_Word{0};
+inline void fail_next_retype_of(seL4_Word type) { g_fail_retype_type = type; }
 
 /** Whether the model holds a live cap at `cap` (an encoded L2 slot, or a kernel
  *  root cap the model handed out). Tests use it to check a cap an allocator
@@ -181,6 +187,7 @@ inline void reset()
     g_collisions = 0;
     g_invalid = 0;
     g_log = false;
+    g_fail_retype_type = ~seL4_Word{0};
 }
 
 /** The workload forgot its pieces (the allocator's reset): nothing the model
@@ -237,6 +244,10 @@ inline seL4_Error untyped_retype(seL4_CPtr service, seL4_Word type, seL4_Word si
         return seL4_InvalidArgument;
     }
     Cap &parent = g_caps[service];
+    if (type == g_fail_retype_type) {
+        g_fail_retype_type = ~seL4_Word{0};
+        return seL4_NotEnoughMemory;
+    }
     uint32_t const free_index = parent.children == 0 ? 0 : parent.free_index;
     uint64_t const free_bytes =
         (uint64_t{1} << parent.block_bits) - uint64_t{free_index} * 16;

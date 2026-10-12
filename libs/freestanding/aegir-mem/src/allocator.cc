@@ -868,13 +868,15 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
                    static_cast<uint64_t>(slot), false, node->cap);
         }
         slot_failed(slot);
-        /* The piece cannot yield the object, so it is not a usable piece: it is
-         * dropped, not put back. Putting a piece back whose retype was refused
-         * -- a spent piece -- leaves it on the free list for the next caller,
-         * and that is how a spent piece reaches a carve (specs/memory.md). The
-         * piece is already off the list (take), so this only gives its node
-         * back. */
-        free_node(node);
+        /* The piece goes back, not away. A retype is refused for reasons that
+         * leave the piece usable (a bad type, an occupied destination, a
+         * transient shortage), and revoking makes it whole whatever the kernel
+         * did, so dropping it lost a piece per refused allocation -- measured by
+         * the conformance case `failed_alloc_returns_what_it_took_holds`. A
+         * spent piece is recovered by the same revoke (`ensure_piece_whole`
+         * resets a childless untyped's free index). */
+        ensure_piece_whole(node);
+        insert(node->device != 0, node);
         return 0;
     }
     /* The piece is the object now. The node stays as the object's identity: a
@@ -996,7 +998,11 @@ seL4_CPtr Allocator::alloc_pages_run(seL4_Word count, Account &account, seL4_Err
             retype_node_index(first + done), cnode_depth_, slot_offset(first + done), chunk);
         if (retyped != seL4_NoError) {
             slot_failed_run(first + done, count - done);
-            free_node(node);
+            /* The piece goes back whole, not away: the frames already retyped
+             * die in the revoke, and the piece is usable again. Dropping it lost
+             * a piece per refused run (the same case as `alloc_object`). */
+            ensure_piece_whole(node);
+            insert(node->device != 0, node);
             *error = retyped;
             return 0;
         }

@@ -596,6 +596,202 @@ bool child_spawn_holds()
     return host_sel4::collisions() == before_collisions;
 }
 
+/* A session's range is reclaimed (auth's `slot_release`): a mark is taken before
+ * a session's allocations, and once the session's capabilities have been revoked
+ * -- the kernel emptied the slots -- the cursor returns to the mark, so the next
+ * session reuses the range instead of growing past it. This is the "a revoked
+ * range comes back at once" half of freeing (specs/userland.md). */
+bool session_reclaim_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(0, 12);
+    g_chunks = 0;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const seed = host_sel4::make_root_untyped(20);
+    if (!allocator.adopt_untyped(seed, 20, 0)) {
+        return false;
+    }
+    allocator.adopt_slots(20, 400, 0, 12);
+
+    seL4_CPtr const mark = allocator.slot_mark();
+    seL4_CPtr held[16] = {};
+    for (seL4_CPtr &slot : held) {
+        slot = allocator.alloc_slot();
+        if (slot == 0) {
+            return false;
+        }
+    }
+    /* The session is torn down: its caps are revoked (the kernel empties the
+     * slots) and auth hands the range back. */
+    allocator.slot_release(mark);
+
+    for (seL4_CPtr const was : held) {
+        if (allocator.alloc_slot() != was) {
+            return false; /* the range did not come back */
+        }
+    }
+    return true;
+}
+
+/* One CNode, two allocators (aegir-net): the process's own draws upward from the
+ * first free slot and lwIP's draws downward from the end, over disjoint halves,
+ * so neither can hand out a slot the other holds while anything is left. */
+bool shared_cnode_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(0, 12);
+
+    aegir::mem::Allocator up(nullptr);
+    aegir::mem::Allocator down(nullptr);
+    constexpr seL4_CPtr kUpFirst = 20;
+    constexpr seL4_Word kEach = 200;
+    up.adopt_slots(kUpFirst, kEach, 0, 12);
+    down.adopt_slots_down(kUpFirst + kEach, kEach, 0, 12);
+
+    for (seL4_Word i = 0; i < kEach; ++i) {
+        seL4_CPtr const a = up.alloc_slot();
+        seL4_CPtr const b = down.alloc_slot();
+        if (a == 0 || b == 0 || a == b) {
+            return false;
+        }
+        /* Each stays in its own half. */
+        if (a < kUpFirst || a >= kUpFirst + kEach) {
+            return false;
+        }
+        if (b < kUpFirst + kEach || b >= kUpFirst + 2 * kEach) {
+            return false;
+        }
+    }
+    /* Only genuinely full are they out. */
+    return up.alloc_slot() == 0 && down.alloc_slot() == 0;
+}
+
+/* A driver's device registers (aegir-director, aegir-partmgr's
+ * `device_window`): `pages` consecutive frames at a physical base, which can
+ * come from nowhere but a device untyped that covers it. A base the untyped does
+ * not cover is refused rather than silently returning someone else's page. */
+bool device_window_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(0, 12);
+
+    seL4_BootInfo info{};
+    info.empty = {1, 8000};
+    info.initThreadCNodeSizeBits = 12;
+    constexpr uint64_t kBase = 0x10000000ull;
+    seL4_CPtr const device = host_sel4::make_root_untyped(24);
+    info.untypedList[0].sizeBits = 24;
+    info.untypedList[0].isDevice = 1;
+    info.untypedList[0].paddr = kBase;
+    info.untyped = {device, device + 1};
+
+    aegir::mem::Allocator allocator(&info);
+    if (!allocator.initialise()) {
+        return false;
+    }
+
+    seL4_Error error = seL4_NoError;
+    seL4_CPtr first = 0;
+    if (!allocator.device_window(kBase, 4, &first, &error)) {
+        return false;
+    }
+    for (seL4_Word i = 0; i < 4; ++i) {
+        if (!host_sel4::valid_cap(first + i)) {
+            return false;
+        }
+    }
+    /* A window outside the device untyped is refused, not answered with some
+     * other frame. */
+    seL4_CPtr other = 0;
+    if (allocator.device_window(kBase + (1ull << 24), 1, &other, &error)) {
+        return false;
+    }
+    return true;
+}
+
+/* A refused allocation gives back what it took (aegir-mem's `slot_failed` and
+ * `slot_failed_run`): a retype that fails after the slot is reserved must return
+ * the slot and the piece, or the CSpace loses them and a later allocation runs
+ * out of a resource that is free. A caller sees zero; the allocator must still
+ * be whole. */
+bool failed_alloc_returns_what_it_took_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(0, 12);
+    g_chunks = 0;
+
+    /* One piece of exactly the size the use needs, and *no* untyped source, so
+     * a refused retype that drops its piece leaves the retry with nothing (a
+     * larger piece could be split into one, a source could replace it, and
+     * either would hide the leak). */
+    alignas(64) static unsigned char object_pool[1 << 16];
+    alignas(64) static unsigned char run_pool[1 << 16];
+
+    /* A refused object must give its piece back, or the next attempt cannot
+     * run. */
+    {
+        aegir::mem::Allocator allocator(nullptr);
+        seL4_CPtr const piece = host_sel4::make_root_untyped(13);
+        if (!allocator.adopt_untyped(piece, 13, 0)) {
+            return false;
+        }
+        allocator.adopt_slots(20, 100, 0, 12);
+        static NodeWindow window;
+        window = NodeWindow{&allocator, object_pool, sizeof(object_pool), 0};
+        allocator.set_node_source(plain_nodes, &window);
+
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        host_sel4::fail_next_retype_of(seL4_CapTableObject);
+        if (allocator.alloc_object(seL4_CapTableObject, 8, g_account, &error, &cookie) != 0) {
+            std::printf("  failed_alloc: the refused object was not refused\n");
+            return false;
+        }
+        if (allocator.alloc_object(seL4_CapTableObject, 8, g_account, &error, &cookie) == 0) {
+            std::printf("  failed_alloc: the refused object's piece was not returned\n");
+            return false;
+        }
+        if (allocator.check_free_lists() != 0) {
+            std::printf("  failed_alloc: object free lists inconsistent\n");
+            return false;
+        }
+    }
+
+    /* The same for a run: its piece must come back whole, or the retry has no
+     * piece to retype from. A fresh model, because the two sub-tests share the
+     * stub's cap space and would otherwise collide on the first slot. */
+    {
+        host_sel4::reset();
+        aegir::mem::Allocator allocator(nullptr);
+        seL4_CPtr const piece = host_sel4::make_root_untyped(15);
+        if (!allocator.adopt_untyped(piece, 15, 0)) {
+            return false;
+        }
+        allocator.adopt_slots(20, 100, 0, 12);
+        static NodeWindow window;
+        window = NodeWindow{&allocator, run_pool, sizeof(run_pool), 0};
+        allocator.set_node_source(plain_nodes, &window);
+
+        seL4_Error error = seL4_NoError;
+        void *run_cookie = nullptr;
+        host_sel4::fail_next_retype_of(seL4_RISCV_4K_Page);
+        if (allocator.alloc_pages_run(8, g_account, &error, &run_cookie) != 0) {
+            std::printf("  failed_alloc: the refused run was not refused\n");
+            return false;
+        }
+        if (allocator.alloc_pages_run(8, g_account, &error, &run_cookie) == 0) {
+            std::printf("  failed_alloc: the refused run's piece was not returned\n");
+            return false;
+        }
+        if (allocator.check_free_lists() != 0) {
+            std::printf("  failed_alloc: run free lists inconsistent\n");
+            return false;
+        }
+    }
+    return host_sel4::collisions() == 0;
+}
+
 }  // namespace
 
 int main()
@@ -632,6 +828,16 @@ int main()
 
     /* The use every process makes: an image run and the child's own objects. */
     expect(child_spawn_holds(), "a child's image run and its objects are distinct and the run goes back whole");
+
+    /* A session's range comes back on reclaim, and one CNode serves two owners. */
+    expect(session_reclaim_holds(), "a reclaimed session range is handed out again");
+    expect(shared_cnode_holds(), "two owners of one CNode never share a slot");
+
+    /* A driver's registers are consecutive frames from the device's untyped. */
+    expect(device_window_holds(), "a device's register window is consecutive frames at its base");
+
+    expect(failed_alloc_returns_what_it_took_holds(),
+           "a refused retype gives its slot and piece back");
 
     host_sel4::reset();
 
