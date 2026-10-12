@@ -592,8 +592,14 @@ bool ServiceKit::begin(uint32_t owner)
         if (!allocate_command_cnodes(owner, nodes, &base)) {
             return false;
         }
+        /* `growable = false`: this is a *staging* allocator, and its level-one
+         * slots are the launcher's command pool -- a growth retype would land
+         * on a root slot another live command owns. It is sized per command by
+         * `command_cnode_count`, and a command's own runtime objects are
+         * retyped by the command's allocator, not this one. */
         g_command_mem.adopt_slots_level_two(
-            0, static_cast<seL4_Word>(nodes) << cnode_l2_, cnode_l1_, cnode_l2_, base);
+            0, static_cast<seL4_Word>(nodes) << cnode_l2_, cnode_l1_, cnode_l2_, base,
+            false);
     } else {
         g_command_mem.adopt_slot_pool(&slot_pool_, owner);
     }

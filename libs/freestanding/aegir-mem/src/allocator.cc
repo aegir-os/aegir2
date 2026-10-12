@@ -195,17 +195,34 @@ void Allocator::unlink(Node *node) noexcept
     node->free = 0;
 }
 
-/* One more level-one slot, when this CSpace may grow. The source is the
- * process's business (`set_slot_source`); what the allocator owns is where the
- * new L2 CNode sits. `slots_end_` is the first index the adopted run does not
- * cover, and a run is laid down consecutively (specs/memory.md), so the CNode
- * for it lands on that encoded index's level-one slot and the cursor extends
- * over the L2's worth of indices. A single-level CSpace has no level one to add
- * to, so it stays bounded by what it was given, as it always was. */
+/* One more L2 CNode, retyped into the level-one slot the adopted run ends
+ * before. The allocator owns this now (`slots_may_grow_`): a stand-up hands its
+ * block's numbers to `adopt_slots_level_two` and stops, rather than each one
+ * re-declaring a hook that all but one then forgot. `slots_end_` is the first
+ * encoded index the adopted run does not cover, and a run is laid down
+ * consecutively (specs/memory.md), so at a CNode boundary its level-one index is
+ * the empty root slot the new CNode goes into -- and the retype's capability
+ * *is* that slot, so growth spends no slot of this CSpace. A single-level
+ * CSpace has no level one to add to, so it stays bounded by what it was given,
+ * as it always was. */
 bool Allocator::grow_slots() noexcept
 {
-    if (level_two_bits_ == 0 || slot_source_ == nullptr ||
-        !slot_source_(slot_source_context_, slots_end_)) {
+    if (level_two_bits_ == 0 || !slots_may_grow_) {
+        return false;
+    }
+    /* Only at a CNode boundary. A run that ends mid-CNode is a spawner's
+     * reserved tail (the launcher's and the terminal's command pool): the root
+     * slot `slots_end_ >> l2` is the CNode the run is already in, so a retype
+     * there would collide with it -- and the slots after `slots_end_` belong to
+     * the pool, not to this allocator. */
+    seL4_CPtr const mask = (static_cast<seL4_CPtr>(1) << level_two_bits_) - 1;
+    if ((slots_end_ & mask) != 0) {
+        return false;
+    }
+    Account account{"cspace", 0, 0, 0};
+    seL4_Error error = seL4_NoError;
+    seL4_Word const l1_slot = static_cast<seL4_Word>(slots_end_) >> level_two_bits_;
+    if (alloc_cnode_at_l1(level_two_bits_, l1_slot, account, &error) == 0) {
         return false;
     }
     slots_end_ += static_cast<seL4_CPtr>(1) << level_two_bits_;
@@ -234,7 +251,7 @@ seL4_CPtr Allocator::alloc_slot() noexcept
      * (`growing_`, `sourcing_`), because those users *are* the transaction. */
     constexpr seL4_Word kReserve = 8;
     seL4_Word const reserve =
-        level_two_bits_ != 0 && slot_source_ != nullptr && !growing_ && !sourcing_
+        level_two_bits_ != 0 && slots_may_grow_ && !growing_ && !sourcing_
             ? kReserve
             : 0;
     /* Descending: the cursor is the lowest slot still free, and the free
@@ -785,7 +802,7 @@ seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
      * constant is what this wants, and until then both copies say three, which
      * is a split's two halves and a receipt. */
     seL4_Word const reserve =
-        level_two_bits_ != 0 && slot_source_ != nullptr ? 3 : 0;
+        level_two_bits_ != 0 && slots_may_grow_ ? 3 : 0;
     if (slots_next_ + count > slots_end_ - reserve && !grow_slots()) {
         return 0;
     }
@@ -946,6 +963,7 @@ void Allocator::adopt_slots(seL4_CPtr first, seL4_Word count, seL4_Word depth,
     cnode_depth_ = depth;
     cnode_size_bits_ = static_cast<unsigned>(radix);
     level_two_bits_ = 0;
+    slots_may_grow_ = false;
 }
 
 void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word depth,
@@ -959,10 +977,12 @@ void Allocator::adopt_slots_down(seL4_CPtr first, seL4_Word count, seL4_Word dep
     cnode_depth_ = depth;
     cnode_size_bits_ = static_cast<unsigned>(radix);
     level_two_bits_ = 0;
+    slots_may_grow_ = false;
 }
 
 void Allocator::adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Word l1,
-                                      seL4_Word l2, seL4_Word cnode_index) noexcept
+                                      seL4_Word l2, seL4_Word cnode_index,
+                                      bool growable) noexcept
 {
     /* No level one is the single-level shape, and taking it here is the point:
      * a program hands over the numbers its block gave it and is adopted right
@@ -991,6 +1011,7 @@ void Allocator::adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Wor
     slots_end_ = base + count;
     slots_descend_ = false;
     slots_used_ = 0;
+    slots_may_grow_ = growable;
 }
 
 seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_Error *error,

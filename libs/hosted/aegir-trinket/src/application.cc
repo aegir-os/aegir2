@@ -95,14 +95,10 @@ bool adopt_memory() {
     if (ok) {
         uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
         uint32_t const l2 = aegir::bootstrap::cnode_bits();
-        if (l1 != 0) {
-            /* A two-level CSpace (specs/memory.md): the toolkit's slots live in
-             * the L2 CNode at root slot 0, and a plain slot is `(0, slot)`. */
-            g_objects.adopt_slots_level_two(first_free, reserved_slot_base() - first_free,
-                                            l1, l2, 0);
-        } else {
-            g_objects.adopt_slots(first_free, reserved_slot_base() - first_free, 0, l2);
-        }
+        /* The block's own numbers, one call: the allocator takes `l1 == 0` as
+         * the single-level shape and grows its own level one otherwise. */
+        g_objects.adopt_slots_level_two(first_free, reserved_slot_base() - first_free,
+                                        l1, l2, 0);
         ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
                              static_cast<uintptr_t>(window_base),
                              static_cast<uintptr_t>(window_base + window_bytes),

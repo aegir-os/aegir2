@@ -557,7 +557,8 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * whose runtime allocates more dies of `std::bad_alloc` a layer up while its
      * memory is fine (`page-no-slot` in the heap's markers, then the kernel
      * refusing the retype: `page-kernel-error`). Its level one is this process's
-     * shape, and the growth half is `grow_slots` in aegir-command; this is the
+     * shape, and the growth half is the allocator's own `grow_slots` (a command
+     * is a leaf, so `aegir-command` adopts with `growable = true`); this is the
      * switch that was waiting for every cap op in a command's own CSpace to name
      * `endpoint_depth()` rather than a hard-coded `cnode_bits()`
      * (a50e3c6e, 8e86d7e7, 3a38b2cb, 9498019a, 10fb7674). */

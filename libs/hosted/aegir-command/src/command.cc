@@ -44,30 +44,6 @@ aegir::mem::Scratch &window() noexcept
  * the other way round -- is answered rather than refused. */
 bool g_stood_up = false;
 
-/* Another L2 CNode for a CSpace that must grow (specs/memory.md, "Growing the
- * CSpace on demand"): the block gave this process a level one (`cnode_l1_bits`),
- * the CNodes in it are laid down consecutively, and `first` is the first encoded
- * slot the adopted run does not cover -- so `first`'s level-one index is the
- * slot the new CNode goes to, and a retype lands the capability straight there
- * (`Allocator::alloc_cnode_at_l1`). Growing a slot spends no slot: the object's
- * own capability *is* the level-one slot.
- *
- * The account is the heap's throwaway shape -- charged once, never reclaimed --
- * because an L2 CNode is not something a process gives back (specs/memory.md).
- * A command is spawned with a run of them sized by its image; this is what lets
- * a program whose *runtime* objects are more than its image -- a linker -- keep
- * going instead of dying of `std::bad_alloc` a layer up. */
-bool grow_slots(void *context, seL4_CPtr first) noexcept
-{
-    static_cast<void>(context);
-    aegir::mem::Account account{"cspace", 0, 0, 0};
-    seL4_Error error = seL4_NoError;
-    seL4_Word const l1_slot =
-        static_cast<seL4_Word>(first) >> aegir::bootstrap::cnode_bits();
-    return objects().alloc_cnode_at_l1(aegir::bootstrap::cnode_bits(), l1_slot, account,
-                                       &error) != 0;
-}
-
 bool adopt_memory() noexcept
 {
     uint64_t untyped_slot = 0;
@@ -100,17 +76,15 @@ bool adopt_memory() noexcept
     if (ok) {
         uint32_t const l2 = aegir::bootstrap::cnode_bits();
         uint32_t const l1 = aegir::bootstrap::cnode_l1_bits();
-        if (l1 != 0) {
-            /* A two-level process: its plain slots live in the L2 CNode at its
-             * root slot 0, and the rest of its level one is empty, so the CSpace
-             * grows into it rather than ending at one CNode (specs/memory.md,
-             * "Growing the CSpace on demand"). The spawner's half is giving a
-             * command `cspace_l1_bits`; `grow_slots` above is this half. */
-            objects().adopt_slots_level_two(first_free, (1u << l2) - first_free, l1, l2, 0);
-            objects().set_slot_source(grow_slots, nullptr);
-        } else {
-            objects().adopt_slots(first_free, (1u << l2) - first_free, 0, l2);
-        }
+        /* One call, the block's own numbers: `adopt_slots_level_two` takes
+         * `l1 == 0` as the single-level shape. `growable = true` because a
+         * command is a leaf -- the level-one slots above root slot 0 are its
+         * own, so the allocator may retype the next L2 CNode into them as it
+         * fills (specs/memory.md, "Growing the CSpace on demand"). The shape is
+         * still the spawner's to choose: giving a command `cspace_l1_bits` is
+         * what makes this two-level, and nothing here changes. */
+        objects().adopt_slots_level_two(first_free, (1u << l2) - first_free, l1, l2, 0,
+                                        true);
         ok = window().adopt(static_cast<seL4_CPtr>(vspace_slot),
                             static_cast<uintptr_t>(window_base),
                             static_cast<uintptr_t>(window_base + window_bytes), &objects());

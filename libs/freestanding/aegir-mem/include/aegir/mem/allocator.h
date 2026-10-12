@@ -265,7 +265,9 @@ public:
      * into it names the L2 CNode cap (`node_index = cnode_index`,
      * `node_depth = l1`, `node_offset = offset`). `first`/`count` are offsets
      * within that L2 CNode, and the cursor commits slots in `(cnode_index, *)`
-     * only -- adding a CNode is the caller's (specs/memory.md).
+     * only -- adding a CNode is this allocator's own (`grow_slots`), not the
+     * caller's, which is the whole point: a stand-up hands over its block's
+     * numbers and never wires a growth hook (specs/memory.md).
      *
      * An `l1` of zero is the *single-level* shape -- the process has no level
      * one, so its own-CNode cap is the CNode itself and this is exactly
@@ -275,9 +277,20 @@ public:
      * as a flat range; the caps their retypes made landed in root slots, and a
      * command invoking one it had just made is how `DataTypes:ilbm.datatype`
      * raised four `Attempted to invoke a null cap` a run.
+     *
+     * `growable` is whether this allocator may add L2 CNodes as it fills. A
+     * *leaf* process (a command: a compiler, a linker) owns its whole level one
+     * above root slot 0 and grows; a process that *spawns* (the launcher, the
+     * terminal) shares those slots with its command pool, and a growth retype
+     * would land on a CNode another command owns -- so it does not. That is the
+     * one thing the block's numbers cannot say, and it defaults to false so a
+     * stand-up opts in knowingly. Growth itself is the allocator's retype --
+     * `alloc_cnode_at_l1` -- not a hook the caller supplies, which is what left
+     * it unwired on every process but one.
      */
     void adopt_slots_level_two(seL4_CPtr first, seL4_Word count, seL4_Word l1,
-                               seL4_Word l2, seL4_Word cnode_index) noexcept;
+                               seL4_Word l2, seL4_Word cnode_index,
+                               bool growable = false) noexcept;
 
     /**
      * Draw this allocator's slots from a shared pool instead of its own
@@ -310,30 +323,10 @@ public:
         untyped_context_ = context;
     }
 
-    /**
-     * One more L2 CNode, covering the slot indices from `first` onward -- the
-     * first the adopted range does not cover. True once the capability is in
-     * the CSpace's level one, and the allocator's cursor extends over it by
-     * `1 << level_two_bits_` indices; false is a refusal and the caller gets
-     * zero as it always did.
-     *
-     * This is `untyped_source_`'s shape for the other resource a growing
-     * process runs out of. Memory grows through a source, and "a process whose
-     * CSpace must grow is given `cspace_l1_bits` ... and adds L2 CNodes rather
-     * than being sized to fit" (`bootstrap.h`'s kCNodeBits) -- but the adding
-     * had no hook, so a CSpace was only ever what the spawner laid down. A
-     * linker's runtime allocation is not its image, and `alloc_slot` returning
-     * zero is how that ended a link.
-     *
-     * Set only by a two-level process: a single-level CSpace has no level one
-     * to add to, so it never asks and behaves exactly as before.
-     */
-    using SlotSource = bool (*)(void *context, seL4_CPtr first);
-    void set_slot_source(SlotSource source, void *context) noexcept
-    {
-        slot_source_ = source;
-        slot_source_context_ = context;
-    }
+    /* Growth is the allocator's own now: `adopt_slots_level_two` sets
+     * `slots_may_grow_` and `grow_slots` retypes the next L2 CNode with
+     * `alloc_cnode_at_l1`. There is no caller-supplied hook, because there was
+     * only ever one caller and it re-derived what this class already knows. */
 
     /**
      * An ASID pool, for a process that will build address spaces of its own.
@@ -439,7 +432,7 @@ public:
      * process with a working source from a flat one. */
     bool slots_can_grow() const noexcept
     {
-        return level_two_bits_ != 0 && slot_source_ != nullptr;
+        return level_two_bits_ != 0 && slots_may_grow_;
     }
 
     /** Whether a *pool* owns this allocator's slots. An adopted `slot_pool_`
@@ -562,14 +555,17 @@ private:
     seL4_CPtr alloc_slot_reserved() noexcept;
 
     /**
-     * One more level-one slot, from `slot_source_` when the process set one and
-     * this CSpace is two-level. False is a refusal, and the caller is bounded by
-     * the adopted run as it always was.
+     * One more L2 CNode, retyped into the level-one slot the adopted run ends
+     * before. False is a refusal, and the caller is bounded by the adopted run
+     * as it always was.
      *
-     * Both slot cursors ask this rather than each carrying the rule: two copies
-     * of a cursor is how a fix reaches one of them and not the other, which is
-     * what happened here -- `alloc_slot` is the path a retype takes and it does
-     * not go through `alloc_slot_run`.
+     * This is the allocator's own retype, not a caller-supplied hook: the
+     * allocator already holds the shape (`level_two_bits_`), the cursor
+     * (`slots_end_`) and the retype (`alloc_cnode_at_l1`), and the hook only
+     * ever meant one of the six stand-ups declared it -- so growth was dead on
+     * every process but `aegir-command`'s. Both slot cursors ask this rather
+     * than each carrying the rule: `alloc_slot` is the path a retype takes and
+     * it does not go through `alloc_slot_run`.
      */
     bool grow_slots() noexcept;
 
@@ -633,8 +629,11 @@ private:
     UntypedSource untyped_source_ = nullptr;
     void *untyped_context_ = nullptr;
     bool sourcing_ = false;
-    SlotSource slot_source_ = nullptr;
-    void *slot_source_context_ = nullptr;
+    /* Whether this CSpace may retype another L2 CNode as it fills: true for a
+     * process's own CSpace, false for the launcher's staging allocator, whose
+     * level-one slots are the live command pool. `adopt_slots_level_two` sets
+     * it; a single-level allocator has no level one and never grows. */
+    bool slots_may_grow_ = false;
     Trace trace_ = nullptr;
     void *trace_context_ = nullptr;
     /* A small built-in region, so an allocator whose caller does not adopt one
