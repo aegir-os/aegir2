@@ -217,8 +217,42 @@ seL4_CPtr Allocator::alloc_slot() noexcept
     if (slot_pool_ != nullptr) {
         return slot_pool_->alloc(slot_owner_);
     }
+    /* A *caller* stops short of the slots this allocator's own growth runs in,
+     * because a caller that took the last ones would leave the CSpace unable to
+     * grow at all: a buddy split retypes its two halves into two slots and a
+     * caller's untyped source takes one for the capability it brings back
+     * (`refill_inner`, `runtime_untyped_source`). Measured, which is what this
+     * is for: `ld.lld` at the link reached `slots 4071 of 4071, largest free 20
+     * bits, l1 8, l2 12` -- a full CNode, a megabyte free, two-level all along,
+     * no kernel message -- and its growth could not start because its first step
+     * wanted the slots it was trying to create. Two for a split's halves and one
+     * for a receipt, so the number is the reserve's users, not a chosen bound. */
+    constexpr seL4_Word kReserve = 3;
+    seL4_Word const reserve =
+        level_two_bits_ != 0 && slot_source_ != nullptr ? kReserve : 0;
     /* Descending: the cursor is the lowest slot still free, and the free
      * window is [slots_first_, slots_next_). */
+    if (slots_descend_) {
+        if (slots_next_ <= slots_first_ + reserve) {
+            return 0;
+        }
+        ++slots_used_;
+        return --slots_next_;
+    }
+    while (slots_next_ + reserve > slots_end_) {
+        if (!grow_slots()) {
+            return 0;
+        }
+    }
+    ++slots_used_;
+    return slots_next_++;
+}
+
+seL4_CPtr Allocator::alloc_slot_reserved() noexcept
+{
+    if (slot_pool_ != nullptr) {
+        return slot_pool_->alloc(slot_owner_);
+    }
     if (slots_descend_) {
         if (slots_next_ <= slots_first_) {
             return 0;
@@ -452,8 +486,10 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
             insert(device, parent);
             return false;
         }
-        seL4_CPtr const left_slot = alloc_slot();
-        seL4_CPtr const right_slot = left_slot != 0 ? alloc_slot() : 0;
+        /* The split's own two slots come from the reserve: a *caller* stopping
+         * short of it is what keeps them there (alloc_slot). */
+        seL4_CPtr const left_slot = alloc_slot_reserved();
+        seL4_CPtr const right_slot = left_slot != 0 ? alloc_slot_reserved() : 0;
         if (left_slot == 0 || right_slot == 0) {
             if (left_slot != 0) {
                 slot_failed(left_slot);
@@ -707,7 +743,17 @@ seL4_CPtr Allocator::alloc_slot_run(seL4_Word count) noexcept
             return 0;
         }
     }
-    if (slots_next_ + count > slots_end_ && !grow_slots()) {
+    /* The same reserve a caller's single `alloc_slot` keeps, and for the same
+     * reason: a *run* is a caller's allocation too -- the heap's frames come
+     * through here (`alloc_pages_run`) -- and taking the last slots leaves
+     * growth nowhere to start. Measured twice: with the reserve in `alloc_slot`
+     * alone the link's refusal was unchanged, because its frames arrive here.
+     * Two copies of one rule is how one of them goes unpatched; a member
+     * constant is what this wants, and until then both copies say three, which
+     * is a split's two halves and a receipt. */
+    seL4_Word const reserve =
+        level_two_bits_ != 0 && slot_source_ != nullptr ? 3 : 0;
+    if (slots_next_ + count > slots_end_ - reserve && !grow_slots()) {
         return 0;
     }
     seL4_CPtr const first = slots_next_;

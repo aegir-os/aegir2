@@ -510,6 +510,14 @@ private:
      *  of `count` objects needs a consecutive destination (alloc_pages_run). */
     seL4_CPtr alloc_slot_run(seL4_Word count) noexcept;
 
+    /** One slot for the allocator's *own* growth -- a split's two halves, the
+     *  slot a caller's source parks a capability in -- which may spend the
+     *  reserve `alloc_slot` keeps back for exactly these (allocator.cc). A
+     *  growth that could not get a slot because a caller had taken the last one
+     *  is the shape `ld.lld` hit at the link: a full CNode, a megabyte free, a
+     *  two-level CSpace, and nothing able to start. */
+    seL4_CPtr alloc_slot_reserved() noexcept;
+
     /**
      * One more level-one slot, from `slot_source_` when the process set one and
      * this CSpace is two-level. False is a refusal, and the caller is bounded by
