@@ -431,6 +431,18 @@ bool map_page(uintptr_t address) noexcept
         }
         return false;
     }
+    /* The frame is in hand, before the mapping and before the record that the
+     * comment further down says can recurse into this same function (a chunk
+     * allocated from the registry, which grows by mapping arena pages, which this
+     * record is what remembers -- "that is a cycle, and it is what hung
+     * posix-memory-test"). With `mmap-pages` printed before the loop and this line
+     * here, the last line of a dead run says which half of `map_page` stopped:
+     * `mmap-pages` alone is the frame allocation, `page-frame` is the mapping or
+     * the record. Neither a refusal marker (`page-kernel-error`, `page-no-slot`,
+     * `page-no-piece`, `page-map-refused`) nor `mmap-pages-done` prints in the run
+     * that freezes, so it is not a refusal -- it is a stop that answers nothing,
+     * which is a fault's shape. */
+    trace_phase("page-frame");
     if (!g_scratch->map_at(address, frame)) {
         trace_phase("page-map-refused");
         return false;
