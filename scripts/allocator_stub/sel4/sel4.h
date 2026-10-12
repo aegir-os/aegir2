@@ -51,6 +51,7 @@ enum : seL4_Word {
 enum : unsigned {
     seL4_WordBits = 64,
     seL4_PageBits = 12,
+    seL4_LargePageBits = 21,
     seL4_SlotBits = 5,
     seL4_UntypedObject = 0,
     seL4_CapTableObject = 1,

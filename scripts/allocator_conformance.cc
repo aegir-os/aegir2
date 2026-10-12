@@ -60,6 +60,9 @@ struct Live {
  * allocation fails, rather than growing forever. */
 constexpr unsigned kChunks = 64;
 unsigned g_chunks = 0;
+/* How many chunks the source will hand out. The linker's scenario asks for far
+ * more than the small floor the other cases use. */
+unsigned g_chunk_limit = kChunks;
 /* The source's chunk width. The memory service hands out 21 bits; a test may
  * widen it to force a split deeper than the slot reserve, which is the
  * invariant under test. */
@@ -67,7 +70,7 @@ unsigned g_chunk_bits = 21;
 
 seL4_CPtr source(void *, seL4_Word want_bits, seL4_Word *bits, uint64_t *paddr)
 {
-    if (g_chunks >= kChunks) {
+    if (g_chunks >= g_chunk_limit) {
         return 0;
     }
     /* A grown chunk arrives like the memory service's: a size and no address
@@ -868,6 +871,84 @@ bool diagnostics_contract_holds()
            allocator.untyped_free() >= free_before;
 }
 
+/* The linker and the compiler (specs/development.md, specs/clang-on-aegir.md).
+ * `ld.lld` maps its inputs file-backed: the aligned middle in 2 MiB frames (one
+ * capability per 2 MiB -- `map_large_page`, so a 100 MB archive is ~50 caps, not
+ * 25 600), the head and tail in 4 KiB. Its own structures come from mallocng as
+ * 4 KiB mappings, and it unmaps as it goes. At the allocator that is a long mix
+ * of page frames, mega frames and page tables, with frees, and the CSpace must
+ * grow through all of it without a refusal. This is the scenario the link
+ * actually is, not a synthetic page loop. */
+bool linker_space_growth_holds()
+{
+    host_sel4::reset();
+    host_sel4::set_shape(4, 12);
+    g_chunks = 0;
+    g_chunk_limit = 4096;
+    g_chunk_bits = 21;
+    g_state = 0x2545f4914f6cdd1dull;
+
+    aegir::mem::Allocator allocator(nullptr);
+    seL4_CPtr const seed = host_sel4::make_root_untyped(26);
+    if (!allocator.adopt_untyped(seed, 26, 0)) {
+        return false;
+    }
+    allocator.set_untyped_source(source, nullptr);
+    allocator.adopt_slots_level_two(20, (seL4_Word{1} << 12) - 20, 4, 12, 0, true);
+    alignas(64) static unsigned char pool[4 << 20];
+    static NodeWindow window;
+    window = NodeWindow{&allocator, pool, sizeof(pool), 0};
+    /* The heap's node source is `grow_nodes_from_window`, which retypes a frame
+     * through the allocator it serves (`reentrant_nodes`). It consumes slots too,
+     * and it is what turned the link's split into a slot shortage. */
+    allocator.set_node_source(reentrant_nodes, &window);
+
+    unsigned const before_collisions = host_sel4::collisions();
+    unsigned const before_invalid = host_sel4::invalid();
+    unsigned const before_slots = allocator.slots_total();
+
+    constexpr Shape kLinkerShapes[] = {
+        {seL4_RISCV_4K_Page, seL4_PageBits},               /* mallocng groups, head/tail */
+        {seL4_RISCV_Mega_Page, seL4_LargePageBits},        /* the input's aligned middle */
+        {seL4_RISCV_PageTableObject, seL4_PageTableBits},  /* the tables those need */
+    };
+
+    std::vector<Live> live;
+    constexpr unsigned kOps = 80000;
+    bool refused = false;
+    for (unsigned i = 0; i < kOps && !refused; ++i) {
+        unsigned const roll = static_cast<unsigned>(rng() % 100);
+        if (roll < 55 || live.empty()) {
+            Shape const &shape =
+                kLinkerShapes[rng() % (sizeof(kLinkerShapes) / sizeof(kLinkerShapes[0]))];
+            seL4_Error error = seL4_NoError;
+            void *cookie = nullptr;
+            seL4_CPtr const cap =
+                allocator.alloc_object(shape.type, shape.size_bits, g_account, &error, &cookie);
+            if (cap != 0) {
+                live.push_back(Live{cap, cookie,
+                                    aegir::mem::Allocator::object_bits(shape.type,
+                                                                       shape.size_bits)});
+            } else if (error == seL4_FailedLookup && allocator.slots_can_grow()) {
+                /* The CSpace could add a CNode and still refused: the wall. */
+                std::printf("  linker: refused at op %u, slots %u of %u, can-grow\n", i,
+                            allocator.slots_used(), allocator.slots_total());
+                refused = true;
+            }
+        } else {
+            std::size_t const index = rng() % live.size();
+            Live const entry = live[index];
+            /* The mapping is unmapped: the object's cap goes, then its piece. */
+            (void)seL4_CNode_Delete(seL4_CapInitThreadCNode, entry.cap, 16);
+            (void)allocator.free_object(entry.cookie, entry.wanted);
+            live.erase(live.begin() + static_cast<std::ptrdiff_t>(index));
+        }
+    }
+    bool const grew = allocator.slots_total() > before_slots;
+    return !refused && grew && host_sel4::collisions() == before_collisions &&
+           host_sel4::invalid() == before_invalid && allocator.check_free_lists() == 0;
+}
+
 }  // namespace
 
 int main()
@@ -919,7 +1000,11 @@ int main()
     expect(asid_pool_holds(), "a child's ASID pool is named by a slot");
     expect(diagnostics_contract_holds(), "the allocator's diagnostics describe the piece held");
 
+    /* The link's own workload: what ld.lld and clang actually ask for. */
+    expect(linker_space_growth_holds(), "a linker's mapping churn grows the CSpace without a refusal");
+
     host_sel4::reset();
+    g_chunk_limit = kChunks;
 
     /* The bootinfo: one 22-bit root untyped -- the launcher's seed -- and a run
      * of free slots. Growth comes from the source above. */
