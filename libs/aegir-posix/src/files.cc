@@ -854,9 +854,11 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
     }
     path = anchored;
     if (names_the_root(path, text_length(path))) {
-        /* The synthetic root (specs/posix.md): a directory to browse -- which
-         * is what `opendir("/")` opens it as -- and not a file to open. */
-        if ((flags & O_DIRECTORY) == 0) {
+        /* The synthetic root (specs/posix.md) is a directory to browse, and
+         * open.html's EISDIR is only for a write open (or O_CREAT without
+         * O_DIRECTORY), so a read open of it succeeds. */
+        if ((flags & (O_WRONLY | O_RDWR)) != 0 ||
+            ((flags & O_CREAT) != 0 && (flags & O_DIRECTORY) == 0)) {
             return -EISDIR;
         }
         return install_root();
@@ -882,6 +884,18 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
         return install(slot, target, 0, true, false, false);
     }
     if ((flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) != 0) {
+        /* open.html ERRORS: "[EISDIR] The named file is a directory and oflag
+         * includes O_WRONLY or O_RDWR, or includes O_CREAT without
+         * O_DIRECTORY." */
+        if (exists && info.kind == aegir::volume::kKindDir) {
+            give_slot(slot);
+            return -EISDIR;
+        }
+        /* "[EEXIST] O_CREAT and O_EXCL are set, and the named file exists." */
+        if (exists && (flags & O_CREAT) != 0 && (flags & O_EXCL) != 0) {
+            give_slot(slot);
+            return -EEXIST;
+        }
         /* The volume's open takes its create flag as the intent to name a file
          * for writing; an open without O_CREAT still only opens an existing
          * one, so the missing case is refused here rather than letting the
@@ -907,8 +921,9 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
         return -ENOENT;
     }
     if (info.kind == aegir::volume::kKindDir) {
-        give_slot(slot);
-        return -EISDIR;
+        /* A directory opened O_RDONLY is not an error: the descriptor is what
+         * read gives EISDIR for (read.html) and what fdopendir browses. */
+        return install(slot, target, 0, true, false, false);
     }
     /* A read open takes a read handle, and a union answers with a capability to
      * the member it chose and that member's own path, so the fd names the
@@ -1052,7 +1067,16 @@ long read_framed(Entry &entry, char *out, size_t count) noexcept
 long read(int fd, void *buffer, size_t count) noexcept
 {
     Entry *entry = entry_for(fd);
-    if (entry == nullptr || !entry->readable || entry->directory || buffer == nullptr) {
+    if (entry == nullptr) {
+        return -EBADF;
+    }
+    /* read.html ERRORS: "[EISDIR] The fildes argument refers to a directory and
+     * the implementation does not allow the directory to be read using read()"
+     * -- the readdir() function should be used instead. */
+    if (entry->directory) {
+        return -EISDIR;
+    }
+    if (!entry->readable || buffer == nullptr) {
         return -EBADF;
     }
     auto *bytes_out = static_cast<char *>(buffer);
@@ -1240,14 +1264,18 @@ long pwrite(int fd, void const *buffer, size_t count, long offset) noexcept
 long lseek(int fd, long offset, int whence) noexcept
 {
     Entry *entry = entry_for(fd);
-    if (entry == nullptr || entry->directory) {
+    if (entry == nullptr) {
         return -EBADF;
     }
+    /* A directory's offset is seekable: lseek.html's EINVAL names a directory
+     * among the files a negative resulting offset is refused for, and the
+     * offset is the listing cursor musl's rewinddir, seekdir and telldir seek
+     * with (they are lseeks on the stream's own descriptor). */
     int64_t base = 0;
     if (whence == SEEK_SET) {
         base = 0;
     } else if (whence == SEEK_CUR) {
-        base = static_cast<int64_t>(entry->offset);
+        base = static_cast<int64_t>(entry->directory ? entry->index : entry->offset);
     } else if (whence == SEEK_END) {
         aegir::vfs::Volume::Info info{};
         if (!aegir::vfs::Volume(entry->volume)
@@ -1261,6 +1289,9 @@ long lseek(int fd, long offset, int whence) noexcept
     int64_t const position = base + offset;
     if (position < 0) {
         return -EINVAL;
+    }
+    if (entry->directory) {
+        entry->index = static_cast<uint64_t>(position);
     }
     entry->offset = static_cast<uint64_t>(position);
     return static_cast<long>(position);
