@@ -149,6 +149,26 @@ void files_surface(Volume const &volume)
         snprintf(reason, sizeof(reason), "Aegir answers errno %d, not EISDIR", directory_errno);
         deviation("open", "a directory O_WRONLY is EISDIR", reason);
     }
+    /* open.html reserves EISDIR for O_WRONLY/O_RDWR (or O_CREAT without
+     * O_DIRECTORY): a directory opened O_RDONLY is not an error. Its descriptor
+     * is then what read.html's own EISDIR is about -- a directory read directly,
+     * which is why readdir exists. */
+    errno = 0;
+    int const directory_read = open(dir, O_RDONLY);
+    if (directory_read >= 0) {
+        check("open", "a directory O_RDONLY is opened", true);
+        errno = 0;
+        if (read(directory_read, nullptr, 1) == -1 && errno == EISDIR) {
+            check("read", "reading a directory descriptor is EISDIR", true);
+        } else {
+            deviation("read", "reading a directory descriptor is EISDIR",
+                      "the read did not answer EISDIR");
+        }
+        (void)close(directory_read);
+    } else {
+        deviation("open", "a directory O_RDONLY is opened",
+                  "Aegir answers EISDIR; open.html reserves that for O_WRONLY/O_RDWR");
+    }
 
     /* write: ERRORS ("[EBADF] The fildes argument is not a valid file descriptor
      * open for writing"). */
@@ -292,6 +312,12 @@ void files_surface(Volume const &volume)
     errno = 0;
     check("truncate", "a missing file is ENOENT",
           truncate(absent_path, 0) == -1 && errno == ENOENT);
+    errno = 0;
+    if (truncate(second, -1) == -1 && errno == EINVAL) {
+        check("truncate", "a negative length is EINVAL", true);
+    } else {
+        deviation("truncate", "a negative length is EINVAL", "the call did not answer EINVAL");
+    }
     errno = 0;
     check("ftruncate", "a bad descriptor is EBADF", ftruncate(-1, 0) == -1 && errno == EBADF);
     {
