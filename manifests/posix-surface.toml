@@ -31,16 +31,7 @@ status = "covered"
 
 [[area]]
 name = "files"
-status = "todo"
-# answered: openat(56) close(57) read(63) write(64) readv(65) writev(66)
-#           pread64(67) pwrite64(68) sendfile(71) lseek(62)
-#           newfstatat(79) fstat(80) statx(291) faccessat(48)
-#           truncate(45) ftruncate(46) mkdirat(34) unlinkat(35)
-#           renameat2(276) fchmod(52) fchmodat(53) fcntl(25)
-# not answered: linkat(37) symlinkat(36) readlinkat(78) fchownat(54)
-#           dup(23) dup3(24) pipe2(59) mkfifoat?() fsync(82) fdatasync(83)
-#           sync(81) flock(32) statfs(43) fstatfs(44) utimensat(88)
-#           fallocate(47) copy_file_range(285)
+status = "covered"
 
 [[area]]
 name = "directories"
@@ -187,3 +178,312 @@ area = "memory"
 state = "unimplemented"
 syscall = 0
 clause = "shm_unlink.html"
+
+# --- files -----------------------------------------------------------------
+
+[[interface]]
+name = "open"
+area = "files"
+state = "implemented"
+syscall = 56
+clause = "open.html"
+
+[[interface]]
+name = "close"
+area = "files"
+state = "implemented"
+syscall = 57
+clause = "close.html"
+
+[[interface]]
+name = "read"
+area = "files"
+state = "implemented"
+syscall = 63
+clause = "read.html"
+
+[[interface]]
+name = "write"
+area = "files"
+state = "implemented"
+syscall = 64
+clause = "write.html"
+
+[[interface]]
+name = "pread"
+area = "files"
+state = "implemented"
+syscall = 67
+clause = "pread.html"
+
+[[interface]]
+name = "pwrite"
+area = "files"
+state = "implemented"
+syscall = 68
+clause = "pwrite.html"
+
+[[interface]]
+name = "readv"
+area = "files"
+state = "implemented"
+syscall = 65
+clause = "readv.html"
+
+[[interface]]
+name = "writev"
+area = "files"
+state = "implemented"
+syscall = 66
+clause = "writev.html"
+
+[[interface]]
+name = "lseek"
+area = "files"
+state = "implemented"
+syscall = 62
+clause = "lseek.html"
+
+[[interface]]
+name = "stat"
+area = "files"
+state = "implemented"
+syscall = 79
+clause = "stat.html"
+
+[[interface]]
+name = "fstat"
+area = "files"
+state = "implemented"
+syscall = 80
+clause = "fstat.html"
+
+[[interface]]
+name = "lstat"
+area = "files"
+state = "implemented"
+syscall = 79
+clause = "lstat.html"
+
+[[interface]]
+name = "fstatat"
+area = "files"
+state = "implemented"
+syscall = 79
+clause = "fstatat.html"
+
+[[interface]]
+name = "access"
+area = "files"
+state = "implemented"
+syscall = 48
+clause = "access.html"
+
+[[interface]]
+name = "truncate"
+area = "files"
+state = "implemented"
+syscall = 45
+clause = "truncate.html"
+
+[[interface]]
+name = "ftruncate"
+area = "files"
+state = "implemented"
+syscall = 46
+clause = "ftruncate.html"
+
+[[interface]]
+name = "unlink"
+area = "files"
+state = "implemented"
+syscall = 35
+clause = "unlink.html"
+
+[[interface]]
+name = "rename"
+area = "files"
+state = "implemented"
+syscall = 276
+clause = "rename.html"
+
+[[interface]]
+name = "chmod"
+area = "files"
+# `partial`: the dispatcher answers fchmodat, but the scratch volume is FAT and
+# has no mode bits, so protect answers EOPNOTSUPP. The suite asserts the refusal
+# rather than a pass (specs/posix-conformance.md).
+state = "partial"
+syscall = 53
+clause = "chmod.html"
+
+[[interface]]
+name = "fchmod"
+area = "files"
+state = "partial"
+syscall = 52
+clause = "fchmod.html"
+
+[[interface]]
+name = "fcntl"
+area = "files"
+# `partial`: F_GETFL/F_GETFD/F_SETFD are answered, but no descriptor flags are
+# kept (there is no exec), so FD_CLOEXEC is not tracked and F_GETFL does not
+# report the access mode. The suite names that rather than passing it.
+state = "partial"
+syscall = 25
+clause = "fcntl.html"
+
+[[interface]]
+name = "fopen"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "fopen.html"
+
+[[interface]]
+name = "fclose"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "fclose.html"
+
+[[interface]]
+name = "fread"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "fread.html"
+
+[[interface]]
+name = "fwrite"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "fwrite.html"
+
+[[interface]]
+name = "fflush"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "fflush.html"
+
+[[interface]]
+name = "fileno"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "fileno.html"
+
+[[interface]]
+name = "remove"
+area = "files"
+state = "implemented"
+syscall = 0
+clause = "remove.html"
+
+[[interface]]
+name = "link"
+area = "files"
+state = "unimplemented"
+syscall = 37
+clause = "link.html"
+
+[[interface]]
+name = "symlink"
+area = "files"
+state = "unimplemented"
+syscall = 36
+clause = "symlink.html"
+
+[[interface]]
+name = "readlink"
+area = "files"
+state = "unimplemented"
+syscall = 78
+clause = "readlink.html"
+
+[[interface]]
+name = "chown"
+area = "files"
+state = "unimplemented"
+syscall = 54
+clause = "chown.html"
+
+[[interface]]
+name = "dup"
+area = "files"
+state = "unimplemented"
+syscall = 23
+clause = "dup.html"
+
+[[interface]]
+name = "dup2"
+area = "files"
+state = "unimplemented"
+syscall = 24
+clause = "dup2.html"
+
+[[interface]]
+name = "pipe"
+area = "files"
+state = "unimplemented"
+syscall = 59
+clause = "pipe.html"
+
+[[interface]]
+name = "fsync"
+area = "files"
+state = "unimplemented"
+syscall = 82
+clause = "fsync.html"
+
+[[interface]]
+name = "fdatasync"
+area = "files"
+state = "unimplemented"
+syscall = 83
+clause = "fdatasync.html"
+
+[[interface]]
+name = "sync"
+area = "files"
+state = "unimplemented"
+syscall = 81
+clause = "sync.html"
+
+[[interface]]
+name = "flock"
+area = "files"
+state = "unimplemented"
+syscall = 32
+clause = "flock.html"
+
+[[interface]]
+name = "statvfs"
+area = "files"
+state = "unimplemented"
+syscall = 43
+clause = "statvfs.html"
+
+[[interface]]
+name = "fstatvfs"
+area = "files"
+state = "unimplemented"
+syscall = 44
+clause = "fstatvfs.html"
+
+[[interface]]
+name = "utime"
+area = "files"
+state = "unimplemented"
+syscall = 88
+clause = "utime.html"
+
+[[interface]]
+name = "mkfifo"
+area = "files"
+state = "unimplemented"
+syscall = 33
+clause = "mkfifo.html"

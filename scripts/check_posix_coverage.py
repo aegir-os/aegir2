@@ -71,10 +71,10 @@ def main() -> int:
         state = interface["state"]
         syscall = interface.get("syscall", 0)
         known.add(name)
-        if state == "implemented":
+        if state in ("implemented", "partial"):
             if syscall and syscall not in answered:
                 problems.append(
-                    f"{name} ({interface['area']}): marked implemented, but the "
+                    f"{name} ({interface['area']}): marked {state}, but the "
                     f"dispatcher answers no syscall {syscall}")
         elif state == "unimplemented":
             if syscall and syscall in answered:

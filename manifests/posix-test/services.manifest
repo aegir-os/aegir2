@@ -554,7 +554,10 @@ restart   = never
 binary    = aegir-posix-conformance
 authority = system
 account   = boot
-needs     = log.main, mem.main
+# vfs.namespace: the file and directory areas' cases open real files, on the
+# disk's SCRATCH volume reached through the POSIX view (/SCRATCH/...). The
+# memory area alone needed only log.main and mem.main.
+needs     = log.main, mem.main, vfs.namespace
 maps      = true
 memory_kib = 256
 restart   = never
