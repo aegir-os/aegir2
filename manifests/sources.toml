@@ -348,4 +348,27 @@ files = [
   { name = "putenv.html", sha256 = "68f925a1cb30fe48b954da8b60b32ef07038af45363b70d3770233e5cbe146bf" },
   { name = "confstr.html", sha256 = "544779bd68f5760801c706cee4f36b1efc9086f3906a9b7384fe7b3fd7ce3e7e" },
   { name = "environ.html", sha256 = "48155c576661c580a239e2291190244a8e3145b0493cdcae62dc7a58b2d6b938" },
+  # The time area (specs/posix-conformance.md). gettimeofday/settimeofday are
+  # 404: they were removed in Issue 8 in favour of clock_gettime/settimeofday's
+  # successors, clock_gettime/clock_settime.
+  { name = "clock_gettime.html", sha256 = "71b134895b554e33f242b05f3c2a12934109053bbe77af83e814892a5ac3638c" },
+  { name = "clock_settime.html", sha256 = "71b134895b554e33f242b05f3c2a12934109053bbe77af83e814892a5ac3638c" },
+  { name = "clock_getres.html", sha256 = "71b134895b554e33f242b05f3c2a12934109053bbe77af83e814892a5ac3638c" },
+  { name = "clock_nanosleep.html", sha256 = "2999877ec69a4b2283d01384697ec41789d53f141aca37a695ed69ea4c7b8ea4" },
+  { name = "nanosleep.html", sha256 = "fcf25e334c9c56477a24a52d306f4b09f2ab8a79e6e8d00e1c5dc45bb0acb2b0" },
+  { name = "sleep.html", sha256 = "2a3adb3c91cbf9c84a3c9b911fe4d7f45e47d860b67c034fb641b364a11a4aab" },
+  { name = "time.html", sha256 = "ccd6e1e158d7c7d168fad93cba0d7fd66fadc2fc4a007675cd58ffcc0c63938f" },
+  { name = "timer_create.html", sha256 = "ecbaaab115c50be2576b79a6879f3a090438577a86b479b06897237c6b0b7484" },
+  { name = "timer_delete.html", sha256 = "98ca219f611a6fbaca43648a58983487b63ada6c2346e96ab4c7f1793e0cd863" },
+  { name = "timer_settime.html", sha256 = "1f8779eb500a6d60df5758ba030d7caee7be314942723cd05a535d383b59caf1" },
+  { name = "timer_gettime.html", sha256 = "1f8779eb500a6d60df5758ba030d7caee7be314942723cd05a535d383b59caf1" },
+  { name = "timer_getoverrun.html", sha256 = "1f8779eb500a6d60df5758ba030d7caee7be314942723cd05a535d383b59caf1" },
+  { name = "localtime.html", sha256 = "f49f74896ac61b630b8cda8d7fd7d7e4cebce30b8c9ff0c95b615dc1f29cc2d4" },
+  { name = "gmtime.html", sha256 = "8f13eb4eb1b946bea3c6c8af7714251ddc6d955f9be896f3c0d9187880d4bd40" },
+  { name = "mktime.html", sha256 = "5dd1351e227843ec45a11d185567922ae763918ee9be1d9c84e9be151ec47879" },
+  { name = "strftime.html", sha256 = "6282dd46eb29cd397cd12dcdf7809fb433f4ae04bcb06b8f9d71ef0ba42a94a8" },
+  { name = "ctime.html", sha256 = "71f909d0da0a5774d6cc5ebec1ff9600877daaba74d5880a487474106e3a71b3" },
+  { name = "difftime.html", sha256 = "880ada8cfde9be46dbdf46fb979227329f1d3342b74cadbdb50c9706650cf1e9" },
+  { name = "asctime.html", sha256 = "14864a3c6aa9bc8ca67680e7f085f56c453523252c64010b740fe571eaf7c801" },
+  { name = "clock_getcpuclockid.html", sha256 = "dbb79132618ca5326387a6f36d4fcb31cc0d8e584b7adfbae18b643362f57f33" },
 ]

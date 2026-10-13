@@ -19,7 +19,7 @@ project(aegir-posix-conformance CXX)
 if(AEGIR_HOSTED_CXX)
   add_executable(aegir-posix-conformance src/main.cc src/harness.cc src/scratch.cc src/memory.cc
                                    src/files.cc src/directories.cc src/process.cc
-                                   src/environment.cc)
+                                   src/environment.cc src/time.cc)
 
   target_compile_options(aegir-posix-conformance PRIVATE -Wall -Wextra -Werror)
 

@@ -113,6 +113,7 @@ int main()
     aegir_posix_conformance::directories_surface(aegir_posix_conformance::kBfsVolume);
     aegir_posix_conformance::process_surface();
     aegir_posix_conformance::environment_surface();
+    aegir_posix_conformance::time_surface();
 
     int const passed = aegir_posix_conformance::passed();
     int const failed = aegir_posix_conformance::failed();

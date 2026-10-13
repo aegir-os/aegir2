@@ -47,12 +47,7 @@ status = "covered"
 
 [[area]]
 name = "time"
-status = "todo"
-# answered: clock_gettime(113) nanosleep(101)
-# not answered: clock_settime(112) clock_getres(114) clock_nanosleep(115)
-#           timer_create(107) timer_settime(110) timer_gettime(108)
-#           timer_delete(111) alarm(?) gettimeofday(169) settimeofday(170)
-#           clock_adjtime(266)
+status = "covered"
 
 [[area]]
 name = "sockets"
@@ -859,6 +854,151 @@ area = "environment"
 state = "implemented"
 syscall = 0
 clause = "environ.html"
+
+# --- time -----------------------------------------------------------------
+
+[[interface]]
+name = "clock_gettime"
+area = "time"
+state = "implemented"
+syscall = 113
+clause = "clock_gettime.html"
+
+[[interface]]
+name = "clock_settime"
+area = "time"
+state = "unimplemented"
+syscall = 112
+clause = "clock_settime.html"
+
+[[interface]]
+name = "clock_getres"
+area = "time"
+state = "unimplemented"
+syscall = 114
+clause = "clock_getres.html"
+
+[[interface]]
+name = "clock_nanosleep"
+area = "time"
+state = "unimplemented"
+syscall = 115
+clause = "clock_nanosleep.html"
+
+[[interface]]
+name = "nanosleep"
+area = "time"
+# `unimplemented` although the dispatcher answers 101: musl implements nanosleep
+# as __clock_nanosleep, which on riscv64 reaches SYS_clock_nanosleep (115), not
+# SYS_nanosleep, so the 101 handler is never called (measured: ENOSYS 38).
+state = "unimplemented"
+syscall = 115
+clause = "nanosleep.html"
+
+[[interface]]
+name = "sleep"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "sleep.html"
+
+[[interface]]
+name = "time"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "time.html"
+
+[[interface]]
+name = "timer_create"
+area = "time"
+state = "unimplemented"
+syscall = 107
+clause = "timer_create.html"
+
+[[interface]]
+name = "timer_delete"
+area = "time"
+state = "unimplemented"
+syscall = 111
+clause = "timer_delete.html"
+
+[[interface]]
+name = "timer_settime"
+area = "time"
+state = "unimplemented"
+syscall = 110
+clause = "timer_settime.html"
+
+[[interface]]
+name = "timer_gettime"
+area = "time"
+state = "unimplemented"
+syscall = 108
+clause = "timer_gettime.html"
+
+[[interface]]
+name = "timer_getoverrun"
+area = "time"
+state = "unimplemented"
+syscall = 109
+clause = "timer_getoverrun.html"
+
+[[interface]]
+name = "localtime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "localtime.html"
+
+[[interface]]
+name = "gmtime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "gmtime.html"
+
+[[interface]]
+name = "mktime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "mktime.html"
+
+[[interface]]
+name = "strftime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "strftime.html"
+
+[[interface]]
+name = "ctime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "ctime.html"
+
+[[interface]]
+name = "asctime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "asctime.html"
+
+[[interface]]
+name = "difftime"
+area = "time"
+state = "implemented"
+syscall = 0
+clause = "difftime.html"
+
+[[interface]]
+name = "clock_getcpuclockid"
+area = "time"
+state = "unimplemented"
+syscall = 0
+clause = "clock_getcpuclockid.html"
 
 [[interface]]
 name = "mkfifo"
