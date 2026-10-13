@@ -1034,7 +1034,11 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     static_cast<void>(addr);
     static_cast<void>(prot);
     bool const file_backed = (flags & MAP_ANONYMOUS) == 0;
-    if (!ready_ || (flags & MAP_FIXED) != 0 || length == 0 ||
+    /* The mapping type is exactly one of MAP_PRIVATE and MAP_SHARED:
+     * `mmap.html` ERRORS makes "neither ... is set" an EINVAL, and a run with
+     * no sharing is one whose writes nobody agreed to. */
+    int const sharing = flags & (MAP_PRIVATE | MAP_SHARED);
+    if (!ready_ || (flags & MAP_FIXED) != 0 || length == 0 || sharing == 0 ||
         (file_backed && fd < 0)) {
         return -EINVAL;
     }
@@ -1363,13 +1367,24 @@ long sys_mprotect(void *addr, size_t length, int prot) noexcept
     return 0;
 }
 
-/* SYS_madvise: a hint. mallocng asks for reclaim; the pages are already ours
- * and mapped, so there is nothing to advise. */
+/* SYS_madvise: a hint, but one with two error cases the standard names
+ * (`posix_madvise.html`, RETURN VALUE and ERRORS), and this is what forwards
+ * them. mallocng's reclaim is advice on pages already ours and mapped, so the
+ * five valid advices do nothing; an advice outside them is EINVAL, and a range
+ * outside the process's window is ENOMEM -- the same bound `sys_mprotect` uses.
+ * A no-op that answered zero to both is a deviation the conformance suite
+ * measures (apps/hosted/aegir-posix-conformance). */
 long sys_madvise(void *addr, size_t length, int advice) noexcept
 {
-    static_cast<void>(addr);
-    static_cast<void>(length);
-    static_cast<void>(advice);
+    if (advice < POSIX_MADV_NORMAL || advice > POSIX_MADV_DONTNEED) {
+        return -EINVAL;
+    }
+    uintptr_t const address = reinterpret_cast<uintptr_t>(addr);
+    uintptr_t const needed = align_up(length);
+    if (g_scratch == nullptr || address < g_scratch->base() ||
+        address + needed > g_scratch->limit()) {
+        return -ENOMEM;
+    }
     return 0;
 }
 
