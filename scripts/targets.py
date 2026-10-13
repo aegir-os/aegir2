@@ -150,7 +150,15 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
         name=name,
         description=f"Aegir's own root task -- {memory_mib} MiB, {cores} core(s)",
         build_dir=f"out/{name}",
-        configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}"),
+        # The shared build dir (`out/<name>`) is also `aegir-posix-conformance`'s,
+        # and that target reconfigures it with a reduced manifest. A cache value
+        # left by it would otherwise survive, because `-C settings.cmake` does not
+        # reset a cache entry that a later configure does not name -- which is how
+        # a `make run` once booted the reduced manifest and its own acceptance
+        # cues went missing. Name the full manifest on every configure; the
+        # conformance target appends its own later `-D`, and the last one wins.
+        configure_flags=(f"-DQEMU_MEMORY={memory_mib}", f"-DKernelMaxNumNodes={cores}",
+                         "-DAEGIR_MANIFEST_NAME=services.manifest"),
         marker="AEGIR_BOOT_OK",
         # The machine's virtio devices, so the transports the tree describes
         # are not all empty: an entropy source (which needs no backing file), a
