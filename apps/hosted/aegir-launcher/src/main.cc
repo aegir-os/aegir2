@@ -31,9 +31,11 @@
 #include <aegir/memory.h>
 #include <aegir/nmspace.h>
 #include <aegir/spawn/service_kit.h>
+#include <aegir/thread.h>
 #include <sel4/sel4.h>
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -77,6 +79,26 @@ std::unordered_map<uint64_t, HeldWait> g_waits;   /* pid -> held reply */
 std::unordered_map<uint64_t, uint64_t> g_exits;   /* pid -> status, till waited */
 std::unordered_map<uint64_t, uint64_t> g_parents; /* child pid -> spawner pid */
 
+/* The ends' lock: a child's end is filed from the serve loop (its own `exited`,
+ * or a Break) *and* from the fault supervisor thread (below), and a held `wait`
+ * reads the same two tables. One mutex covers them and the reply-slot free
+ * list they share. */
+std::mutex g_ends_mutex;
+
+/* A fault is an end like any other (specs/launch.md): the status a `wait`
+ * reports for it is nonzero, so a command that died rather than returned fails
+ * the line it was on. */
+constexpr uint64_t kFaultStatus = 128;
+
+/* The supervisor thread's own objects and stack, charged here. */
+aegir::mem::Account g_supervisor_account{"launcher.faults", 0, 0, 0};
+
+/* The ServiceKit is one object shared by the serve loop and the fault
+ * supervisor, so every use is serialized here. Lock order is this one then
+ * `g_ends_mutex` (through file_exit), and both threads take them in that order. */
+std::mutex g_service_mutex;
+aegir::spawn::ServiceKit *g_service = nullptr;
+
 /* Slots for held replies, reused: the allocator's free is private, so a slot
  * deleted after its reply is kept here and handed out again. Grows on demand. */
 std::vector<seL4_CPtr> g_free_reply_slots;
@@ -106,6 +128,7 @@ void give_reply_slot(seL4_CPtr slot) noexcept
  * a halt that followed it. */
 void file_exit(uint64_t pid, uint64_t status) noexcept
 {
+    std::lock_guard<std::mutex> const locked(g_ends_mutex);
     auto waiter = g_waits.find(pid);
     if (waiter != g_waits.end()) {
         seL4_SetMR(0, 1);
@@ -149,6 +172,7 @@ std::string default_window(uint64_t index)
 void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
                   bool cap_arrived, uint64_t caller, uint64_t *reply, uint32_t *reply_count)
 {
+    std::lock_guard<std::mutex> const locked(g_service_mutex);
     reply[0] = 0;
     *reply_count = 1;
     if (count < 2) {
@@ -281,6 +305,7 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
                      uint32_t count, bool cap_arrived, uint64_t caller, uint64_t *reply,
                      uint32_t *reply_count)
 {
+    std::lock_guard<std::mutex> const locked(g_service_mutex);
     reply[0] = 0;
     *reply_count = 1;
     if (count < 3) {
@@ -369,6 +394,7 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
 void handle_release(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
                     uint64_t *reply, uint32_t *reply_count)
 {
+    std::lock_guard<std::mutex> const locked(g_service_mutex);
     reply[0] = 0;
     *reply_count = 1;
     if (count < 1) {
@@ -384,6 +410,7 @@ void handle_release(aegir::spawn::ServiceKit &service, uint64_t const *words, ui
 void handle_halt(aegir::spawn::ServiceKit &service, uint64_t const *words, uint32_t count,
                  uint64_t *reply, uint32_t *reply_count)
 {
+    std::lock_guard<std::mutex> const locked(g_service_mutex);
     reply[0] = 0;
     *reply_count = 1;
     if (count < 1) {
@@ -411,6 +438,7 @@ void handle_exited(uint64_t const *words, uint32_t count, uint64_t caller) noexc
 bool handle_wait(uint64_t const *words, uint32_t count, uint64_t caller, uint64_t *reply,
                  uint32_t *reply_count)
 {
+    std::lock_guard<std::mutex> const locked(g_ends_mutex);
     reply[0] = 0;
     reply[1] = 0;
     *reply_count = 2;
@@ -442,6 +470,41 @@ bool handle_wait(uint64_t const *words, uint32_t count, uint64_t caller, uint64_
     }
     g_waits[pid] = HeldWait{slot};
     return true;
+}
+
+/* The fault supervisor (specs/launch.md, and specs/director.md's own split).
+ *
+ *  Every command is given a fault endpoint; the kernel delivers a fault there
+ *  and blocks the faulting thread until its supervisor answers. Left unread,
+ *  that is a command that never ends and a `wait` that never completes -- the
+ *  whole session behind it, silently. The launcher's serve loop cannot wait on
+ *  two endpoints at once, so a second thread reads the fault endpoint and files
+ *  the child's end exactly as `exited` does; the badge the kernel reports is the
+ *  child's pid. */
+void fault_supervisor(void *argument) noexcept
+{
+    seL4_CPtr const fault = static_cast<seL4_CPtr>(reinterpret_cast<uintptr_t>(argument));
+    for (;;) {
+        seL4_Word badge = 0;
+        seL4_MessageInfo_t const info = seL4_Recv(fault, &badge);
+        aegir::debug_write("  launcher: command faulted, fault ");
+        aegir::debug_write_unsigned(seL4_MessageInfo_get_label(info));
+        aegir::debug_write(", pid ");
+        aegir::debug_write_unsigned(badge);
+        aegir::debug_write("\n");
+        /* Reap it too: a faulted command's stream only closes when the launcher
+         * releases it, and the shell that started it is waiting on that stream
+         * (specs/launch.md's reap), not only on the pid's end. `halt` suspends
+         * the fault-blocked thread and releases its memory; the suspend is also
+         * what clears the fault the kernel is holding. */
+        {
+            std::lock_guard<std::mutex> const locked(g_service_mutex);
+            if (g_service != nullptr) {
+                (void)g_service->halt(badge);
+            }
+        }
+        file_exit(badge, kFaultStatus);
+    }
 }
 
 }  // namespace
@@ -554,6 +617,32 @@ int main(int argc, char *argv[])
         own_badge = 0;
     }
     service.adopt_identity(own_badge);
+    g_service = &service;
+
+    /* The fault supervisor thread: without it a command that faults blocks on
+     * its own fault message for ever, and the `wait` behind it never completes
+     * (fault_supervisor's comment). Its own CSpace and VSpace are this process's;
+     * the fault endpoint is the one every command is given. */
+    {
+        seL4_CPtr const fault = service.fault_endpoint();
+        aegir::thread::Builder builder(g_objects, g_scratch, g_supervisor_account);
+        aegir::thread::Placement const where{
+            seL4_CapInitThreadCNode,
+            static_cast<seL4_CPtr>(vspace_slot),
+            seL4_CapNull,
+            seL4_MaxPrio - 3,
+            4,
+        };
+        aegir::thread::Thread supervisor{};
+        if (fault == 0 ||
+            !builder.start(where, fault_supervisor,
+                           reinterpret_cast<void *>(static_cast<uintptr_t>(fault)),
+                           supervisor)) {
+            write("FAIL the fault supervisor could not be started");
+            seL4_Signal(aegir::bootstrap::kSlotSupervision);
+            aegir::halt();
+        }
+    }
 
     write("ready, serving launch.session");
     seL4_Signal(aegir::bootstrap::kSlotSupervision);
