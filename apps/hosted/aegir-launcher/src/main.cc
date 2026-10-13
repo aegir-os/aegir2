@@ -20,6 +20,7 @@
  */
 
 #include <aegir/bootstrap.h>
+#include <aegir/console_stream_client.h>
 #include <aegir/debug.h>
 #include <aegir/ipc/port.h>
 #include <aegir/heap.h>
@@ -98,6 +99,73 @@ aegir::mem::Account g_supervisor_account{"launcher.faults", 0, 0, 0};
  * `g_ends_mutex` (through file_exit), and both threads take them in that order. */
 std::mutex g_service_mutex;
 aegir::spawn::ServiceKit *g_service = nullptr;
+
+/* The stream each live command's exit is reported on (specs/launch.md). A
+ * command that faults never reaches its own `report_exit`, so its stream exit
+ * must come from here: the launcher held the caller's stream cap while it
+ * spawned the command, and without the exit the terminal never marks the line
+ * finished and the shell's read never returns. Keyed by the command's pid; the
+ * cap is minted with the caller's (the shell's) badge, so the message lands on
+ * the shell's stream exactly as the command's own would. */
+std::unordered_map<uint64_t, seL4_CPtr> g_command_streams;
+std::vector<seL4_CPtr> g_free_stream_slots;
+
+seL4_CPtr take_stream_slot() noexcept
+{
+    if (!g_free_stream_slots.empty()) {
+        seL4_CPtr const slot = g_free_stream_slots.back();
+        g_free_stream_slots.pop_back();
+        return slot;
+    }
+    return g_objects.alloc_slot();
+}
+
+void give_stream_slot(seL4_CPtr slot) noexcept
+{
+    if (slot == 0) {
+        return;
+    }
+    (void)seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, slot,
+                            aegir::bootstrap::endpoint_depth());
+    g_free_stream_slots.push_back(slot);
+}
+
+/* Keep a cap to the stream the command writes to, badged for the caller. Called
+ * with `g_service_mutex` held. */
+void record_command_stream(uint64_t pid, seL4_CPtr stream) noexcept
+{
+    if (stream == 0) {
+        return;
+    }
+    seL4_CPtr const slot = take_stream_slot();
+    if (slot == 0) {
+        return;
+    }
+    seL4_Error const error = seL4_CNode_Copy(aegir::bootstrap::kSlotOwnCNode, slot,
+                                             aegir::bootstrap::endpoint_depth(),
+                                             aegir::bootstrap::kSlotOwnCNode, stream,
+                                             aegir::bootstrap::endpoint_depth(),
+                                             seL4_CapRights_new(1, 1, 0, 1));
+    if (error != seL4_NoError) {
+        write("FAIL could not record the command's stream, kernel error ");
+        aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+        aegir::debug_write("\n");
+        give_stream_slot(slot);
+        return;
+    }
+    g_command_streams[pid] = slot;
+}
+
+void drop_command_stream(uint64_t pid) noexcept
+{
+    auto const it = g_command_streams.find(pid);
+    if (it == g_command_streams.end()) {
+        return;
+    }
+    seL4_CPtr const slot = it->second;
+    g_command_streams.erase(it);
+    give_stream_slot(slot);
+}
 
 /* Slots for held replies, reused: the allocator's free is private, so a slot
  * deleted after its reply is kept here and handed out again. Grows on demand. */
@@ -292,6 +360,7 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
     if (!service.start_command(command, &started)) {
         return;
     }
+    record_command_stream(started.badge, stream);
     g_parents.emplace(started.badge, caller);
     write_started(argv_words[0].c_str());
     reply[0] = 1;
@@ -400,6 +469,7 @@ void handle_release(aegir::spawn::ServiceKit &service, uint64_t const *words, ui
     if (count < 1) {
         return;
     }
+    drop_command_stream(words[0]);
     reply[0] = static_cast<uint64_t>(service.release(words[0]));
 }
 
@@ -416,6 +486,7 @@ void handle_halt(aegir::spawn::ServiceKit &service, uint64_t const *words, uint3
     if (count < 1) {
         return;
     }
+    drop_command_stream(words[0]);
     reply[0] = static_cast<uint64_t>(service.halt(words[0]));
     /* The registry broke the child, so it never reached its own `exited`: file
      * the end here, with the break status, so a waiting parent completes. */
@@ -492,12 +563,28 @@ void fault_supervisor(void *argument) noexcept
         aegir::debug_write(", pid ");
         aegir::debug_write_unsigned(badge);
         aegir::debug_write("\n");
-        /* Reap it too: a faulted command's stream only closes when the launcher
-         * releases it, and the shell that started it is waiting on that stream
-         * (specs/launch.md's reap), not only on the pid's end. `halt` suspends
-         * the fault-blocked thread and releases its memory; the suspend is also
-         * what clears the fault the kernel is holding. */
+        /* Report the stream exit the command's own `report_exit` would have
+         * (specs/launch.md): a command that faults never reaches that call, so
+         * its line's stream stays open and the shell's read never returns. The
+         * terminal's `kStreamMethodExit` handler reaps the command from there,
+         * so this must not `halt` first -- a release that finds no command
+         * refuses to finish the line. A command with no recorded stream (a
+         * stream-less one) is reaped here instead. */
+        seL4_CPtr stream = 0;
         {
+            std::lock_guard<std::mutex> const locked(g_service_mutex);
+            auto const it = g_command_streams.find(badge);
+            if (it != g_command_streams.end()) {
+                stream = it->second;
+                g_command_streams.erase(it);
+            }
+        }
+        if (stream != 0) {
+            aegir::ipc::Consumer const port(stream);
+            (void)aegir::console::stream_exit(port, kFaultStatus, badge);
+            std::lock_guard<std::mutex> const locked(g_service_mutex);
+            give_stream_slot(stream);
+        } else {
             std::lock_guard<std::mutex> const locked(g_service_mutex);
             if (g_service != nullptr) {
                 (void)g_service->halt(badge);
