@@ -44,11 +44,15 @@ def answered_syscalls() -> set[int]:
 
 
 def suite_interfaces() -> dict[str, int]:
-    """{interface: number of cases} the suite declares (`check`, `unavailable`,
-    `skip` all name their interface as the first string literal)."""
+    """{interface: number of cases} the suite declares. Every case names its
+    interface as the first string literal -- through `check`, `unavailable`,
+    `skip` and `deviation`, or through the two shaping helpers
+    (`conforms_or_deviation`, `answers_or_hole`)."""
     seen: dict[str, int] = {}
+    pattern = (r'\b(?:check|unavailable|skip|deviation|conforms_or_deviation|answers_or_hole)'
+               r'\("([A-Za-z0-9_]+)"')
     for path in sorted(SUITE.glob("*.cc")):
-        for match in re.finditer(r'\b(?:check|unavailable|skip|deviation)\("([a-z0-9_]+)"', path.read_text()):
+        for match in re.finditer(pattern, path.read_text()):
             name = match.group(1)
             seen[name] = seen.get(name, 0) + 1
     return seen

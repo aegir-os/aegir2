@@ -39,13 +39,7 @@ status = "covered"
 
 [[area]]
 name = "process"
-status = "todo"
-# answered: exit(93) exit_group(94) wait4(260); posix_spawn and clone are
-#           answered outside the dispatcher (the musl patch and aegir-posix)
-# not answered: fork/clone(fork) execve(221) getpid(172) getppid(173)
-#           getuid/geteuid/getgid/getegid setuid/setgid/... getrlimit(163)
-#           setrlimit(164) getrusage(165) times(153) umask(166) setsid(157)
-#           setpgid(154) getpgid(155) nice(103) isatty (ioctl) ttyname
+status = "covered"
 
 [[area]]
 name = "environment"
@@ -571,6 +565,256 @@ area = "directories"
 state = "unimplemented"
 syscall = 50
 clause = "fchdir.html"
+
+# --- process --------------------------------------------------------------
+# The syscall column carries the riscv64 number where it is clear and is 0 where
+# the call is libc over a family of syscalls (fork is clone, exec is execve);
+# the check only cross-reads `implemented`.
+
+[[interface]]
+name = "exit"
+area = "process"
+state = "implemented"
+syscall = 94
+clause = "exit.html"
+
+[[interface]]
+name = "_exit"
+area = "process"
+state = "implemented"
+syscall = 93
+clause = "_exit.html"
+
+[[interface]]
+name = "_Exit"
+area = "process"
+state = "implemented"
+syscall = 93
+clause = "_Exit.html"
+
+[[interface]]
+name = "abort"
+area = "process"
+state = "implemented"
+syscall = 0
+clause = "abort.html"
+
+[[interface]]
+name = "atexit"
+area = "process"
+state = "implemented"
+syscall = 0
+clause = "atexit.html"
+
+[[interface]]
+name = "fork"
+area = "process"
+state = "unimplemented"
+syscall = 0
+clause = "fork.html"
+
+[[interface]]
+name = "exec"
+area = "process"
+state = "unimplemented"
+syscall = 221
+clause = "exec.html"
+
+[[interface]]
+name = "posix_spawn"
+area = "process"
+state = "implemented"
+syscall = 0
+clause = "posix_spawn.html"
+
+[[interface]]
+name = "popen"
+area = "process"
+state = "unimplemented"
+syscall = 0
+clause = "popen.html"
+
+[[interface]]
+name = "system"
+area = "process"
+state = "unimplemented"
+syscall = 0
+clause = "system.html"
+
+[[interface]]
+name = "wait"
+area = "process"
+state = "implemented"
+syscall = 260
+clause = "wait.html"
+
+[[interface]]
+name = "waitid"
+area = "process"
+state = "unimplemented"
+syscall = 95
+clause = "waitid.html"
+
+[[interface]]
+name = "getpid"
+area = "process"
+state = "unimplemented"
+syscall = 172
+clause = "getpid.html"
+
+[[interface]]
+name = "getppid"
+area = "process"
+state = "unimplemented"
+syscall = 173
+clause = "getppid.html"
+
+[[interface]]
+name = "getuid"
+area = "process"
+state = "unimplemented"
+syscall = 174
+clause = "getuid.html"
+
+[[interface]]
+name = "geteuid"
+area = "process"
+state = "unimplemented"
+syscall = 175
+clause = "geteuid.html"
+
+[[interface]]
+name = "getgid"
+area = "process"
+state = "unimplemented"
+syscall = 176
+clause = "getgid.html"
+
+[[interface]]
+name = "getegid"
+area = "process"
+state = "unimplemented"
+syscall = 177
+clause = "getegid.html"
+
+[[interface]]
+name = "setuid"
+area = "process"
+state = "unimplemented"
+syscall = 146
+clause = "setuid.html"
+
+[[interface]]
+name = "setgid"
+area = "process"
+state = "unimplemented"
+syscall = 144
+clause = "setgid.html"
+
+[[interface]]
+name = "getpgrp"
+area = "process"
+state = "unimplemented"
+syscall = 155
+clause = "getpgrp.html"
+
+[[interface]]
+name = "getpgid"
+area = "process"
+state = "unimplemented"
+syscall = 155
+clause = "getpgid.html"
+
+[[interface]]
+name = "setpgid"
+area = "process"
+state = "unimplemented"
+syscall = 154
+clause = "setpgid.html"
+
+[[interface]]
+name = "setsid"
+area = "process"
+state = "unimplemented"
+syscall = 157
+clause = "setsid.html"
+
+[[interface]]
+name = "getsid"
+area = "process"
+state = "unimplemented"
+syscall = 156
+clause = "getsid.html"
+
+[[interface]]
+name = "getrlimit"
+area = "process"
+state = "unimplemented"
+syscall = 163
+clause = "getrlimit.html"
+
+[[interface]]
+name = "setrlimit"
+area = "process"
+state = "unimplemented"
+syscall = 164
+clause = "setrlimit.html"
+
+[[interface]]
+name = "getrusage"
+area = "process"
+state = "unimplemented"
+syscall = 165
+clause = "getrusage.html"
+
+[[interface]]
+name = "times"
+area = "process"
+state = "unimplemented"
+syscall = 153
+clause = "times.html"
+
+[[interface]]
+name = "umask"
+area = "process"
+state = "unimplemented"
+syscall = 166
+clause = "umask.html"
+
+[[interface]]
+name = "nice"
+area = "process"
+state = "unimplemented"
+syscall = 103
+clause = "nice.html"
+
+[[interface]]
+name = "isatty"
+area = "process"
+state = "implemented"
+syscall = 0
+clause = "isatty.html"
+
+[[interface]]
+name = "ttyname"
+area = "process"
+state = "implemented"
+syscall = 0
+clause = "ttyname.html"
+
+[[interface]]
+name = "sysconf"
+area = "process"
+state = "implemented"
+syscall = 0
+clause = "sysconf.html"
+
+[[interface]]
+name = "uname"
+area = "process"
+state = "implemented"
+syscall = 160
+clause = "uname.html"
 
 [[interface]]
 name = "mkfifo"
