@@ -2053,6 +2053,26 @@ TARGETS: dict[str, Target] = {
         marker="All is well in the universe",
         source_dir="projects/sel4test",
     ),
+    # The POSIX conformance suite on its own (specs/posix.md): the same machine
+    # and the same build as `aegir-8g-smp4`, but the run types one command into
+    # the session's shell and stops on the suite's own marker. No acceptance
+    # steps at all. It reuses `out/aegir-8g-smp4`, so `make posix-test` does not
+    # pay for a second build.
+    "aegir-posix-conformance": replace(
+        _AEGIR_8G_SMP4,
+        name="aegir-posix-conformance",
+        development=True,
+        marker="AEGIR_POSIX_CONFORMANCE_OK",
+        qmp_steps=(
+            # Capture the shell's badge, then type the suite at its prompt. The
+            # `terminal: ready for line` line is printed when the terminal holds
+            # the focus *and* the shell is asking, so the click is what makes it
+            # appear (apps/hosted/aegir-terminal/src/main.cc:213-264).
+            QmpStep(r"terminal: ready for line \d+ shell (\d+)", capture="shell", times=0),
+            QmpStep(SHELL_READY, events=TERMINAL_CLICK,
+                    press="Sys:Development/C/posix-conformance\n", await_shell=True),
+        ),
+    ),
 }
 
 # The envelope, in the order it is worth trying: the floor first (two cores

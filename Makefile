@@ -46,7 +46,7 @@ DEPS_TIMEOUT ?= 3600
 RUN_TIMEOUT ?= 900
 TEST_TIMEOUT ?= 1200
 
-.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset check-posix-path build run run-ui run-ui-dev envelope test clean distclean
+.PHONY: all help tools tools-check lock-tools deps deps-force deps-check check-bidi check-locale check-translation check-terminal check-process check-args check-pattern check-script check-limits check-allocator check-netmanifest check-fonts check-regions check-font-probe check-atlas check-ilbm check-png check-jpeg check-layout check-scrollbar check-slider check-cycle check-listview check-tab-group check-text-document check-file-path check-popup check-theme theme-preview theme-preset check-posix-path build run run-ui run-ui-dev envelope test posix-test clean distclean
 
 all: help
 
@@ -205,6 +205,9 @@ envelope: ## build and boot every target in the memory/cores envelope
 
 test: ## build and boot the seL4 test suite on qemu-riscv-virt (acceptance test)
 	timeout $(TEST_TIMEOUT) $(PYTHON) scripts/run_target.py --target sel4test --build-timeout $(BUILD_TIMEOUT)
+
+posix-test: ## boot Aegir and run the POSIX conformance suite in the guest
+	timeout $(RUN_TIMEOUT) $(PYTHON) scripts/run_target.py --target aegir-posix-conformance --build-timeout $(BUILD_TIMEOUT)
 
 clean: ## remove build output, keep fetched tools
 	rm -rf build out

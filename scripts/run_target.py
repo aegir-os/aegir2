@@ -720,6 +720,13 @@ def development_tree(build_dir: Path) -> Path:
     if posix_env.is_file():
         shutil.copy2(posix_env, root / "C" / "posix-env-test")
 
+    # The POSIX conformance suite (specs/posix.md): assertions derived from The
+    # Open Group Base Specifications, not from Aegir's own tests. Packed beside
+    # the sub-arc clients so `make posix-test` runs it by name.
+    conformance = build_dir / "apps/hosted/aegir-posix-conformance/aegir-posix-conformance"
+    if conformance.is_file():
+        shutil.copy2(conformance, root / "C" / "posix-conformance")
+
     # The sysroot's content (specs/development.md): Libs is what a *hosted* Aegir
     # program links against, so that a compiler standing on the volume can link one.
     # The archives go in as *one* file rather than fifty -- a volume holds a bounded
