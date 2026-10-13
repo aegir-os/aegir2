@@ -51,13 +51,7 @@ status = "covered"
 
 [[area]]
 name = "sockets"
-status = "todo"
-# answered: socket(198) bind(200) listen(201) accept(202) accept4(242)
-#           connect(203) getsockname(204) getpeername(205) sendto(206)
-#           recvfrom(207) setsockopt(208) getsockopt(209) shutdown(210)
-# not answered: socketpair(199) sendmsg(211) recvmsg(212) poll(7)
-#           ppoll(73) select(23 old) pselect6(72) epoll_create1(20)
-#           getaddrinfo (libc over the resolver)
+status = "covered"
 
 [[area]]
 name = "signals"
@@ -999,6 +993,204 @@ area = "time"
 state = "unimplemented"
 syscall = 0
 clause = "clock_getcpuclockid.html"
+
+# --- sockets --------------------------------------------------------------
+
+[[interface]]
+name = "socket"
+area = "sockets"
+state = "implemented"
+syscall = 198
+clause = "socket.html"
+
+[[interface]]
+name = "socketpair"
+area = "sockets"
+state = "unimplemented"
+syscall = 199
+clause = "socketpair.html"
+
+[[interface]]
+name = "bind"
+area = "sockets"
+state = "implemented"
+syscall = 200
+clause = "bind.html"
+
+[[interface]]
+name = "listen"
+area = "sockets"
+state = "implemented"
+syscall = 201
+clause = "listen.html"
+
+[[interface]]
+name = "accept"
+area = "sockets"
+state = "implemented"
+syscall = 202
+clause = "accept.html"
+
+[[interface]]
+name = "connect"
+area = "sockets"
+state = "implemented"
+syscall = 203
+clause = "connect.html"
+
+[[interface]]
+name = "getsockname"
+area = "sockets"
+state = "implemented"
+syscall = 204
+clause = "getsockname.html"
+
+[[interface]]
+name = "getpeername"
+area = "sockets"
+state = "implemented"
+syscall = 205
+clause = "getpeername.html"
+
+[[interface]]
+name = "send"
+area = "sockets"
+state = "implemented"
+syscall = 206
+clause = "send.html"
+
+[[interface]]
+name = "sendto"
+area = "sockets"
+state = "implemented"
+syscall = 206
+clause = "sendto.html"
+
+[[interface]]
+name = "recv"
+area = "sockets"
+state = "implemented"
+syscall = 207
+clause = "recv.html"
+
+[[interface]]
+name = "recvfrom"
+area = "sockets"
+state = "implemented"
+syscall = 207
+clause = "recvfrom.html"
+
+[[interface]]
+name = "sendmsg"
+area = "sockets"
+state = "unimplemented"
+syscall = 211
+clause = "sendmsg.html"
+
+[[interface]]
+name = "recvmsg"
+area = "sockets"
+state = "unimplemented"
+syscall = 212
+clause = "recvmsg.html"
+
+[[interface]]
+name = "setsockopt"
+area = "sockets"
+state = "implemented"
+syscall = 208
+clause = "setsockopt.html"
+
+[[interface]]
+name = "getsockopt"
+area = "sockets"
+state = "implemented"
+syscall = 209
+clause = "getsockopt.html"
+
+[[interface]]
+name = "shutdown"
+area = "sockets"
+state = "implemented"
+syscall = 210
+clause = "shutdown.html"
+
+[[interface]]
+name = "getaddrinfo"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "getaddrinfo.html"
+
+[[interface]]
+name = "freeaddrinfo"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "freeaddrinfo.html"
+
+[[interface]]
+name = "gai_strerror"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "gai_strerror.html"
+
+[[interface]]
+name = "getnameinfo"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "getnameinfo.html"
+
+[[interface]]
+name = "inet_pton"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "inet_pton.html"
+
+[[interface]]
+name = "inet_ntop"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "inet_ntop.html"
+
+[[interface]]
+name = "htonl"
+area = "sockets"
+state = "implemented"
+syscall = 0
+clause = "htonl.html"
+
+[[interface]]
+name = "poll"
+area = "sockets"
+state = "unimplemented"
+syscall = 7
+clause = "poll.html"
+
+[[interface]]
+name = "select"
+area = "sockets"
+state = "unimplemented"
+syscall = 72
+clause = "select.html"
+
+[[interface]]
+name = "pselect"
+area = "sockets"
+state = "unimplemented"
+syscall = 72
+clause = "pselect.html"
+
+[[interface]]
+name = "ppoll"
+area = "sockets"
+state = "unimplemented"
+syscall = 73
+clause = "ppoll.html"
 
 [[interface]]
 name = "mkfifo"
