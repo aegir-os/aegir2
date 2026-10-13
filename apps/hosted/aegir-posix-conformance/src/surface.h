@@ -16,6 +16,7 @@ void memory_surface();
 void files_surface(Volume const &volume);
 void directories_surface(Volume const &volume);
 void process_surface();
+void environment_surface();
 
 }  // namespace aegir_posix_conformance
 

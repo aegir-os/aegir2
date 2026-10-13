@@ -43,9 +43,7 @@ status = "covered"
 
 [[area]]
 name = "environment"
-status = "todo"
-# answered: getenv/setenv/unsetenv/putenv/environ are libc over the startup
-#           frame (bootstrap.h); nothing here is a syscall
+status = "covered"
 
 [[area]]
 name = "time"
@@ -815,6 +813,52 @@ area = "process"
 state = "implemented"
 syscall = 160
 clause = "uname.html"
+
+# --- environment ----------------------------------------------------------
+# All of these are libc over the process's own environment array, which the
+# startup frame seeds (specs/environment.md); none is a syscall.
+
+[[interface]]
+name = "getenv"
+area = "environment"
+state = "implemented"
+syscall = 0
+clause = "getenv.html"
+
+[[interface]]
+name = "setenv"
+area = "environment"
+state = "implemented"
+syscall = 0
+clause = "setenv.html"
+
+[[interface]]
+name = "unsetenv"
+area = "environment"
+state = "implemented"
+syscall = 0
+clause = "unsetenv.html"
+
+[[interface]]
+name = "putenv"
+area = "environment"
+state = "implemented"
+syscall = 0
+clause = "putenv.html"
+
+[[interface]]
+name = "confstr"
+area = "environment"
+state = "implemented"
+syscall = 0
+clause = "confstr.html"
+
+[[interface]]
+name = "environ"
+area = "environment"
+state = "implemented"
+syscall = 0
+clause = "environ.html"
 
 [[interface]]
 name = "mkfifo"

@@ -340,4 +340,12 @@ files = [
   { name = "ttyname.html", sha256 = "17de69adee751b5f4f2d9a8b9a6e80e2a6c3eaa7eb0d6aa8c7c512a20dc377ea" },
   { name = "sysconf.html", sha256 = "01625d98d608862d87e9c8265d96b22f0909d982566eb39fa516a03ae18ab271" },
   { name = "uname.html", sha256 = "103fa6f54ab2e741ac7d0b45bbc72484e407e6d3696fd51adab48f9680912070" },
+  # The environment area (specs/posix-conformance.md). `environ.html` serves the
+  # same page as exec.html: environ is described there, not on a page of its own.
+  { name = "getenv.html", sha256 = "deadaa32e051bee7c6521bb16dfd355e08036c0aba6ecc46565484033b39e7b8" },
+  { name = "setenv.html", sha256 = "ee4b55f3f78c2c26ac3f9cfb7e9cc78eb1de3211d3f89c9fd86a0c921f60cfbe" },
+  { name = "unsetenv.html", sha256 = "47539963e901b769a4a96a4a65741509e57aa6eecdf1618cd0bf911bdee34cf3" },
+  { name = "putenv.html", sha256 = "68f925a1cb30fe48b954da8b60b32ef07038af45363b70d3770233e5cbe146bf" },
+  { name = "confstr.html", sha256 = "544779bd68f5760801c706cee4f36b1efc9086f3906a9b7384fe7b3fd7ce3e7e" },
+  { name = "environ.html", sha256 = "48155c576661c580a239e2291190244a8e3145b0493cdcae62dc7a58b2d6b938" },
 ]
