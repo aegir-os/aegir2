@@ -27,6 +27,7 @@ import pins
 
 DISPATCHER = pins.ROOT / "libs" / "hosted" / "aegir-heap" / "src" / "heap.cc"
 MANIFEST = pins.ROOT / "manifests" / "posix-surface.toml"
+SOURCES = pins.ROOT / "manifests" / "sources.toml"
 SUITE = pins.ROOT / "apps" / "hosted" / "aegir-posix-conformance" / "src"
 
 
@@ -53,12 +54,27 @@ def suite_interfaces() -> dict[str, int]:
     return seen
 
 
+def pinned_spec_pages() -> set[str]:
+    """The Issue 8 pages `manifests/sources.toml` actually pins.
+
+    A case may only cite a clause the build fetches: writing `open: ...` from
+    memory of the standard and labelling it `open.html` is the failure this
+    refuses (specs/posix-conformance.md)."""
+    with SOURCES.open("rb") as handle:
+        sources = tomllib.load(handle).get("source", [])
+    for source in sources:
+        if source.get("name") == "posix-spec":
+            return {entry["name"] for entry in source.get("files", [])}
+    return set()
+
+
 def main() -> int:
     with MANIFEST.open("rb") as handle:
         surface = tomllib.load(handle)
 
     answered = answered_syscalls()
     cases = suite_interfaces()
+    pinned = pinned_spec_pages()
     areas = surface.get("area", [])
     interfaces = surface.get("interface", [])
 
@@ -85,6 +101,16 @@ def main() -> int:
             problems.append(f"{name}: unknown state {state!r}")
         if name not in cases:
             problems.append(f"{name} ({interface['area']}): no case in the suite")
+
+        # The clause must be a page the build fetches. This is the check that a
+        # case is derived from the standard rather than from memory.
+        clause = interface.get("clause", "")
+        if clause.endswith(".html") and clause not in pinned:
+            problems.append(
+                f"{name} ({interface['area']}): clause {clause} is not a pinned page "
+                f"in manifests/sources.toml -- the case cites a standard that was "
+                f"never fetched"
+            )
 
     for name in sorted(cases):
         if name not in known:

@@ -25,12 +25,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
-#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
-#include <utime.h>
 
 namespace aegir_posix_conformance {
 namespace {
@@ -437,9 +436,6 @@ void files_surface(Volume const &volume)
         errno = 0;
         unavailable("fdatasync", "is not implemented",
                     synced >= 0 && fdatasync(synced) == -1, errno);
-        errno = 0;
-        unavailable("flock", "is not implemented", synced >= 0 && flock(synced, LOCK_EX) == -1,
-                    errno);
         if (synced >= 0) {
             (void)close(synced);
         }
@@ -456,8 +452,24 @@ void files_surface(Volume const &volume)
             (void)close(vfsed);
         }
     }
-    errno = 0;
-    unavailable("utime", "is not implemented", utime(file, nullptr) == -1, errno);
+    /* futimens/utimensat: `utime` was removed in Issue 8; these replaced it. */
+    {
+        struct timespec now[2];
+        now[0].tv_sec = 0;
+        now[0].tv_nsec = 0;
+        now[1].tv_sec = 0;
+        now[1].tv_nsec = 0;
+        int const stamped = open(file, O_RDONLY);
+        errno = 0;
+        unavailable("futimens", "is not implemented",
+                    stamped >= 0 && futimens(stamped, now) == -1, errno);
+        if (stamped >= 0) {
+            (void)close(stamped);
+        }
+        errno = 0;
+        unavailable("utimensat", "is not implemented",
+                    utimensat(AT_FDCWD, file, now, 0) == -1, errno);
+    }
     errno = 0;
     unavailable("mkfifo", "is not implemented", mkfifo(fifo, 0644) == -1, errno);
     /* sync() returns void, so an unanswered SYS_sync has nothing to fail

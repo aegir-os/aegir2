@@ -454,13 +454,6 @@ syscall = 81
 clause = "sync.html"
 
 [[interface]]
-name = "flock"
-area = "files"
-state = "unimplemented"
-syscall = 32
-clause = "flock.html"
-
-[[interface]]
 name = "statvfs"
 area = "files"
 state = "unimplemented"
@@ -475,11 +468,18 @@ syscall = 44
 clause = "fstatvfs.html"
 
 [[interface]]
-name = "utime"
+name = "futimens"
 area = "files"
 state = "unimplemented"
 syscall = 88
-clause = "utime.html"
+clause = "futimens.html"
+
+[[interface]]
+name = "utimensat"
+area = "files"
+state = "unimplemented"
+syscall = 88
+clause = "utimensat.html"
 
 [[interface]]
 name = "mkfifo"
