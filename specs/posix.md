@@ -316,6 +316,31 @@ What the client *inherited* it prints rather than asserts: the session's
 environment is the running system's business, and a client that pinned a value
 would fail for a reason that is not the layer's.
 
+## The conformance suite
+
+`apps/hosted/aegir-posix-conformance` is a second kind of client: where the
+sub-arc clients above are derived from Aegir's own uses, this one is derived
+from the standard. Its cases come from The Open Group Base Specifications Issue
+8 (IEEE Std 1003.1-2024), fetched by `make deps` into
+`third_party/posix-spec/issue8` as a *reference* -- the standard's text is not
+redistributed -- and each assertion names the clause it is from. A call outside
+the profile is a named `SKIP`, not a silent pass: the dispatcher answers `mmap`,
+`munmap`, `mprotect` and `madvise`, so `msync` is skipped by name.
+
+It runs as a boot service in the reduced `posix-test` manifest (`make
+posix-test`, `manifests/posix-test/services.manifest`), packed into director's
+initrd like `cxxsmoke`. There is no shell on purpose: a session shell wants a
+greeter login and a focused terminal, and this target is not worth that boot.
+The runner stops on `AEGIR_POSIX_CONFORMANCE_OK`, or on the service's
+`..._FAIL`.
+
+The first boot measured 13/16 and named two deviations, both now forwarded in
+`libs/hosted/aegir-heap/src/heap.cc`: `sys_mmap` accepted a run with neither
+`MAP_PRIVATE` nor `MAP_SHARED` (the standard's EINVAL), and `sys_madvise` was a
+no-op, so `posix_madvise` -- which returns the syscall's raw error -- answered
+zero to an advice outside `POSIX_MADV_NORMAL..DONTNEED` (EINVAL) and to a range
+outside the process's window (ENOMEM). It is 16/16.
+
 ## What this is not
 
 Not a change to Aegir's native paths, `std::filesystem`, or the namespace — the
