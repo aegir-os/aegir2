@@ -1,6 +1,6 @@
 /*
- * aegir-posix-conformance: the scratch volume and the suite's small text
- * helpers.
+ * aegir-posix-conformance: the volumes the file and directory areas run
+ * against, and the suite's small text helpers.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
@@ -13,6 +13,9 @@
 #include <unistd.h>
 
 namespace aegir_posix_conformance {
+
+Volume const kFatVolume = {"FAT", "/SCRATCH", false};
+Volume const kBfsVolume = {"BFS", "/BFS", true};
 
 size_t length_of(char const *text)
 {
@@ -39,7 +42,7 @@ bool absent(char const *path)
     return access(path, F_OK) == -1 && errno == ENOENT;
 }
 
-bool wait_for_scratch()
+bool wait_for_volume(Volume const &volume)
 {
     /* A minute, in steps small enough that the volume is noticed as soon as it
      * appears: 300 x 200 ms. Not a limit on the volume's size or the number of
@@ -50,7 +53,7 @@ bool wait_for_scratch()
     pause.tv_sec = 0;
     pause.tv_nsec = 200 * 1000 * 1000;
     for (int attempt = 0; attempt < kTries; ++attempt) {
-        if (access(kScratch, F_OK) == 0) {
+        if (access(volume.root, F_OK) == 0) {
             return true;
         }
         (void)nanosleep(&pause, nullptr);

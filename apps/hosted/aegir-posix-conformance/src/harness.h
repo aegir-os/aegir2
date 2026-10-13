@@ -35,10 +35,6 @@ void deviation(char const *interface, char const *test, char const *reason);
 /* Not testable in this process, with the reason. */
 void skip(char const *interface, char const *test, char const *reason);
 
-/* The area entry points, one per source file. */
-void memory_surface();
-void files_surface();
-
 /* The tallies the marker prints. */
 int passed();
 int failed();

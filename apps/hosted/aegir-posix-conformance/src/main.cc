@@ -27,6 +27,7 @@
  */
 
 #include "harness.h"
+#include "surface.h"
 
 #include <aegir/bootstrap.h>
 #include <aegir/debug.h>
@@ -104,7 +105,10 @@ int main()
     }
 
     aegir_posix_conformance::memory_surface();
-    aegir_posix_conformance::files_surface();
+    /* The files area against both filesystems, with the expected result a
+     * property of the volume (scratch.h). */
+    aegir_posix_conformance::files_surface(aegir_posix_conformance::kFatVolume);
+    aegir_posix_conformance::files_surface(aegir_posix_conformance::kBfsVolume);
 
     int const passed = aegir_posix_conformance::passed();
     int const failed = aegir_posix_conformance::failed();
