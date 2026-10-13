@@ -55,10 +55,7 @@ status = "covered"
 
 [[area]]
 name = "signals"
-status = "todo"
-# answered: rt_sigprocmask(135) -- the mask is ignored; Aegir delivers none
-# not answered: rt_sigaction(134) rt_sigreturn(139) kill(129) tkill(130)
-#           tgkill(131) rt_sigtimedwait(137) sigaltstack(132) pause
+status = "covered"
 
 [[area]]
 name = "threads"
@@ -1191,6 +1188,166 @@ area = "sockets"
 state = "unimplemented"
 syscall = 73
 clause = "ppoll.html"
+
+# --- signals ---------------------------------------------------------------
+# Aegir delivers no signals: the dispatcher answers rt_sigprocmask (135) and
+# ignores the mask, and answers nothing else in the family.
+
+[[interface]]
+name = "sigaction"
+area = "signals"
+state = "unimplemented"
+syscall = 134
+clause = "sigaction.html"
+
+[[interface]]
+name = "sigprocmask"
+area = "signals"
+# `partial`: the dispatcher answers rt_sigprocmask, but the mask is not kept --
+# the case asserts the call, not a delivered signal.
+state = "partial"
+syscall = 135
+clause = "sigprocmask.html"
+
+[[interface]]
+name = "sigpending"
+area = "signals"
+state = "unimplemented"
+syscall = 136
+clause = "sigpending.html"
+
+[[interface]]
+name = "sigsuspend"
+area = "signals"
+state = "unimplemented"
+syscall = 133
+clause = "sigsuspend.html"
+
+[[interface]]
+name = "sigwait"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "sigwait.html"
+
+[[interface]]
+name = "sigwaitinfo"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "sigwaitinfo.html"
+
+[[interface]]
+name = "sigtimedwait"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "sigtimedwait.html"
+
+[[interface]]
+name = "sigqueue"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "sigqueue.html"
+
+[[interface]]
+name = "kill"
+area = "signals"
+state = "unimplemented"
+syscall = 129
+clause = "kill.html"
+
+[[interface]]
+name = "killpg"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "killpg.html"
+
+[[interface]]
+name = "raise"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "raise.html"
+
+[[interface]]
+name = "alarm"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "alarm.html"
+
+[[interface]]
+name = "pause"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "pause.html"
+
+[[interface]]
+name = "sigaltstack"
+area = "signals"
+state = "unimplemented"
+syscall = 132
+clause = "sigaltstack.html"
+
+[[interface]]
+name = "sigemptyset"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "sigemptyset.html"
+
+[[interface]]
+name = "sigfillset"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "sigfillset.html"
+
+[[interface]]
+name = "sigaddset"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "sigaddset.html"
+
+[[interface]]
+name = "sigdelset"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "sigdelset.html"
+
+[[interface]]
+name = "sigismember"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "sigismember.html"
+
+[[interface]]
+name = "sigsetjmp"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "sigsetjmp.html"
+
+[[interface]]
+name = "siglongjmp"
+area = "signals"
+state = "implemented"
+syscall = 0
+clause = "siglongjmp.html"
+
+[[interface]]
+name = "signal"
+area = "signals"
+state = "unimplemented"
+syscall = 0
+clause = "signal.html"
 
 [[interface]]
 name = "mkfifo"
