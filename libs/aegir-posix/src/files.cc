@@ -886,8 +886,14 @@ long openat(int dfd, char const *path, int flags, int mode) noexcept
     if ((flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) != 0) {
         /* open.html ERRORS: "[EISDIR] The named file is a directory and oflag
          * includes O_WRONLY or O_RDWR, or includes O_CREAT without
-         * O_DIRECTORY." */
-        if (exists && info.kind == aegir::volume::kKindDir) {
+         * O_DIRECTORY." The empty path is the exception: it is the volume's own
+         * root, which the VFS protocol reports as a directory for browsing, but
+         * for a volume with no directory (NIL:, PIPE:) that kind is a fiction and
+         * the root is exactly how the device is opened for write -- the shell's
+         * `>NIL:` and a pipeline's `>PIPE:` are write opens of it. A volume that
+         * really has a directory refuses the empty path in its own open (BFS's
+         * walk_parent, FAT's), so the refusal sits where the knowledge is. */
+        if (exists && info.kind == aegir::volume::kKindDir && target.rest_length != 0) {
             give_slot(slot);
             return -EISDIR;
         }
