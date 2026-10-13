@@ -322,23 +322,19 @@ also keeps the M4 evidence alive in the tree.
 
 ### Where supervision stands
 
-Supervision works, and the boot now exercises it on every run. `aegir-hello` dies
-on purpose before reporting ready -- it is the one service in the boot set whose
-job is to fail, because a supervision path nobody walks is not a path -- and the
-transcript shows the whole chain:
+Supervision works. The supervisor holds every child's fault endpoint, a death is
+delivered to it badged with the offender (the capability the child was given,
+`kernel/src/kernel/faulthandler.c:83-96`), and it names the service from its table
+and signals the dead service's own readiness notification -- which is how the boot
+thread tells a "ready" (the service's own badge) from a "died" (director's badge,
+which no service can produce for itself). The boot then finishes with that service
+counted as faulted instead of hanging on it.
 
-    supervisor: service 2 (hello) faulted on a memory access
-    hello did not report ready: it faulted
-    1 ready, 1 faulted
-    AEGIR_BOOT_OK
-
-That is the design working end to end. The kernel delivered the fault to the one
-shared endpoint carrying the *offender's* badge (2, from the capability the child
-was given, `kernel/src/kernel/faulthandler.c:83-96`); the supervisor was waiting on
-it there, named the service from the table, and signalled the dead service's own
-readiness notification -- which is how the boot thread tells a "ready" (the
-service's own badge) from a "died" (director's badge, which no service can produce
-for itself). The boot then finishes with one service faulted instead of hanging.
+`aegir-hello` used to die on purpose before reporting ready so the path was walked
+on every boot. That is gone: a deliberate fault in the boot set put a false alarm
+in every transcript and made every run special-case it. The path is now walked
+only by a service that actually faults, and the boot's readiness wait is exercised
+by the clients that report ready.
 
 Two things had to be right for that to be observable, and both looked like
 something else while they were wrong:

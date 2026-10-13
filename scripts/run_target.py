@@ -44,14 +44,13 @@ TEST_SUMMARY = re.compile(r"Test suite passed\.\s+(\d+) tests passed\.\s+(\d+) t
 # wrong, and `vfs: no room ...` is a table that filled -- the two that let a
 # session whose namespace would not bind pass unnoticed.
 GUEST_FAILURE = re.compile(r"test: FAIL|checks FAILED|_SMOKE_FAIL|auth: FAIL|vfs: no room")
-# The supervisor's fault report (specs/director.md). `hello` is the one boot
-# service that faults on purpose, and it does so before the boot marker prints;
-# any report *after* the marker is a service nobody asked to die, which the run
-# must fail on -- the console was suspended mid-drag this way once and the run
-# still passed, because `hello`'s fault is the only one the marker tolerates.
+# The supervisor's fault report (specs/director.md). No boot service is supposed
+# to fault: a report at any point is a service that died when nobody asked it to,
+# and the run must fail on it -- the console was suspended mid-drag this way once
+# and the run still passed, because a deliberate fault was tolerated then.
 SUPERVISOR_FAULT = re.compile(r"supervisor:.*faulted")
-# The boot's ready/faulted summary. The ready count moves with the manifest;
-# the fault count is the one that must stay at hello's single deliberate fault.
+# The boot's ready/faulted summary. The ready count moves with the manifest; the
+# fault count is the one that must be zero.
 BOOT_SUMMARY = re.compile(r"(\d+) ready, (\d+) faulted")
 # The guest's own rectangles, so a click can follow the layout rather than a
 # pinned pixel: a line `rect <name> <x> <y> <w> <h>`, screen pixels. A step's
@@ -1234,12 +1233,11 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int,
                 summary = f"{match.group(1)} tests passed, {match.group(2)} disabled"
             if GUEST_FAILURE.search(stripped):
                 failed = True
-            # A fault report is expected only for `hello`, and only before the
-            # boot marker. `seen` is the marker's from a previous line, so a
-            # report after it is a service that died when nobody asked it to.
-            if seen and SUPERVISOR_FAULT.search(stripped):
+            # No boot service is supposed to fault (specs/director.md): a report
+            # at any point is a service that died when nobody asked it to.
+            if SUPERVISOR_FAULT.search(stripped):
                 print(
-                    f"    runner: FAIL a service faulted after the boot marker: {stripped}",
+                    f"    runner: FAIL a service faulted: {stripped}",
                     flush=True,
                 )
                 failed = True
@@ -1521,15 +1519,12 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int,
             # never comes is the timeout's and the gate's to report.
             if seen and all(played > 0 for played in step_matches):
                 break
-        # `hello` faults on purpose -- that is the supervision path's whole
-        # test -- and the boot summary is where it is counted. Exactly one is
-        # the design: zero would mean hello stopped walking the path it exists
-        # to walk, more would mean another service died too. A target that
-        # never prints the summary (sel4test) is not checked here.
-        if boot_faulted is not None and boot_faulted != 1:
+        # No boot service is supposed to fault (specs/director.md). The boot
+        # summary is where the count is printed; a target that never prints it
+        # (sel4test) is not checked here.
+        if boot_faulted is not None and boot_faulted != 0:
             print(
-                f"    runner: FAIL the boot reported {boot_faulted} faulted, "
-                "expected 1 (hello, on purpose)",
+                f"    runner: FAIL the boot reported {boot_faulted} faulted, expected none",
                 flush=True,
             )
             failed = True

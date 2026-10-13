@@ -215,25 +215,15 @@ int main(int argc, char *argv[])
                                      : (answer.word == aegir::log::kRecorded ? "recorded" : "answered"));
     }
 
-    /* Die on purpose, without reporting ready.
-     *
-     * Supervision is a path nobody walks until something crashes, so this client
-     * walks it on every boot: it is the one service in the boot set whose job is to
-     * fail. Dying *before* saying "ready" is the case that matters, because a
-     * service that never reports leaves whoever waits for it waiting forever --
-     * that is exactly what the boot thread does, so it only continues if the
-     * supervisor tells it what happened (specs/director.md). The address is one
-     * nothing is mapped at in this process.
-     *
-     * Its readiness notification is therefore never signalled by this client, and
-     * that is the point: the supervisor signals it on the dead service's behalf,
-     * which is how the boot thread tells "ready" (the service's own badge) from
-     * "died" (director's badge, which no service can produce for itself). */
-    (void)supervised;
-    aegir::debug_write("AEGIR_CLIENT_FAULTING_ON_PURPOSE\n");
-    *reinterpret_cast<volatile uint64_t *>(0x1000000ull) = 1;
-
-    // Not reached, and that is the point.
+    /* Report ready, then stop. This client has nothing to serve: its job is to
+     * prove the spawn path and the logger port, and the readiness signal is how
+     * the supervisor's boot wait learns it finished starting. A client that dies
+     * before reporting ready leaves the boot thread waiting until the supervisor
+     * speaks for it (specs/director.md); that is the supervisor's own concern, and
+     * the boot no longer manufactures a fault just to walk it. */
+    if (supervised) {
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+    }
     aegir::debug_write("AEGIR_CLIENT_SURVIVED\n");
     aegir::halt();
 }

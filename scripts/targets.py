@@ -231,12 +231,11 @@ def _aegir(memory_mib: int, cores: int, name: str) -> Target:
             # registers itself as it stands up, so the live set forms before
             # anything can Break it. The pid is the process's own badge.
             QmpStep(r"process: registered \d+ \w+"),
-            # `hello` faults on purpose -- the one boot service whose job is to
-            # fail, so the supervision path is walked every run (specs/
-            # director.md). This is its last line before the fault, and the run
-            # requires it; the boot must report exactly that one fault, and any
-            # *other* service faulting after the boot marker is a failure.
-            QmpStep(r"AEGIR_CLIENT_FAULTING_ON_PURPOSE"),
+            # `hello` is the boot set's first spawned client (specs/
+            # director.md): it reports ready, prints this, and parks. A run where
+            # it did not survive to here -- a fault, a missing bootstrap block, a
+            # refused logger call -- fails this rather than passing quietly.
+            QmpStep(r"AEGIR_CLIENT_SURVIVED"),
             # The network driver (specs/net.md): the pinned lwIP tree is
             # compiled, the transport answers device id 1, and the MAC, MTU and
             # link state came from the device's config space -- read, not
