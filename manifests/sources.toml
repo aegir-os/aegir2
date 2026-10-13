@@ -218,3 +218,26 @@ files = [
   { name = "cldr-core/supplemental/plurals.json", sha256 = "ce19668400e9f7904e8b3939d1f0a2872fe8da7bdea9f45f5d50b3a2bac3b382" },
   { name = "cldr-core/supplemental/numberingSystems.json", sha256 = "213dab3fa71e00b52bd5ad091cf79f12602968d1482f1a15889a29984ea5c4ac" },
 ]
+
+# The POSIX specification pages the conformance suite derives its assertions
+# from (specs/posix.md). A *reference*, not code we build: fetched so a test can
+# cite its clause offline, never modified, never committed (third_party/ is
+# gitignored). The Open Group publishes the Base Specifications Issue 8 -- IEEE
+# Std 1003.1-2024 -- as HTML under pubs.opengroup.org; each page's sha256 is the
+# pin, the same file-source shape as the UCD above. The text is Copyright IEEE
+# and The Open Group and is **not redistributed**: we read it and write our own
+# assertions, which is why this is a reference and not a vendored test corpus.
+# `madvise` is not a POSIX name; the call is `posix_madvise`.
+[[source]]
+name = "posix-spec"
+version = "issue8"
+path = "third_party/posix-spec/issue8"
+base_url = "https://pubs.opengroup.org/onlinepubs/9799919799/functions/"
+license = "Copyright 2001-2024 IEEE and The Open Group; reference only, not redistributed"
+files = [
+  { name = "mmap.html", sha256 = "6e78132f706b5ab3041414cbc98f597f12c5f851679841a9723b36b0fbe66414" },
+  { name = "munmap.html", sha256 = "b54bb8d2766b5446d13ec791db8ced4cf087019eae2abf2f18455cc34041ff13" },
+  { name = "mprotect.html", sha256 = "dc30337c70ce04d8241858b4f0de3a28a32a7957972791ce712b12b0d9c456c2" },
+  { name = "posix_madvise.html", sha256 = "b0fa0da042211726a3549d13a8c617bf8391457e87fbe00d1af03ab6e84b9a1e" },
+  { name = "msync.html", sha256 = "9085a1feef4e520e49a06a9d2b966828c815c6e9214b1af6d144a8cd0522ba2f" },
+]
