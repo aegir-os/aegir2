@@ -29,8 +29,14 @@ add_custom_command(
 )
 add_custom_target(users_db_pack ALL DEPENDS "${users_db}")
 
+# The services manifest packed into the initrd (specs/services.md). A target may
+# name a reduced one -- `make posix-test` boots console/vfs/memory/auth and a
+# session shell without the self-paced test bed or the demo -- by setting
+# AEGIR_MANIFEST_NAME to a file under manifests/.
+set(AEGIR_MANIFEST_NAME "services.manifest" CACHE STRING
+    "the services manifest packed into the initrd")
 set(aegir_initrd_files
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/services.manifest"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/${AEGIR_MANIFEST_NAME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/drivers.registry"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../manifests/filesystems.registry"
     "${users_db}"

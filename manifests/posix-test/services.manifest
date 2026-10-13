@@ -1,0 +1,597 @@
+# Aegir's boot manifest. See specs/services.md for the format, the fields and
+# the rules director validates against.
+#
+# This file is packed into director's initrd under the flat name `services` and
+# parsed at boot. It is data: changing the service set is an image change, not a
+# code change. The authoritative copy will be served by a config service later.
+#
+# `owns` and `needs` are the port graph: a port has exactly one owner (its only
+# reader), and whoever needs it may call it. Creation follows that graph, so an
+# owner is always running before its first consumer, and a cycle stops the boot.
+
+format = 1
+
+# The logger owns the port everything else talks to, and is therefore first:
+# a service that cannot say what it is doing is a service nobody can supervise.
+[logger]
+binary    = aegir-logger
+authority = system
+account   = system
+owns      = log.main
+restart   = always
+
+# The process registry (specs/process.md): the live set, by pid. It has no
+# needs -- it answers about processes, not through one -- and its granted memory
+# holds both a Row and a break-source slot per process, so `memory_kib` is how
+# many processes it holds at once, a starting pool rather than a ceiling
+# (specs/memory.md).
+[process]
+binary     = aegir-process-registry
+authority  = system
+account    = system
+owns       = process.registry
+memory_kib = 256
+restart    = always
+
+# The clock: the machine's RTC, mapped as a device and served as clock.main
+# (aegir/clock.h). A platform device has no virtio id and no bus map, so
+# director grants it the frame the devicetree names by compatible; its
+# consumers name clock.main in their own `needs`, and the hosted runtime
+# answers clock_gettime through it (specs/services.md).
+[clock]
+binary    = aegir-rtc
+authority = system
+account   = system
+owns      = clock.main
+needs     = log.main
+device    = google,goldfish-rtc
+restart   = always
+
+# The device manager owns what the machine is, rather than director repeating it:
+# it is given the device tree, reads it, and will hold the bus -> device -> service
+# map that lets a driver be started for a device (specs/services.md).
+[devicemgr]
+binary    = aegir-device-manager
+authority = system
+account   = system
+# The map it builds is a port it owns, so a service director starts can hold
+# a caller half: count and describe ask what the machine is, and open
+# introduces the caller to the driver bound to a row (specs/services.md).
+owns      = devmgr.registry
+needs     = log.main, mem.main
+restart   = always
+# The machine's devices are given to this service and to no other: a device is a
+# capability, so it cannot be handed out to everyone who might want one. No device
+# is its own any more: the random number generator (virtio device 4) was, as the
+# first proof that a service could read hardware, and the proof served -- the
+# transport is bound from the driver registry like any other (specs/services.md).
+device_manager = true
+# The drivers are this service's to start, not director's: a device manager owns
+# the bus -> device -> service map, so the process made for a device is made by
+# the service that knows the bus (specs/services.md). Director delegates the
+# authority -- an untyped, an ASID pool, its own VSpace root, the initrd, and the
+# device frames as capabilities -- and skips starting what this names. The
+# partition manager goes with it: the storage stack's composition belongs to the
+# service that owns the devices, not to director's port graph.
+spawns    = blkdriver, rngdriver, ethdriver, kbddriver, gpudriver, p9driver, timer, partmgr
+# What that spawning costs: two 32 MiB scanout windows for the gpu drivers'
+# framebuffers (megapages -- specs/services.md), the partition manager's
+# megabyte, the filesystem image, and the drivers' images, queues and windows.
+# The default 4 MiB delegation is auth's, not this service's.
+delegate_mib = 68
+
+# The block driver. Director's survey found virtio device 2 behind a transport, and this
+# service asks for it by id -- one device per service, because a device is a capability and
+# two services wanting two devices is what the bus map is for. It owns no port yet: serving
+# a request needs a virtqueue, and the queue comes before the port (specs/services.md).
+[blkdriver]
+binary    = aegir-virtio-blk
+authority = system
+account   = system
+needs     = log.main
+device_id = 2
+# Memory to lay a virtqueue out in. A driver needs some: the queue's descriptor entries
+# carry *physical* addresses the device reads, and a service cannot find out where its own
+# memory is -- so director carves a region, says where it is, and hands over the
+# capability (specs/services.md, specs/authority.md).
+memory_kib = 8
+restart   = always
+
+# The entropy driver. virtio device 4, bound from the registry row like any
+# other driver (specs/services.md). It serves one method, `read`, answered in
+# the port's own envelope -- entropy is small, so the registry row declares no
+# shared window, and its first consumer finds the port through the registry's
+# `open` rather than a static edge here.
+[rngdriver]
+binary    = aegir-virtio-rng
+authority = system
+account   = system
+needs     = log.main
+device_id = 4
+# The queue's memory, as the block driver's above: the registry row is what
+# the device manager carves by.
+memory_kib = 16
+restart   = always
+
+# The network driver. virtio device 1, bound from the registry row like any
+# other (specs/services.md). It owns the transport's two queues and serves the
+# Ethernet link port (aegir/ethernet.h): raw frames to the stack above it,
+# which knows nothing about virtio, so a board's NIC is a new row and the stack
+# is unchanged (specs/net.md). The MAC, link state and MTU are read from the
+# device's config space; nothing about the machine is compiled in.
+[ethdriver]
+binary    = aegir-virtio-net
+authority = system
+account   = system
+needs     = log.main
+device_id = 1
+# Two 8 KiB queues plus one posted receive buffer per descriptor; the registry
+# row's `memory` (256 KiB) is what the device manager carves by.
+memory_kib = 256
+restart   = always
+
+# The 9P transport driver (specs/9p.md): virtio device 9, bound from the
+# registry row like any other. It carries 9P messages to a host export and
+# back -- one request queue, and a shared window split into a request half and
+# a reply half, so a message never crosses the envelope. The filesystem that
+# speaks 9P is a separate service that opens this driver through the registry;
+# the driver itself knows nothing about volumes or the VFS.
+[p9driver]
+binary     = aegir-virtio-9p
+authority  = system
+account    = system
+needs      = log.main
+device_id  = 9
+# One 8 KiB request queue; the registry row's `memory` is what the device
+# manager carves by.
+memory_kib = 16
+restart    = always
+
+# The keyboard driver. virtio device 18, bound from the registry row like any
+# other (specs/services.md): two queues -- the event queue primed with one
+# device-writable buffer per descriptor, the status queue idle -- and events
+# answered in the port's own envelope (aegir/input.h), so no shared window.
+# Its `next` is the first port that can say "wait": the reply is held until
+# the interrupt lands.
+[kbddriver]
+binary    = aegir-virtio-input
+authority = system
+account   = system
+needs     = log.main
+device_id = 18
+# Two queues take 16 KiB; the posted buffers take a page past them.
+memory_kib = 32
+restart   = always
+
+# The display driver. virtio device 16, bound from the registry row like any
+# other -- and bound *twice*: QEMU's command line carries two transports, the
+# probe re-points both at the one row, and the spawn loop starts one process
+# per head (specs/services.md). The framebuffer is the shared window the
+# registry row declares (32 MiB of mega pages), not this memory: one control
+# queue is all the queue the driver runs.
+[gpudriver]
+binary    = aegir-virtio-gpu
+authority = system
+account   = system
+needs     = log.main
+device_id = 16
+# One queue is 8 KiB; the command and response buffers live in its page.
+memory_kib = 8
+restart   = always
+
+# The interval timer (specs/timer.md): a monotonic clock and a sleep, apart
+# from the wall clock. On this machine it is backed by the RTC's alarm and
+# interrupt, so it shares the RTC device with clock.main; the device manager
+# binds it as a platform device (no id, the compatible alone decides) and
+# issues that interrupt. It owns timer.main, the port a client finds by name
+# through its bootstrap block, the way it finds clock.main.
+[timer]
+binary    = aegir-timer
+authority = system
+account   = system
+owns      = timer.main
+needs     = log.main
+device    = google,goldfish-rtc
+# The service's own memory: it lays out no queue, but the spawn hands every
+# child a region and a page is the floor.
+memory_kib = 4
+restart   = always
+
+# The partition manager. The device manager starts it once block drivers answer,
+# and hands it their ports: reading partition tables is a filesystem-agnostic job
+# that belongs above the drivers, not inside them (specs/services.md). Its spawn
+# right is a class: filesystem services are `fs.*`, so a new filesystem type in
+# the class is a new entry here, not an authority change.
+[partmgr]
+binary    = aegir-partmgr
+authority = system
+account   = system
+needs     = log.main, vfs.namespace, clock.main, mem.main
+spawns    = fs.*
+restart   = always
+
+# The network stack (specs/net.md): one service over every Ethernet link, a netif
+# each, so routing and the socket namespace belong to the stack and not to one
+# NIC. Director starts it -- like the VFS, it is a system service, not a driver
+# -- and it learns the links through the device manager's registry, opening each
+# bound eth.* row and adding a netif. It needs the registry to find them and the
+# timer for its tcpip thread's tick; it maps the link windows through the VSpace
+# root and the untyped it is given, and its heap grows from that untyped rather
+# than a fixed MEM_SIZE, so `memory_kib` is a starting pool and not a ceiling (a
+# later source is mem.main). Loopback is up from the first moment, before any
+# link; nothing about a machine is compiled in, the MAC, MTU, link state and
+# addresses all coming over the wire.
+[net]
+binary     = aegir-net
+authority  = system
+account    = system
+owns       = net.control, net.socket
+# mem.main is what the tcpip thread's own allocator will grow from. Two threads
+# sharing one allocator hand each other the same slot -- the allocator's cursor
+# is not atomic (allocator.h) -- and the second owner needs a chunk of its own
+# to carve rather than one the first is already splitting. The prose above
+# already calls mem.main the later source; this makes it reachable.
+needs      = log.main, devmgr.registry, timer.main, mem.main
+maps       = true
+memory_kib = 8192
+restart    = always
+
+# The Net: filesystem view (specs/net.md): the live half. A synthetic volume --
+# one directory per adapter, one file per parameter -- that reads and
+# reprograms the running stack through its control port, and registers itself
+# with the VFS so an ordinary file client reads and writes it. It is a system
+# service because it holds the control port and the namespace, and its writes
+# are what reprogram a system interface.
+[netvol]
+binary     = aegir-net-volume
+authority  = system
+account    = system
+owns       = vol.net
+needs      = log.main, vfs.namespace, net.control
+# The handle table's backing store: the page the write side's open handles
+# live in, sized from this grant rather than a number chosen in code (the way
+# fs-bfs's and fs-fat's handle pages are).
+memory_kib = 4
+restart    = never
+
+# The network is configured and proved from Startup-Sequence, not here
+# (specs/net.md): `netconfig` reads Sys:S/network.manifest and applies it through
+# the control port, and `ping` sends the ICMP echo. Neither can be a boot service
+# -- they read Sys:, which is up only once the session is -- so both are commands
+# on C: that the boot session runs, and the [net] stack they talk to is the only
+# network service that starts here.
+
+# The FAT filesystem service: one instance per FAT partition, started by the
+# partition manager with the block device's port and a range grant rather than
+# the whole device (specs/services.md). FAT16/32/ExFAT are the interchange
+# filesystems -- not Aegir's own -- and read-only to begin with.
+[fs.fat]
+binary    = aegir-fs-fat
+authority = system
+account   = system
+needs     = log.main, clock.main
+restart   = always
+
+# The VFS owns the namespace -- volume names, path resolution -- and not the
+# data (specs/vfs.md). It must exist before any filesystem, so filesystems
+# have somewhere to register. Its port carries capabilities, which the port
+# graph notes for the rights both halves need.
+[vfs]
+binary    = aegir-vfs
+authority = system
+account   = system
+owns      = vfs.namespace
+needs     = log.main
+# The registration table's backing store: the map grows until this is gone,
+# and reaching the end of it is a loud refusal, never a quiet overwrite. The
+# table holds every volume and every session's bindings (Home:, ENV:, S:, C:),
+# so it carries the boot set's volumes plus a session's aliases with room.
+memory_kib = 32
+restart   = always
+
+# The initrd service serves the boot image itself as the Initrd: volume --
+# the flat archive, mapped read-only (`initrd = true`, the same mapping a
+# spawner gets without the spawn authority), registered with the VFS by the
+# service itself, read out of in place (specs/vfs.md). It must start after
+# the VFS, so its volume exists before anything that reads the boot image.
+# Its name is not in the fs.* class on purpose: that class is partmgr's
+# spawn right, and this service is director's to start.
+[initrd]
+binary    = aegir-fs-initrd
+authority = system
+account   = system
+owns      = vol.initrd
+needs     = log.main, vfs.namespace
+initrd    = true
+# maps (specs/vfs.md's scaling path): the service maps a caller's frame into
+# its own address space to read straight into it, so it is trusted with a
+# VSpace root and a window of free addresses, and the untyped the page tables
+# over that window are retyped from.
+maps       = true
+memory_kib = 16
+restart   = always
+
+# The 9P filesystem (specs/9p.md): the host directory a run shares, mounted as
+# a volume. Director starts it -- it is a filesystem, not a driver and not a
+# partition the partition manager would find -- and it opens the bound p9.*
+# transport through the device manager's registry, speaks 9P2000.L over it, and
+# registers the export's own tag as a volume. `maps` is what lets it map the
+# transport's window through its own VSpace root; the untyped is the page
+# tables over that window. Its name is not in the fs.* class, like the initrd's,
+# because that class is partmgr's spawn right.
+[hostfs]
+binary     = aegir-fs-9p
+authority  = system
+account    = system
+owns       = vol.hostfs
+needs      = log.main, vfs.namespace, devmgr.registry
+maps       = true
+memory_kib = 256
+restart    = never
+
+# The null handler (specs/boot.md, specs/vfs.md): the NIL: device, where output
+# goes to disappear and input is always at its end. A volume like any other, so
+# redirection reaches it by path and the VFS needs no special case for it --
+# `EndCLI >NIL:` is its first use. It must start after the VFS, like the initrd,
+# so its name exists before anything can redirect to it.
+[nil]
+binary    = aegir-fs-nil
+authority = system
+account   = system
+owns      = vol.nil
+needs     = log.main, vfs.namespace
+restart   = always
+
+# The pipe handler (specs/pipe.md): the PIPE: device, named byte pipes. A
+# volume like NIL:, so a command's redirection and the shell's `|` reach it by
+# path. Its memory is the buffers: carved into chunks, a pipe grows into it on
+# demand, and a bigger grant is more pipes and a larger ceiling for each. It
+# starts after the VFS, like the initrd and nil, so its name exists before a
+# pipeline resolves it.
+[pipe]
+binary    = aegir-fs-pipe
+authority = system
+account   = system
+owns      = vol.pipe
+needs     = log.main, vfs.namespace
+memory_kib = 1024
+restart   = always
+
+# The memory service (specs/memory.md): one pool, handed out as pristine
+# untyped chunks on demand, owned by the caller's badge and reclaimed together
+# when the caller releases. It maps its own -- `maps` gives it the untyped
+# whole, which is what it carves -- and `memory = rest` gives it the untypeds
+# the boot did not spend: the pool is the host's memory, not a constant. A
+# process's ceiling is the limits of specs/limits.md, not this grant: it reads
+# the user database and Sys:S/limits.manifest through the namespace at boot
+# and refuses or reports a user's crossing at alloc.
+[memory]
+binary    = aegir-memory
+authority = system
+account   = system
+owns      = mem.main
+needs     = log.main, vfs.namespace
+maps      = true
+memory    = rest
+restart   = always
+
+# The font service (specs/fonts.md): it owns the faces Sys:Fonts holds and one
+# FreeType, and serves font.main -- a client opens a face by its own family and
+# style and asks for metrics, so no app carries an outline engine or a face set
+# of its own. It takes the maps grant because the hosted runtime's heap is
+# carved from its own address space, and mem.main because that heap grows past
+# its seed on demand (specs/memory.md). Sys:Fonts is not a port, so this service
+# waits for it -- the disk answers after the namespace -- rather than director
+# ordering it (specs/services.md).
+[font]
+binary     = aegir-font
+authority  = system
+account    = system
+owns       = font.main
+needs      = log.main, vfs.namespace, mem.main, timer.main
+maps       = true
+# A face in the CJK collection is CFF-based: its table is sixteen megabytes, so
+# the seed is sized for a face rather than for an empty service, and the CSpace
+# is sized for the pages a face and its page tables are retyped from. Both are
+# floors, not ceilings: the heap grows through mem.main (specs/memory.md).
+memory_kib = 16384
+stack_kib  = 64
+cspace_bits = 14
+restart    = always
+
+# The memory service's client (specs/memory.md, Phase 1): it asks for a chunk,
+# retypes a frame from it, and releases -- the protocol exercised by a caller.
+[memsmoke]
+binary    = aegir-mem-smoke
+authority = system
+account   = system
+needs     = log.main, mem.main
+restart   = never
+
+# The signal primitive's acceptance pair (specs/signal.md): one binary under two
+# names, because a held reply needs a caller blocked in a call and one process
+# cannot hold its own. `signal.smoke` serves the port with a Receiver and a
+# Reply_holder; its notification is retyped from a mem.main chunk, so it needs
+# no delegated untyped. `signal.client` proves the round trip: the server mints
+# it a context, it signals it, and its next call is held and answered from the
+# server's notification branch.
+[signal.smoke]
+binary    = aegir-signal-smoke
+authority = system
+account   = system
+owns      = signal.smoke
+needs     = log.main, mem.main
+restart   = never
+
+[signal.client]
+binary    = aegir-signal-smoke
+authority = system
+account   = system
+needs     = log.main, signal.smoke
+restart   = never
+
+# The console owns the display and the input devices, exclusively
+# (specs/console.md): what every other process sees of the screen and the
+# keyboard is what it serves. It maps the gpu's pixel window itself --
+# `maps` is the spawner's vspace grant without the spawn authority -- so
+# its memory is what page tables and the clients' pixel slices are retyped
+# from. The delegation is a *starting* pool, not a budget: when it runs out
+# the console asks mem.main for another screen-max chunk (specs/console.md),
+# so the number of windows and the head's size are what it can hold, not
+# this number. `memory_kib` here only saves the first few slices the trip to
+# the memory service. mem.main is a caller need, like the terminal's.
+[console]
+binary    = aegir-console
+authority = system
+account   = system
+owns      = console.gui
+needs     = log.main, devmgr.registry, mem.main
+maps      = true
+memory_kib = 8192
+restart   = always
+
+# auth owns the user database and the login port (specs/auth.md): it reads
+# the packed table from Initrd: through the namespace -- the first system
+# consumer of the VFS -- and serves auth.login from it. It is also a
+# spawner: a successful login starts a session, so its memory is the
+# untyped it is delegated, and its table and its sessions both come out
+# of it. console.gui is its own caller half: a login through the greeter
+# ends with auth reaping the greeter's windows and slice (specs/console.md).
+[auth]
+binary    = aegir-auth
+authority = system
+account   = system
+owns      = auth.login
+needs     = log.main, vfs.namespace, console.gui
+spawns    = session.*, greeter, system.*
+# Auth's delegation holds the greeter's kit and auth's own objects. A session
+# has no pool: its memory comes from the memory service on demand, charged to
+# the session's badge (specs/memory.md, specs/auth.md's Session reclaim), so
+# there is nothing session-sized here.
+delegate_mib = 32
+# Its CSpace: a session spawns three large children -- the bureau, the terminal
+# and the session's launcher -- and each child's image is frames the spawner
+# keeps a capability for, so auth's slots are what the session's children cost
+# together. 8192 (13 bits) holds the three; 4096 held two and refused the
+# third with no slot left (specs/authority.md).
+cspace_bits = 13
+# Its stack: the default 8 KiB was already close, and the session start --
+# ensure_home's path buffers, the spawn's own frames -- tipped it over into a
+# fault once the terminal's spawn kit joined the bureau's. 32 KiB is the room
+# with margin; the service's own functions are the growth's cause and are the
+# next thing to shrink.
+stack_kib = 32
+restart   = always
+
+# The login window (specs/console.md's login arc): auth's face, started once
+# the user database is read, badged from auth's own range (specs/authority.md).
+# Nothing else starts it, and its needs are what drives the delegatable
+# copies auth's spawn kit carries for it.
+[greeter]
+binary    = aegir-greeter
+authority = system
+account   = system
+# font.main is the font service (specs/fonts.md): the greeter's form is drawn in
+# a Sys:Fonts face, and this need is also what makes auth's spawn kit carry the
+# delegatable copy its windows are handed. log.main is the same reason the boot
+# smoke clients need it: without the logger's port a client writes the serial
+# itself, a character at a time.
+needs     = log.main, console.gui, auth.login, font.main
+restart   = never
+
+# The boot session (specs/boot.md): the system's Startup-Sequence, run once
+# before the greeter. auth spawns it from the same kit a session's terminal
+# uses, on a system badge; its shell reads Sys:S/Startup-Sequence and signals
+# auth when the command file is done.
+[system.boot]
+binary    = aegir-terminal
+authority = system
+account   = system
+needs     = log.main, vfs.namespace, console.gui, mem.main
+restart   = never
+
+# The spawn smoke client. It proves the C++ path end to end (ABI, static
+# constructors, TLS, floating point, console) and now also that a spawned process
+# can call a port it was given.
+[hello]
+binary    = aegir-hello
+authority = system
+account   = boot
+needs     = log.main
+restart   = never
+
+# `[test]` (aegir-test) is deliberately absent here: it is the self-paced test
+# bed that needs GUI clicks to make progress, and `make posix-test` boots only
+# enough to run the POSIX conformance suite. The full manifest is
+# services.manifest.
+
+# The hosted C++ runtime's acceptance client (specs/cxx.md): it needs no port
+# of the boot set, but it does need the untyped, the VSpace root and the window
+# the heap is carved from, so it takes the maps grant and its own memory. Its
+# seed is deliberately small: the runtime's heap grows past it through mem.main
+# (specs/memory.md Phase 2), so the seed is a floor and not a ceiling.
+[cxxsmoke]
+binary    = aegir-cxx-smoke
+authority = system
+account   = boot
+# log.main: without it the runtime's debug fallback writes the serial one
+# character at a time and this client's lines interleave with the logger's
+# (and envsmoke's), splitting cues the acceptance reads by line (specs/
+# testing.md, the console-split note in specs/memory.md).
+needs     = log.main, mem.main
+maps      = true
+memory_kib = 256
+restart   = never
+
+# The process environment's acceptance client (specs/environment.md): a spawned
+# service that checks the argv, environment and current directory its spawner
+# gave it. It runs the hosted runtime, so it takes the maps grant and its own
+# memory like the cxx-smoke.
+[envsmoke]
+binary      = aegir-env-smoke
+authority   = system
+account     = boot
+# log.main, for the same reason as cxxsmoke: the direct-serial fallback is
+# character-at-a-time, so a client without the logger's port interleaves.
+needs       = log.main
+args        = alpha, beta
+environment = AEGIR=smoke, TWO=2
+maps        = true
+memory_kib  = 4096
+restart     = never
+
+# The filesystem libraries' acceptance client (specs/cxx.md step 5): a spawned
+# service that reads the VFS through aegir::filesystem and aegir::vfs, so it
+# needs the namespace port and -- running the hosted runtime -- the maps grant
+# and its own memory.
+[fssmoke]
+binary     = aegir-fs-smoke
+authority  = system
+account    = boot
+needs      = log.main, vfs.namespace, clock.main
+maps       = true
+memory_kib = 2048
+restart    = never
+
+# The window manager's demonstration client (specs/window-manager.md) is no
+# longer a boot service: it is a command on Sys:C, started in the session by
+# `Run gui-demo` in Sys:S/Shell-Startup. It has to run as the caller to hold
+# the launch.session caller half and serve-launch a datatype class
+# (specs/datatypes.md), and a boot service runs with the system's authority.
+# Its needs are a command's own set (specs/launch.md): the toolkit's console,
+# the bureau's menu, the font service, and the session's namespace.
+
+# The session's authority (specs/session.md). A session's *services* are the
+# session manifest's (`Sys:S/session.manifest`): which, in what order, with what
+# memory. This entry declares only the *authority* auth needs to compose any of
+# them -- the union of the ports a session service may name in `needs` -- so
+# director hands auth the unbadged sources (`spawn:...`) it delegates. auth does
+# not spawn this entry; `[auth] spawns = session.*` covers it, and it is a
+# declaration, not a service. `launch.session` and `bureau.menu` are absent
+# because auth makes those ports itself.
+[session.authority]
+binary    = aegir-session-smoke
+authority = user
+account   = user
+needs     = log.main, vfs.namespace, console.gui, font.main, clock.main, timer.main, mem.main, net.socket, net.control, process.registry
+restart   = never

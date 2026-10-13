@@ -2062,6 +2062,10 @@ TARGETS: dict[str, Target] = {
         _AEGIR_8G_SMP4,
         name="aegir-posix-conformance",
         development=True,
+        # The reduced boot (manifests/posix-test.manifest): the self-paced test
+        # bed is absent, so the run does not need the acceptance's clicks.
+        configure_flags=_AEGIR_8G_SMP4.configure_flags
+        + ("-DAEGIR_MANIFEST_NAME=posix-test/services.manifest",),
         marker="AEGIR_POSIX_CONFORMANCE_OK",
         qmp_steps=(
             # Capture the shell's badge, then type the suite at its prompt. The
