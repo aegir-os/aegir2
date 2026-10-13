@@ -192,6 +192,12 @@ void *grow_node_region(void *context, unsigned *bytes) noexcept
 struct Run {
     uintptr_t base;
     uintptr_t bytes;
+    /* A writable MAP_SHARED file-backed run is a view of the file and owes it
+     * its bytes when the run is released (lld's FileOutputBuffer::commit unmaps
+     * first and renames after, so the release is where the write-back is
+     * expected). -1 for every other run: anonymous, private, or read-only. */
+    int file_fd;
+    uint64_t file_offset;
 };
 
 Run *g_runs = nullptr;
@@ -212,7 +218,7 @@ bool grow_run_record() noexcept
     auto *const more = reinterpret_cast<Run *>(page);
     uint32_t const count = static_cast<uint32_t>(kPageBytes / sizeof(Run));
     for (uint32_t i = 0; i < count; ++i) {
-        more[i] = Run{0, 0};
+        more[i] = Run{0, 0, -1, 0};
     }
     for (uint32_t i = 0; i < g_run_count; ++i) {
         more[i] = g_runs[i];
@@ -222,13 +228,15 @@ bool grow_run_record() noexcept
     return true;
 }
 
-void record_run(uintptr_t base, uintptr_t bytes) noexcept
+void record_run(uintptr_t base, uintptr_t bytes, int file_fd, uint64_t file_offset) noexcept
 {
     if (g_run_count == g_run_capacity && !grow_run_record()) {
         return;
     }
     g_runs[g_run_count].base = base;
     g_runs[g_run_count].bytes = bytes;
+    g_runs[g_run_count].file_fd = file_fd;
+    g_runs[g_run_count].file_offset = file_offset;
     ++g_run_count;
 }
 
@@ -1166,7 +1174,14 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     /* The run is ours from here on, whether it was carved fresh or handed back by the
      * free list: recorded, so `munmap` asks the record instead of reasoning from bounds
      * (specs/memory.md, "The record"). */
-    record_run(base, needed);
+    /* A writable MAP_SHARED file-backed run owes the file its bytes: it is a view
+     * of the file, and the write-back is what lld's FileOutputBuffer relies on
+     * (its commit unmaps, "letting OS flush dirty pages to file on disk", and
+     * renames after). The fd and offset are kept with the run; a read-only or
+     * private mapping has nothing to write back. */
+    int const write_back_fd =
+        (file_backed && (flags & MAP_SHARED) != 0 && (prot & PROT_WRITE) != 0) ? fd : -1;
+    record_run(base, needed, write_back_fd, static_cast<uint64_t>(offset));
     return static_cast<long>(base);
 }
 
@@ -1200,7 +1215,22 @@ long sys_munmap(void *addr, size_t length) noexcept
         trace("munmap-refused", base, bytes);
         return -EINVAL;
     }
+    /* A writable MAP_SHARED file-backed run gives the file its bytes back, while
+     * the pages are still mapped -- after the release below they are gone. This
+     * is what lld's FileOutputBuffer::commit() waits for: it unmaps first and
+     * renames the temporary file over the destination after, so a mapping whose
+     * writes never reach the file leaves an empty output. */
+    int const write_back_fd = g_runs[at].file_fd;
+    uint64_t const write_back_offset = g_runs[at].file_offset;
     forget_run(at);
+    if (write_back_fd >= 0) {
+        long const wrote = files::pwrite(write_back_fd, reinterpret_cast<void const *>(base),
+                                         static_cast<size_t>(bytes),
+                                         static_cast<long>(write_back_offset));
+        if (wrote < 0) {
+            trace("munmap-file-refused", base, bytes);
+        }
+    }
     if (!g_free_regions.give(base, bytes)) {
         trace("munmap-refused", base, bytes);
         return -EINVAL;

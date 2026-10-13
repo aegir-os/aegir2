@@ -276,18 +276,32 @@ void memory_file_surface(Volume const &volume)
     } else {
         check("mmap", "a shared file-backed mapping serves the file's bytes",
               equals(shared, kMappedText, length_of(kMappedText)));
-        /* mmap.html, DESCRIPTION: "MAP_SHARED Changes are shared." A write
-         * through the mapping is visible to a read of the file. */
+        /* mmap.html, DESCRIPTION: "MAP_SHARED Changes are shared." The write-back
+         * is on the release, which is the order every writer uses: lld's
+         * FileOutputBuffer::commit() unmaps first ("letting OS flush dirty pages
+         * to file on disk") and renames the temporary file over the destination
+         * after. So the case writes through the mapping, releases it, and reads
+         * the file back -- and a read *while* the mapping is live is the second
+         * case, which does not see the change (named: a mid-mapping read gets the
+         * file's bytes, not the mapping's). */
         shared[0] = 'X';
         char read_back = 0;
-        ssize_t const got = pread(shared_fd, &read_back, 1, 0);
-        if (got == 1 && read_back == 'X') {
-            check("mmap", "a shared write is visible in the file", true);
+        ssize_t const while_mapped = pread(shared_fd, &read_back, 1, 0);
+        if (while_mapped == 1 && read_back == 'X') {
+            check("mmap", "a shared write is visible while mapped", true);
         } else {
-            deviation("mmap", "a shared write is visible in the file",
-                      "the write through the mapping did not reach the file");
+            deviation("mmap", "a shared write is visible while mapped",
+                      "the write reaches the file on release, not while mapped");
         }
         (void)munmap(shared, kPage);
+        char after = 0;
+        ssize_t const got = pread(shared_fd, &after, 1, 0);
+        if (got == 1 && after == 'X') {
+            check("mmap", "a shared write is visible in the file after the release", true);
+        } else {
+            deviation("mmap", "a shared write is visible in the file after the release",
+                      "the write through the mapping did not reach the file");
+        }
     }
     (void)close(shared_fd);
     (void)unlink(file);
