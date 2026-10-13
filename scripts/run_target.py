@@ -941,6 +941,20 @@ def with_overlay(target: Target, build_dir: Path) -> tuple[list[str], Path]:
     return arguments, overlay
 
 
+def with_initrd(build_dir: Path, arguments: list[str]) -> None:
+    """Add the boot initrd when the build produced one.
+
+    The initrd is a boot-provided region (specs/boot.md), not a blob linked into
+    the root task: the build leaves it at `<build>/initrd.cpio`, QEMU's `-initrd`
+    loads it, and the ELF loader records it in /chosen. The path is relative
+    because QEMU runs with the build directory as its working directory, like
+    the disk and 9P paths. A target that has no such file (sel4test) passes
+    nothing, which is why this asks the filesystem rather than the target."""
+    initrd = build_dir / "initrd.cpio"
+    if initrd.is_file():
+        arguments += ["-initrd", initrd.name]
+
+
 def boot_interactive(target: Target, build_dir: Path) -> int:
     """Boot the image with QEMU's own window on the displays: the user is the
     runner. The keys the acceptance check's script would press are theirs to
@@ -951,6 +965,7 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
     ensure_tftp(build_dir)
     ensure_host(build_dir)
     arguments, overlay = with_overlay(target, build_dir)
+    with_initrd(build_dir, arguments)
     extra = " ".join(arguments)
     # -g/-s replace simulate's -nographic: a GTK window on the consoles, the
     # serial console on the terminal. Attached with `=`, for the same reason
@@ -1018,6 +1033,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int,
     ensure_host(build_dir)
 
     arguments, overlay = with_overlay(target, build_dir)
+    with_initrd(build_dir, arguments)
     extra = " ".join(arguments)
     command = "./simulate --extra-qemu-args=" + shlex.quote(extra)
     # A leftover socket from a previous run would make QEMU's own bind fail.

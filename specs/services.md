@@ -36,12 +36,22 @@ service identities.
 
 Two archives exist and only one of them is ours. The ELF loader has its own,
 holding `kernel.elf`, `kernel.dtb` and the stripped `rootserver`
-(`tools/seL4/elfloader-tool/CMakeLists.txt:252-302`); that one is the loader's
-private payload and no process can read it. Aegir's initrd is the archive linked
-into director and reached through `_cpio_archive`/`_cpio_archive_end` — the
-mechanism `sel4test-driver` uses for its own test ELF
-(`projects/sel4test/apps/sel4test-driver/CMakeLists.txt:83`,
-`projects/sel4test/apps/sel4test-driver/src/main.c:410-411`).
+(`tools/seL4/elfloader-tool/CMakeLists.txt`); that one is the loader's private
+payload and no process can read it.
+
+Aegir's initrd is not linked into director. It is a **boot-provided region**,
+the way uBoot hands Linux one: the build leaves it at `initrd.cpio`, QEMU loads
+it with `-initrd`, and the bootloader records its range in the device tree's
+`/chosen` (`linux,initrd-start`/`end`). An initrd the kernel does not know about
+would be handed to the root task as free memory and overwritten, so the ELF
+loader copies it inside the **user-image run** the kernel already reserves for
+the initial thread and rewrites `/chosen` at the copy
+(`third_party/patches/tools/seL4/0002`); the kernel is unchanged. Director reads
+the range from `/chosen`, and because the kernel maps that whole run into this
+address space and puts the IPC buffer at the run's virtual end, the archive is
+already mapped just below the IPC buffer
+(`apps/freestanding/aegir-director/src/main.cc`, `locate_initrd`). Nothing is
+linked into the image, and nothing is copied again.
 
 ### Unique names are a requirement, not a convention
 

@@ -169,9 +169,23 @@ endif()
 include(cpio)
 MakeCPIO(director_initrd.o "${aegir_initrd_files}" DEPENDS aegir-hello aegir-logger)
 
+# The initrd is a boot-provided region (specs/boot.md): QEMU hands it to the ELF
+# loader with -initrd, which places it in the user image run and points the
+# device tree's /chosen at the copy. It is no longer linked into director's
+# image, so it is left at a fixed path the runner can name.
+set(aegir_initrd_cpio "${CMAKE_BINARY_DIR}/initrd.cpio")
+add_custom_command(
+  OUTPUT "${aegir_initrd_cpio}"
+  COMMAND
+    "${CMAKE_COMMAND}" -E copy "${CMAKE_CURRENT_BINARY_DIR}/archive.director_initrd.o.cpio"
+    "${aegir_initrd_cpio}"
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/director_initrd.o"
+  VERBATIM
+)
+add_custom_target(aegir-initrd ALL DEPENDS "${aegir_initrd_cpio}")
+
 add_executable(
   aegir-director src/main.cc src/services.cc src/ports.cc src/supervisor.cc
-                  director_initrd.o
 )
 
 target_compile_options(aegir-director PRIVATE -Wall -Wextra -Werror)

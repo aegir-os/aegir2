@@ -41,11 +41,6 @@ extern "C" {
 }
 
 extern "C" {
-/* Our initrd: the archive the build packs into this image (specs/services.md).
- * The ELF loader's own archive is a different one and not readable here. */
-extern char _cpio_archive[];
-extern char _cpio_archive_end[];
-
 /* sel4runtime's public header is C-only -- sel4runtime/stdint.h uses
  * _Static_assert, which C++ rejects
  * (projects/sel4runtime/include/sel4runtime/stdint.h:15-19) -- so director
@@ -201,6 +196,92 @@ unsigned map_device_tree(seL4_BootInfo const *bootinfo, aegir::mem::Scratch *scr
 
     *blob_out = blob + offset;
     *bytes_out = tree.total_size();
+    return 0;
+}
+
+/** A /chosen address is big-endian, one or two 32-bit cells (the tree's
+ *  #address-cells). Decode one; false for any other length. */
+bool read_tree_address(void const *data, uint32_t length, uint64_t &value) noexcept
+{
+    auto const *bytes = static_cast<uint8_t const *>(data);
+    if (length == 4) {
+        value = (static_cast<uint64_t>(bytes[0]) << 24) |
+                (static_cast<uint64_t>(bytes[1]) << 16) |
+                (static_cast<uint64_t>(bytes[2]) << 8) |
+                static_cast<uint64_t>(bytes[3]);
+        return true;
+    }
+    if (length == 8) {
+        value = 0;
+        for (uint32_t i = 0; i < 8; ++i) {
+            value = (value << 8) | static_cast<uint64_t>(bytes[i]);
+        }
+        return true;
+    }
+    return false;
+}
+
+/** Find the initrd the bootloader handed us, wherever the ELF loader put it.
+ *
+ *  The ELF loader copied it inside the initial thread's user-image region --
+ *  the memory the kernel already reserves for us -- and pointed /chosen at the
+ *  copy, so the physical range is read from the standard property. The kernel
+ *  then maps that whole region into this address space at `paddr - pv_offset`,
+ *  and places the IPC buffer at the region's virtual end
+ *  (kernel/src/arch/riscv/kernel/boot.c: `ipcbuf_vptr = ui_v_reg.end`). So the
+ *  initrd's mapped address is the IPC buffer less the initrd's page-rounded
+ *  span: it is already mapped, and needs no scratch window of its own. */
+unsigned locate_initrd(seL4_BootInfo const *bootinfo, void const *device_tree,
+                       uint32_t device_tree_bytes, void const **blob_out,
+                       uint64_t *bytes_out) noexcept {
+    *blob_out = nullptr;
+    *bytes_out = 0;
+
+    aegir::devtree::Tree tree;
+    if (device_tree == nullptr || device_tree_bytes == 0 ||
+        !tree.adopt(device_tree, device_tree_bytes)) {
+        aegir::debug_write("  FAIL no device tree to read /chosen from\n");
+        return 1;
+    }
+
+    void const *start_data = nullptr;
+    void const *end_data = nullptr;
+    uint32_t start_length = 0;
+    uint32_t end_length = 0;
+    if (!tree.property("/chosen", "linux,initrd-start", start_data, start_length) ||
+        !tree.property("/chosen", "linux,initrd-end", end_data, end_length)) {
+        aegir::debug_write("  FAIL /chosen has no linux,initrd-start/end\n");
+        return 1;
+    }
+    uint64_t initrd_start = 0;
+    uint64_t initrd_end = 0;
+    if (!read_tree_address(start_data, start_length, initrd_start) ||
+        !read_tree_address(end_data, end_length, initrd_end) || initrd_end <= initrd_start) {
+        aegir::debug_write("  FAIL /chosen's initrd range is not an address pair\n");
+        return 1;
+    }
+
+    uint64_t const initrd_bytes = initrd_end - initrd_start;
+    uint64_t const span = (initrd_bytes + 4095) & ~static_cast<uint64_t>(4095);
+    uintptr_t const ipc = reinterpret_cast<uintptr_t>(bootinfo->ipcBuffer);
+    if (bootinfo->ipcBuffer == nullptr || span == 0 || span > ipc) {
+        aegir::debug_write("  FAIL /chosen's initrd does not fit below the IPC buffer\n");
+        return 1;
+    }
+    auto const *base = reinterpret_cast<void const *>(ipc - span);
+
+    *blob_out = base;
+    *bytes_out = initrd_bytes;
+
+    aegir::debug_write("  initrd: /chosen ");
+    aegir::debug_write_hex(initrd_start);
+    aegir::debug_write("..");
+    aegir::debug_write_hex(initrd_end - 1);
+    aegir::debug_write(", mapped at ");
+    aegir::debug_write_hex(reinterpret_cast<uintptr_t>(base));
+    aegir::debug_write(", ");
+    report_size(initrd_bytes);
+    aegir::debug_write("\n");
     return 0;
 }
 
@@ -956,6 +1037,10 @@ int main(int argc, char *argv[])
     void const *device_tree = nullptr;
     uint32_t device_tree_bytes = 0;
     failures += map_device_tree(bootinfo, &scratch, &device_tree, &device_tree_bytes);
+    void const *initrd_blob = nullptr;
+    uint64_t initrd_bytes = 0;
+    failures += locate_initrd(bootinfo, device_tree, device_tree_bytes,
+                              &initrd_blob, &initrd_bytes);
     uint64_t device_untyped = 0;
     uint64_t first_transport = 0;
     uint64_t last_transport = 0;
@@ -1036,8 +1121,7 @@ int main(int argc, char *argv[])
     number(system.objects);
     write(" objects\n");
 
-    aegir::spawn::Initrd initrd(static_cast<void const *>(_cpio_archive),
-                                static_cast<uint64_t>(_cpio_archive_end - _cpio_archive));
+    aegir::spawn::Initrd initrd(initrd_blob, initrd_bytes);
     char const *manifest_text = nullptr;
     unsigned long manifest_size = 0;
     bool const initrd_ok = read_initrd(initrd, manifest_text, manifest_size);

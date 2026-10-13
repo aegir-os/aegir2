@@ -467,4 +467,7 @@ task is `apps/aegir-director` (`specs/director.md`), and M4's root task,
 starts first. Director also carries a second, Aegir-owned archive — the initrd
 above, holding the service binaries and the boot manifest — which is a different
 archive from the loader's, and the one `specs/services.md` describes as the flat
-filesystem that will mount as `Initrd:`.
+filesystem that will mount as `Initrd:`. It is not linked into the image but is
+a boot-provided region: the build leaves it at `initrd.cpio`, QEMU loads it with
+`-initrd`, and director finds it through the device tree's `/chosen`
+(`specs/services.md`).
