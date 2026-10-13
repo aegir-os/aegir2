@@ -105,6 +105,8 @@ int main()
     }
 
     aegir_posix_conformance::memory_surface();
+    aegir_posix_conformance::memory_file_surface(aegir_posix_conformance::kFatVolume);
+    aegir_posix_conformance::memory_file_surface(aegir_posix_conformance::kBfsVolume);
     /* The files area against both filesystems, with the expected result a
      * property of the volume (scratch.h). */
     aegir_posix_conformance::files_surface(aegir_posix_conformance::kFatVolume);

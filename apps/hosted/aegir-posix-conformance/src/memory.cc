@@ -10,9 +10,15 @@
  * self-evident. A case whose subject Aegir does not implement asserts the
  * failure (the hole); one where Aegir answers something the page does not is a
  * named deviation, with the measurement.
+ *
+ * The anonymous cases are volume-less and run once; the file-backed ones run
+ * against each volume (FAT and BFS), because a mapping of a file's bytes is a
+ * filesystem's answer as much as the heap's, and running the volume-less cases
+ * per volume would count the same hole twice.
  */
 
 #include "harness.h"
+#include "scratch.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -27,6 +33,11 @@ namespace {
 
 constexpr size_t kPage = 4096;
 constexpr size_t kRun = 3 * kPage;
+
+/* The file the file-backed cases map: one of the suite's own, written through
+ * the POSIX view, so the bytes a mapping serves are a file's and are known. */
+constexpr char const *kMappedText =
+    "the POSIX conformance suite wrote this file and mapped it back\n";
 
 }  // namespace
 
@@ -93,7 +104,6 @@ void memory_surface()
                       "Aegir refuses MAP_FIXED with EINVAL; mmap.html names ENOTSUP");
         }
     }
-    skip("mmap", "a file-backed mapping", "the file surface is the files area's");
 
     /* munmap.html, ERRORS. */
     errno = 0;
@@ -200,6 +210,87 @@ void memory_surface()
     errno = 0;
     unavailable("shm_unlink", "is not implemented", shm_unlink("/aegir-conformance") == -1,
                 errno);
+}
+
+void memory_file_surface(Volume const &volume)
+{
+    char title[64];
+    snprintf(title, sizeof(title), "memory (file-backed, %s)", volume.label);
+    section(title);
+
+    /* The disk's volumes are registered by partmgr asynchronously (scratch.h). */
+    if (!wait_for_volume(volume)) {
+        check("mmap", "a file-backed mapping serves the file's bytes", false);
+        return;
+    }
+
+    /* mmap.html: a file-backed mapping, which is what a compiler's input arrives
+     * through (LLVM's MemoryBuffer maps every object file, specs/clang-on-
+     * aegir.md). The file is written here, through the POSIX view, so the bytes
+     * are known and the mapping's are checked against them. */
+    char file[192];
+    snprintf(file, sizeof(file), "%s/MMAP.TXT", volume.root);
+    bool wrote = false;
+    int const made = open(file, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (made >= 0) {
+        wrote = write(made, kMappedText, length_of(kMappedText)) ==
+                static_cast<ssize_t>(length_of(kMappedText));
+        (void)close(made);
+    }
+    if (!wrote) {
+        check("mmap", "a file-backed mapping serves the file's bytes", false);
+        check("mmap", "a shared file-backed mapping serves the file's bytes", false);
+        return;
+    }
+
+    int const source = open(file, O_RDONLY);
+    if (source < 0) {
+        check("mmap", "a file-backed mapping serves the file's bytes", false);
+    } else {
+        char *const mapped =
+            static_cast<char *>(mmap(nullptr, kPage, PROT_READ, MAP_PRIVATE, source, 0));
+        check("mmap", "a file-backed mapping is mapped", mapped != MAP_FAILED);
+        if (mapped != MAP_FAILED) {
+            check("mmap", "a file-backed mapping serves the file's bytes",
+                  equals(mapped, kMappedText, length_of(kMappedText)));
+            /* Past the file's end the pages read as zero: a fresh frame is zero
+             * and the file's bytes stop at its length. */
+            check("mmap", "a file-backed mapping is zero past the file",
+                  mapped[kPage - 1] == 0);
+            (void)munmap(mapped, kPage);
+        } else {
+            check("mmap", "a file-backed mapping serves the file's bytes", false);
+        }
+        (void)close(source);
+    }
+
+    int const shared_fd = open(file, O_RDWR);
+    if (shared_fd < 0) {
+        check("mmap", "a shared file-backed mapping serves the file's bytes", false);
+        return;
+    }
+    char *const shared = static_cast<char *>(
+        mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, shared_fd, 0));
+    if (shared == MAP_FAILED) {
+        check("mmap", "a shared file-backed mapping serves the file's bytes", false);
+    } else {
+        check("mmap", "a shared file-backed mapping serves the file's bytes",
+              equals(shared, kMappedText, length_of(kMappedText)));
+        /* mmap.html, DESCRIPTION: "MAP_SHARED Changes are shared." A write
+         * through the mapping is visible to a read of the file. */
+        shared[0] = 'X';
+        char read_back = 0;
+        ssize_t const got = pread(shared_fd, &read_back, 1, 0);
+        if (got == 1 && read_back == 'X') {
+            check("mmap", "a shared write is visible in the file", true);
+        } else {
+            deviation("mmap", "a shared write is visible in the file",
+                      "the write through the mapping did not reach the file");
+        }
+        (void)munmap(shared, kPage);
+    }
+    (void)close(shared_fd);
+    (void)unlink(file);
 }
 
 }  // namespace aegir_posix_conformance
