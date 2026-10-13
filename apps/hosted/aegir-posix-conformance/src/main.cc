@@ -22,17 +22,30 @@
  *     AEGIR_POSIX_CONFORMANCE_OK <passed>/<total> [<n> skipped]
  *     AEGIR_POSIX_CONFORMANCE_FAIL <passed>/<total> [<n> skipped]
  *
- * A plain POSIX program: mmap, munmap, mprotect, posix_madvise and nothing
- * else, so the runtime stands it up before main (aegir-crt0's constructor).
+ * A boot service: it is packed in director's initrd and started from the
+ * reduced manifest, so it stands itself up -- it adopts the untyped, the VSpace
+ * root and the window the spawn kit installed, then initialises the heap before
+ * main's first printf. There is no shell and no typing; the runner stops on the
+ * marker below.
  */
 
+#include <aegir/bootstrap.h>
+#include <aegir/debug.h>
+#include <aegir/heap.h>
+#include <aegir/mem/allocator.h>
+#include <aegir/mem/vspace.h>
 #include <errno.h>
 #include <stdio.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 namespace {
+
+/* Static, like the greeter's, the test bed's and the C++ smoke's: the
+ * allocator's untyped table and the scratch window's bookkeeping are tens of
+ * kilobytes, and a service's stack is pages (specs/userland.md). */
+aegir::mem::Allocator g_objects(nullptr);
+aegir::mem::Scratch g_scratch(nullptr);
 
 constexpr size_t kPage = 4096;
 constexpr size_t kRun = 3 * kPage;
@@ -60,10 +73,69 @@ void skip(char const *name, char const *reason)
     (void)fflush(nullptr);
 }
 
+/* The mapping authority the spawn kit installs: the delegated untyped (page
+ * tables and frames are retyped from it), the VSpace root, and the window of
+ * free addresses (the give_vspace grant). The pattern is the C++ smoke's, the
+ * greeter's and the test bed's. */
+bool adopt_memory()
+{
+    uint64_t untyped_slot = 0;
+    uint64_t vspace_slot = 0;
+    uint64_t window_base = 0;
+    uint32_t window_bytes = 0;
+    uint64_t untyped_physical = 0;
+    uint32_t untyped_bits = 0;
+    uint64_t untyped_address = 0;
+    static_cast<void>(aegir::bootstrap::untyped(&untyped_physical, &untyped_bits, &untyped_address));
+
+    uint64_t first_free = aegir::bootstrap::kSlotFirstDeclared;
+    aegir::bootstrap::Block const *block = aegir::bootstrap::find();
+    if (block != nullptr) {
+        for (uint32_t e = 0; e < block->entry_count; ++e) {
+            aegir::bootstrap::Entry const &entry = block->entries[e];
+            if (entry.kind == aegir::bootstrap::EntryKind::Capability &&
+                entry.number + 1 > first_free) {
+                first_free = entry.number + 1;
+            }
+        }
+    }
+
+    bool ok = aegir::bootstrap::capability("untyped", 7, &untyped_slot) &&
+              aegir::bootstrap::capability("vspace", 6, &vspace_slot) &&
+              aegir::bootstrap::window(&window_base, &window_bytes) &&
+              g_objects.adopt_untyped(static_cast<seL4_CPtr>(untyped_slot), untyped_bits,
+                                      untyped_physical);
+    if (ok) {
+        g_objects.adopt_slots_level_two(first_free, (1u << aegir::bootstrap::cnode_bits()) - first_free,
+                                        aegir::bootstrap::cnode_l1_bits(),
+                                        aegir::bootstrap::cnode_bits(), 0);
+        ok = g_scratch.adopt(static_cast<seL4_CPtr>(vspace_slot),
+                             static_cast<uintptr_t>(window_base),
+                             static_cast<uintptr_t>(window_base + window_bytes), &g_objects);
+    }
+    return ok;
+}
+
 }  // namespace
 
 int main()
 {
+    if (!adopt_memory()) {
+        aegir::debug_write("  posix-conformance: FAIL no untyped, vspace or window\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+
+    /* The suite mallocs (the mapping after a release), so the heap is what the
+     * standard's own error cases are measured through; init it before the first
+     * printf, because stdout is the heap's to route. */
+    constexpr uint64_t kHeapBytes = 8ull << 20;
+    if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
+        aegir::debug_write("  posix-conformance: FAIL the heap could not claim the window\n");
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        aegir::halt();
+    }
+
     /* mmap: DESCRIPTION ("shall establish a mapping"), RETURN VALUE (MAP_FAILED
      * on failure), ERRORS ("[EINVAL] The value of len is zero"; "[EINVAL] The
      * value of flags is invalid (neither MAP_PRIVATE nor MAP_SHARED is set)"). */
@@ -83,7 +155,8 @@ int main()
     if (anon == MAP_FAILED) {
         printf("AEGIR_POSIX_CONFORMANCE_FAIL %d/%d\n", passed, passed + failed);
         (void)fflush(nullptr);
-        _exit(1);
+        seL4_Signal(aegir::bootstrap::kSlotSupervision);
+        return 1;
     }
     check("mmap: a fresh anonymous run is zero-filled", anon[0] == 0 && anon[kRun - 1] == 0);
     anon[0] = 'a';
@@ -144,5 +217,10 @@ int main()
     }
     printf("\n");
     (void)fflush(nullptr);
-    _exit(failed == 0 ? 0 : 1);
+
+    /* The boot thread waits for this signal (the same one the greeter and the
+     * C++ smoke send), so the marker can follow it. Returning, rather than
+     * _exit, lets the runtime's exit bridge run. */
+    seL4_Signal(aegir::bootstrap::kSlotSupervision);
+    return failed;
 }

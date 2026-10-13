@@ -91,6 +91,7 @@ set(aegir_initrd_binaries
     aegir-shell
     aegir-launcher
     aegir-cxx-smoke
+    aegir-posix-conformance
     aegir-env-smoke
     aegir-fs-smoke
     aegir-font
@@ -132,6 +133,7 @@ set(aegir_initrd_binary_names
     "aegir-shell"
     "aegir-launcher"
     "aegir-cxx-smoke"
+    "aegir-posix-conformance"
     "aegir-env-smoke"
     "aegir-fs-smoke"
     "aegir-font"

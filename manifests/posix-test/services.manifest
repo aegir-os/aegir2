@@ -543,6 +543,22 @@ maps      = true
 memory_kib = 256
 restart   = never
 
+# Aegir's POSIX memory-interface conformance suite (specs/posix.md): the
+# standard's mmap/munmap/mprotect/posix_madvise error cases, asserted from the
+# Open Group Base Specifications Issue 8. In the reduced `posix-test` manifest
+# it is a boot service with no shell of its own, so `make posix-test` needs no
+# greeter, no login and no typing: the runner stops on its marker. Like the
+# C++ smoke it takes the maps grant (every mapping is a retyped frame) and its
+# own memory, and it grows the heap through mem.main.
+[posix.conformance]
+binary    = aegir-posix-conformance
+authority = system
+account   = boot
+needs     = log.main, mem.main
+maps      = true
+memory_kib = 256
+restart   = never
+
 # The process environment's acceptance client (specs/environment.md): a spawned
 # service that checks the argv, environment and current directory its spawner
 # gave it. It runs the hosted runtime, so it takes the maps grant and its own

@@ -110,6 +110,11 @@ class Target:
     # defaults are not our decisions.
     configure_flags: tuple[str, ...]
     marker: str
+    # A cue that means the run reached its end but *failed* -- the conformance
+    # suite's own `..._FAIL` line. Seeing it stops the run and reports the
+    # failure, rather than waiting out the success marker's timeout with the
+    # reason only in the missing-cue list.
+    failure_marker: str | None = None
     # The project this target configures, relative to the repository root. Our
     # own targets configure the root project; an upstream project inside the tree
     # (projects/sel4test) has to be named, because the root's init-build.sh would
@@ -2054,28 +2059,22 @@ TARGETS: dict[str, Target] = {
         source_dir="projects/sel4test",
     ),
     # The POSIX conformance suite on its own (specs/posix.md): the same machine
-    # and the same build as `aegir-8g-smp4`, but the run types one command into
-    # the session's shell and stops on the suite's own marker. No acceptance
-    # steps at all. It reuses `out/aegir-8g-smp4`, so `make posix-test` does not
-    # pay for a second build.
+    # and the same build as `aegir-8g-smp4`, but the suite runs as a boot service
+    # in the reduced manifest -- no greeter, no login, no typing -- and the run
+    # stops on the service's own marker. It reuses `out/aegir-8g-smp4`, so `make
+    # posix-test` does not pay for a second build.
     "aegir-posix-conformance": replace(
         _AEGIR_8G_SMP4,
         name="aegir-posix-conformance",
         development=True,
-        # The reduced boot (manifests/posix-test.manifest): the self-paced test
-        # bed is absent, so the run does not need the acceptance's clicks.
+        # The reduced boot (manifests/posix-test/services.manifest): the
+        # self-paced test bed and the session are absent, so the run does not
+        # need the acceptance's clicks, its greeter login or a shell.
         configure_flags=_AEGIR_8G_SMP4.configure_flags
         + ("-DAEGIR_MANIFEST_NAME=posix-test/services.manifest",),
         marker="AEGIR_POSIX_CONFORMANCE_OK",
-        qmp_steps=(
-            # Capture the shell's badge, then type the suite at its prompt. The
-            # `terminal: ready for line` line is printed when the terminal holds
-            # the focus *and* the shell is asking, so the click is what makes it
-            # appear (apps/hosted/aegir-terminal/src/main.cc:213-264).
-            QmpStep(r"terminal: ready for line \d+ shell (\d+)", capture="shell", times=0),
-            QmpStep(SHELL_READY, events=TERMINAL_CLICK,
-                    press="Sys:Development/C/posix-conformance\n", await_shell=True),
-        ),
+        failure_marker="AEGIR_POSIX_CONFORMANCE_FAIL",
+        qmp_steps=(),
     ),
 }
 

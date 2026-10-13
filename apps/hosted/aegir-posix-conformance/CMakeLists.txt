@@ -6,10 +6,10 @@
 # The standard's text is a reference; what is committed here is our own
 # assertions, each naming the clause it came from (specs/posix.md).
 #
-# A plain POSIX program -- no Aegir call of its own -- so it must link
-# aegir-crt0 first: a static archive is searched only for symbols something
-# already references, and standing the runtime up is exactly what this program
-# does not do itself.
+# A boot service, packed in director's initrd (apps/aegir-director/CMakeLists.txt)
+# and started from the reduced `posix-test` manifest. It stands itself up -- the
+# untyped, the VSpace root and the window the spawn kit installed, then the heap
+# -- so, like aegir-cxx-smoke, it needs no aegir-crt0 and no shell.
 #
 
 cmake_minimum_required(VERSION 3.16.0)
@@ -22,9 +22,8 @@ if(AEGIR_HOSTED_CXX)
   target_compile_options(aegir-posix-conformance PRIVATE -Wall -Wextra -Werror)
 
   target_link_libraries(
-    aegir-posix-conformance PRIVATE aegir-crt0 aegir-cxx-policy-hosted
-                                     aegir-cxxabi-shim aegir-posix aegir-command aegir-heap
-                                     aegir-runtime aegir-bootstrap aegir-mem sel4 sel4runtime
+    aegir-posix-conformance PRIVATE aegir-cxx-policy-hosted aegir-cxxabi-shim aegir-heap
+                                     aegir-runtime aegir-bootstrap aegir-mem aegir-thread sel4 sel4runtime
   )
 else()
   add_executable(aegir-posix-conformance src/placeholder.cc)

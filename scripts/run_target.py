@@ -720,12 +720,11 @@ def development_tree(build_dir: Path) -> Path:
     if posix_env.is_file():
         shutil.copy2(posix_env, root / "C" / "posix-env-test")
 
-    # The POSIX conformance suite (specs/posix.md): assertions derived from The
-    # Open Group Base Specifications, not from Aegir's own tests. Packed beside
-    # the sub-arc clients so `make posix-test` runs it by name.
-    conformance = build_dir / "apps/hosted/aegir-posix-conformance/aegir-posix-conformance"
-    if conformance.is_file():
-        shutil.copy2(conformance, root / "C" / "posix-conformance")
+    # The POSIX conformance suite runs as a boot service in the reduced
+    # `posix-test` manifest, packed into director's initrd
+    # (apps/aegir-director/CMakeLists.txt), so it is deliberately not laid out
+    # on the development volume: there is no shell to type it at, and the
+    # service stands itself up rather than linking aegir-crt0.
 
     # The sysroot's content (specs/development.md): Libs is what a *hosted* Aegir
     # program links against, so that a compiler standing on the volume can link one.
@@ -1423,6 +1422,16 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         failed = True
             previous = stripped
             if target.marker in stripped:
+                seen = True
+            # The suite's own negative marker: stop here and say so, rather than
+            # wait out the success marker's timeout with the reason buried in
+            # the missing-cue list.
+            if target.failure_marker and target.failure_marker in stripped:
+                print(
+                    f"    runner: FAIL the conformance suite reported failure: {stripped}",
+                    flush=True,
+                )
+                failed = True
                 seen = True
             # The run is done when the marker has printed and the script is
             # played out -- the business may continue past the boot marker (a
