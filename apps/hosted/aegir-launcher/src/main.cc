@@ -443,6 +443,9 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
         return;
     }
     for (uint32_t i = 0; i < cap; ++i) {
+        /* Every stage writes the line's one stream, so every stage's fault is
+         * reported on it (the terminal tells the stages apart by their pids). */
+        record_command_stream(started[i].badge, context.stream);
         g_parents.emplace(started[i].badge, caller);
     }
     for (uint32_t i = 0; i < stage_count; ++i) {
