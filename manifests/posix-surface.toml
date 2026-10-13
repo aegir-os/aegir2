@@ -1,0 +1,189 @@
+# manifests/posix-surface.toml
+#
+# The POSIX surface Aegir claims, and how much of it the conformance suite
+# proves. Read by scripts/check_posix_coverage.py (see specs/posix-conformance.md).
+#
+# An *area* is `todo` until every interface in it is enumerated, and `covered`
+# once each of those has a case in the suite. `make check-posix-coverage` fails
+# while any area is `todo` or any interface has no case, naming what is left --
+# so this file is the worklist, and a hole is never a silence.
+#
+# `state = "implemented"` means Aegir answers the call; `state = "unimplemented"`
+# means it must return the standard's ENOSYS, and the suite asserts it.
+# `syscall` is the riscv64 number the interface reaches (0 for a libc-only
+# call). The dispatcher (`heap.cc`'s `vsyscall`) is the truth for "answered":
+# the check cross-reads the two and either disagreeing is a failure.
+#
+# `clause` is the Issue 8 page (or, for an Aegir extension, the page's own name)
+# the cases are derived from; third_party/posix-spec/issue8 holds the fetched
+# text and is not vendored.
+
+[surface]
+version = 1
+
+# ---------------------------------------------------------------------------
+# areas -- the check fails while any of these is `todo`
+# ---------------------------------------------------------------------------
+
+[[area]]
+name = "memory"
+status = "covered"
+
+[[area]]
+name = "files"
+status = "todo"
+# answered: openat(56) close(57) read(63) write(64) readv(65) writev(66)
+#           pread64(67) pwrite64(68) sendfile(71) lseek(62)
+#           newfstatat(79) fstat(80) statx(291) faccessat(48)
+#           truncate(45) ftruncate(46) mkdirat(34) unlinkat(35)
+#           renameat2(276) fchmod(52) fchmodat(53) fcntl(25)
+# not answered: linkat(37) symlinkat(36) readlinkat(78) fchownat(54)
+#           dup(23) dup3(24) pipe2(59) mkfifoat?() fsync(82) fdatasync(83)
+#           sync(81) flock(32) statfs(43) fstatfs(44) utimensat(88)
+#           fallocate(47) copy_file_range(285)
+
+[[area]]
+name = "directories"
+status = "todo"
+# answered: getdents64(61) getcwd(17) chdir(49) mkdirat(34) unlinkat(35)
+# not answered: getdents(61 old) fchdir(50) chroot(51)
+
+[[area]]
+name = "process"
+status = "todo"
+# answered: exit(93) exit_group(94) wait4(260); posix_spawn and clone are
+#           answered outside the dispatcher (the musl patch and aegir-posix)
+# not answered: fork/clone(fork) execve(221) getpid(172) getppid(173)
+#           getuid/geteuid/getgid/getegid setuid/setgid/... getrlimit(163)
+#           setrlimit(164) getrusage(165) times(153) umask(166) setsid(157)
+#           setpgid(154) getpgid(155) nice(103) isatty (ioctl) ttyname
+
+[[area]]
+name = "environment"
+status = "todo"
+# answered: getenv/setenv/unsetenv/putenv/environ are libc over the startup
+#           frame (bootstrap.h); nothing here is a syscall
+
+[[area]]
+name = "time"
+status = "todo"
+# answered: clock_gettime(113) nanosleep(101)
+# not answered: clock_settime(112) clock_getres(114) clock_nanosleep(115)
+#           timer_create(107) timer_settime(110) timer_gettime(108)
+#           timer_delete(111) alarm(?) gettimeofday(169) settimeofday(170)
+#           clock_adjtime(266)
+
+[[area]]
+name = "sockets"
+status = "todo"
+# answered: socket(198) bind(200) listen(201) accept(202) accept4(242)
+#           connect(203) getsockname(204) getpeername(205) sendto(206)
+#           recvfrom(207) setsockopt(208) getsockopt(209) shutdown(210)
+# not answered: socketpair(199) sendmsg(211) recvmsg(212) poll(7)
+#           ppoll(73) select(23 old) pselect6(72) epoll_create1(20)
+#           getaddrinfo (libc over the resolver)
+
+[[area]]
+name = "signals"
+status = "todo"
+# answered: rt_sigprocmask(135) -- the mask is ignored; Aegir delivers none
+# not answered: rt_sigaction(134) rt_sigreturn(139) kill(129) tkill(130)
+#           tgkill(131) rt_sigtimedwait(137) sigaltstack(132) pause
+
+[[area]]
+name = "threads"
+status = "todo"
+# answered: clone (the musl patch routes it to __aegir_clone); pthread_* on
+#           top of it. Nothing here is a dispatcher case.
+# not answered: futex(98) set_robust_list(99) get_robust_list(100)
+#           sched_yield(124) sched_setaffinity(122)
+
+# ---------------------------------------------------------------------------
+# interfaces
+# ---------------------------------------------------------------------------
+
+# --- memory -----------------------------------------------------------------
+
+[[interface]]
+name = "mmap"
+area = "memory"
+state = "implemented"
+syscall = 222
+clause = "mmap.html"
+
+[[interface]]
+name = "munmap"
+area = "memory"
+state = "implemented"
+syscall = 215
+clause = "munmap.html"
+
+[[interface]]
+name = "mprotect"
+area = "memory"
+state = "implemented"
+syscall = 226
+clause = "mprotect.html"
+
+[[interface]]
+name = "posix_madvise"
+area = "memory"
+state = "implemented"
+syscall = 233
+clause = "posix_madvise.html"
+
+[[interface]]
+name = "posix_memalign"
+area = "memory"
+state = "implemented"
+syscall = 0
+clause = "posix_memalign.html"
+
+[[interface]]
+name = "msync"
+area = "memory"
+state = "unimplemented"
+syscall = 227
+clause = "msync.html"
+
+[[interface]]
+name = "mlock"
+area = "memory"
+state = "unimplemented"
+syscall = 228
+clause = "mlock.html"
+
+[[interface]]
+name = "munlock"
+area = "memory"
+state = "unimplemented"
+syscall = 229
+clause = "munlock.html"
+
+[[interface]]
+name = "mlockall"
+area = "memory"
+state = "unimplemented"
+syscall = 230
+clause = "mlockall.html"
+
+[[interface]]
+name = "munlockall"
+area = "memory"
+state = "unimplemented"
+syscall = 231
+clause = "munlockall.html"
+
+[[interface]]
+name = "shm_open"
+area = "memory"
+state = "unimplemented"
+syscall = 0
+clause = "shm_open.html"
+
+[[interface]]
+name = "shm_unlink"
+area = "memory"
+state = "unimplemented"
+syscall = 0
+clause = "shm_unlink.html"

@@ -1,32 +1,29 @@
 /*
- * aegir-posix-conformance: the POSIX memory-interface conformance suite.
+ * aegir-posix-conformance: the POSIX conformance suite.
  *
  * Copyright (c) 2026 Robert Roland
  * SPDX-License-Identifier: MIT
  *
  * Derived from The Open Group Base Specifications Issue 8 (IEEE Std
- * 1003.1-2024), fetched by `make deps` into third_party/posix-spec/issue8:
- * mmap.html, munmap.html, mprotect.html, posix_madvise.html. The standard's
- * text is a reference and is not redistributed; what is here is our own
- * assertions, each naming the clause it came from. No part of this program was
- * derived from Aegir's own tests or its implementation.
+ * 1003.1-2024), fetched by `make deps` into third_party/posix-spec/issue8 as a
+ * *reference* (its text is not redistributed). Every case names the interface
+ * it belongs to; `scripts/check_posix_coverage.py` cross-reads those names
+ * against `manifests/posix-surface.toml` and the dispatcher, so an interface
+ * with no case is a failed check and not a silence (specs/posix-conformance.md).
  *
- * The profile is Aegir's, stated so a test outside it is a named skip and not a
- * silent pass: the dispatcher answers mmap (222), munmap (215), mprotect (226)
- * and madvise (233, advisory only) and does not answer msync (227), so msync is
- * not claimed. posix_madvise is claimed only as an advisory hint whose error
- * cases below are measured against the standard, because a hint that always
- * returns zero is a deviation the suite is supposed to say out loud.
+ * Four kinds of line:
+ *   posix: ok|FAIL  <interface>: <test>   -- an implemented interface, asserted
+ *                                            against the standard
+ *   posix: hole     <interface>: <test>   -- an interface Aegir does not
+ *                                            implement; the call must fail, and
+ *                                            the errno is printed
+ *   posix: deviate  <interface>: <test>   -- a deliberate non-conformance
+ *   posix: SKIP     <interface>: <test>   -- not testable in this process
  *
- * Markers, machine-readable for the runner:
- *     AEGIR_POSIX_CONFORMANCE_OK <passed>/<total> [<n> skipped]
- *     AEGIR_POSIX_CONFORMANCE_FAIL <passed>/<total> [<n> skipped]
+ * and one marker: AEGIR_POSIX_CONFORMANCE_OK|FAIL <passed>/<total>.
  *
- * A boot service: it is packed in director's initrd and started from the
- * reduced manifest, so it stands itself up -- it adopts the untyped, the VSpace
- * root and the window the spawn kit installed, then initialises the heap before
- * main's first printf. There is no shell and no typing; the runner stops on the
- * marker below.
+ * A boot service: it stands itself up (the untyped, the VSpace root and the
+ * window the spawn kit installed, then the heap) before its first printf.
  */
 
 #include <aegir/bootstrap.h>
@@ -35,7 +32,10 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/vspace.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -53,23 +53,59 @@ constexpr size_t kRun = 3 * kPage;
 int passed = 0;
 int failed = 0;
 int skipped = 0;
+int holes = 0;
+int deviations = 0;
 
-void check(char const *name, bool ok)
+void section(char const *area)
+{
+    printf("posix: -- %s --\n", area);
+    (void)fflush(nullptr);
+}
+
+/* An implemented interface, asserted against the standard. The first argument
+ * is the interface, so the coverage check can read which interfaces have cases;
+ * everything after it is the case's own name. */
+void check(char const *interface, char const *test, bool ok)
 {
     if (ok) {
         ++passed;
-        printf("posix: ok   %s\n", name);
+        printf("posix: ok      %s: %s\n", interface, test);
     } else {
         ++failed;
-        printf("posix: FAIL %s\n", name);
+        printf("posix: FAIL    %s: %s\n", interface, test);
     }
     (void)fflush(nullptr);
 }
 
-void skip(char const *name, char const *reason)
+/* A hole the standard names and Aegir does not fill: the call must fail, and the
+ * errno it returned is printed, so the hole is a number and not a promise. The
+ * day it stops failing, this goes red. */
+void unavailable(char const *interface, char const *test, bool failed_call, int err)
+{
+    if (failed_call) {
+        ++holes;
+        printf("posix: hole    %s: %s (errno %d)\n", interface, test, err);
+    } else {
+        ++failed;
+        printf("posix: FAIL    %s: %s (expected a hole, but the call succeeded)\n", interface,
+               test);
+    }
+    (void)fflush(nullptr);
+}
+
+/* A deliberate non-conformance (specs/posix.md): named and counted, not hidden
+ * behind a pass. */
+void deviation(char const *interface, char const *test, char const *reason)
+{
+    ++deviations;
+    printf("posix: deviate %s: %s (%s)\n", interface, test, reason);
+    (void)fflush(nullptr);
+}
+
+void skip(char const *interface, char const *test, char const *reason)
 {
     ++skipped;
-    printf("posix: SKIP %s (%s)\n", name, reason);
+    printf("posix: SKIP    %s: %s (%s)\n", interface, test, reason);
     (void)fflush(nullptr);
 }
 
@@ -116,6 +152,147 @@ bool adopt_memory()
     return ok;
 }
 
+/* --- memory ----------------------------------------------------------------
+ *
+ * Cases from mmap.html, munmap.html, mprotect.html, posix_madvise.html,
+ * posix_memalign.html and shm_open.html. */
+void memory_surface()
+{
+    section("memory");
+
+    /* mmap: RETURN VALUE (MAP_FAILED on failure), ERRORS ("[EINVAL] The value of
+     * len is zero"; "[EINVAL] The value of flags is invalid (neither MAP_PRIVATE
+     * nor MAP_SHARED is set)"). */
+    errno = 0;
+    check("mmap", "len zero is EINVAL",
+          mmap(nullptr, 0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) ==
+                  MAP_FAILED &&
+              errno == EINVAL);
+    errno = 0;
+    check("mmap", "neither MAP_PRIVATE nor MAP_SHARED is EINVAL",
+          mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0) == MAP_FAILED &&
+              errno == EINVAL);
+
+    errno = 0;
+    char *const run = static_cast<char *>(
+        mmap(nullptr, kRun, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    check("mmap", "a fresh anonymous mapping is mapped", run != MAP_FAILED);
+    if (run != MAP_FAILED) {
+        check("mmap", "a fresh anonymous mapping is zero-filled",
+              run[0] == 0 && run[kRun - 1] == 0);
+        run[0] = 'a';
+        run[kRun - 1] = 'z';
+        check("mmap", "the mapping reads its bytes back", run[0] == 'a' && run[kRun - 1] == 'z');
+    }
+
+    /* MAP_FIXED: the standard has it replace the mapping at the address; Aegir's
+     * profile refuses it (specs/posix.md). A named deviation, not a pass. */
+    deviation("mmap", "MAP_FIXED",
+              "Aegir's profile refuses MAP_FIXED (specs/posix.md); the standard replaces");
+    skip("mmap", "a file-backed mapping", "the file surface is the files area's");
+
+    /* munmap: RETURN VALUE (zero on success), ERRORS ("[EINVAL] The addr argument
+     * is not a multiple of the page size"; "[EINVAL] The len argument is 0"). */
+    errno = 0;
+    check("munmap", "len zero is EINVAL", run != MAP_FAILED && munmap(run, 0) == -1 &&
+                                               errno == EINVAL);
+    errno = 0;
+    check("munmap", "an unaligned addr is EINVAL",
+          run != MAP_FAILED && munmap(run + 1, kPage) == -1 && errno == EINVAL);
+    check("munmap", "a mapping is released", run != MAP_FAILED && munmap(run, kRun) == 0);
+
+    /* A release owes a churning allocator memory that is there and zero-filled
+     * when the address is handed out again. */
+    char *const again = static_cast<char *>(
+        mmap(nullptr, kRun, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    check("munmap", "a mapping after the release succeeds", again != MAP_FAILED);
+    if (again != MAP_FAILED) {
+        check("munmap", "the mapping after the release is zero-filled",
+              again[0] == 0 && again[kRun - 1] == 0);
+        (void)munmap(again, kRun);
+    }
+
+    /* mprotect: RETURN VALUE (zero on success), ERRORS ("[EINVAL] The addr
+     * argument is not a multiple of the page size"; "[ENOMEM] Addresses ... are
+     * not mapped"). A non-null address the process was never given is the case,
+     * not nullptr. */
+    char *const page = static_cast<char *>(
+        mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    errno = 0;
+    check("mprotect", "an unmapped range is ENOMEM",
+          mprotect(reinterpret_cast<void *>(kPage), kPage, PROT_READ) == -1 && errno == ENOMEM);
+    /* The byte is written *before* the page is narrowed: the read-only case
+     * reads a value, it does not create one -- writing after the mprotect faults
+     * the very page the case is about. */
+    if (page != MAP_FAILED) {
+        page[0] = 'q';
+    }
+    check("mprotect", "a mapped page is made read-only",
+          page != MAP_FAILED && mprotect(page, kPage, PROT_READ) == 0);
+    check("mprotect", "a read-only page still reads", page != MAP_FAILED && page[0] == 'q');
+    check("mprotect", "it is made writable again",
+          page != MAP_FAILED && mprotect(page, kPage, PROT_READ | PROT_WRITE) == 0);
+    /* mprotect.html's EINVAL for an unaligned addr is at the *syscall*: libc
+     * rounds addr down to the pages containing the range (musl's mprotect),
+     * which is the description's own wording, so the error is not reachable
+     * through the interface. Named, not dropped. */
+    skip("mprotect", "an unaligned addr is EINVAL",
+         "musl rounds addr down to a page boundary, so the syscall's EINVAL is unreachable");
+
+    /* posix_madvise: RETURN VALUE ("zero" or "an error number"), ERRORS
+     * ("[EINVAL] The value of advice is invalid"; "[ENOMEM] Addresses ... outside
+     * the range allowed for the address space"). The error cases are the
+     * standard's, and a no-op fails them. */
+    check("posix_madvise", "NORMAL returns zero",
+          page != MAP_FAILED && posix_madvise(page, kPage, POSIX_MADV_NORMAL) == 0);
+    check("posix_madvise", "an invalid advice is EINVAL",
+          page != MAP_FAILED && posix_madvise(page, kPage, 0x7fff) == EINVAL);
+    check("posix_madvise", "an outside range is ENOMEM",
+          posix_madvise(reinterpret_cast<void *>(kPage), kPage, POSIX_MADV_NORMAL) == ENOMEM);
+    if (page != MAP_FAILED) {
+        (void)munmap(page, kPage);
+    }
+
+    /* posix_memalign: RETURN VALUE ("zero" or "an error number"), ERRORS
+     * ("[EINVAL] The value of alignment is not a power of two multiple of
+     * sizeof(void *)"). */
+    void *aligned = nullptr;
+    check("posix_memalign", "a sufficiently-aligned block is returned",
+          posix_memalign(&aligned, 64, kPage) == 0 && aligned != nullptr &&
+              (reinterpret_cast<uintptr_t>(aligned) % 64) == 0);
+    if (aligned != nullptr) {
+        static_cast<char *>(aligned)[0] = 'x';
+        free(aligned);
+        aligned = nullptr;
+    }
+    check("posix_memalign", "an alignment that is not a power of two is EINVAL",
+          posix_memalign(&aligned, 3, kPage) == EINVAL);
+
+    /* The holes. Each call must fail; the errno is printed, so a hole that
+     * closes is visible as the case going red rather than as silence. */
+    void *const hole = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                            -1, 0);
+    if (hole != MAP_FAILED) {
+        errno = 0;
+        unavailable("msync", "is not implemented", msync(hole, kPage, MS_SYNC) == -1, errno);
+        errno = 0;
+        unavailable("mlock", "is not implemented", mlock(hole, kPage) == -1, errno);
+        errno = 0;
+        unavailable("munlock", "is not implemented", munlock(hole, kPage) == -1, errno);
+        (void)munmap(hole, kPage);
+    }
+    errno = 0;
+    unavailable("mlockall", "is not implemented", mlockall(MCL_CURRENT) == -1, errno);
+    errno = 0;
+    unavailable("munlockall", "is not implemented", munlockall() == -1, errno);
+    errno = 0;
+    unavailable("shm_open", "is not implemented",
+                shm_open("/aegir-conformance", O_CREAT | O_RDWR, 0600) == -1, errno);
+    errno = 0;
+    unavailable("shm_unlink", "is not implemented", shm_unlink("/aegir-conformance") == -1,
+                errno);
+}
+
 }  // namespace
 
 int main()
@@ -125,10 +302,6 @@ int main()
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-
-    /* The suite mallocs (the mapping after a release), so the heap is what the
-     * standard's own error cases are measured through; init it before the first
-     * printf, because stdout is the heap's to route. */
     constexpr uint64_t kHeapBytes = 8ull << 20;
     if (!aegir::heap::init(g_objects, g_scratch, kHeapBytes)) {
         aegir::debug_write("  posix-conformance: FAIL the heap could not claim the window\n");
@@ -136,86 +309,10 @@ int main()
         aegir::halt();
     }
 
-    /* mmap: DESCRIPTION ("shall establish a mapping"), RETURN VALUE (MAP_FAILED
-     * on failure), ERRORS ("[EINVAL] The value of len is zero"; "[EINVAL] The
-     * value of flags is invalid (neither MAP_PRIVATE nor MAP_SHARED is set)"). */
-    errno = 0;
-    void *const zero = mmap(nullptr, 0, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    check("mmap: len zero is EINVAL", zero == MAP_FAILED && errno == EINVAL);
+    memory_surface();
 
-    errno = 0;
-    void *const bad_flags = mmap(nullptr, kPage, PROT_READ | PROT_WRITE,
-                                 MAP_ANONYMOUS /* neither MAP_PRIVATE nor MAP_SHARED */, -1, 0);
-    check("mmap: neither MAP_PRIVATE nor MAP_SHARED is EINVAL",
-          bad_flags == MAP_FAILED && errno == EINVAL);
-
-    char *const anon = static_cast<char *>(
-        mmap(nullptr, kRun, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    check("mmap: a run is mapped", anon != MAP_FAILED);
-    if (anon == MAP_FAILED) {
-        printf("AEGIR_POSIX_CONFORMANCE_FAIL %d/%d\n", passed, passed + failed);
-        (void)fflush(nullptr);
-        seL4_Signal(aegir::bootstrap::kSlotSupervision);
-        return 1;
-    }
-    check("mmap: a fresh anonymous run is zero-filled", anon[0] == 0 && anon[kRun - 1] == 0);
-    anon[0] = 'a';
-    anon[kRun - 1] = 'z';
-    check("mmap: the run reads its bytes back", anon[0] == 'a' && anon[kRun - 1] == 'z');
-
-    /* mprotect: RETURN VALUE (zero on success), ERRORS ("[ENOMEM] Addresses ...
-     * specify one or more pages which are not mapped"). A non-null address the
-     * process was never given is the case, not nullptr. */
-    errno = 0;
-    check("mprotect: an unmapped range is ENOMEM",
-          mprotect(reinterpret_cast<void *>(kPage), kPage, PROT_READ) == -1 && errno == ENOMEM);
-    check("mprotect: a mapped page can be made read-only", mprotect(anon, kPage, PROT_READ) == 0);
-    check("mprotect: a read-only page still reads", anon[0] == 'a');
-    check("mprotect: it can be made writable again",
-          mprotect(anon, kPage, PROT_READ | PROT_WRITE) == 0);
-
-    /* munmap: RETURN VALUE (zero on success), ERRORS ("[EINVAL] The len
-     * argument is 0"); and a mapping that follows lands on memory that is there
-     * and zero-filled, which is what a release owes a churning allocator. */
-    errno = 0;
-    check("munmap: len zero is EINVAL", munmap(anon, 0) == -1 && errno == EINVAL);
-    check("munmap: a run is released", munmap(anon, kRun) == 0);
-    char *const again = static_cast<char *>(
-        mmap(nullptr, kRun, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    check("munmap: a mapping after the release succeeds", again != MAP_FAILED);
-    if (again != MAP_FAILED) {
-        check("munmap: the mapping after the release is zero-filled",
-              again[0] == 0 && again[kRun - 1] == 0);
-        (void)munmap(again, kRun);
-    }
-
-    /* posix_madvise: RETURN VALUE ("zero" or "an error number"), ERRORS
-     * ("[EINVAL] The value of advice is invalid"; "[ENOMEM] Addresses ... partly
-     * or completely outside the range allowed for the address space"). The
-     * first is a hint and may pass trivially; the two error cases are the
-     * standard's, and a no-op fails them. */
-    char *const adv = static_cast<char *>(
-        mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    if (adv == MAP_FAILED) {
-        skip("posix_madvise", "no mapping to advise");
-    } else {
-        check("posix_madvise: NORMAL returns zero", posix_madvise(adv, kPage, POSIX_MADV_NORMAL) == 0);
-        check("posix_madvise: an invalid advice is EINVAL", posix_madvise(adv, kPage, 0x7fff) == EINVAL);
-        check("posix_madvise: an outside range is ENOMEM",
-              posix_madvise(reinterpret_cast<void *>(kPage), kPage, POSIX_MADV_NORMAL) == ENOMEM);
-        (void)munmap(adv, kPage);
-    }
-
-    /* msync is not in the profile: the dispatcher answers no such syscall. It is
-     * a named skip, so a reader sees the gap rather than an absent test. */
-    skip("msync", "not in Aegir's profile: no msync syscall");
-
-    printf("AEGIR_POSIX_CONFORMANCE_%s %d/%d", failed == 0 ? "OK" : "FAIL", passed,
-           passed + failed);
-    if (skipped != 0) {
-        printf(" (%d skipped)", skipped);
-    }
-    printf("\n");
+    printf("AEGIR_POSIX_CONFORMANCE_%s %d/%d (%d skipped, %d holes, %d deviations)\n",
+           failed == 0 ? "OK" : "FAIL", passed, passed + failed, skipped, holes, deviations);
     (void)fflush(nullptr);
 
     /* The boot thread waits for this signal (the same one the greeter and the
