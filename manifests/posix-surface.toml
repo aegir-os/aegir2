@@ -35,9 +35,7 @@ status = "covered"
 
 [[area]]
 name = "directories"
-status = "todo"
-# answered: getdents64(61) getcwd(17) chdir(49) mkdirat(34) unlinkat(35)
-# not answered: getdents(61 old) fchdir(50) chroot(51)
+status = "covered"
 
 [[area]]
 name = "process"
@@ -480,6 +478,99 @@ area = "files"
 state = "unimplemented"
 syscall = 88
 clause = "utimensat.html"
+
+# --- directories -----------------------------------------------------------
+
+[[interface]]
+name = "opendir"
+area = "directories"
+state = "implemented"
+syscall = 61
+clause = "opendir.html"
+
+[[interface]]
+name = "readdir"
+area = "directories"
+state = "implemented"
+syscall = 61
+clause = "readdir.html"
+
+[[interface]]
+name = "closedir"
+area = "directories"
+state = "implemented"
+syscall = 57
+clause = "closedir.html"
+
+[[interface]]
+name = "rewinddir"
+area = "directories"
+state = "implemented"
+syscall = 62
+clause = "rewinddir.html"
+
+[[interface]]
+name = "seekdir"
+area = "directories"
+state = "implemented"
+syscall = 62
+clause = "seekdir.html"
+
+[[interface]]
+name = "telldir"
+area = "directories"
+state = "implemented"
+syscall = 62
+clause = "telldir.html"
+
+[[interface]]
+name = "dirfd"
+area = "directories"
+state = "implemented"
+syscall = 0
+clause = "dirfd.html"
+
+[[interface]]
+name = "scandir"
+area = "directories"
+state = "implemented"
+syscall = 0
+clause = "scandir.html"
+
+[[interface]]
+name = "mkdir"
+area = "directories"
+state = "implemented"
+syscall = 34
+clause = "mkdir.html"
+
+[[interface]]
+name = "rmdir"
+area = "directories"
+state = "implemented"
+syscall = 35
+clause = "rmdir.html"
+
+[[interface]]
+name = "chdir"
+area = "directories"
+state = "implemented"
+syscall = 49
+clause = "chdir.html"
+
+[[interface]]
+name = "getcwd"
+area = "directories"
+state = "implemented"
+syscall = 17
+clause = "getcwd.html"
+
+[[interface]]
+name = "fchdir"
+area = "directories"
+state = "unimplemented"
+syscall = 50
+clause = "fchdir.html"
 
 [[interface]]
 name = "mkfifo"

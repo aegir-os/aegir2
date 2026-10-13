@@ -290,4 +290,18 @@ files = [
   { name = "utimensat.html", sha256 = "68875db5a5c70f36c8b05c5630d9ac34d6f8fdd7644b10b422626d9b0cd26897" },
   { name = "write.html", sha256 = "1b45e6a71f8bc9bff702da5633d42c88fd927c1d0efc5bafe7a939d23eb66e6a" },
   { name = "writev.html", sha256 = "41b9c0e459ac73b37147d6c05bb80114fdff87dbd8763b56a48c309154be6b8a" },
+  # The directories area (specs/posix-conformance.md).
+  { name = "chdir.html", sha256 = "5fdfbee7761d1027694593465392074a0337b7eda63ca794d65750c6ad5bc5b7" },
+  { name = "closedir.html", sha256 = "7dc821dca2a00362f87a6ec47781ffa92bccbe705022278ad65edb0293ff135b" },
+  { name = "dirfd.html", sha256 = "50d735693466f933d783355460e6036e851dfaabcf324d17881857f828603992" },
+  { name = "fchdir.html", sha256 = "57aa30d6ba60c0f924952275f8e0f634413505484b14538e49b8ede5c3676e27" },
+  { name = "getcwd.html", sha256 = "f01855bbf3061a15b6e1c2751c697915056e53baa88a4581c9ed828ad2a080a4" },
+  { name = "mkdir.html", sha256 = "ac720cc5e203d5b0582ee7bc8fe5ff69bcb2c116e17a79f2b1141c7b73449589" },
+  { name = "opendir.html", sha256 = "36222f4ce7bf0c6c9757e423f5d59076af5e9da0611c52727c39339f3375bfc7" },
+  { name = "readdir.html", sha256 = "1d9606a3311c1d2f9b230995f17b322cbbb88ec45262a63d74e8469f29698be5" },
+  { name = "rewinddir.html", sha256 = "c71c41ee7b88f65e24d9e6e2f5db631c6df6324b243c5db6593c1d4ea4bde5cc" },
+  { name = "rmdir.html", sha256 = "3442eee7e4c46d7307011d74e84429376665d75db0db06896f1056399c1f34cd" },
+  { name = "scandir.html", sha256 = "faff8f1ce50b50920845991616dd4dab3e0e282d4b93e3522d986a783be6daf6" },
+  { name = "seekdir.html", sha256 = "2e0c501f07df9929a6d9579b420dc7e9a31f52d466548456a7c36440cffb77c0" },
+  { name = "telldir.html", sha256 = "d72b0966b54bf530d5a4a917657e188c2732e97830cb08f0dc3c5a1bcd5fd12b" },
 ]
