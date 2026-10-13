@@ -971,7 +971,39 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
         overlay.unlink(missing_ok=True)
 
 
-def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, bool, str, bool]:
+def guest_cpu_seconds() -> float:
+    """QEMU's own CPU time in seconds, or 0 when it is not running.
+
+    Read from /proc and matched by comm, so it is the emulator and not the shell
+    that started it. Idle CPU and a silent log are one signal: a guest that is
+    working still burns CPU while saying nothing, and one that has stopped burns
+    none, and the log alone cannot tell them apart (specs/testing.md). The runner
+    samples this beside the console position so a *block* is a verdict and not a
+    wait for the quiet timeout."""
+    ticks = os.sysconf("SC_CLK_TCK")
+    total = 0.0
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue
+        close = stat.rfind(")")
+        if close < 0:
+            continue
+        comm = stat[stat.find("(") + 1 : close]
+        if not comm.startswith("qemu-system"):
+            continue
+        fields = stat[close + 1 :].split()
+        if len(fields) > 12:
+            total += (int(fields[11]) + int(fields[12])) / ticks
+    return total
+
+
+def boot_and_watch(target: Target, build_dir: Path, timeout: int,
+                   idle_window: float = 30.0, idle_cpu: float = 3.0
+                   ) -> tuple[bool, bool, str, bool]:
     """Boot the image, streaming the console until the marker appears.
 
     Answers (marker seen, an acceptance check failed, test summary): a failed
@@ -1100,10 +1132,34 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                 lines.put(None)
 
         threading.Thread(target=pump, daemon=True).start()
+        # The console's last line and the guest's CPU then. A guest that is working
+        # burns CPU while saying nothing; one that has stopped burns none. Sampled
+        # together, on a short beat, so a block is named in seconds rather than
+        # waited out as a quiet timeout.
+        sample_seconds = 3.0
+        quiet_since: float | None = None
+        quiet_cpu = 0.0
         while True:
             try:
-                line = lines.get(timeout=timeout)
+                line = lines.get(timeout=sample_seconds)
             except queue.Empty:
+                now = time.monotonic()
+                if quiet_since is None:
+                    quiet_since = now
+                    quiet_cpu = guest_cpu_seconds()
+                cpu = guest_cpu_seconds()
+                elapsed = now - quiet_since
+                if elapsed >= idle_window and cpu - quiet_cpu < idle_cpu:
+                    print(
+                        f"    runner: FAIL the guest went idle: no console line for "
+                        f"{elapsed:.0f}s and {cpu - quiet_cpu:.1f}s of CPU in it -- "
+                        "it is blocked or stopped, not working",
+                        flush=True,
+                    )
+                    failed = True
+                    break
+                if elapsed < timeout:
+                    continue
                 with unwritten_lock:
                     shown = unwritten["shown"]
                     partial_bytes = unwritten["bytes"]
@@ -1149,6 +1205,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                         flush=True,
                     )
                 break
+            quiet_since = None
             stripped = line.rstrip("\n")
             if stripped:
                 print(f"    {stripped}", flush=True)
@@ -1552,6 +1609,22 @@ def main(argv: list[str]) -> int:
         # console ends, and boot_and_watch says so at once.
         help="seconds a run may print nothing before it is treated as stopped",
     )
+    parser.add_argument(
+        "--idle-window",
+        type=float,
+        default=30.0,
+        # The pair that turns a silent guest into a verdict: with no console line
+        # for this many seconds AND less than --idle-cpu of CPU in them, the guest
+        # is blocked, not slow. A working guest keeps burning CPU through a long
+        # step, so only a *rate* near zero means stopped.
+        help="seconds of a silent console (with little CPU) before the guest is idle",
+    )
+    parser.add_argument(
+        "--idle-cpu",
+        type=float,
+        default=3.0,
+        help="CPU seconds below which that silence means the guest is stopped",
+    )
     parser.add_argument("--build-only", action="store_true", help="stop after building")
     parser.add_argument(
         "--interactive",
@@ -1652,7 +1725,8 @@ def main(argv: list[str]) -> int:
         return boot_interactive(target, build_dir)
 
     try:
-        seen, failed, summary, gaps = boot_and_watch(target, build_dir, arguments.quiet_timeout)
+        seen, failed, summary, gaps = boot_and_watch(target, build_dir, arguments.quiet_timeout,
+                                                     arguments.idle_window, arguments.idle_cpu)
     except (OSError, subprocess.SubprocessError) as exc:
         pins.report(False, f"{target.name} boot failed", str(exc))
         return 1
