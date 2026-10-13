@@ -255,6 +255,25 @@ the rights its `prot` asked for cost the cxx smoke a fault on a page it had mapp
 because its thread stack is `mmap`'d and written. `mmap` maps everything writable
 and `mprotect` is the only thing that narrows (specs/posix.md).
 
+### A writable `MAP_SHARED` file-backed mapping writes the file back
+
+`mmap` has always filled a file-backed run with the file's bytes (the compiler's
+input path, through `pread`). A writable `MAP_SHARED` run is a *view* of the file
+and owes it its bytes back: the run now records the fd and the offset, and
+`sys_munmap` writes the pages back through `files::pwrite` while they are still
+mapped -- after the release they are gone. The release is where the write-back is
+expected, and `lld`'s `FileOutputBuffer::commit()` is the proof: it unmaps first
+("letting OS flush dirty pages to file on disk") and renames the temporary file
+over the destination after (`llvm/lib/Support/FileOutputBuffer.cpp`). Without it a
+link's output is empty, because `lld` maps its output `MAP_SHARED` by default
+(`Unix/Path.inc:845` with `lld/ELF/Driver.cpp:1376`).
+
+What this does *not* give is coherence *while* the mapping is live: a read of the
+file between the write and the release sees the file's bytes, not the mapping's.
+The conformance suite names both -- the write reaching the file on release is
+`ok`, the mid-mapping read is a deviation -- because the difference is what a page
+cache would give and a retyped-frame mapping does not.
+
 ## What every service sees: a region, not a capability
 
 The memory service hands out **pristine untyped**, and that is the right unit
