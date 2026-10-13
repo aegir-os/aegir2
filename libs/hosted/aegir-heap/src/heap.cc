@@ -2027,6 +2027,12 @@ long vsyscall(long sysnum, ...) noexcept
     case 101: /* SYS_nanosleep: the timer service behind it (aegir/timer.h) */
         ret = time::nanosleep(va_arg(ap, void const *), va_arg(ap, void *));
         break;
+    case 115: /* SYS_clock_nanosleep: what musl's nanosleep actually reaches --
+               * __clock_nanosleep calls this, not SYS_nanosleep (101), so the
+               * 101 case above was dead until this was answered. */
+        ret = time::clock_nanosleep(va_arg(ap, int), va_arg(ap, int),
+                                    va_arg(ap, void const *), va_arg(ap, void *));
+        break;
     case 48: /* SYS_faccessat: `access` is this call with AT_FDCWD, and a linker asks
               * it whether a file is there before it opens it (files.h's faccessat,
               * specs/clang-on-aegir.md -- this is what answered "cannot find linker

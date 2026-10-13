@@ -868,18 +868,18 @@ clause = "clock_getres.html"
 [[interface]]
 name = "clock_nanosleep"
 area = "time"
-state = "unimplemented"
+state = "implemented"
 syscall = 115
 clause = "clock_nanosleep.html"
 
 [[interface]]
 name = "nanosleep"
 area = "time"
-# `unimplemented` although the dispatcher answers 101: musl implements nanosleep
-# as __clock_nanosleep, which on riscv64 reaches SYS_clock_nanosleep (115), not
-# SYS_nanosleep, so the 101 handler is never called (measured: ENOSYS 38).
-state = "unimplemented"
-syscall = 115
+# implemented: musl's __clock_nanosleep reaches SYS_nanosleep (101) for the
+# relative CLOCK_REALTIME case and SYS_clock_nanosleep (115) for the rest, so
+# both are answered now; before, only 101 was and nothing reached it.
+state = "implemented"
+syscall = 101
 clause = "nanosleep.html"
 
 [[interface]]

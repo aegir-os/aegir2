@@ -27,6 +27,14 @@ long clock_gettime(int clock_id, void *tp) noexcept;
  *  EINVAL for a negative timespec, ENOSYS before the timer port is bound. */
 long nanosleep(void const *request, void *remaining) noexcept;
 
+/** Answer clock_nanosleep.html: the same sleep, but the clock is named and
+ *  TIMER_ABSTIME (flags bit 1) waits until that clock reaches the time rather
+ *  than for a duration. This is the syscall musl's nanosleep actually reaches
+ *  (SYS_clock_nanosleep, 115); the dispatcher's SYS_nanosleep (101) is never
+ *  called by it. Returns 0, or a negative errno: EINVAL for an unknown clock
+ *  or an out-of-range timespec. */
+long clock_nanosleep(int clock_id, int flags, void const *request, void *remaining) noexcept;
+
 }  // namespace aegir::heap::time
 
 #endif  // AEGIR_HEAP_TIME_H

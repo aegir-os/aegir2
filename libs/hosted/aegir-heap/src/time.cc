@@ -27,6 +27,10 @@ namespace aegir::heap::time {
 constexpr int kClockRealtime = 0;
 constexpr int kClockMonotonic = 1;
 
+/* TIMER_ABSTIME: the flag that makes a clock_nanosleep request a time on the
+ * named clock rather than a duration (musl's <time.h> numbers it 1). */
+constexpr int kTimerAbstime = 1;
+
 namespace {
 
 /* One `now` from the named port, into the caller's struct timespec. */
@@ -82,7 +86,9 @@ long nanosleep(void const *request, void *remaining) noexcept
         return -EFAULT;
     }
     auto const *timespec = static_cast<long const *>(request);
-    if (timespec[0] < 0 || timespec[1] < 0) {
+    /* nanosleep.html ERRORS: "[EINVAL] The rqtp argument specified a nanosecond
+     * value less than zero or greater than or equal to 1000 million." */
+    if (timespec[0] < 0 || timespec[1] < 0 || timespec[1] >= 1000000000L) {
         return -EINVAL;
     }
     uint64_t const duration = static_cast<uint64_t>(timespec[0]) * 1000000000ull +
@@ -106,6 +112,37 @@ long nanosleep(void const *request, void *remaining) noexcept
         left[1] = 0;
     }
     return 0;
+}
+
+long clock_nanosleep(int clock_id, int flags, void const *request, void *remaining) noexcept
+{
+    if (clock_id != kClockRealtime && clock_id != kClockMonotonic) {
+        return -EINVAL;
+    }
+    if (request == nullptr) {
+        return -EFAULT;
+    }
+    auto const *timespec = static_cast<long const *>(request);
+    if (timespec[0] < 0 || timespec[1] < 0 || timespec[1] >= 1000000000L) {
+        return -EINVAL;
+    }
+    uint64_t duration = static_cast<uint64_t>(timespec[0]) * 1000000000ull +
+                        static_cast<uint64_t>(timespec[1]);
+    if ((flags & kTimerAbstime) != 0) {
+        /* The absolute form waits until the named clock reaches the time, so
+         * what is left is that time minus now. */
+        long at[2] = {0, 0};
+        long const reading = clock_gettime(clock_id, at);
+        if (reading != 0) {
+            return reading;
+        }
+        uint64_t const now = static_cast<uint64_t>(at[0]) * 1000000000ull +
+                             static_cast<uint64_t>(at[1]);
+        duration = duration > now ? duration - now : 0;
+    }
+    long const relative[2] = {static_cast<long>(duration / 1000000000ull),
+                              static_cast<long>(duration % 1000000000ull)};
+    return nanosleep(relative, remaining);
 }
 
 }  // namespace aegir::heap::time

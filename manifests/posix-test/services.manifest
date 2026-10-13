@@ -555,11 +555,12 @@ binary    = aegir-posix-conformance
 authority = system
 account   = boot
 # vfs.namespace: the file and directory areas' cases open real files, on the
-# disk's SCRATCH volume reached through the POSIX view (/SCRATCH/...). The
-# memory area alone needed only log.main and mem.main. net.socket: the sockets
-# area's cases open real sockets -- without the grant network::adopt finds no
-# port and socket() answers EAFNOSUPPORT (measured).
-needs     = log.main, mem.main, vfs.namespace, net.socket
+# disk's SCRATCH volume reached through the POSIX view (/SCRATCH/...). net.socket:
+# the sockets area's cases open real sockets -- without the grant network::adopt
+# finds no port and socket() answers EAFNOSUPPORT (measured). clock.main and
+# timer.main: the runtime's clock_gettime and nanosleep reach them by name, so
+# without them the time area answers ENOSYS (measured).
+needs     = log.main, mem.main, vfs.namespace, net.socket, clock.main, timer.main
 maps      = true
 memory_kib = 256
 restart   = never

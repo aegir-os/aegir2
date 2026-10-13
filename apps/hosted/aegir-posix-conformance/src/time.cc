@@ -81,16 +81,19 @@ void time_surface()
      * when the time elapsed, or the error number itself (not -1/errno). */
     struct timespec none = {0, 0};
     int const slept = clock_nanosleep(CLOCK_REALTIME, 0, &none, nullptr);
-    conforms_or_deviation("clock_nanosleep", "a zero sleep returns zero", "clock_nanosleep.html",
-                          slept == 0, slept, "zero");
+    check("clock_nanosleep", "a zero sleep returns zero", slept == 0);
+    {
+        struct timespec too_many = {0, 1000000000};
+        int const out_of_range = clock_nanosleep(CLOCK_REALTIME, 0, &too_many, nullptr);
+        check("clock_nanosleep", "a nanosecond of 1000 million is EINVAL",
+              out_of_range == EINVAL);
+    }
 
-    /* nanosleep.html: musl implements nanosleep as __clock_nanosleep, which on
-     * riscv64 reaches SYS_clock_nanosleep (115) -- not SYS_nanosleep (101) -- so
-     * the dispatcher's 101 handler is never called and nanosleep answers ENOSYS. */
+    /* nanosleep.html: musl implements nanosleep as __clock_nanosleep, which
+     * reaches SYS_clock_nanosleep -- the same sleep, and the case that proves
+     * the 115 handler answers it. */
     errno = 0;
-    int const napped = nanosleep(&none, nullptr);
-    unavailable("nanosleep", "is not implemented (libc reaches clock_nanosleep)", napped == -1,
-                errno);
+    check("nanosleep", "a zero sleep returns zero", nanosleep(&none, nullptr) == 0);
 
     /* sleep.html defines no error; RETURN VALUE is the unslept seconds. */
     check("sleep", "a zero sleep returns zero", sleep(0) == 0);
