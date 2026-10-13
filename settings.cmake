@@ -63,6 +63,15 @@ ApplyCommonReleaseVerificationSettings(${RELEASE} ${VERIFICATION})
 # real board both provide.
 set(ElfloaderIncludeDtb OFF CACHE BOOL "Use the bootloader's device tree, not one baked into the elfloader" FORCE)
 
+# Place the rootserver image at the end of memory rather than right above the
+# kernel. The kernel reserves that whole run as the initial thread's
+# user-image region, so the bootloader's initrd can be placed inside it and
+# inherit that reservation with no kernel change (specs/boot.md). It also
+# keeps the low memory the kernel and the ELF loader occupy clear of the
+# initrd, which is what lets the ELF loader leave its raised address in
+# third_party/patches/tools/seL4/0001.
+set(ElfloaderRootserversLast ON CACHE BOOL "Place the rootserver images at the end of memory" FORCE)
+
 set(valid_platforms ${KernelPlatform_all_strings} ${correct_platform_strings_platform_aliases})
 set_property(CACHE PLATFORM PROPERTY STRINGS ${valid_platforms})
 if(NOT "${PLATFORM}" IN_LIST valid_platforms)

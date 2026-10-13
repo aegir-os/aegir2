@@ -1,0 +1,518 @@
+From: Aegir <aegir@example.invalid>
+Subject: [PATCH] place the bootloader's initrd in the reserved user-image run
+
+The bootloader may load an initrd and record its range in /chosen
+(linux,initrd-start/end), as QEMU's -initrd and uBoot both do. The kernel
+knows nothing of it, so left where the bootloader put it, it would be handed
+to the root task as free memory and overwritten.
+
+Read that range, copy the initrd to the end of the user image run -- the
+memory the kernel already reserves for the initial thread -- and rewrite
+/chosen to point at the copy. The kernel is unchanged: the run it reserves is
+what protects the initrd, exactly as it already protects the user image
+itself.
+
+The run is placed at the top of RAM (CONFIG_ELFLOADER_ROOTSERVERS_LAST), so
+the initrd no longer has to fit between the kernel and the ELF loader. The
+top of RAM comes from the device tree's /memory node, because no platform
+YAML (and so no `memory_region`) exists for qemu-riscv-virt.
+---
+ elfloader-tool/include/fdt.h |  44 ++++++++
+ elfloader-tool/src/common.c  | 131 +++++++++++++++++++++-
+ elfloader-tool/src/fdt.c     | 261 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 435 insertions(+), 1 deletion(-)
+diff --git a/elfloader-tool/include/fdt.h b/elfloader-tool/include/fdt.h
+index 63faf8e..083b13d 100644
+--- a/elfloader-tool/include/fdt.h
++++ b/elfloader-tool/include/fdt.h
+@@ -6,5 +6,49 @@
+ 
+ #pragma once
+ 
++#include <types.h>
++
+ size_t fdt_size(
+     void const *fdt);
++
++/* Byte-swap a big-endian 32-bit FDT value to/from host order. This is its own
++ * inverse, so it is what writes a value back as it reads one. */
++uint32_t be32_to_le(
++    uint32_t be);
++
++/*
++ * Read a property out of a device tree. `path` is a slash-separated node path
++ * from the root ("chosen", or "/chosen" -- the leading slash is optional),
++ * and a node's unit address is ignored, so "/soc/uart" finds `uart@10000000`.
++ * On success `*value`/`*length` describe the property's raw big-endian bytes
++ * and point into `fdt`, which the caller must keep intact. Returns 0 on
++ * success and -1 when the node or the property is absent, or when the blob is
++ * malformed on the way to it.
++ */
++int fdt_get_property(
++    void const *fdt,
++    char const *path,
++    char const *name,
++    void const **value,
++    uint32_t *length);
++
++/*
++ * The end (base + size) of the first /memory region, or 0 when the tree has
++ * no usable /memory node. This is the top of RAM, which is where the ELF
++ * loader puts the run it asks the kernel to reserve.
++ */
++uint64_t fdt_memory_end(
++    void const *fdt);
++
++/*
++ * Replace a property's value in place. The structure block is sized by the
++ * sum of its parts, so this only works when the new value has exactly the
++ * length already there (which is the case when a value is retargeted rather
++ * than resized); it returns -1 otherwise, or when the property is absent.
++ */
++int fdt_set_property(
++    void *fdt,
++    char const *path,
++    char const *name,
++    void const *value,
++    uint32_t length);
+diff --git a/elfloader-tool/src/common.c b/elfloader-tool/src/common.c
+index b91bb24..fe4fc10 100644
+--- a/elfloader-tool/src/common.c
++++ b/elfloader-tool/src/common.c
+@@ -92,6 +92,46 @@ static int ensure_phys_range_valid(
+     return 0;
+ }
+ 
++/*
++ * A /chosen initrd bound is one or two big-endian 32-bit cells, per the
++ * tree's #address-cells. Read one into a host address, and write one back in
++ * the same shape.
++ */
++static int fdt_read_address(
++    void const *value,
++    uint32_t length,
++    paddr_t *address)
++{
++    uint8_t const *bytes = value;
++
++    if (length == sizeof(uint32_t)) {
++        *address = (paddr_t)be32_to_le(*(uint32_t const *)bytes);
++        return 0;
++    }
++    if (length == 2 * sizeof(uint32_t)) {
++        uint32_t high = be32_to_le(*(uint32_t const *)bytes);
++        uint32_t low = be32_to_le(*(uint32_t const *)(bytes + sizeof(uint32_t)));
++        *address = ((paddr_t)high << 32) | (paddr_t)low;
++        return 0;
++    }
++    return -1;
++}
++
++static void fdt_write_address(
++    void *value,
++    uint32_t length,
++    paddr_t address)
++{
++    uint32_t *cells = value;
++
++    if (length == sizeof(uint32_t)) {
++        cells[0] = be32_to_le((uint32_t)address);
++    } else {
++        cells[0] = be32_to_le((uint32_t)(address >> 32));
++        cells[1] = be32_to_le((uint32_t)address);
++    }
++}
++
+ /*
+  * Unpack an ELF file to the given physical address.
+  */
+@@ -497,6 +537,47 @@ int load_images(
+         next_phys_addr = ROUND_UP(kernel_phys_end, PAGE_BITS);
+     }
+ 
++    /*
++     * The bootloader may have placed an initrd in RAM and recorded it in
++     * /chosen (QEMU's -initrd; uBoot does the same). The kernel knows nothing
++     * of it, so left where the bootloader put it it would be handed to the
++     * root task as free memory and overwritten. It is copied into the user
++     * image run below, which the kernel does reserve, and /chosen is pointed
++     * at the copy -- the root task then reads the standard property exactly as
++     * it would under uBoot.
++     */
++    void const *initrd_src = NULL;
++    size_t initrd_size = 0;
++    uint32_t initrd_cell_bytes = 0;
++    if (dtb && chosen_dtb) {
++        void const *start_value = NULL;
++        void const *end_value = NULL;
++        uint32_t start_length = 0;
++        uint32_t end_length = 0;
++        paddr_t initrd_start = 0;
++        paddr_t initrd_end = 0;
++
++        if (fdt_get_property(*chosen_dtb, "/chosen", "linux,initrd-start",
++                             &start_value, &start_length) == 0 &&
++            fdt_get_property(*chosen_dtb, "/chosen", "linux,initrd-end",
++                             &end_value, &end_length) == 0 &&
++            start_length == end_length &&
++            fdt_read_address(start_value, start_length, &initrd_start) == 0 &&
++            fdt_read_address(end_value, end_length, &initrd_end) == 0 &&
++            initrd_end > initrd_start) {
++            initrd_src = (void const *)(uintptr_t)initrd_start;
++            initrd_size = (size_t)(initrd_end - initrd_start);
++            initrd_cell_bytes = start_length;
++            printf("Found initrd in /chosen.\n");
++            printf("   paddr=[%p..%p]\n", initrd_start, initrd_end - 1);
++        }
++    }
++
++#ifdef CONFIG_ELFLOADER_ROOTSERVERS_LAST
++    /* The run goes at the top of RAM, which the device tree's /memory says. */
++    void const *memory_dtb = (chosen_dtb && *chosen_dtb) ? *chosen_dtb : dtb;
++#endif
++
+     /* Load the kernel */
+     ret = load_elf(cpio,
+                    cpio_len,
+@@ -567,9 +648,21 @@ int load_images(
+                                  + KEEP_HEADERS_SIZE;
+     }
+ 
++    /* The initrd rides at the end of the same run, so the run is grown by its
++     * size and the kernel's reservation covers it too. */
++    if (initrd_size != 0) {
++        total_user_image_size = ROUND_UP(total_user_image_size, PAGE_BITS)
++                                + ROUND_UP(initrd_size, PAGE_BITS);
++    }
++
+     /* work out where to place the user image */
+ 
+-    next_phys_addr = ROUND_DOWN(memory_region[0].end, PAGE_BITS)
++    uint64_t ram_end = fdt_memory_end(memory_dtb);
++    if (ram_end == 0) {
++        printf("ERROR: no /memory region in the device tree\n");
++        return -1;
++    }
++    next_phys_addr = ROUND_DOWN(ram_end, PAGE_BITS)
+                      - ROUND_UP(total_user_image_size, PAGE_BITS);
+ 
+ #endif /* CONFIG_ELFLOADER_ROOTSERVERS_LAST */
+@@ -610,6 +703,42 @@ int load_images(
+         *num_images = i + 1;
+     }
+ 
++    /*
++     * Put the initrd at the end of the user image run and extend the run's
++     * recorded end, so the kernel reserves it as part of the initial thread's
++     * image instead of handing it out as free memory.
++     */
++    if (initrd_size != 0 && *num_images != 0) {
++        paddr_t initrd_start = next_phys_addr;
++        size_t initrd_span = ROUND_UP(initrd_size, PAGE_BITS);
++        uint32_t encoded[2];
++
++        if (ensure_phys_range_valid(initrd_start, initrd_start + initrd_span) != 0) {
++            printf("ERROR: Physical address of initrd invalid\n");
++            return -1;
++        }
++
++        memmove((void *)initrd_start, initrd_src, initrd_size);
++        user_info[*num_images - 1].phys_region_end = initrd_start + initrd_span;
++
++        fdt_write_address(encoded, initrd_cell_bytes, initrd_start);
++        if (chosen_dtb == NULL ||
++            fdt_set_property((void *)*chosen_dtb, "/chosen", "linux,initrd-start",
++                             encoded, initrd_cell_bytes) != 0) {
++            printf("ERROR: Could not retarget /chosen linux,initrd-start\n");
++            return -1;
++        }
++        fdt_write_address(encoded, initrd_cell_bytes, initrd_start + initrd_size);
++        if (fdt_set_property((void *)*chosen_dtb, "/chosen", "linux,initrd-end",
++                             encoded, initrd_cell_bytes) != 0) {
++            printf("ERROR: Could not retarget /chosen linux,initrd-end\n");
++            return -1;
++        }
++
++        printf("Loaded initrd into the user image run.\n");
++        printf("   paddr=[%p..%p]\n", initrd_start, initrd_start + initrd_size - 1);
++    }
++
+     return 0;
+ }
+ 
+diff --git a/elfloader-tool/src/fdt.c b/elfloader-tool/src/fdt.c
+index a4a3179..23da4c0 100644
+--- a/elfloader-tool/src/fdt.c
++++ b/elfloader-tool/src/fdt.c
+@@ -4,6 +4,8 @@
+  * SPDX-License-Identifier: GPL-2.0-only
+  */
+ #include <types.h>
++#include <strops.h>
++#include <fdt.h>
+ 
+ #define FDT_MAGIC (0xd00dfeed)
+ /* Newest FDT version that we understand */
+@@ -44,3 +46,262 @@ size_t fdt_size(
+     return be32_to_le(hdr->totalsize);
+ }
+ 
++/* Structure-block tokens (devicetree spec, "Structure Block"). */
++#define FDT_BEGIN_NODE  0x1
++#define FDT_END_NODE    0x2
++#define FDT_PROP        0x3
++#define FDT_NOP         0x4
++
++struct fdt_prop_header {
++    uint32_t len;
++    uint32_t nameoff;
++};
++
++static uint32_t fdt_align4(
++    uint32_t value)
++{
++    return (value + 3u) & ~3u;
++}
++
++static uint32_t fdt_read32(
++    void const *fdt,
++    uint32_t offset)
++{
++    return be32_to_le(*(uint32_t const *)((uint8_t const *)fdt + offset));
++}
++
++/* A node name may carry a unit address ("uart@10000000"); a path names it by
++ * the part before the '@'. `component` is one path element, ended by NUL or
++ * '/'. */
++static int fdt_component_matches(
++    char const *component,
++    char const *node_name)
++{
++    while (*component != '\0' && *component != '/') {
++        if (*node_name != *component) {
++            return 0;
++        }
++        ++component;
++        ++node_name;
++    }
++    return *node_name == '\0' || *node_name == '@';
++}
++
++/*
++ * The structure-block offset of the first token inside the node named by
++ * `path` ("chosen" or "chosen/sub"), or 0 when there is no such node. Every
++ * read is bounded by `struct_end`, so a truncated blob ends the walk instead
++ * of running past itself.
++ */
++static uint32_t fdt_node_body(
++    uint8_t const *fdt,
++    uint32_t body,
++    uint32_t struct_end,
++    char const *path)
++{
++    uint32_t offset = body;
++    unsigned int depth = 1;
++
++    while (depth > 0) {
++        if (offset + sizeof(uint32_t) > struct_end) {
++            return 0;
++        }
++        uint32_t token = fdt_read32(fdt, offset);
++        offset += sizeof(uint32_t);
++
++        if (token == FDT_BEGIN_NODE) {
++            char const *node_name = (char const *)(fdt + offset);
++            uint32_t name_end = offset + fdt_align4((uint32_t)strlen(node_name) + 1u);
++            if (name_end > struct_end) {
++                return 0;
++            }
++            if (depth == 1 && fdt_component_matches(path, node_name)) {
++                char const *rest = path;
++                while (*rest != '\0' && *rest != '/') {
++                    ++rest;
++                }
++                if (*rest == '\0') {
++                    return name_end;
++                }
++                uint32_t found = fdt_node_body(fdt, name_end, struct_end, rest + 1);
++                if (found != 0) {
++                    return found;
++                }
++            }
++            offset = name_end;
++            ++depth;
++        } else if (token == FDT_END_NODE) {
++            --depth;
++        } else if (token == FDT_PROP) {
++            if (offset + sizeof(struct fdt_prop_header) > struct_end) {
++                return 0;
++            }
++            offset += sizeof(struct fdt_prop_header) + fdt_align4(fdt_read32(fdt, offset));
++        } else if (token != FDT_NOP) {
++            return 0;
++        }
++    }
++    return 0;
++}
++
++/* The body offset of the node named by `path`, with an optional leading '/'. */
++static uint32_t fdt_path_body(
++    void const *fdt,
++    char const *path)
++{
++    struct fdt_header const *hdr = fdt;
++    uint32_t struct_end = be32_to_le(hdr->off_dt_struct) + be32_to_le(hdr->size_dt_struct);
++
++    if (path[0] == '/') {
++        ++path;
++    }
++    if (be32_to_le(hdr->off_dt_struct) + sizeof(uint32_t) > struct_end) {
++        return 0;
++    }
++    if (fdt_read32(fdt, be32_to_le(hdr->off_dt_struct)) != FDT_BEGIN_NODE) {
++        return 0;
++    }
++    uint32_t offset = be32_to_le(hdr->off_dt_struct) + sizeof(uint32_t);
++    uint32_t root_body = offset +
++                         fdt_align4((uint32_t)strlen((char const *)((uint8_t const *)fdt + offset)) + 1u);
++    if (root_body > struct_end) {
++        return 0;
++    }
++    if (*path == '\0') {
++        return root_body;
++    }
++    return fdt_node_body((uint8_t const *)fdt, root_body, struct_end, path);
++}
++
++/* The offset of the property's value (just past its header), or 0. Properties
++ * of child nodes are skipped: only the named node's own are considered. */
++static uint32_t fdt_property_value(
++    void const *fdt,
++    char const *path,
++    char const *name,
++    uint32_t *length)
++{
++    struct fdt_header const *hdr = fdt;
++    uint32_t struct_end = be32_to_le(hdr->off_dt_struct) + be32_to_le(hdr->size_dt_struct);
++    uint32_t strings = be32_to_le(hdr->off_dt_strings);
++    uint32_t strings_end = strings + be32_to_le(hdr->size_dt_strings);
++    uint32_t offset = fdt_path_body(fdt, path);
++    unsigned int depth = 1;
++
++    if (offset == 0) {
++        return 0;
++    }
++    while (depth > 0) {
++        if (offset + sizeof(uint32_t) > struct_end) {
++            return 0;
++        }
++        uint32_t token = fdt_read32(fdt, offset);
++        offset += sizeof(uint32_t);
++
++        if (token == FDT_BEGIN_NODE) {
++            offset += fdt_align4((uint32_t)strlen((char const *)((uint8_t const *)fdt + offset)) + 1u);
++            ++depth;
++        } else if (token == FDT_END_NODE) {
++            --depth;
++        } else if (token == FDT_PROP) {
++            if (offset + sizeof(struct fdt_prop_header) > struct_end) {
++                return 0;
++            }
++            uint32_t prop_length = fdt_read32(fdt, offset);
++            uint32_t name_offset = fdt_read32(fdt, offset + sizeof(uint32_t));
++            uint32_t name_address = strings + name_offset;
++            if (depth == 1 && name_address >= strings && name_address < strings_end &&
++                strcmp((char const *)((uint8_t const *)fdt + name_address), name) == 0) {
++                *length = prop_length;
++                return offset + sizeof(struct fdt_prop_header);
++            }
++            offset += sizeof(struct fdt_prop_header) + fdt_align4(prop_length);
++        } else if (token != FDT_NOP) {
++            return 0;
++        }
++        if (offset > struct_end) {
++            return 0;
++        }
++    }
++    return 0;
++}
++
++static uint64_t fdt_read_cells(
++    void const *value,
++    uint32_t cells)
++{
++    uint8_t const *bytes = value;
++    uint64_t result = 0;
++
++    for (uint32_t i = 0; i < cells; ++i) {
++        result = (result << 32) |
++                 be32_to_le(*(uint32_t const *)(bytes + i * sizeof(uint32_t)));
++    }
++    return result;
++}
++
++uint64_t fdt_memory_end(
++    void const *fdt)
++{
++    void const *value = 0;
++    uint32_t length = 0;
++    uint64_t address_cells = 2;
++    uint64_t size_cells = 1;
++    uint64_t base;
++    uint64_t size;
++
++    if (fdt_get_property(fdt, "/", "#address-cells", &value, &length) == 0 &&
++        length == sizeof(uint32_t)) {
++        address_cells = be32_to_le(*(uint32_t const *)value);
++    }
++    if (fdt_get_property(fdt, "/", "#size-cells", &value, &length) == 0 &&
++        length == sizeof(uint32_t)) {
++        size_cells = be32_to_le(*(uint32_t const *)value);
++    }
++    if (address_cells == 0 || address_cells > 2 || size_cells == 0 || size_cells > 2) {
++        return 0;
++    }
++    if (fdt_get_property(fdt, "/memory", "reg", &value, &length) != 0 ||
++        length < (address_cells + size_cells) * sizeof(uint32_t)) {
++        return 0;
++    }
++    base = fdt_read_cells(value, (uint32_t)address_cells);
++    size = fdt_read_cells((uint8_t const *)value + address_cells * sizeof(uint32_t),
++                          (uint32_t)size_cells);
++    return base + size;
++}
++
++int fdt_get_property(
++    void const *fdt,
++    char const *path,
++    char const *name,
++    void const **value,
++    uint32_t *length)
++{
++    uint32_t len = 0;
++    uint32_t offset = fdt_property_value(fdt, path, name, &len);
++
++    if (offset == 0) {
++        return -1;
++    }
++    *value = (uint8_t const *)fdt + offset;
++    *length = len;
++    return 0;
++}
++
++int fdt_set_property(
++    void *fdt,
++    char const *path,
++    char const *name,
++    void const *value,
++    uint32_t length)
++{
++    uint32_t existing = 0;
++    uint32_t offset = fdt_property_value(fdt, path, name, &existing);
++
++    if (offset == 0 || existing != length) {
++        return -1;
++    }
++    memcpy((uint8_t *)fdt + offset, value, length);
++    return 0;
++}
