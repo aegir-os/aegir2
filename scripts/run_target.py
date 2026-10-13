@@ -971,7 +971,7 @@ def boot_interactive(target: Target, build_dir: Path) -> int:
         overlay.unlink(missing_ok=True)
 
 
-def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, bool, str]:
+def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool, bool, str, bool]:
     """Boot the image, streaming the console until the marker appears.
 
     Answers (marker seen, an acceptance check failed, test summary): a failed
@@ -1050,6 +1050,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
     anchors: dict[str, tuple[int, int, int, int]] = {}
     screen = (1280, 800)
     summary = ""
+    gaps = False
     boot_faulted: int | None = None
     # The previous console line, without its newline. A cue can be split at a
     # line boundary by a writer that flushed mid-line; joining the two lines
@@ -1433,6 +1434,14 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
                 )
                 failed = True
                 seen = True
+            # The gaps marker: the suite ran, but its case lines recorded holes
+            # and deviations. That is not a pass -- the counts ride in the
+            # marker's own line -- so the run ends as a gap report.
+            if target.gaps_marker and target.gaps_marker in stripped:
+                print(f"    runner: the suite ran with gaps: {stripped}", flush=True)
+                gaps = True
+                summary = stripped.strip()
+                seen = True
             # The run is done when the marker has printed and the script is
             # played out -- the business may continue past the boot marker (a
             # login on the greeter, the bureau's backdrop), and a cue that
@@ -1518,7 +1527,7 @@ def boot_and_watch(target: Target, build_dir: Path, timeout: int) -> tuple[bool,
         # QEMU is done with the overlay, and the overlay is scratch: the disk
         # image it backs is the thing that stays.
         overlay.unlink(missing_ok=True)
-    return seen, failed, summary
+    return seen, failed, summary, gaps
 
 
 def main(argv: list[str]) -> int:
@@ -1643,7 +1652,7 @@ def main(argv: list[str]) -> int:
         return boot_interactive(target, build_dir)
 
     try:
-        seen, failed, summary = boot_and_watch(target, build_dir, arguments.quiet_timeout)
+        seen, failed, summary, gaps = boot_and_watch(target, build_dir, arguments.quiet_timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         pins.report(False, f"{target.name} boot failed", str(exc))
         return 1
@@ -1661,6 +1670,9 @@ def main(argv: list[str]) -> int:
             else "an acceptance check failed (see the runner's lines above)",
         )
         return 1
+    if gaps:
+        print(f"GAPS  {target.name} ran, with gaps recorded  ({summary})", flush=True)
+        return 0
     pins.report(True, f"{target.name} booted", summary or target.marker)
     return 0
 

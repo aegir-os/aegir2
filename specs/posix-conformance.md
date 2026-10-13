@@ -74,14 +74,20 @@ shell, no greeter and no login.
 
 It prints one line per case -- `posix: ok|FAIL <area>: <interface>: <test>` for
 an implemented interface, `posix: unavailable <area>: <interface>` for a hole --
-and one marker:
+and one marker, with **three** outcomes rather than two:
 
 ```
-AEGIR_POSIX_CONFORMANCE_OK <passed>/<total> (<skipped> skipped)
-AEGIR_POSIX_CONFORMANCE_FAIL <passed>/<total> (<skipped> skipped)
+AEGIR_POSIX_CONFORMANCE_CONFORMS <passed>/<total> (<skipped> skipped, 0 holes, 0 deviations)
+AEGIR_POSIX_CONFORMANCE_GAPS     <passed>/<total> (<skipped> skipped, <holes> holes, <deviations> deviations)
+AEGIR_POSIX_CONFORMANCE_FAIL     <passed>/<total> (<skipped> skipped, <holes> holes, <deviations> deviations)
 ```
 
-The runner stops on either.
+**`GAPS` is not a pass.** "The suite ran to its end" and "Aegir conforms" are two
+claims, and only the second is a pass: a run that recorded holes and deviations
+prints `GAPS`, and the runner reports it as *ran, with gaps recorded* -- never as
+`PASS`. `CONFORMS` needs both counts to be zero; `FAIL` means a case failed
+outright. The runner stops on any of the three (`Target.marker`,
+`gaps_marker`, `failure_marker`).
 
 ## What a case is
 

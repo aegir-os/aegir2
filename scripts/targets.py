@@ -115,6 +115,11 @@ class Target:
     # failure, rather than waiting out the success marker's timeout with the
     # reason only in the missing-cue list.
     failure_marker: str | None = None
+    # A cue that means the run reached its end with gaps recorded -- the
+    # conformance suite's `..._GAPS` line. Seeing it stops the run and reports
+    # the gaps rather than a pass: "the suite ran" and "Aegir conforms" are two
+    # claims, and only the second is a pass.
+    gaps_marker: str | None = None
     # The project this target configures, relative to the repository root. Our
     # own targets configure the root project; an upstream project inside the tree
     # (projects/sel4test) has to be named, because the root's init-build.sh would
@@ -2072,8 +2077,9 @@ TARGETS: dict[str, Target] = {
         # need the acceptance's clicks, its greeter login or a shell.
         configure_flags=_AEGIR_8G_SMP4.configure_flags
         + ("-DAEGIR_MANIFEST_NAME=posix-test/services.manifest",),
-        marker="AEGIR_POSIX_CONFORMANCE_OK",
+        marker="AEGIR_POSIX_CONFORMANCE_CONFORMS",
         failure_marker="AEGIR_POSIX_CONFORMANCE_FAIL",
+        gaps_marker="AEGIR_POSIX_CONFORMANCE_GAPS",
         qmp_steps=(),
     ),
 }

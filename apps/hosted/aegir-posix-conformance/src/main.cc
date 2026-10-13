@@ -118,10 +118,21 @@ int main()
 
     int const passed = aegir_posix_conformance::passed();
     int const failed = aegir_posix_conformance::failed();
-    printf("AEGIR_POSIX_CONFORMANCE_%s %d/%d (%d skipped, %d holes, %d deviations)\n",
-           failed == 0 ? "OK" : "FAIL", passed, passed + failed,
-           aegir_posix_conformance::skipped(), aegir_posix_conformance::holes(),
-           aegir_posix_conformance::deviations());
+    int const skipped = aegir_posix_conformance::skipped();
+    int const holes = aegir_posix_conformance::holes();
+    int const deviations = aegir_posix_conformance::deviations();
+    /* Three outcomes, because "the suite ran" and "Aegir conforms" are two
+     * claims: FAIL when a case failed, CONFORMS only when nothing is a hole or
+     * a deviation, and GAPS in between -- the run finished, and the counts are
+     * how much of the standard is not met. A pass is the second one only. */
+    char const *verdict = "GAPS";
+    if (failed != 0) {
+        verdict = "FAIL";
+    } else if (holes == 0 && deviations == 0) {
+        verdict = "CONFORMS";
+    }
+    printf("AEGIR_POSIX_CONFORMANCE_%s %d/%d (%d skipped, %d holes, %d deviations)\n", verdict,
+           passed, passed + failed, skipped, holes, deviations);
     (void)fflush(nullptr);
 
     /* The boot thread waits for this signal (the same one the greeter and the
