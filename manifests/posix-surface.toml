@@ -59,11 +59,7 @@ status = "covered"
 
 [[area]]
 name = "threads"
-status = "todo"
-# answered: clone (the musl patch routes it to __aegir_clone); pthread_* on
-#           top of it. Nothing here is a dispatcher case.
-# not answered: futex(98) set_robust_list(99) get_robust_list(100)
-#           sched_yield(124) sched_setaffinity(122)
+status = "covered"
 
 # ---------------------------------------------------------------------------
 # interfaces
@@ -1164,8 +1160,10 @@ clause = "htonl.html"
 [[interface]]
 name = "poll"
 area = "sockets"
+# 0, not 7: syscall 7 on riscv64 is fsetxattr (7 is poll's number on x86).
+# musl's poll reaches ppoll (73).
 state = "unimplemented"
-syscall = 7
+syscall = 73
 clause = "poll.html"
 
 [[interface]]
@@ -1348,6 +1346,248 @@ area = "signals"
 state = "unimplemented"
 syscall = 0
 clause = "signal.html"
+
+# --- threads ---------------------------------------------------------------
+# musl's clone is routed to __aegir_clone by the tracked patch, so pthreads are
+# implemented over real seL4 threads. None of these is a dispatcher case.
+
+[[interface]]
+name = "pthread_create"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_create.html"
+
+[[interface]]
+name = "pthread_join"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_join.html"
+
+[[interface]]
+name = "pthread_detach"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_detach.html"
+
+[[interface]]
+name = "pthread_exit"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_exit.html"
+
+[[interface]]
+name = "pthread_self"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_self.html"
+
+[[interface]]
+name = "pthread_equal"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_equal.html"
+
+[[interface]]
+name = "pthread_once"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_once.html"
+
+[[interface]]
+name = "pthread_mutex_init"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_mutex_init.html"
+
+[[interface]]
+name = "pthread_mutex_destroy"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_mutex_destroy.html"
+
+[[interface]]
+name = "pthread_mutex_lock"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_mutex_lock.html"
+
+[[interface]]
+name = "pthread_mutex_trylock"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_mutex_trylock.html"
+
+[[interface]]
+name = "pthread_mutex_unlock"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_mutex_unlock.html"
+
+[[interface]]
+name = "pthread_cond_init"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cond_init.html"
+
+[[interface]]
+name = "pthread_cond_destroy"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cond_destroy.html"
+
+[[interface]]
+name = "pthread_cond_wait"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cond_wait.html"
+
+[[interface]]
+name = "pthread_cond_signal"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cond_signal.html"
+
+[[interface]]
+name = "pthread_cond_broadcast"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cond_broadcast.html"
+
+[[interface]]
+name = "pthread_key_create"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_key_create.html"
+
+[[interface]]
+name = "pthread_key_delete"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_key_delete.html"
+
+[[interface]]
+name = "pthread_setspecific"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_setspecific.html"
+
+[[interface]]
+name = "pthread_getspecific"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_getspecific.html"
+
+[[interface]]
+name = "pthread_attr_init"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_attr_init.html"
+
+[[interface]]
+name = "pthread_attr_destroy"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_attr_destroy.html"
+
+[[interface]]
+name = "pthread_cancel"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cancel.html"
+
+[[interface]]
+name = "pthread_setcancelstate"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_setcancelstate.html"
+
+[[interface]]
+name = "pthread_setcanceltype"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_setcanceltype.html"
+
+[[interface]]
+name = "pthread_testcancel"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_testcancel.html"
+
+[[interface]]
+name = "pthread_kill"
+area = "threads"
+state = "unimplemented"
+syscall = 0
+clause = "pthread_kill.html"
+
+[[interface]]
+name = "pthread_sigmask"
+area = "threads"
+state = "partial"
+syscall = 135
+clause = "pthread_sigmask.html"
+
+[[interface]]
+name = "pthread_cleanup_push"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_cleanup_push.html"
+
+[[interface]]
+name = "pthread_atfork"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_atfork.html"
+
+[[interface]]
+name = "pthread_getcpuclockid"
+area = "threads"
+state = "implemented"
+syscall = 0
+clause = "pthread_getcpuclockid.html"
+
+[[interface]]
+name = "pthread_setschedparam"
+area = "threads"
+state = "unimplemented"
+syscall = 0
+clause = "pthread_setschedparam.html"
+
+[[interface]]
+name = "pthread_getschedparam"
+area = "threads"
+state = "unimplemented"
+syscall = 0
+clause = "pthread_getschedparam.html"
 
 [[interface]]
 name = "mkfifo"

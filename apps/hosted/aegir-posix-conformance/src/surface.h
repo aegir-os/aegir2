@@ -20,6 +20,7 @@ void environment_surface();
 void time_surface();
 void sockets_surface();
 void signals_surface();
+void threads_surface();
 
 }  // namespace aegir_posix_conformance
 
