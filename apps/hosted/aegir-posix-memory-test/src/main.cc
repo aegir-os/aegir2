@@ -40,6 +40,7 @@
 
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -130,6 +131,36 @@ int main()
     void *const refused = mmap(reinterpret_cast<void *>(kPage), kPage, PROT_READ,
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     require(refused == MAP_FAILED, "MAP_FIXED at an address we were not given is refused");
+
+    /* A block grown repeatedly with realloc, so it leaves mallocng's small-size
+     * path for the mmap-serviced one and grows within it -- the allocator
+     * pattern a linker's SmallVector makes, run here without the linker. Bytes
+     * written before a growth must survive it: a group whose meta link was lost
+     * underneath a live pointer fails this, and the failure names itself in the
+     * exit status. */
+    unsigned char *grown = nullptr;
+    size_t grown_length = 0;
+    bool grown_ok = true;
+    for (size_t want = 1024; want <= (4u * 1024u * 1024u); want *= 2) {
+        unsigned char *const moved = static_cast<unsigned char *>(realloc(grown, want));
+        if (moved == nullptr) {
+            grown_ok = false;
+            break;
+        }
+        if (grown_length != 0 && (moved[0] != 0xa5 || moved[grown_length - 1] != 0x5a)) {
+            grown_ok = false;
+        }
+        for (size_t i = 0; i < want; ++i) {
+            moved[i] = static_cast<unsigned char>(i & 0xff);
+        }
+        /* Mark the ends so the next growth can prove they survived. */
+        moved[0] = 0xa5;
+        moved[want - 1] = 0x5a;
+        grown = moved;
+        grown_length = want;
+    }
+    require(grown_ok, "a block grown past the mmap threshold keeps its bytes");
+    free(grown);
 
     printf("AEGIR_POSIX_MEMORY_OK\n");
     (void)fflush(nullptr);
