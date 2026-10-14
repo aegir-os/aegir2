@@ -575,6 +575,12 @@ bool ServiceKit::start_command(Command const &command, Started *out)
      * more. */
     request.stack_pages = command.stack_pages;
 
+    /* The stream the command's death is reported on, recorded before the command
+     * can run and die (a fault in its first instructions would otherwise race the
+     * caller's own recording, and the line would never be finished). */
+    if (child_stream_hook_ != nullptr) {
+        child_stream_hook_(child_stream_context_, badge, command.stream);
+    }
     aegir::spawn::Process process{};
     if (!spawner().spawn(request, account, process)) {
         aegir::debug_write("  spawn: FAIL spawning a command: ");

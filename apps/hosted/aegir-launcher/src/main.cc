@@ -167,6 +167,16 @@ void drop_command_stream(uint64_t pid) noexcept
     give_stream_slot(slot);
 }
 
+/* The ServiceKit's spawn-time hook: record the stream before the command's
+ * thread can run, so a command that faults in its first instructions is still
+ * reported on it. Called with `g_service_mutex` held (the spawn is under it),
+ * which is what `record_command_stream` assumes. */
+void record_child_stream(void *context, uint64_t badge, seL4_CPtr stream) noexcept
+{
+    static_cast<void>(context);
+    record_command_stream(badge, stream);
+}
+
 /* Slots for held replies, reused: the allocator's free is private, so a slot
  * deleted after its reply is kept here and handed out again. Grows on demand. */
 std::vector<seL4_CPtr> g_free_reply_slots;
@@ -360,7 +370,6 @@ void handle_spawn(aegir::spawn::ServiceKit &service, uint64_t const *words, uint
     if (!service.start_command(command, &started)) {
         return;
     }
-    record_command_stream(started.badge, stream);
     g_parents.emplace(started.badge, caller);
     write_started(argv_words[0].c_str());
     reply[0] = 1;
@@ -443,9 +452,6 @@ void handle_pipeline(aegir::spawn::ServiceKit &service, uint64_t const *words,
         return;
     }
     for (uint32_t i = 0; i < cap; ++i) {
-        /* Every stage writes the line's one stream, so every stage's fault is
-         * reported on it (the terminal tells the stages apart by their pids). */
-        record_command_stream(started[i].badge, context.stream);
         g_parents.emplace(started[i].badge, caller);
     }
     for (uint32_t i = 0; i < stage_count; ++i) {
@@ -708,6 +714,7 @@ int main(int argc, char *argv[])
     }
     service.adopt_identity(own_badge);
     g_service = &service;
+    service.set_child_stream_hook(record_child_stream, nullptr);
 
     /* The fault supervisor thread: without it a command that faults blocks on
      * its own fault message for ever, and the `wait` behind it never completes

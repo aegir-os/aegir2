@@ -120,6 +120,17 @@ public:
     /* Where a command's faults arrive. Tier 1 does not read it. */
     seL4_CPtr fault_endpoint() const { return fault_endpoint_; }
 
+    /* Called once per command, after its badge is fixed and before its thread
+     * can run -- the only window in which a supervisor can record the stream a
+     * command's death is reported on before the command can die in its first
+     * instructions. The hook is the caller's; the kit only calls it. */
+    using ChildStreamHook = void (*)(void *context, uint64_t badge, seL4_CPtr stream);
+    void set_child_stream_hook(ChildStreamHook hook, void *context) noexcept
+    {
+        child_stream_hook_ = hook;
+        child_stream_context_ = context;
+    }
+
     /* The shell's own badge (specs/process.md): reserved once, from the range
      * this process was delegated, so the shell is a process the registry names
      * and a Break can reach -- not a stream key shared with another. The
@@ -406,6 +417,8 @@ private:
     std::vector<OwnerCnode> owner_cnodes_;
     seL4_CPtr stream_endpoint_ = 0;
     seL4_CPtr fault_endpoint_ = 0;
+    ChildStreamHook child_stream_hook_ = nullptr;
+    void *child_stream_context_ = nullptr;
     /* The output view's endpoint, once one is up (specs/launch.md): the view
      * owns it, and a stream-less command is handed a badged copy. */
     seL4_CPtr output_view_endpoint_ = 0;
