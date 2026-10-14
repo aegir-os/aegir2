@@ -303,13 +303,36 @@ bool Volume::read_part(Run const &run, uint64_t skip, uint8_t *out,
     uint64_t byte = to_block(run) * block_size() + skip;
     uint8_t *dst = out;
     uint32_t left = length;
+    uint32_t const sectors_per_block = block_size() / kSectorBytes;
+    uint32_t const max_blocks =
+        max_sectors_ >= sectors_per_block ? max_sectors_ / sectors_per_block : 1;
     while (left > 0) {
-        uint64_t const block = byte / block_size();
         uint32_t const within = static_cast<uint32_t>(byte % block_size());
         uint32_t chunk = block_size() - within;
         if (chunk > left) {
             chunk = left;
         }
+        /* The direct read below reaches the disk, not the journal's buffered
+         * image (read_block peeks the journal first). Batch only when no
+         * transaction is in flight; during one, the writer reads blocks back
+         * through read_block so a journaled write is what it sees. */
+        if (within == 0 && chunk == block_size() && max_blocks > 1 &&
+            (journal_ == nullptr || !journal_->active())) {
+            uint32_t blocks = left / block_size();
+            if (blocks > max_blocks) {
+                blocks = max_blocks;
+            }
+            if (!read_(context_, byte / kSectorBytes, dst,
+                       blocks * sectors_per_block)) {
+                return false;
+            }
+            uint32_t const bytes = blocks * block_size();
+            dst += bytes;
+            byte += bytes;
+            left -= bytes;
+            continue;
+        }
+        uint64_t const block = byte / block_size();
         if (!read_block(block, block_)) {
             return false;
         }

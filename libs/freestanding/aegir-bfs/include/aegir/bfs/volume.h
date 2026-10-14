@@ -83,6 +83,11 @@ public:
     void attach_discard(DiscardSectors discard) noexcept { discard_ = discard; }
     bool can_discard() const noexcept { return discard_ != nullptr; }
 
+    /** The most sectors one read callback can move: the service's window,
+     *  rounded down to whole blocks. Stream reads batch contiguous whole
+     *  blocks up to this. Zero means one block. */
+    void set_max_sectors(uint32_t sectors) noexcept { max_sectors_ = sectors; }
+
     /** Discard the blocks of `run`: the device's business, and a no-op -- with
      *  a false answer -- when no discard transport was attached. A block is
      *  four 512-byte sectors. */
@@ -256,6 +261,7 @@ private:
     DiscardSectors discard_ = nullptr;
     void *context_ = nullptr;
     uint32_t block_shift_ = 0;
+    uint32_t max_sectors_ = 0;
     uint32_t ag_shift_ = 0;
     uint32_t num_ags_ = 0;
     uint32_t blocks_per_ag_ = 0;
