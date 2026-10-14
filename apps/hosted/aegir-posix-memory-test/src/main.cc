@@ -162,6 +162,48 @@ int main()
     require(grown_ok, "a block grown past the mmap threshold keeps its bytes");
     free(grown);
 
+    /* The linker's own pattern, which the growth above does not have: a file
+     * mapped in, and a block grown repeatedly with realloc *while the mapping is
+     * live* -- one heap serves both, so the growth must not take the mapping's
+     * pages and the mapping must not take the growth's. Repeated, because a
+     * one-shot interleave can pass by luck of placement; the input object files
+     * that a link maps and unmaps are what this stands in for. */
+    int const interleave_fd = open(kSource, O_RDONLY);
+    require(interleave_fd >= 0, "open the file for the mapping-and-growth interleave");
+    bool interleave_ok = true;
+    for (int round = 0; interleave_ok && round < 8; ++round) {
+        void const *const live = mmap(nullptr, kPage, PROT_READ, MAP_PRIVATE, interleave_fd, 0);
+        if (live == MAP_FAILED) {
+            interleave_ok = false;
+            break;
+        }
+        unsigned char *block = nullptr;
+        size_t block_length = 0;
+        for (size_t want = 1024; want <= (2u * 1024u * 1024u); want *= 2) {
+            unsigned char *const moved =
+                static_cast<unsigned char *>(realloc(block, want));
+            if (moved == nullptr || memcmp(live, kAegirText, length) != 0 ||
+                (block_length != 0 && (moved[0] != 0x3c || moved[block_length - 1] != 0xc3))) {
+                interleave_ok = false;
+                break;
+            }
+            for (size_t i = 0; i < want; ++i) {
+                moved[i] = static_cast<unsigned char>(i & 0xff);
+            }
+            moved[0] = 0x3c;
+            moved[want - 1] = 0xc3;
+            block = moved;
+            block_length = want;
+        }
+        free(block);
+        if (munmap(const_cast<void *>(live), kPage) != 0) {
+            interleave_ok = false;
+        }
+    }
+    require(interleave_ok,
+            "a block grown under a live file mapping keeps its bytes and the mapping its");
+    require(close(interleave_fd) == 0, "close the interleave file");
+
     printf("AEGIR_POSIX_MEMORY_OK\n");
     (void)fflush(nullptr);
     _exit(0);
