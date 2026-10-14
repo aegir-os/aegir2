@@ -1,0 +1,29 @@
+diff --git a/llvm/lib/Support/SmallVector.cpp b/llvm/lib/Support/SmallVector.cpp
+index dceea4fbc630..071fefc3470a 100644
+--- a/llvm/lib/Support/SmallVector.cpp
++++ b/llvm/lib/Support/SmallVector.cpp
+@@ -14,6 +14,7 @@
+ #include "llvm/ADT/Twine.h"
+ #include "llvm/Support/MemAlloc.h"
+ #include <cstdint>
++#include <cstdio>
+ #ifdef LLVM_ENABLE_EXCEPTIONS
+ #include <stdexcept>
+ #endif
+@@ -156,6 +157,16 @@ void SmallVectorBase<Size_T>::grow_pod(void *FirstEl, size_t MinSize,
+     memcpy(NewElts, this->BeginX, size() * TSize);
+   } else {
+     // If this wasn't grown from the inline copy, grow the allocated space.
++    // AEGIR PROBE: name the caller and the pointer at every sizeable heap-storage
++    // growth, so a stale BeginX is attributable to a call site. Bounded to
++    // sizeable growths (a link's many small ones would flood the console), and
++    // this is the branch a stale pointer faults in.
++    if (NewCapacity * TSize >= 0x1000)
++      fprintf(stderr, "AEGIR-SVV grow caller=%p this=%p beginx=%p firstel=%p "
++                      "size=%zu cap=%zu TSize=%zu MinSize=%zu bytes=%zu\n",
++              __builtin_return_address(0), (void *)this, (void *)this->BeginX,
++              FirstEl, (size_t)size(), (size_t)capacity(), TSize, MinSize,
++              NewCapacity * TSize);
+     NewElts = llvm::safe_realloc(this->BeginX, NewCapacity * TSize);
+     if (NewElts == FirstEl)
+       NewElts = replaceAllocation(NewElts, TSize, NewCapacity, size());

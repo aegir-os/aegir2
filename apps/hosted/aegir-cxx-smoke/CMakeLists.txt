@@ -2,7 +2,7 @@
 # aegir-cxx-smoke: the hosted C++ runtime's acceptance client.
 #
 # A spawned boot service that stands the hosted runtime up -- the full musl's
-# mallocng over aegir-heap, and libc++'s containers on top -- and says out
+# allocator over aegir-heap, and libc++'s containers on top -- and says out
 # loud whether it worked. It is deliberately independent of the toolkit: this
 # is the runtime's own proof (specs/cxx.md), so a toolkit that is still being
 # repaired cannot make the runtime look broken.

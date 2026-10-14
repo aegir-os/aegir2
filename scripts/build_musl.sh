@@ -5,8 +5,8 @@
 # The seL4 build has its own musllibc fork, built with locale, iconv and
 # threads off and the oldmalloc backend (projects/musllibc/CMakeLists.txt).
 # The hosted C++ runtime needs the real library, so this builds the vendored
-# upstream musl (projects/musl) with its defaults -- mallocng, the backend
-# that actually returns memory -- and with Aegir's syscall redirection patch
+# upstream musl (projects/musl) with the same `oldmalloc` backend
+# (specs/mallocng-bug.md) and with Aegir's syscall redirection patch
 # applied (third_party/patches/projects/musl): musl's syscalls then reach the
 # kernel through sel4_vsyscall instead of a raw ecall, which seL4 does not
 # answer.
@@ -62,6 +62,13 @@ source "${ROOT_DIR}/scripts/env.sh"
 # The pinned ABI (specs/build.md): hard-float rv64imafdc/lp64d.
 CFLAGS="-march=rv64imafdc_zicsr_zifencei -mabi=lp64d -O2"
 
+# The malloc backend. musl's own default is mallocng, and the hosted tier used
+# it until mallocng's group layout was found to fault over aegir-heap
+# (specs/mallocng-bug.md). The seL4 tier already builds oldmalloc, so the hosted
+# tier builds the same one. AEGIR_MUSL_MALLOC=mallocng rebuilds the vendored
+# default, which is how the fault is reproduced.
+MALLOC_IMPL="${AEGIR_MUSL_MALLOC:-oldmalloc}"
+
 # musl's configure takes CC as a command string, so the target goes in it:
 # clang is one binary for every triple. CROSS_COMPILE is left empty -- there is
 # no prefixed binutils -- and the LLVM tools are named on the make lines.
@@ -73,6 +80,7 @@ cd "${BUILD_DIR}"
     --target=riscv64 \
     --enable-static \
     --disable-shared \
+    --with-malloc="${MALLOC_IMPL}" \
     CC="clang --target=riscv64-unknown-elf" \
     CFLAGS="${CFLAGS}"
 

@@ -1,8 +1,9 @@
 #
 # aegir-heap: the freeing heap behind the C++ standard library.
 #
-# musl's malloc is already in the build (the vendored full musl, built with its
-# default mallocng); what a process lacks is *memory*, and that is the empty
+# musl's malloc is already in the build (the vendored full musl, built with the
+# oldmalloc backend -- specs/mallocng-bug.md); what a process lacks is *memory*,
+# and that is the empty
 # space between musl's syscall routing (through __sysinfo) and our own vspace.
 # This library fills it: a dispatcher for the memory syscalls that answers from
 # pages carved out of the process's untyped and mapped into its window

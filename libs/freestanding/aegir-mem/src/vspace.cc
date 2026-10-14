@@ -7,6 +7,7 @@
 
 #include <aegir/mem/vspace.h>
 
+#include <aegir/debug.h>
 #include <aegir/mem/allocator.h>
 
 /* The end of our image, from the linker script the build already uses. It is
@@ -21,6 +22,12 @@ namespace aegir::mem {
 namespace {
 constexpr uintptr_t kPage = 1ull << seL4_PageBits;
 constexpr uintptr_t kLargePage = 1ull << seL4_LargePageBits;
+/* How many occupied pages the streaming cursor will step over before giving
+ * up. The window's span is supposed to be free, but nothing yet guarantees it
+ * (Scratch has no mirror of its mappings; libsel4utils keeps one). Until it
+ * does, an occupied page is skipped rather than stomped, and this bound keeps
+ * a span that is entirely occupied from spinning. */
+constexpr unsigned kMaxWindowSkip = 64;
 
 uintptr_t align_up(uintptr_t value) noexcept
 {
@@ -66,12 +73,34 @@ bool Scratch::initialise(Allocator *tables) noexcept
     base_ = align_up(start);
     next_ = base_;
     small_high_ = base_;
-    /* The large-page region containing the base already has page tables: our
-     * image's last page is in it. */
-    limit_ = (base_ & ~(kLargePage - 1)) + kLargePage;
+    /* The window's top is one large page above its base, not the next 2 MiB
+     * boundary. `round_up_to_2MiB(base_)` made the initial window's size
+     * `2 MiB - (base_ mod 2 MiB)` -- anywhere from one page to 2 MiB -- so the
+     * initrd (which moves `base_`) could shrink the window to a single page and
+     * its first growth walked into whatever was there. A fixed large page is
+     * independent of where `base_` lands; the large-page region containing the
+     * base already has page tables (our image's last page is in it), so no new
+     * table is needed. Occupied pages inside the span are skipped by `map`
+     * rather than assumed away (libsel4utils' rule, reached through the
+     * kernel's `seL4_DeleteFirst`). */
+    limit_ = base_ + kLargePage;
     /* The reservation cursor starts at the window's top and walks down, which is the
      *  end a long-lived run comes from (reserve). */
     high_ = limit_;
+    /* AEGIR PROBE (window): the three anchors and the span they produce, once
+     * at startup. `base` above all three says the window sits past the bootinfo;
+     * the span `base..limit` is what map() then trusts is empty. */
+    aegir::debug_write("      window: init end ");
+    aegir::debug_write_hex(reinterpret_cast<uintptr_t>(_end));
+    aegir::debug_write(" ipc_end ");
+    aegir::debug_write_hex(ipc_end);
+    aegir::debug_write(" bootinfo_end ");
+    aegir::debug_write_hex(bootinfo_end);
+    aegir::debug_write(" base ");
+    aegir::debug_write_hex(base_);
+    aegir::debug_write(" limit ");
+    aegir::debug_write_hex(limit_);
+    aegir::debug_write("\n");
     return true;
 }
 
@@ -110,54 +139,85 @@ void *Scratch::map(seL4_CPtr frame) noexcept
      * REFUSED, every process). A window that may grow -- the root task's, which
      * reserves nothing -- still grows a large page at a time, and takes the
      * reservation cursor with it. The missing page tables are created below, on the
-     * kernel's FailedLookup. */
-    while (next_ + kPage > high_) {
-        if (!may_grow_) {
+     * kernel's FailedLookup.
+     *
+     * A page the window does not own is skipped, not mapped over: the kernel's
+     * `seL4_DeleteFirst` is the occupancy test (libsel4utils answers it from its
+     * own page-table mirror, which Scratch does not keep yet), so an occupied page
+     * in the span costs a cursor step rather than a crash. */
+    for (unsigned skipped = 0; skipped <= kMaxWindowSkip; ++skipped) {
+        while (next_ + kPage > high_) {
+            if (!may_grow_) {
+                return nullptr;
+            }
+            limit_ += kLargePage;
+            high_ = limit_;
+        }
+        uintptr_t const address = next_;
+        seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                               seL4_RISCV_Default_VMAttributes);
+        /* A service's window has no page tables promised above it: the spawner said
+         * where the window is, not that anything was ever mapped there. The kernel
+         * says which level is missing by refusing with FailedLookup, and the table
+         * to create is a page table at whatever level failed -- the same idiom the
+         * child VSpace walks (aegir/mem/child_vspace.cc), against our own root. */
+        unsigned attempts = 0;
+        while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
+            ++attempts;
+            seL4_Error created = seL4_NoError;
+            /* Charged to a throwaway account: the window's tables are the service's
+             * own scaffolding, and the caller's accounts are per-spawn. */
+            Account self{"scratch", 0, 0, 0};
+            seL4_CPtr const table = tables_->alloc_object(seL4_RISCV_PageTableObject,
+                                                          seL4_PageTableBits, self, &created);
+            if (table == 0) {
+                return nullptr;
+            }
+            if (seL4_RISCV_PageTable_Map(table, root_, address,
+                                         seL4_RISCV_Default_VMAttributes) != seL4_NoError) {
+                return nullptr;
+            }
+            error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
+                                        seL4_RISCV_Default_VMAttributes);
+        }
+        if (error == seL4_DeleteFirst) {
+            /* The page already holds something. It is not ours to overwrite, so
+             * the cursor moves past it; the next call resumes above. */
+            aegir::debug_write("      window: skip occupied ");
+            aegir::debug_write_hex(address);
+            aegir::debug_write("\n");
+            next_ += kPage;
+            continue;
+        }
+        if (error != seL4_NoError) {
+            /* AEGIR PROBE (window): the page the map wanted and the window's own
+             * bounds, for a refusal that is not `already mapped`. */
+            aegir::debug_write("      window: map failed at ");
+            aegir::debug_write_hex(address);
+            aegir::debug_write(" base ");
+            aegir::debug_write_hex(base_);
+            aegir::debug_write(" next ");
+            aegir::debug_write_hex(next_);
+            aegir::debug_write(" limit ");
+            aegir::debug_write_hex(limit_);
+            aegir::debug_write(" error ");
+            aegir::debug_write_unsigned(static_cast<uint64_t>(error));
+            aegir::debug_write("\n");
+            last_error_ = error;
             return nullptr;
         }
-        limit_ += kLargePage;
-        high_ = limit_;
-    }
-    uintptr_t address = next_;
-    seL4_Error error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
-                                           seL4_RISCV_Default_VMAttributes);
-    /* A service's window has no page tables promised above it: the spawner said
-     * where the window is, not that anything was ever mapped there. The kernel
-     * says which level is missing by refusing with FailedLookup, and the table
-     * to create is a page table at whatever level failed -- the same idiom the
-     * child VSpace walks (aegir/mem/child_vspace.cc), against our own root. */
-    unsigned attempts = 0;
-    while (error == seL4_FailedLookup && tables_ != nullptr && attempts < 4) {
-        ++attempts;
-        seL4_Error created = seL4_NoError;
-        /* Charged to a throwaway account: the window's tables are the service's
-         * own scaffolding, and the caller's accounts are per-spawn. */
-        Account self{"scratch", 0, 0, 0};
-        seL4_CPtr const table = tables_->alloc_object(seL4_RISCV_PageTableObject,
-                                                      seL4_PageTableBits, self, &created);
-        if (table == 0) {
-            return nullptr;
+        last_cap_ = frame;
+        next_ += kPage;
+        /* Grow-only: the page table this mapping created outlives the frame's unmap,
+         * so the 2 MiB region stays the small run's (see the header's small_high_). */
+        if (address + kPage > small_high_) {
+            small_high_ = address + kPage;
         }
-        if (seL4_RISCV_PageTable_Map(table, root_, address,
-                                     seL4_RISCV_Default_VMAttributes) != seL4_NoError) {
-            return nullptr;
-        }
-        error = seL4_RISCV_Page_Map(frame, root_, address, seL4_AllRights,
-                                    seL4_RISCV_Default_VMAttributes);
+        mapped_bytes_ += kPage;
+        return reinterpret_cast<void *>(address);
     }
-    if (error != seL4_NoError) {
-        last_error_ = error;
-        return nullptr;
-    }
-    last_cap_ = frame;
-    next_ += kPage;
-    /* Grow-only: the page table this mapping created outlives the frame's unmap,
-     * so the 2 MiB region stays the small run's (see the header's small_high_). */
-    if (address + kPage > small_high_) {
-        small_high_ = address + kPage;
-    }
-    mapped_bytes_ += kPage;
-    return reinterpret_cast<void *>(address);
+    last_error_ = seL4_DeleteFirst;
+    return nullptr;
 }
 
 void *Scratch::map_large(seL4_CPtr frame) noexcept
@@ -221,6 +281,14 @@ void *Scratch::map_large(seL4_CPtr frame) noexcept
     }
     next_ += kLargePage;
     mapped_bytes_ += kLargePage;
+    /* AEGIR PROBE (window): a fixed 2 MiB slot the window planted. The streaming
+     * cursor does not know about it, so if it lands above `next_` the walk in
+     * map() steps onto it later. */
+    aegir::debug_write("      window: map_large at ");
+    aegir::debug_write_hex(address);
+    aegir::debug_write(" next ");
+    aegir::debug_write_hex(next_);
+    aegir::debug_write("\n");
     return reinterpret_cast<void *>(address);
 }
 
@@ -266,6 +334,14 @@ bool Scratch::map_at(uintptr_t address, seL4_CPtr frame,
         return false;
     }
     mapped_bytes_ += kPage;
+    /* AEGIR PROBE (window): a fixed-address map. `map_at` may plant a page the
+     * streaming cursor has not reached, so it is the other writer that can make
+     * map() collide. */
+    aegir::debug_write("      window: map_at at ");
+    aegir::debug_write_hex(address);
+    aegir::debug_write(" next ");
+    aegir::debug_write_hex(next_);
+    aegir::debug_write("\n");
     return true;
 }
 

@@ -32,8 +32,9 @@ it was.
   build's `projects/musllibc` is a musl 1.2.5 fork configured without locale,
   iconv or threads and with the `oldmalloc` backend. The hosted runtime needs
   the real library, so it vendors upstream musl 1.2.6 (`manifests/aegir.xml`),
-  built per target by `scripts/build_musl.sh` with its default backend,
-  **mallocng**, and with the syscall redirection that makes musl usable on seL4.
+  built per target by `scripts/build_musl.sh` with the **`oldmalloc`** backend
+  (the same one the seL4 fork uses — `specs/mallocng-bug.md`), and with the
+  syscall redirection that makes musl usable on seL4.
 - **The standard library is libc++** (libc++abi and libunwind with it), from the
   vendored LLVM project, built per target by `scripts/build_libcxx.sh`. An
   earlier draft of this spec chose GCC's libstdc++ to match the compiler; that
@@ -57,10 +58,13 @@ the imported target `musl_full`. Two things about the build are load-bearing:
   the patch routes every one through the `__sysinfo` function pointer, which
   `aegir-heap` installs. The build refuses to run without it rather than produce
   a library that faults on its first syscall.
-- **mallocng, not `oldmalloc`.** The seL4 fork chooses `oldmalloc` because its
-  shim has a no-op `munmap` and no `mremap`. `aegir-heap` provides real
-  `brk`/`mmap` over the process's own memory, so the default backend — the one
-  that actually returns memory — is the right choice.
+- **`oldmalloc`, not `mallocng`.** The seL4 fork chooses `oldmalloc` because
+  its shim has a no-op `munmap` and no `mremap`; the hosted tier first chose
+  musl's default, `mallocng`, because `aegir-heap` provides real `brk`/`mmap`
+  over the process's own memory. That choice was reversed: `mallocng`'s group
+  layout faults over `aegir-heap` (`specs/mallocng-bug.md`), and `oldmalloc`
+  runs the same heap without the fault, so the hosted tier builds `oldmalloc`
+  too. `AEGIR_MUSL_MALLOC=mallocng` rebuilds the vendored default.
 
 ### `cxx`, `cxxabi`, `unwind`: the standard library
 

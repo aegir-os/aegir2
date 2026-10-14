@@ -384,6 +384,24 @@ void trace(char const *kind, uintptr_t first, uintptr_t second) noexcept
 }
 #endif
 
+/* AEGIR PROBE (slots): name a cap the frame bookkeeping records or deletes when
+ * its slot is in the low range the process's own fixed caps live in (the console
+ * endpoint). Nothing here should ever be a frame: if `sys_munmap` deletes the
+ * console's slot, this says so and from which address. */
+void trace_cap(char const *what, seL4_CPtr slot, uintptr_t address) noexcept
+{
+    if (slot >= 4096) {
+        return;
+    }
+    aegir::debug_write("      heap: cap-");
+    aegir::debug_write(what);
+    aegir::debug_write(" slot ");
+    aegir::debug_write_unsigned(slot);
+    aegir::debug_write(" addr ");
+    aegir::debug_write_hex(address);
+    aegir::debug_write("\n");
+}
+
 /* Threads (musl's clone): where a new thread runs, what its objects are charged
  * to, and the ids it hands out. A library cannot know a process's VSpace on its
  * own, so init() fills this in from the window it was handed. */
@@ -524,6 +542,7 @@ bool map_page(uintptr_t address) noexcept
         uint32_t const index = static_cast<uint32_t>((limit_ - address) / kPageBytes);
         if (FrameChunk *chunk = frame_chunk(index, true)) {
             chunk->frames[index - chunk->first] = frame;
+            trace_cap("record", frame, address);
         }
     }
     return true;
@@ -569,6 +588,7 @@ bool map_large_page(uintptr_t address) noexcept
                 static_cast<uint32_t>((limit_ - (address + page * kPageBytes)) / kPageBytes);
             if (FrameChunk *chunk = frame_chunk(index, true)) {
                 chunk->frames[index - chunk->first] = frame;
+                trace_cap("record", frame, address + page * kPageBytes);
             }
         }
         trace_phase("mega-recorded");
@@ -1284,6 +1304,7 @@ long sys_munmap(void *addr, size_t length) noexcept
         }
         seL4_CPtr const frame = chunk->frames[index - chunk->first];
         chunk->frames[index - chunk->first] = 0;
+        trace_cap("delete", frame, address);
         g_scratch->unmap(frame);
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
                           aegir::bootstrap::endpoint_depth());

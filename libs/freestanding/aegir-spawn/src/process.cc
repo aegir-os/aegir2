@@ -6,6 +6,7 @@
  */
 
 #include <aegir/bootstrap.h>
+#include <aegir/debug.h>
 #include <aegir/spawn/process.h>
 
 #include <sel4runtime/auxv.h>
@@ -653,8 +654,32 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (bootstrap::write(block_storage, kBlockBytes, contents) == nullptr) {
         return fail("the bootstrap block does not fit its page");
     }
+    /* AEGIR PROBE (placement): the block goes at `align_up(load_end())`, but the
+     * child's last mapped page ends at `mapped_until`. When the latter is larger,
+     * the two disagree and the block lands on a page the program already holds --
+     * the kernel's "Virtual address (... ) already mapped" and the spawner's
+     * "the bootstrap block could not be mapped". */
+    aegir::debug_write("      spawn: block_at ");
+    aegir::debug_write_hex(block_at);
+    aegir::debug_write(" mapped_until ");
+    aegir::debug_write_hex(mapped_until);
+    aegir::debug_write(" load_end ");
+    aegir::debug_write_hex(static_cast<uint64_t>(elf.load_end()));
+    aegir::debug_write(mapped_until > block_at ? "  COLLISION\n" : "\n");
     if (!vspace.populate(block_at, 1, block_storage, kBlockBytes, 0, false, account, nullptr,
                          &why)) {
+        /* AEGIR PROBE (placement): the address the block wanted, how far the
+         * child's own mapping already reaches, and the kernel's reason. If
+         * `child_mapped_end` is already past `block_at`, the child overlapped
+         * itself; if it is not, the page `block_at` names was mapped by someone
+         * else. */
+        aegir::debug_write("      spawn: block failed at ");
+        aegir::debug_write_hex(block_at);
+        aegir::debug_write(" child_mapped_end ");
+        aegir::debug_write_hex(vspace.mapped_end());
+        aegir::debug_write(" why ");
+        aegir::debug_write(why != nullptr ? why : "(none)");
+        aegir::debug_write("\n");
         detail_ = why;
         return fail("the bootstrap block could not be mapped");
     }

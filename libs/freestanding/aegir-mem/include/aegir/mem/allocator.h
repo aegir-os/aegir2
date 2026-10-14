@@ -490,6 +490,9 @@ private:
         uint8_t size_bits;
         uint8_t device;
         uint8_t free;
+        /* AEGIR PROBE: whether this node's cap was given back (see
+         * `retype_source_live`). */
+        uint8_t cap_live;
         /* The piece this was split from (null for a root), and the other half
          * of that split. A free merges the two and frees the parent in turn. */
         Node *parent;
@@ -561,6 +564,16 @@ private:
     /** Give a piece back, merging with its buddy when the buddy is free
      *  (allocman's `_utspace_split_free`). */
     void free_piece(Node *node) noexcept;
+
+    /** AEGIR PROBE: whether `slot` is on the freed-slot list right now. A live
+     *  piece's cap must never be; a retype from one is the kernel's "Attempted
+     *  to invoke a null cap" / "Untyped cap: Illegal operation" pair, and those
+     *  are what this probe exists to attribute (specs/memory.md). */
+    bool slot_was_freed(seL4_CPtr slot) const noexcept;
+
+    /** AEGIR PROBE: a retype's source slot must be live; trace and refuse when
+     *  it is not, so the kernel-error flood stops and the run names the piece. */
+    bool retype_source_live(Node const *node) noexcept;
 
     /** Delete every capability derived from a piece's cap, so the piece is
      *  childless -- the kernel resets a childless untyped's free index, so a

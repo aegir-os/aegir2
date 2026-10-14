@@ -143,6 +143,7 @@ bool Allocator::add_untyped(seL4_CPtr cap, seL4_Word size_bits, bool device,
     node->physical = paddr;
     node->size_bits = static_cast<uint8_t>(size_bits);
     node->device = device ? 1 : 0;
+    node->cap_live = 1;
     node->parent = nullptr;
     node->sibling = nullptr;
     node->next = nullptr;
@@ -277,7 +278,6 @@ seL4_CPtr Allocator::take_free_slot() noexcept
     free_slot_entries_ = entry;
     return entry->slot;
 }
-
 seL4_CPtr Allocator::alloc_slot() noexcept
 {
     if (slot_pool_ != nullptr) {
@@ -631,6 +631,12 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
          * "0 bytes available". Off the list first, the re-entrant call takes a
          * different piece. */
         unlink(parent);
+        if (!retype_source_live(parent)) {
+            /* AEGIR PROBE: the piece's cap was already given back, so it cannot
+             * be split. Leaving it off the list keeps the split from spending a
+             * slot on a cap the kernel no longer has. */
+            continue;
+        }
         if (trace_ != nullptr) {
             trace_(trace_context_, "split", parent->size_bits, parent->physical,
                    parent->parent != nullptr, parent->cap);
@@ -691,6 +697,7 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
              * it is kept. The rest of the parent is lost; recovering it needs
              * the kernel to say how much is left, which it does not. */
             left->cap = left_slot;
+            left->cap_live = 1;
             left->physical = parent->physical;
             left->size_bits = static_cast<uint8_t>(size_bits);
             left->device = parent->device;
@@ -708,6 +715,7 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
          * are deleted (the kernel resets a childless untyped's free index on
          * the next retype, kernel/src/object/untyped.c:184-189). */
         left->cap = left_slot;
+        left->cap_live = 1;
         left->physical = parent->physical;
         left->size_bits = static_cast<uint8_t>(size_bits);
         left->device = parent->device;
@@ -716,6 +724,7 @@ bool Allocator::refill_inner(bool device, seL4_Word size_bits) noexcept
         left->next = nullptr;
         left->prev = nullptr;
         right->cap = right_slot;
+        right->cap_live = 1;
         right->physical =
             parent->physical != 0 ? parent->physical + (1ull << size_bits) : 0;
         right->size_bits = static_cast<uint8_t>(size_bits);
@@ -782,6 +791,8 @@ void Allocator::free_piece(Node *node) noexcept
         seL4_CNode_Revoke(seL4_CapInitThreadCNode, sibling->cap, del_depth);
         seL4_CNode_Delete(seL4_CapInitThreadCNode, node->cap, del_depth);
         seL4_CNode_Delete(seL4_CapInitThreadCNode, sibling->cap, del_depth);
+        node->cap_live = 0;
+        sibling->cap_live = 0;
         /* The caps are gone, so their slots are free again -- and a pool that
          * remembers owners must be told (specs/memory.md). */
         free_slot(node->cap);
@@ -825,6 +836,28 @@ bool Allocator::free_object(void *cookie, seL4_Word size_bits) noexcept
     return true;
 }
 
+bool Allocator::slot_was_freed(seL4_CPtr slot) const noexcept
+{
+    for (SlotEntry const *entry = free_slots_; entry != nullptr; entry = entry->next) {
+        if (entry->slot == slot) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Allocator::retype_source_live(Node const *node) noexcept
+{
+    if (!slot_was_freed(node->cap)) {
+        return true;
+    }
+    if (trace_ != nullptr) {
+        trace_(trace_context_, "cap-dead", node->size_bits,
+               static_cast<uint64_t>(node->cap), node->free != 0, node->physical);
+    }
+    return false;
+}
+
 seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &account,
                                   seL4_Error *error, void **cookie) noexcept
 {
@@ -850,6 +883,12 @@ seL4_CPtr Allocator::alloc_object(seL4_Word type, seL4_Word size_bits, Account &
     }
     Node *const node = take(false, wanted);
     if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    if (!retype_source_live(node)) {
+        /* AEGIR PROBE: the piece's cap is gone, so the retype would be the
+         * kernel's "Attempted to invoke a null cap". Refuse instead of asking. */
         *error = seL4_NotEnoughMemory;
         return 0;
     }
@@ -990,6 +1029,11 @@ seL4_CPtr Allocator::alloc_pages_run(seL4_Word count, Account &account, seL4_Err
     }
     Node *const node = take(false, wanted);
     if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    if (!retype_source_live(node)) {
+        /* AEGIR PROBE: as `alloc_object`. */
         *error = seL4_NotEnoughMemory;
         return 0;
     }
@@ -1246,6 +1290,11 @@ seL4_CPtr Allocator::alloc_cnode_at_l1(seL4_Word l2_bits, seL4_Word l1_slot,
     }
     Node *const node = take(false, wanted);
     if (node == nullptr) {
+        *error = seL4_NotEnoughMemory;
+        return 0;
+    }
+    if (!retype_source_live(node)) {
+        /* AEGIR PROBE: as `alloc_object`. */
         *error = seL4_NotEnoughMemory;
         return 0;
     }
