@@ -999,11 +999,18 @@ long sys_brk(uintptr_t new_break) noexcept
     if (new_break < brk_ || new_break > mmap_) {
         return static_cast<long>(brk_);
     }
+    uintptr_t const start = brk_;
     while (brk_ < new_break) {
         if (!map_page(brk_)) {
             return static_cast<long>(brk_);
         }
         brk_ += kPageBytes;
+    }
+    if (brk_ > start) {
+        /* The arena is the process's data, not only mallocng's: `sbrk` promises
+         * zeroed memory, and a freshly retyped frame carries its untyped's old
+         * bytes. */
+        memset(reinterpret_cast<void *>(start), 0, brk_ - start);
     }
     return static_cast<long>(brk_);
 }
@@ -1052,10 +1059,8 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
     }
     uintptr_t const needed = align_up(length);
     uintptr_t base = 0;
-    bool reused = false;
     if (void *released = g_free_regions.take(needed)) {
         base = reinterpret_cast<uintptr_t>(released);
-        reused = true;
         trace("mmap-reused", base, needed);
     } else {
         /* A run reserved from the window's top (`Scratch::reserve` walks down from
@@ -1150,12 +1155,13 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
             }
         }
     trace_phase("mmap-pages-done");
-    if (reused) {
-        /* mmap promises zero-filled pages, and a released region holds the last
-         * owner's bytes (specs/memory.md). Zeroed *after* the frames are back,
-         * because before the reclamation the mapping was still there to write. */
-        memset(reinterpret_cast<void *>(base), 0, needed);
-    }
+    /* mmap promises zero-filled pages: POSIX requires it of an anonymous
+     * mapping, and mallocng's groups rely on a fresh one reading empty. Zeroed
+     * unconditionally, because neither source is zero -- a released region holds
+     * the last owner's bytes and a freshly retyped frame holds its untyped's
+     * (the kernel zeroes neither, specs/memory.md) -- and zeroed *after* the
+     * frames are back, because before that the mapping was not there to write. */
+    memset(reinterpret_cast<void *>(base), 0, needed);
     if (file_backed) {
         /* The mapping's pages are in place; what follows is the file's bytes. A
          * stall that never reaches this line is the page mapping above (a 50 MB
@@ -1873,6 +1879,34 @@ long sys_readv(int fd, void const *iov, int count) noexcept
     return total;
 }
 
+/* The syscall number, straight to the serial rather than through the console
+ * stream. Every heap trace is an IPC to the console, so the call a wedged run
+ * is *in* can be the one whose trace write never returns -- and then the log's
+ * silence names nothing. This writes the number before anything that can
+ * block, so the last line of a dead run is the call that died in. One line per
+ * syscall: the volume is real, and the last line is the only one that matters.
+ * Temporary diagnosis, like the `mmap`/`done mmap` pair it backs up. */
+void serial_number(char tag, long number) noexcept
+{
+    char line[24];
+    uint32_t length = 0;
+    line[length++] = tag;
+    uint64_t value = number < 0 ? 0 : static_cast<uint64_t>(number);
+    char digits[20];
+    uint32_t count = 0;
+    do {
+        digits[count++] = static_cast<char>('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (count > 0) {
+        line[length++] = digits[--count];
+    }
+    line[length++] = '\n';
+    for (uint32_t i = 0; i < length; ++i) {
+        seL4_DebugPutChar(line[i]);
+    }
+}
+
 /* The dispatcher: musl's syscall table, one switch. The va_arg reads are the
  * Linux ABI's argument order for each call (projects/musl/arch/riscv64/bits/
  * syscall.h.in has the numbers). */
@@ -1880,6 +1914,7 @@ long vsyscall(long sysnum, ...) noexcept
 {
     va_list ap;
     va_start(ap, sysnum);
+    serial_number('S', sysnum);
     trace_syscall(sysnum);
     /* The name table leaves the synchronisation and sleep calls silent on
      * purpose -- they are what a service spends its idle time in
@@ -2223,12 +2258,20 @@ long vsyscall(long sysnum, ...) noexcept
      * names every call on its way in and nothing on its way out -- and a wedge
      * is a call that never returns, which is an absence, and an absence is not
      * attributable. `trace_syscall` names the call at the entry; this names it at
-     * the exit, and together they say which call the program is *in*. */
+     * the exit, and together they say which call the program is *in*. The direct
+     * serial `R` is the same exit mark off the console path, so an `S` with no
+     * `R` is the wedge and an `S`/`R` pair with silence after it is a wedge
+     * *after* the call. */
+    serial_number('R', sysnum);
     if (char const *const done = syscall_name(sysnum)) {
         aegir::debug_write("      heap: done ");
         aegir::debug_write(done);
         aegir::debug_write("\n");
     }
+    /* The last mark, after the console write has returned: an `R` with no `X` is
+     * the console IPC the call died in, and an `X` with silence after it is the
+     * process blocked *after* the dispatcher -- in user code or on a fault. */
+    serial_number('X', sysnum);
     return ret;
 }
 
