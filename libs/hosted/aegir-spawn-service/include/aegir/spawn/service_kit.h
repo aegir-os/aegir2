@@ -124,7 +124,8 @@ public:
      * can run -- the only window in which a supervisor can record the stream a
      * command's death is reported on before the command can die in its first
      * instructions. The hook is the caller's; the kit only calls it. */
-    using ChildStreamHook = void (*)(void *context, uint64_t badge, seL4_CPtr stream);
+    using ChildStreamHook = void (*)(void *context, uint64_t badge, seL4_CPtr stream,
+                                     char const *name, uint32_t name_length);
     void set_child_stream_hook(ChildStreamHook hook, void *context) noexcept
     {
         child_stream_hook_ = hook;

@@ -109,6 +109,10 @@ aegir::spawn::ServiceKit *g_service = nullptr;
  * the shell's stream exactly as the command's own would. */
 std::unordered_map<uint64_t, seL4_CPtr> g_command_streams;
 std::vector<seL4_CPtr> g_free_stream_slots;
+/* The command word each live command was started as, so a fault can name the
+ * command and not only its pid (`aegir-heap`'s crash a mark that names only a
+ * number is the bug). */
+std::unordered_map<uint64_t, std::string> g_command_names;
 
 seL4_CPtr take_stream_slot() noexcept
 {
@@ -132,8 +136,12 @@ void give_stream_slot(seL4_CPtr slot) noexcept
 
 /* Keep a cap to the stream the command writes to, badged for the caller. Called
  * with `g_service_mutex` held. */
-void record_command_stream(uint64_t pid, seL4_CPtr stream) noexcept
+void record_command_stream(uint64_t pid, seL4_CPtr stream, char const *name,
+                           uint32_t name_length) noexcept
 {
+    if (name != nullptr && name_length != 0) {
+        g_command_names[pid] = std::string(name, name_length);
+    }
     if (stream == 0) {
         return;
     }
@@ -158,6 +166,7 @@ void record_command_stream(uint64_t pid, seL4_CPtr stream) noexcept
 
 void drop_command_stream(uint64_t pid) noexcept
 {
+    g_command_names.erase(pid);
     auto const it = g_command_streams.find(pid);
     if (it == g_command_streams.end()) {
         return;
@@ -171,10 +180,11 @@ void drop_command_stream(uint64_t pid) noexcept
  * thread can run, so a command that faults in its first instructions is still
  * reported on it. Called with `g_service_mutex` held (the spawn is under it),
  * which is what `record_command_stream` assumes. */
-void record_child_stream(void *context, uint64_t badge, seL4_CPtr stream) noexcept
+void record_child_stream(void *context, uint64_t badge, seL4_CPtr stream,
+                         char const *name, uint32_t name_length) noexcept
 {
     static_cast<void>(context);
-    record_command_stream(badge, stream);
+    record_command_stream(badge, stream, name, name_length);
 }
 
 /* Slots for held replies, reused: the allocator's free is private, so a slot
@@ -567,11 +577,6 @@ void fault_supervisor(void *argument) noexcept
     for (;;) {
         seL4_Word badge = 0;
         seL4_MessageInfo_t const info = seL4_Recv(fault, &badge);
-        aegir::debug_write("  launcher: command faulted, fault ");
-        aegir::debug_write_unsigned(seL4_MessageInfo_get_label(info));
-        aegir::debug_write(", pid ");
-        aegir::debug_write_unsigned(badge);
-        aegir::debug_write("\n");
         /* Report the stream exit the command's own `report_exit` would have
          * (specs/launch.md): a command that faults never reaches that call, so
          * its line's stream stays open and the shell's read never returns. The
@@ -580,6 +585,7 @@ void fault_supervisor(void *argument) noexcept
          * refuses to finish the line. A command with no recorded stream (a
          * stream-less one) is reaped here instead. */
         seL4_CPtr stream = 0;
+        std::string name;
         {
             std::lock_guard<std::mutex> const locked(g_service_mutex);
             auto const it = g_command_streams.find(badge);
@@ -587,7 +593,22 @@ void fault_supervisor(void *argument) noexcept
                 stream = it->second;
                 g_command_streams.erase(it);
             }
+            auto const named = g_command_names.find(badge);
+            if (named != g_command_names.end()) {
+                name = named->second;
+                g_command_names.erase(named);
+            }
         }
+        aegir::debug_write("  launcher: command faulted, fault ");
+        aegir::debug_write_unsigned(seL4_MessageInfo_get_label(info));
+        aegir::debug_write(", pid ");
+        aegir::debug_write_unsigned(badge);
+        if (!name.empty()) {
+            aegir::debug_write(" (");
+            aegir::debug_write(name.c_str(), static_cast<uint32_t>(name.size()));
+            aegir::debug_write(")");
+        }
+        aegir::debug_write("\n");
         if (stream != 0) {
             aegir::ipc::Consumer const port(stream);
             (void)aegir::console::stream_exit(port, kFaultStatus, badge);
