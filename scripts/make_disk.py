@@ -762,12 +762,14 @@ def main() -> int:
                 return 1
         else:
             # -F forces FAT32, which a volume this size would not normally get;
-            # the service's first reader is meant to speak it. If this mtools
-            # refuses, the geometry default -- FAT16 at this size -- still
-            # exercises the same BPB walk, so either answer is a disk worth
-            # having.
+            # the service's first reader is meant to speak it. -c 8 gives an
+            # 8-sector (4 KiB) cluster: the write side moves a whole cluster
+            # per device request instead of one 512-byte sector, which is what
+            # made writing a file crawl. If this mtools refuses, the geometry
+            # default -- FAT16 at this size -- still exercises the same BPB
+            # walk, so either answer is a disk worth having.
             forced = subprocess.run(
-                ["mformat", "-i", volume, "-F", "-v", name, "::"],
+                ["mformat", "-i", volume, "-F", "-c", "8", "-v", name, "::"],
                 capture_output=True,
             )
             if forced.returncode != 0:
