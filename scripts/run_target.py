@@ -819,10 +819,10 @@ def development_tree(build_dir: Path) -> Path:
     # command failed, and the acceptance's commands are each their own step
     # (specs/development.md). The step that types it names this with `{link}`.
     SUBSTITUTIONS["link"] = (
-        # --verbose while this fault is open: it prints lld's own search paths and
-        # what it opens, which the layer's trace cannot show -- lld asks this
-        # filesystem nothing at all about -T or -l: (specs/clang-on-aegir.md).
-        "Sys:Development/C/ld.lld --verbose -o SCRATCH:hello --eh-frame-hdr "
+        # No --verbose: the link is no longer the fault under investigation, and
+        # lld's search-path dump floods the terminal (which buffers every line),
+        # growing its heap until its CSpace fills.
+        "Sys:Development/C/ld.lld -o SCRATCH:hello --eh-frame-hdr "
         f"-T {path_of('aegir-eh-frame.lds')} "
         + " ".join(path_of(n) for n in head if n in staged)
         + " SCRATCH:hello.o"
