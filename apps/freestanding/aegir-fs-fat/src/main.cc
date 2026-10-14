@@ -290,6 +290,39 @@ bool fat_load(uint32_t cluster, uint64_t *sector_out) noexcept
     return true;
 }
 
+/* A FAT sector kept apart from the data window, so a chain walk reads each
+ * FAT sector once instead of once per cluster it holds (128 on FAT32, 256 on
+ * FAT16). A data read overwrites the window, but not this copy. */
+uint8_t g_fat_window[kSectorBytes];
+uint64_t g_fat_window_rel = ~0ull;
+
+/* Read the FAT sector holding `cluster` into the cache, unless it is already
+ * there. False when the block read fails. */
+bool fat_sector(uint32_t cluster) noexcept
+{
+    uint64_t const rel =
+        (static_cast<uint64_t>(cluster) * entry_bytes()) / kSectorBytes;
+    if (rel == g_fat_window_rel) {
+        return true;
+    }
+    if (!read(g_volume.fat_start + rel, 1)) {
+        return false;
+    }
+    g_fat_window_rel = rel;
+    for (uint32_t i = 0; i < kSectorBytes; ++i) {
+        g_fat_window[i] = g_window[i];
+    }
+    return true;
+}
+
+/* The next cluster after `cluster`, read from the cached FAT sector. */
+uint32_t fat_next(uint32_t cluster) noexcept
+{
+    return g_volume.fat32
+               ? aegir::fat::next32(g_fat_window, cluster % (kSectorBytes / 4))
+               : aegir::fat::next16(g_fat_window, cluster % (kSectorBytes / 2));
+}
+
 /* Write one cluster's FAT entry -- in every FAT copy, because a volume whose
  * copies disagree is a corrupt volume. */
 bool fat_store(uint32_t cluster, uint32_t value) noexcept
@@ -299,6 +332,8 @@ bool fat_store(uint32_t cluster, uint32_t value) noexcept
         return false;
     }
     window_set_next(cluster, value);
+    /* The cached FAT sector is now stale. */
+    g_fat_window_rel = ~0ull;
     for (uint32_t f = 0; f < g_volume.fats; ++f) {
         if (!write_back(g_volume.fat_start + f * g_volume.fat_sectors + rel, 1)) {
             return false;
@@ -321,13 +356,18 @@ bool zero_cluster(uint32_t cluster) noexcept
 
 /* The first free cluster the FAT knows, claimed and zeroed. Zero is the
  * answer for a full volume as much as for a broken one -- the caller refuses
- * the write, and the count says how much landed. The scan is linear and
- * holds its FAT sector across the entries it covers: 128 clusters per read
- * on FAT32, 256 on FAT16. */
+ * the write, and the count says how much landed. The scan starts where the
+ * last allocation left off and wraps, so a sequential write finds each next
+ * free cluster in one FAT-sector read rather than re-scanning the FAT from
+ * cluster 2 every time (which made writing a large file quadratic in its
+ * size). The scan holds its FAT sector across the entries it covers: 128
+ * clusters per read on FAT32, 256 on FAT16. */
 uint32_t alloc_cluster() noexcept
 {
+    static uint32_t hint = 2;
     uint64_t held = ~0ull; /* the FAT sector in the window, when one is */
-    for (uint32_t c = 2; c < 2 + g_cluster_count; ++c) {
+    for (uint32_t i = 0; i < g_cluster_count; ++i) {
+        uint32_t const c = 2 + (hint - 2 + i) % g_cluster_count;
         uint64_t const rel = (static_cast<uint64_t>(c) * entry_bytes()) / kSectorBytes;
         if (rel != held) {
             if (!read(g_volume.fat_start + rel, 1)) {
@@ -340,6 +380,10 @@ uint32_t alloc_cluster() noexcept
         }
         if (!fat_store(c, chain_eoc_mark()) || !zero_cluster(c)) {
             return 0;
+        }
+        hint = c + 1;
+        if (hint >= 2 + g_cluster_count) {
+            hint = 2;
         }
         return c;
     }
@@ -380,11 +424,10 @@ uint32_t chain_seek(Handle *handle) noexcept
         handle->first_cluster = c;
     }
     for (uint32_t i = 0; i < target; ++i) {
-        uint64_t rel = 0;
-        if (!fat_load(c, &rel)) {
+        if (!fat_sector(c)) {
             return 0;
         }
-        uint32_t next = window_next(c);
+        uint32_t next = fat_next(c);
         if (next >= chain_eoc()) {
             next = alloc_cluster();
             if (next == 0 || !fat_store(c, next)) {
@@ -1777,13 +1820,10 @@ uint64_t read_into(aegir::fat::Dirent const &dirent, uint64_t offset, uint64_t w
             filled += take;
         }
         position += cluster_bytes;
-        uint32_t const fat_offset = cluster * (g_volume.fat32 ? 4u : 2u);
-        if (!read(g_volume.fat_start + fat_offset / kSectorBytes, 1)) {
+        if (!fat_sector(cluster)) {
             break;
         }
-        cluster = g_volume.fat32
-                      ? aegir::fat::next32(g_window, cluster % (kSectorBytes / 4))
-                      : aegir::fat::next16(g_window, cluster % (kSectorBytes / 2));
+        cluster = fat_next(cluster);
     }
     return filled;
 }

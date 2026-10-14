@@ -303,13 +303,37 @@ bool Volume::read_part(Run const &run, uint64_t skip, uint8_t *out,
     uint64_t byte = to_block(run) * block_size() + skip;
     uint8_t *dst = out;
     uint32_t left = length;
+    uint32_t const sectors_per_block = block_size() / kSectorBytes;
+    /* The largest whole-block run read in one device request: the service's
+     * window, rounded down to whole blocks. Zero (a host test that never set
+     * one) means one block, which is what the previous code did. */
+    uint32_t const max_blocks =
+        max_sectors_ >= sectors_per_block ? max_sectors_ / sectors_per_block : 1;
     while (left > 0) {
-        uint64_t const block = byte / block_size();
         uint32_t const within = static_cast<uint32_t>(byte % block_size());
         uint32_t chunk = block_size() - within;
         if (chunk > left) {
             chunk = left;
         }
+        /* A run is contiguous on disk, so a run of whole blocks is one device
+         * request: the device's latency is paid once per window, not once per
+         * block (the cost that dominates a large file's read). */
+        if (within == 0 && chunk == block_size() && max_blocks > 1) {
+            uint32_t blocks = left / block_size();
+            if (blocks > max_blocks) {
+                blocks = max_blocks;
+            }
+            if (!read_(context_, byte / kSectorBytes, dst,
+                       blocks * sectors_per_block)) {
+                return false;
+            }
+            uint32_t const bytes = blocks * block_size();
+            dst += bytes;
+            byte += bytes;
+            left -= bytes;
+            continue;
+        }
+        uint64_t const block = byte / block_size();
         if (!read_block(block, block_)) {
             return false;
         }
