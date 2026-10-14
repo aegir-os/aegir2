@@ -148,7 +148,9 @@ PARTITION_LAYOUT = [
      b"a second volume, a second service, the same reader\n"),
     # No file: the writable volume the write side proves itself on. An empty
     # root directory is the point -- everything in it, the system put there.
-    ("SCRATCH", 6143, None, None),
+    # Sized for the largest thing the acceptance writes: the statically-linked
+    # hello is ~2.4 MiB, so 3 MiB was marginal once the cluster size grew.
+    ("SCRATCH", 16384, None, None),
     # FAT16, and provably so: with one sector per cluster this many sectors
     # is past the 4085-cluster FAT12 ceiling and under FAT32's floor, which
     # is the format's own definition of the flavor. mtools picks from the
