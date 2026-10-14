@@ -87,20 +87,6 @@ bool Scratch::initialise(Allocator *tables) noexcept
     /* The reservation cursor starts at the window's top and walks down, which is the
      *  end a long-lived run comes from (reserve). */
     high_ = limit_;
-    /* AEGIR PROBE (window): the three anchors and the span they produce, once
-     * at startup. `base` above all three says the window sits past the bootinfo;
-     * the span `base..limit` is what map() then trusts is empty. */
-    aegir::debug_write("      window: init end ");
-    aegir::debug_write_hex(reinterpret_cast<uintptr_t>(_end));
-    aegir::debug_write(" ipc_end ");
-    aegir::debug_write_hex(ipc_end);
-    aegir::debug_write(" bootinfo_end ");
-    aegir::debug_write_hex(bootinfo_end);
-    aegir::debug_write(" base ");
-    aegir::debug_write_hex(base_);
-    aegir::debug_write(" limit ");
-    aegir::debug_write_hex(limit_);
-    aegir::debug_write("\n");
     return true;
 }
 
@@ -183,26 +169,10 @@ void *Scratch::map(seL4_CPtr frame) noexcept
         if (error == seL4_DeleteFirst) {
             /* The page already holds something. It is not ours to overwrite, so
              * the cursor moves past it; the next call resumes above. */
-            aegir::debug_write("      window: skip occupied ");
-            aegir::debug_write_hex(address);
-            aegir::debug_write("\n");
             next_ += kPage;
             continue;
         }
         if (error != seL4_NoError) {
-            /* AEGIR PROBE (window): the page the map wanted and the window's own
-             * bounds, for a refusal that is not `already mapped`. */
-            aegir::debug_write("      window: map failed at ");
-            aegir::debug_write_hex(address);
-            aegir::debug_write(" base ");
-            aegir::debug_write_hex(base_);
-            aegir::debug_write(" next ");
-            aegir::debug_write_hex(next_);
-            aegir::debug_write(" limit ");
-            aegir::debug_write_hex(limit_);
-            aegir::debug_write(" error ");
-            aegir::debug_write_unsigned(static_cast<uint64_t>(error));
-            aegir::debug_write("\n");
             last_error_ = error;
             return nullptr;
         }
@@ -281,14 +251,6 @@ void *Scratch::map_large(seL4_CPtr frame) noexcept
     }
     next_ += kLargePage;
     mapped_bytes_ += kLargePage;
-    /* AEGIR PROBE (window): a fixed 2 MiB slot the window planted. The streaming
-     * cursor does not know about it, so if it lands above `next_` the walk in
-     * map() steps onto it later. */
-    aegir::debug_write("      window: map_large at ");
-    aegir::debug_write_hex(address);
-    aegir::debug_write(" next ");
-    aegir::debug_write_hex(next_);
-    aegir::debug_write("\n");
     return reinterpret_cast<void *>(address);
 }
 
@@ -334,14 +296,6 @@ bool Scratch::map_at(uintptr_t address, seL4_CPtr frame,
         return false;
     }
     mapped_bytes_ += kPage;
-    /* AEGIR PROBE (window): a fixed-address map. `map_at` may plant a page the
-     * streaming cursor has not reached, so it is the other writer that can make
-     * map() collide. */
-    aegir::debug_write("      window: map_at at ");
-    aegir::debug_write_hex(address);
-    aegir::debug_write(" next ");
-    aegir::debug_write_hex(next_);
-    aegir::debug_write("\n");
     return true;
 }
 

@@ -315,16 +315,10 @@ FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
      * one source for everything the heap places (specs/memory.md, "one space, one
      * owner"). Carved off `mmap_` this landed inside the arena and the kernel answered
      * "Virtual address ... already mapped". */
-    /* Making a chunk is a mapping's own work: it runs while the caller is
-     * recording a frame, and it allocates through the same allocator the
-     * caller just used. Where a mapping's log ends between "chunk-create" and
-     * "chunk-frame" is which of those three steps never came back. */
-    trace_phase("chunk-create");
     uintptr_t const page = g_scratch->reserve(1);
     if (page == 0) {
         return nullptr;
     }
-    trace_phase("chunk-page");
     aegir::mem::Account account{"heap", 0, 0, 0};
     seL4_Error error = seL4_NoError;
     seL4_CPtr const frame =
@@ -332,7 +326,6 @@ FrameChunk *frame_chunk(uint32_t index, bool create) noexcept
     if (frame == 0 || !g_scratch->map_at(page, frame)) {
         return nullptr;
     }
-    trace_phase("chunk-frame");
     auto *chunk = reinterpret_cast<FrameChunk *>(page);
     chunk->next = g_frame_chunks;
     chunk->first = index - (index % kFramesPerChunk);
@@ -383,24 +376,6 @@ void trace(char const *kind, uintptr_t first, uintptr_t second) noexcept
     static_cast<void>(second);
 }
 #endif
-
-/* AEGIR PROBE (slots): name a cap the frame bookkeeping records or deletes when
- * its slot is in the low range the process's own fixed caps live in (the console
- * endpoint). Nothing here should ever be a frame: if `sys_munmap` deletes the
- * console's slot, this says so and from which address. */
-void trace_cap(char const *what, seL4_CPtr slot, uintptr_t address) noexcept
-{
-    if (slot >= 4096) {
-        return;
-    }
-    aegir::debug_write("      heap: cap-");
-    aegir::debug_write(what);
-    aegir::debug_write(" slot ");
-    aegir::debug_write_unsigned(slot);
-    aegir::debug_write(" addr ");
-    aegir::debug_write_hex(address);
-    aegir::debug_write("\n");
-}
 
 /* Threads (musl's clone): where a new thread runs, what its objects are charged
  * to, and the ids it hands out. A library cannot know a process's VSpace on its
@@ -517,7 +492,6 @@ bool map_page(uintptr_t address) noexcept
      * `page-no-piece`, `page-map-refused`) nor `mmap-pages-done` prints in the run
      * that freezes, so it is not a refusal -- it is a stop that answers nothing,
      * which is a fault's shape. */
-    trace_phase("page-frame");
     if (!g_scratch->map_at(address, frame)) {
         trace_phase("page-map-refused");
         return false;
@@ -542,7 +516,6 @@ bool map_page(uintptr_t address) noexcept
         uint32_t const index = static_cast<uint32_t>((limit_ - address) / kPageBytes);
         if (FrameChunk *chunk = frame_chunk(index, true)) {
             chunk->frames[index - chunk->first] = frame;
-            trace_cap("record", frame, address);
         }
     }
     return true;
@@ -564,34 +537,22 @@ bool map_large_page(uintptr_t address) noexcept
     constexpr uintptr_t kMegaPages = kMega / kPageBytes;
     aegir::mem::Account account{"heap", 0, 0, 0};
     seL4_Error error = seL4_NoError;
-    /* Where a 2 MiB page waits, step by step, because this is the path a linker's
-     * first archive mapping takes and it is where that link stopped. A log ending
-     * after "mega-alloc" was waiting on the allocator, which asks the memory
-     * service for an untyped once its own pool is empty (runtime_untyped_source);
-     * one ending after "mega-map" was waiting on the kernel's mapping call; one
-     * ending after "mega-frames" was in the 512-entry record below, which can
-     * itself ask for a frame chunk. */
-    trace_phase("mega-alloc");
     seL4_CPtr const frame = g_allocator->alloc_object(seL4_RISCV_Mega_Page,
                                                       seL4_LargePageBits, account, &error);
     if (frame == 0) {
         return false;
     }
-    trace_phase("mega-map");
     if (!g_scratch->map_at(address, frame)) {
         return false;
     }
-    trace_phase("mega-frames");
     if (g_scratch != nullptr && address >= g_scratch->base() && address < g_scratch->limit()) {
         for (uintptr_t page = 0; page < kMegaPages; ++page) {
             uint32_t const index =
                 static_cast<uint32_t>((limit_ - (address + page * kPageBytes)) / kPageBytes);
             if (FrameChunk *chunk = frame_chunk(index, true)) {
                 chunk->frames[index - chunk->first] = frame;
-                trace_cap("record", frame, address + page * kPageBytes);
             }
         }
-        trace_phase("mega-recorded");
     }
     return true;
 }
@@ -847,47 +808,10 @@ bool init(aegir::mem::Allocator &allocator, aegir::mem::Scratch &scratch,
     static aegir::mem::NodeWindow node_window{&allocator, &scratch};
     allocator.set_node_source(aegir::mem::grow_nodes_from_window, &node_window);
 
-    /* The allocator's own trace, without which every `trace_(...)` inside it is
-     * computed and discarded. Four call sites exist in the allocator (lines 176,
-     * 479, 586, 717) and not one of them had ever printed in a run: this wiring
-     * landed, was lost to a build fallback that reverted two directories at once,
-     * and nothing checked -- so a year of "that path never happens" was really
-     * "that path cannot be seen". The `retype-refused` marker added for the link's
-     * `seL4_DeleteFirst` showed nothing for exactly this reason.
-     *
-     * The fields are positional (`a`, `b`, `c`, `cap`) because each event means
-     * something different by them: the allocator names the event and fills the
-     * numbers in its own order, and a hook that guessed labels would mislabel
-     * every event but one. */
-    allocator.set_trace(
-        [](void *context, char const *event, unsigned a, uint64_t b, bool c,
-           seL4_CPtr cap) noexcept {
-            static_cast<void>(context);
-            /* The badge, because the console interleaves every program and that
-             * made the last four lines of evidence unattributable: `alloc-object`
-             * and `page-kernel-error` sat four lines apart and nothing in either
-             * said whether they were the same heap. Read once, since the env does
-             * not change and this fires tens of thousands of times. */
-            static uint64_t const badge = []() noexcept {
-                uint64_t value = 0;
-                static_cast<void>(aegir::bootstrap::badge(&value));
-                return value;
-            }();
-            aegir::debug_write("      heap: trace ");
-            aegir::debug_write(event);
-            aegir::debug_write(" badge ");
-            aegir::debug_write_unsigned(badge);
-            aegir::debug_write(" a ");
-            aegir::debug_write_unsigned(a);
-            aegir::debug_write(" b ");
-            aegir::debug_write_unsigned(b);
-            aegir::debug_write(" c ");
-            aegir::debug_write(c ? "1" : "0");
-            aegir::debug_write(" cap ");
-            aegir::debug_write_unsigned(static_cast<uint64_t>(cap));
-            aegir::debug_write("\n");
-        },
-        nullptr);
+    /* The allocator's trace hook is left unset: a hook here fires on every
+     * allocation and split, tens of thousands of lines per link, and each line
+     * is an IPC to the logger -- the diagnostic became the thing it measured.
+     * Set a hook here to re-enable the allocator's `trace_` markers. */
 
     /* The file layer's capability slots come from the same allocator. */
     files::adopt(allocator, scratch);
@@ -1099,14 +1023,6 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
             return -ENOMEM;
         }
         base = reserved;
-        /* Which side of `reserve` the call died on. The entry trace shows the
-         * call and nothing else: no `mmap-reused` (so this is the reserve path),
-         * no `mmap-mega`, no refusal -- and the page loops carry no marker of
-         * their own, so the last call in a dead run cannot be told from one that
-         * stopped in the reserve. This one line splits it: `mmap-reserved` and
-         * silence after it means the stall is in the page mapping, silence
-         * without it means the window cursor never came back. */
-        trace_phase("mmap-reserved");
     }
     /* The pages are mapped on *both* paths, and that is the fix the reclamation
      * needed: a released region gave its frames back -- `sys_munmap` deletes the
@@ -1138,43 +1054,21 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
                 }
                 ++page;
             }
-            bool mega_reported = false;
             while (page + kMegaPages <= needed / kPageBytes &&
                    (base + page * kPageBytes) % kMega == 0) {
-                if (!mega_reported) {
-                    /* The 2 MiB path engaged. If `mmap-filling` never follows this,
-                     * the stall is inside this loop; if this line never appears at
-                     * all, the mapping is going a page at a time -- the tens of
-                     * thousands of round trips the comment above describes, which is
-                     * the shape a hang takes when it is really grinding. */
-                    trace_phase("mmap-mega");
-                    mega_reported = true;
-                }
                 if (!map_large_page(base + page * kPageBytes)) {
                     trace("mmap-refused", length, 0);
                     return -ENOMEM;
                 }
-                trace_phase("mega-mapped");
                 page += kMegaPages;
             }
         }
-        /* The anonymous path's pages, bracketed. `mmap-reserved` says the window
-         * cursor returned; this pair says whether the stall is inside the mapping
-         * loop or after it, which is the last question `sys_mmap` can be asked.
-         * Measured: the console stops on `mmap-reserved`, so the call died between
-         * there and the return -- and with the CPU at zero it is one `map_page`
-         * that never came back, not pages ground through one at a time (that shape
-         * burns CPU, and the file-backed branch below is where tens of thousands
-         * of mappings happen). Two lines per call, not one per page: a run maps
-         * tens of thousands and the shape is the point. */
-        trace_phase("mmap-pages");
         for (; page < needed / kPageBytes; ++page) {
             if (!map_page(base + page * kPageBytes)) {
                 trace("mmap-refused", length, 0);
                 return -ENOMEM;
             }
         }
-    trace_phase("mmap-pages-done");
     /* mmap promises zero-filled pages: POSIX requires it of an anonymous
      * mapping, and mallocng's groups rely on a fresh one reading empty. Zeroed
      * unconditionally, because neither source is zero -- a released region holds
@@ -1183,10 +1077,6 @@ long sys_mmap(void *addr, size_t length, int prot, int flags, int fd,
      * frames are back, because before that the mapping was not there to write. */
     memset(reinterpret_cast<void *>(base), 0, needed);
     if (file_backed) {
-        /* The mapping's pages are in place; what follows is the file's bytes. A
-         * stall that never reaches this line is the page mapping above (a 50 MB
-         * archive is twenty-five thousand pages), and one after it is the fill. */
-        trace_phase("mmap-filling");
         long const filled =
             files::pread(fd, reinterpret_cast<void *>(base), needed, offset);
         if (filled < 0) {
@@ -1316,7 +1206,6 @@ long sys_munmap(void *addr, size_t length) noexcept
         if (frame == released_frame) {
             continue;
         }
-        trace_cap("delete", frame, address);
         g_scratch->unmap(frame);
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
                           aegir::bootstrap::endpoint_depth());
