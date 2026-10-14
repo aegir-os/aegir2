@@ -363,21 +363,16 @@ int TerminalBuffer::visible_first_line() const
     return first < 0 ? 0 : first;
 }
 
-std::size_t TerminalBuffer::retained_bytes() const
-{
-    std::size_t total = lines_.size() * sizeof(TerminalLine);
-    for (TerminalLine const& line : lines_) {
-        total += line.size() * sizeof(TerminalCell);
-    }
-    return total;
-}
-
 void TerminalBuffer::enforce_budget()
 {
     if (scrollback_budget_ == 0) {
         return;
     }
-    while (lines_.size() > 1 && retained_bytes() > scrollback_budget_) {
+    /* Drop the oldest lines until the history behind the viewport fits the
+     * budget. The visible rows stay, so a budget is scrollback lines, not
+     * total lines. */
+    while (lines_.size() > 1 &&
+           static_cast<std::size_t>(scrollback_lines()) > scrollback_budget_) {
         lines_.pop_front();
         if (cursor_line_ > 0) {
             --cursor_line_;

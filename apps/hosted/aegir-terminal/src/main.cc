@@ -42,6 +42,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <fcntl.h>
 #include <filesystem>
 #include <memory>
@@ -198,6 +199,20 @@ int main(int argc, char *argv[])
     }
 
     auto view = std::make_unique<TerminalView>();
+    /* The scrollback, in lines: the user's preference with a bounded default.
+     * AEGIR_SCROLLBACK names it (lines); zero is unbounded, and an unparsable
+     * value keeps the default. This is a stop-gap until it is a stored
+     * preference. */
+    std::size_t scrollback = 1500;
+    char const *const scrollback_env = aegir::environment::getenv("AEGIR_SCROLLBACK");
+    if (scrollback_env != nullptr && scrollback_env[0] != '\0') {
+        char *end = nullptr;
+        unsigned long const value = std::strtoul(scrollback_env, &end, 10);
+        if (end != scrollback_env && *end == '\0') {
+            scrollback = static_cast<std::size_t>(value);
+        }
+    }
+    view->buffer().set_scrollback_budget(scrollback);
     /* The terminal is a grid: a fixed advance, so the theme's monospace face
      * (specs/trinket/theming.md), not the proportional default. */
     view->set_font(app.theme().font_monospace());

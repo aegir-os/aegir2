@@ -171,14 +171,16 @@ void check_scrollback()
     expect_int(b.visible_first_line(), 2, "scrollback: back to the end");
 }
 
-/* A budget drops the oldest lines and no newer ones. */
+/* A budget drops the oldest lines and no newer ones. The budget is scrollback
+ * lines: the visible rows stay, and the history behind them is capped. */
 void check_budget()
 {
     TerminalBuffer b(10, 2);
     b.set_scrollback_budget(1);
     b.write("1\n2\n3\n4\n5");
-    expect_int(b.line_count(), 1, "budget: all but the newest line were dropped");
-    expect_text(b.line(0), U"5", "budget: the newest line is the survivor");
+    expect_int(b.line_count(), 3, "budget: two visible rows plus one scrollback line");
+    expect_text(b.line(0), U"3", "budget: the oldest line is the one scrollback line");
+    expect_text(b.line(2), U"5", "budget: the newest line is the last");
 }
 
 /* BiDi: an LTR line with a trailing RTL run reorders for display. */

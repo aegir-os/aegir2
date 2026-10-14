@@ -85,11 +85,11 @@ public:
     /* Every line joined by `\n`, for a whole-buffer assertion. */
     std::u32string text() const;
 
-    /* Scrollback. A budget of zero is unbounded -- capacity grows on demand --
-     * and a positive budget is the most the ring may hold, oldest lines
-     * dropped first (project rule: no arbitrary limits). */
+    /* Scrollback, in *lines* behind the viewport. A budget of zero is
+     * unbounded; a positive budget is the most history the ring may hold,
+     * oldest lines dropped first. */
     std::size_t scrollback_budget() const { return scrollback_budget_; }
-    void set_scrollback_budget(std::size_t bytes) { scrollback_budget_ = bytes; }
+    void set_scrollback_budget(std::size_t lines) { scrollback_budget_ = lines; }
     /* How many lines may be retained behind the viewport, for a scroll bar. */
     int scrollback_lines() const;
     int scroll_offset() const { return scroll_offset_; }
@@ -109,7 +109,6 @@ private:
     void apply(char32_t cp);
     void put(char32_t cp);
     void enforce_budget();
-    std::size_t retained_bytes() const;
 
     int columns_;
     int rows_;
