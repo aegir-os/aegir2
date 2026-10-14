@@ -1292,6 +1292,15 @@ long sys_munmap(void *addr, size_t length) noexcept
         aegir::debug_write("\n");
     }
     unsigned released = 0;
+    /* A 2 MiB frame is recorded once per page it covers (map_large_page), so a
+     * run of pages shares one frame slot. The slot is released with the first
+     * of those pages; the rest clear their record entry and nothing else.
+     * Releasing the shared slot once per page is what invoked a null cap on the
+     * second and later pages of every large frame: the first page unmapped and
+     * deleted the cap, so each following page's `unmap` invoked a cap that was
+     * gone. The walk is in address order and a large frame's pages are
+     * consecutive, so the previous released slot is the dedupe key. */
+    seL4_CPtr released_frame = 0;
     for (uintptr_t offset = 0; offset < bytes; offset += kPageBytes) {
         uintptr_t const address = base + offset;
         if (address < g_scratch->base() || address >= g_scratch->limit()) {
@@ -1304,6 +1313,9 @@ long sys_munmap(void *addr, size_t length) noexcept
         }
         seL4_CPtr const frame = chunk->frames[index - chunk->first];
         chunk->frames[index - chunk->first] = 0;
+        if (frame == released_frame) {
+            continue;
+        }
         trace_cap("delete", frame, address);
         g_scratch->unmap(frame);
         seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame,
@@ -1311,6 +1323,7 @@ long sys_munmap(void *addr, size_t length) noexcept
         /* The capability is gone, so the slot is empty and the allocator may
          * hand it out again (specs/userland.md). */
         g_allocator->free_slot(frame);
+        released_frame = frame;
         ++released;
     }
     {
