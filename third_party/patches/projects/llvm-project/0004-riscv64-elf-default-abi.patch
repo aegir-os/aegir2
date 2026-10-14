@@ -1,0 +1,37 @@
+From: Aegir <dev@aegir.invalid>
+Subject: [PATCH] clang: default riscv64-unknown-elf to Aegir's pinned ABI
+
+The build compiles everything with the pinned ABI spelled out
+(`-march=rv64imafdc_zicsr_zifencei -mabi=lp64d`, specs/build.md), so a
+program the on-device `aegir-clang` compiles for `riscv64-unknown-elf`
+with no `-march`/`-mabi` must agree with the build's own objects. Upstream
+defaults a bare-metal riscv64 target to soft-float `rv64imac`/`lp64`, which
+is what made the acceptance's `hello.o` refuse to link against the staged
+`crt0.o` (hard-float `lp64d`).
+
+The ABI default is normally derived from the arch string
+(`getRISCVABI` step 2), so the arch default is the load-bearing change; the
+triple fallback is made explicit for the same reason the build is.
+
+diff --git a/clang/lib/Driver/ToolChains/Arch/RISCV.cpp b/clang/lib/Driver/ToolChains/Arch/RISCV.cpp
+index 6935904a24ed..0e808a3ea763 100644
+--- a/clang/lib/Driver/ToolChains/Arch/RISCV.cpp
++++ b/clang/lib/Driver/ToolChains/Arch/RISCV.cpp
+@@ -240,7 +240,7 @@ StringRef riscv::getRISCVABI(const ArgList &Args, const llvm::Triple &Triple) {
+       return "ilp32d";
+   } else {
+     if (Triple.getOS() == llvm::Triple::UnknownOS)
+-      return "lp64";
++      return "lp64d";
+     else
+       return "lp64d";
+   }
+@@ -342,7 +342,7 @@ std::string riscv::getRISCVArch(const llvm::opt::ArgList &Args,
+       return "rv32imafdc";
+   } else {
+     if (Triple.getOS() == llvm::Triple::UnknownOS)
+-      return "rv64imac";
++      return "rv64imafdc_zicsr_zifencei";
+     else if (Triple.isAndroid())
+       return "rv64imafdcv_zba_zbb_zbs";
+     else
