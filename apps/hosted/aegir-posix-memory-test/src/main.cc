@@ -204,6 +204,67 @@ int main()
             "a block grown under a live file mapping keeps its bytes and the mapping its");
     require(close(interleave_fd) == 0, "close the interleave file");
 
+    /* The linker's *output*: a file mapped PROT_READ|PROT_WRITE, MAP_SHARED, so
+     * the writes are the file's and the release is what carries them back --
+     * LLVM's FileOutputBuffer writes through such a mapping and its commit is an
+     * unmap followed by a rename. Interleaved with the growth, because that is
+     * the mixture a link makes: a writable shared mapping is live while the
+     * linker's own structures grow. The file is created and read back through
+     * the POSIX view, so the bytes proved are a file's on disk, not the
+     * mapping's in memory. */
+    constexpr char const *kShared = "/SCRATCH/MEMORY.SHARED";
+    constexpr size_t kSharedSize = 64u * 1024u;
+    int shared_fd = open(kShared, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    require(shared_fd >= 0, "create the shared file");
+    require(ftruncate(shared_fd, static_cast<off_t>(kSharedSize)) == 0,
+            "size the shared file before mapping it");
+    char *const shared = static_cast<char *>(
+        mmap(nullptr, kSharedSize, PROT_READ | PROT_WRITE, MAP_SHARED, shared_fd, 0));
+    require(shared != MAP_FAILED, "mmap the file writable and shared");
+    unsigned char *under = nullptr;
+    size_t under_length = 0;
+    bool shared_ok = true;
+    for (size_t want = 1024; want <= (2u * 1024u * 1024u); want *= 2) {
+        unsigned char *const moved = static_cast<unsigned char *>(realloc(under, want));
+        if (moved == nullptr ||
+            (under_length != 0 && (moved[0] != 0x5e || moved[under_length - 1] != 0xe5))) {
+            shared_ok = false;
+            break;
+        }
+        for (size_t i = 0; i < want; ++i) {
+            moved[i] = static_cast<unsigned char>(i & 0xff);
+        }
+        moved[0] = 0x5e;
+        moved[want - 1] = 0xe5;
+        under = moved;
+        under_length = want;
+        /* The writable mapping is still ours to write while the block grows. */
+        for (size_t i = 0; i < kSharedSize; ++i) {
+            shared[i] = static_cast<char>('A' + (i % 26));
+        }
+    }
+    require(shared_ok, "a block grown while a writable shared mapping is live");
+    require(munmap(shared, kSharedSize) == 0, "munmap the shared mapping");
+    free(under);
+    require(close(shared_fd) == 0, "close the shared file");
+
+    /* The write-back belongs to the unmap: the file on disk must hold what was
+     * written through the mapping. */
+    shared_fd = open(kShared, O_RDONLY);
+    require(shared_fd >= 0, "reopen the shared file after the release");
+    char back[26];
+    require(pread(shared_fd, back, sizeof(back), 0) == static_cast<ssize_t>(sizeof(back)),
+            "read the shared file back");
+    bool wrote_back = true;
+    for (size_t i = 0; i < sizeof(back); ++i) {
+        if (back[i] != static_cast<char>('A' + (i % 26))) {
+            wrote_back = false;
+        }
+    }
+    require(wrote_back, "a shared mapping's writes reached the file on the release");
+    require(close(shared_fd) == 0, "close after reading the shared file back");
+    require(unlink(kShared) == 0, "unlink the shared file");
+
     printf("AEGIR_POSIX_MEMORY_OK\n");
     (void)fflush(nullptr);
     _exit(0);
