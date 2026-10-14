@@ -1943,10 +1943,6 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    /* Stream reads batch contiguous whole blocks up to the window's capacity
-     * (read_part), so a large file read pays the device's latency once per
-     * window, not once per block. */
-    g_volume.set_max_sectors(window_bytes / kSectorBytes);
     if (g_discard) {
         g_volume.attach_discard(discard_sectors);
     }
