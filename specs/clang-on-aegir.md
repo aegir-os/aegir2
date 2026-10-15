@@ -59,7 +59,7 @@ only, `heap.cc:513`) — and a small tail (signals, threads, process).
 | --- | --- |
 | Goal | On-device native compiler: clang+lld run under Aegir, emit `riscv64` Aegir ELFs |
 | Non-POSIX gap | A POSIX personality behind `__sysinfo`; LLVM unpatched except tracked patches |
-| Target triple | A first-class `riscv64-unknown-aegir-elf` (a tracked clang patch) |
+| Target triple | A first-class `riscv64-unknown-aegir-musl` (a tracked clang patch) |
 | Components | clang + lld + LLVM core, `RISCV` target only; compiler-rt builtins / libc++abi; tooling **last** |
 | Driver model | Stock `clang` and `lld`, each a child process, with `cc` a name for the driver; the driver starts `cc1` and the linker |
 | Process surface | `posix_spawn` + `wait4` over Aegir's spawn (`specs/launch.md`); `fork` explicitly absent |
@@ -105,7 +105,7 @@ Verified in the tree. Each row is a prerequisite arc.
 specs/clang-on-aegir.md                  # this file
 scripts/build_llvm.sh                    # Phase 1: cross-build clang+lld+builtins
 libs/aegir-llvm/imported.cmake           # Phase 1: expose clang/lld to CMake
-third_party/patches/projects/llvm-project/0002-riscv64-aegir-triple.patch  # the one new LLVM patch
+third_party/patches/projects/llvm-project/0006-riscv64-aegir-triple.patch  # the one new LLVM patch
 libs/aegir-posix/                        # Phase 2: the personality (files, mem, env, time)
 libs/hosted/aegir-heap/src/heap.cc       # shrinks: the file handlers move to libs/aegir-posix
 apps/aegir-cc/                           # Phase 3: the sysroot's clang, lld and cc (stock programs)
@@ -554,16 +554,31 @@ milestones must not wait on them.
 ## The target triple
 
 The compiler must identify Aegir as its own target rather than borrow
-`riscv64-unknown-elf`. The decision is a first-class `riscv64-unknown-aegir-elf`,
-carried as a tracked patch
-(`third_party/patches/projects/llvm-project/0002-riscv64-aegir-triple.patch`).
+`riscv64-unknown-elf`. The decision is a first-class
+**`riscv64-unknown-aegir-musl`**, carried as a tracked patch
+(`third_party/patches/projects/llvm-project/0006-riscv64-aegir-triple.patch`).
+
+The spelling is Linux's with `linux`→`aegir`. `riscv64-unknown-linux-musl`
+decomposes as arch/vendor/os/environment, and Aegir takes the **OS** slot the same
+way — that is the slot `isOSBinFormatELF`, the default ABI and the toolchain all
+key on. The vendor stays `unknown`, as it is for Linux: the vendor slot names a
+platform vendor (Apple, PC, SUSE, sifive), and Aegir has none to name. The
+environment is `musl`, the libc a hosted program links; no non-test use of
+`isMusl()` in clang fires for an OS that is not Linux, so the name describes the
+runtime without making clang assume Linux. `-elf` is not a third field to choose:
+it is the *object format*, already ELF for riscv64, and Linux's musl triple for
+the same reason spells none.
+
 The patch has to touch:
 
-- the `Triple` above (arch/vendor/os/environment), so `isOSBinFormatELF`, the
-  default ABI and the object format are right;
-- a Driver toolchain for the triple, so `-march=rv64imafdc_zicsr_zifencei
-  -mabi=lp64d` and (later) the sysroot and the in-process linker are selected by
-  default;
+- the `Triple` — an `OSType::Aegir` beside `Linux`, `Serenity` and `HermitCore`,
+  with its `parseOS`/`getOSTypeName` cases, so `getOS()` is Aegir and
+  `isOSBinFormatELF`, the default ABI and the object format come out right;
+- a Driver toolchain for the triple (`Driver::getToolChain`'s `case
+  Triple::Aegir`), so `-march=rv64imafdc_zicsr_zifencei -mabi=lp64d` and (later)
+  the sysroot and the in-process linker are selected by default. Today an
+  unrecognized `aegir` is `UnknownOS` and reaches the ELF default,
+  `toolchains::Generic_ELF` (`clang/lib/Driver/Driver.cpp`);
 - the compiler-rt builtins directory name, which embeds the triple.
 
 Until the sysroot exists the toolchain is deliberately minimal: no default
@@ -599,9 +614,12 @@ sizes; it does not require them to run.
 
 ## Open, for review
 
-- **The exact triple spelling.** `riscv64-unknown-aegir-elf` is the intended
-  normalization; whether the vendor field should be `unknown` or something
-  Aegir-specific is a detail to fix with the patch.
+- **The exact triple spelling, decided.** `riscv64-unknown-aegir-musl`: vendor
+  `unknown` (as for Linux — the slot names a platform vendor, and Aegir has none
+  to name rather than a vendor we have not chosen), OS `aegir`, environment
+  `musl`. The vendor question this item used to leave open is closed; the OS enum
+  and the toolchain are the patch (above). The hosted tier's *input* triple
+  (below) is a separate spelling.
 - **The hosted tier's build triple.** LLVM's Support library selects its Unix
   implementation by macro and has no generic path (`Unix/Process.inc` `#error`s
   without one). Aegir's hosted C runtime is musl and its syscall ABI is Linux's
