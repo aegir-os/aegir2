@@ -1,156 +1,137 @@
-# Task: finish the acceptance — two remaining bugs (Aegir, /home/rroland/src/aegir2)
+# Task: give Aegir its own triple — `riscv64-unknown-aegir-musl`
+
+Repo: `/home/rroland/src/aegir2` (branch `main`). Make `riscv64-unknown-aegir-musl`
+the **one** triple for the whole system: the compiler's *output* triple and the
+*input* triple every part of the hosted tier is built for. The decision and its
+reasoning are already written down (`specs/clang-on-aegir.md`, "The target
+triple" and "The hosted tier's input triple"); **none of it is implemented yet.**
 
 ## Where the tree is
 
-Run `make build TARGET=aegir-8g-smp4 && make run TARGET=aegir-8g-smp4`. The
-acceptance **boots end to end** now: it reaches `AEGIR-ACCEPTANCE-LINKED` and
-`AEGIR_HELLO_OK` is printed, `23 ready, 0 faulted`. Two bugs remain, both
-described below. Everything landed so far is uncommitted diagnostic work plus
-two real fixes (see "Already landed").
-
-The signatures to reproduce:
-
 ```
-$ make run TARGET=aegir-8g-smp4
-...
-    <<seL4(CPU 0) [decodeInvocation/643 ... "rootserver" @...]: Attempted to invoke a null cap #N.>>   (188 of these)
-    ld.lld: error: SCRATCH:hello.o: cannot link object files with different floating-point ABI from /Sys/Development/Libs/crt0.o
+make build TARGET=aegir-8g-smp4     # BUILD_TIMEOUT=1800
+make run   TARGET=aegir-8g-smp4     # RUN_TIMEOUT=900
 ```
 
-## Already landed (do not redo)
+The acceptance is **green** on `main`: `PASS aegir-8g-smp4 booted
+(AEGIR_BOOT_OK)`, `23 ready, 0 faulted`, **0 seL4 errors**, 0 test failures,
+clean log, no leftover QEMU. `git status` is clean; the last two commits are the
+triple decision (`1d212221`) and the hosted-tier plan (`e2b087ed`). Keep it green
+at every step.
 
-1. **The hosted tier builds `oldmalloc`, not `mallocng`.**
-   `scripts/build_musl.sh` defaults `MALLOC_IMPL="${AEGIR_MUSL_MALLOC:-oldmalloc}"`
-   (`--with-malloc=`). The reason is `specs/mallocng-bug.md`: mallocng faults
-   over `aegir-heap` (a `SmallVector` grown with `size=8192, cap=0`). That is
-   documented and parked. `AEGIR_MUSL_MALLOC=mallocng` rebuilds the vendored
-   default to reproduce it. `specs/cxx.md` records the reversal.
+## The decision (settled — do not relitigate)
 
-2. **The scratch window no longer trusts a computed span.**
-   `libs/freestanding/aegir-mem/src/vspace.cc`:
-   - `Scratch::map` treats the kernel's `seL4_DeleteFirst` ("already mapped") as
-     the occupancy test and **skips** the page (`kMaxWindowSkip` bound) instead
-     of failing. This is `libsel4utils`' rule ("nothing is ever mapped into a
-     non-EMPTY entry", `projects/seL4_libs/libsel4utils/src/vspace/bootstrap.c`)
-     reached without a page-table mirror: the kernel already knows.
-   - `limit_ = base_ + kLargePage`, not `round_up_to_2MiB(base_)`. The old
-     rounding made the initial window `2 MiB - (base_ mod 2 MiB)` — anywhere from
-     one page to 2 MiB — so the initrd (which moves `base_`) could shrink the
-     window to a single page. This was the whole "layout-sensitive" saga.
+`riscv64-unknown-aegir-musl` — Linux's shape with `linux`→`aegir`:
 
-   The remaining, optional half of this (not done): seed a real mirror from the
-   three sources `reserve_initial_task_regions` uses — `[__executable_start,
-   _end)`, the IPC buffer page, and the bootinfo + `extraBIPages` — and place the
-   window only in unmarked space, so it never even *attempts* a reserved page.
-   Today `base_ = max(_end, ipc_end, bootinfo_end)` already sits above all three,
-   so this is belt-and-suspenders rather than a fix; the skip is what makes the
-   window survivable.
+| slot | value | why |
+|---|---|---|
+| arch | `riscv64` | |
+| vendor | `unknown` | Linux uses it too; the slot names a *platform* vendor and Aegir has none |
+| os | `aegir` | the OS slot is what `isOSBinFormatELF`, the default ABI and the ToolChain key on |
+| environment | `musl` | the libc a hosted program links; no non-test `isMusl()` use fires for a non-Linux OS |
 
-## Bug 1 — the console endpoint cap is emptied (188 seL4 errors)
+`-elf` is **not** a field to add — it is the *object format*, already ELF for
+riscv64. Putting `aegir` in the **vendor** slot (`riscv64-aegir-…`) is strictly
+worse: LLVM then inserts `unknown` for the OS, which is the slot that matters.
 
-**Symptom.** 188 `seL4` kernel lines, all `"rootserver"`, all
-`decodeInvocation: Attempted to invoke a null cap #N`, where `N` is a *low* slot
-(this run: a handful of distinct values in the 900s). The faulting user PC
-symbolizes to a **console write**:
+## Current state: three values for one system
 
-```
-aegir::nmspace::pack_string(...)                 nmspace/.../nmspace.h
-aegir::console::stream_write(...)                console/console_stream_client.h
-aegir::heap::trace_phase(char const*)            libs/hosted/aegir-heap/src/heap.cc
-```
+| what | triple | where |
+|---|---|---|
+| the whole Aegir build | `riscv64-unknown-elf` | `configs/riscv64-qemu-virt.cmake`'s `TRIPLE` |
+| musl / libc++ / compiler-rt | `riscv64-unknown-elf` | `scripts/build_musl.sh`, `build_libcxx.sh`, `build_compiler_rt.sh` |
+| LLVM's Support only | `riscv64-unknown-linux-musl` | `scripts/build_llvm.sh`'s `BUILD_TRIPLE` |
+| the guest's compile | `riscv64-unknown-elf` | `scripts/targets.py` acceptance line |
+| **target (this task)** | `riscv64-unknown-aegir-musl` | everywhere |
 
-So the heap is trying to `debug_write` (its own trace output) and the **console
-stream endpoint capability is empty**. Something deleted or emptied a slot the
-process still holds.
+Two values for one system is the hazard: `__linux__` is on for LLVM's translation
+units and off for the apps', so libc++'s inline header code can differ between
+them. `build_llvm.sh`'s Linux-musl is a **labelled crutch**, not a claim that
+Aegir is Linux — it describes the syscall ABI musl's port already speaks.
 
-**What is ruled out.** It is *not* `Scratch`/`free_slot`: a window-slot ownership
-check (`slot_is_ours`) was tried and fired **0 times** (and regressed boot, and
-was reverted). The frame bookkeeping's low-slot trace (`heap: cap-record` /
-`cap-delete` in `libs/hosted/aegir-heap/src/heap.cc`) fired on low slots 39–112
-as `cap-record` but never as `cap-delete`, so `sys_munmap` is not deleting the
-console cap either — at least not in the runs measured.
+## Why this is small (the measurement is already done)
 
-**Next step.** Name the slot and the deleter. The two candidates are
-`seL4_CNode_Delete` in `heap.cc` (three sites: 694/703 are the scratch receive
-slot, 1288 is `sys_munmap`'s frame) and any `free_slot`/`slot_failed` path in
-`aegir-mem`. Add a trace at each `CNode_Delete` naming the slot, run until the
-null cap's number appears, and the deleter names itself. `heap.cc` already has
-the `debug_write` facility; `aegir-mem` now links `aegir-runtime` (see below).
+Fuchsia — a real, non-Unix OS that LLVM supports — is the control:
 
-## Bug 2 — the on-device link fails on the floating-point ABI
+- `llvm/lib/Support/Unix`: **3 files** (`Memory.inc`, `Path.inc`, `Program.inc`)
+- `Triple::Fuchsia`: **5 files** (`llvm/include/llvm/TargetParser/Triple.h`,
+  `llvm/lib/TargetParser/Triple.cpp`, `clang/lib/Basic/Targets.cpp`,
+  `clang/lib/Driver/Driver.cpp`, `clang/lib/Lex/InitHeaderSearch.cpp`)
+- `libcxx/include`: 4 files; `libcxx/src`: 2 files
 
-**Symptom.**
+Total **~30 references across ~15 files**. Aegir's is smaller:
 
-```
-ld.lld: error: SCRATCH:hello.o: cannot link object files with different
-floating-point ABI from /Sys/Development/Libs/crt0.o
-```
+- **musl has zero `__linux__`** — its port is the three tracked patches routing
+  every syscall through `__sysinfo` (`projects/musl/arch/riscv64/syscall_arch.h`).
+- `0005-getMainExecutable-argv0.patch` already fixes `Unix/Path.inc`'s one `#error`.
+- `LLVM_ENABLE_THREADS=OFF` keeps `Unix/Threading.inc`'s nine branches out.
+- The remaining hard `#error` (`Unix/Process.inc`'s page size) is a **configure**
+  value (`HAVE_GETPAGESIZE`), not an OS branch.
 
-The guest's `aegir-clang` (`apps/hosted/aegir-clang`) compiles
-`Sys:Development/hello.c` to `SCRATCH:hello.o` with soft-float (`lp64`), while
-the staged `crt0.o` (from `aegir-crt0`) is hard-float (`lp64d`, Aegir's pinned
-ABI — `specs/build.md` says rv64imafdc/lp64d).
+## The plan — land each step as its own commit, re-run green each time
 
-**Confirmed by reproduction.** On the host, `clang --target=riscv64-unknown-elf
--c hello.c` (no `-mabi`) produces the same mismatch, and adding `-mabi=lp64d`
-makes it link. So the fix is that the **driver default must be the Aegir ABI**
-(`-march=rv64imafdc_zicsr_zifencei -mabi=lp64d`), the way the build's own
-`CFLAGS` set it.
+1. **The OS enum.** `OSType::Aegir` in `llvm/include/llvm/TargetParser/Triple.h`
+   plus its `parseOS`/`getOSTypeName` cases in `llvm/lib/TargetParser/Triple.cpp`
+   (beside `Linux`, `Serenity`, `HermitCore`). As a new tracked patch
+   `third_party/patches/projects/llvm-project/0006-riscv64-aegir-triple.patch`
+   (apply it, then `make deps-check` / `scripts/check_pins.py` must pass).
+2. **The ToolChain.** `case Triple::Aegir` in `clang/lib/Driver/Driver.cpp`, with
+   the TargetInfo and the **default include search** beside it
+   (`clang/lib/Basic/Targets.cpp`, `clang/lib/Lex/InitHeaderSearch.cpp`) — the
+   latter is where `specs/development.md`'s `Sys:Development/Include` default
+   belongs. Today `aegir` is `UnknownOS` and reaches `toolchains::Generic_ELF`.
+3. **The Unix layer.** The `Unix/Process.inc` page-size `#error` (answer it with
+   `HAVE_GETPAGESIZE` in the configure), and any `Unix/*.inc` branch whose generic
+   `#else` path is actually wrong for Aegir. Expect this to be a handful.
+4. **The build triples.** `configs/riscv64-qemu-virt.cmake`'s `TRIPLE` and the
+   `riscv64-unknown-elf` in `build_musl.sh` / `build_libcxx.sh` /
+   `build_compiler_rt.sh` → `riscv64-unknown-aegir-musl`.
+5. **libc++.** Promote `_LIBCPP_AEGIR` (today a build flag;
+   `0002-aegir-path-grammar.patch` turns it on) to the `__aegir__` trigger, so the
+   path grammar and the platform config follow the triple rather than a `-D`.
+6. **The acceptance.** `scripts/targets.py`'s compile line `--target=…` →
+   `riscv64-unknown-aegir-musl`, and verify on the guest.
 
-The acceptance's compile step is in `scripts/targets.py:2010`:
-`cc -v -ccc-install-dir Sys:Development/C --target=riscv64-unknown-elf -c
-Sys:Development/hello.c -o SCRATCH:hello.o` — the driver is `aegir-clang`,
-deployed as `cc`/`clang`. Either the driver must inject the ABI, or the
-acceptance's compile line must carry it; prefer the driver (the spec says the
-device compile and the build's compile must agree).
+## Constraints (AGENTS.md, enforced by the user)
 
-**Note.** This error is only visible now because it used to be masked: with
-mallocng, `ld.lld` faulted during parsing before it ever reached the ABI check.
+- **Never edit vendored trees in place.** Patches under
+  `third_party/patches/<project>/` are the source of truth; `apply_patches.py`
+  and `scripts/check_pins.py` must pass.
+- **No arbitrary or hardcoded limits**; capacity grows on demand.
+- **No seL4 errors or warnings** in the log.
+- **No flakes** — a broken run is a broken run; re-run to confirm.
+- `make`/`make run` under `timeout`; afterwards
+  `ps -eo args | grep '[q]emu-system'` must be empty.
+- **STOP and ask for clarification**; never unilaterally change the plan.
+- Run logs contain NUL bytes — use `grep -a`.
 
-## Constraints (from AGENTS.md and this arc)
+## Watch out for
 
-- **Never patch the seL4 kernel.** The elfloader (`tools/seL4/elfloader-tool`)
-  is the sanctioned patch point (`third_party/patches/tools/seL4/`).
-- **Patches under `third_party/patches/<project>/` are the source of truth**;
-  never edit vendored trees in place.
-- **No arbitrary or hardcoded limits; capacity grows on demand.**
-- **No seL4 errors or warnings** — 188 is a failure, not a warning.
-- **No flakes:** a broken run is a broken run. Runs are deterministic per build
-  (three identical runs gave 204/204/204 earlier), but *any* change to a binary's
-  size can move an address and flip an outcome — argue from invariants, not from
-  one green run.
-- Long runs use `timeout`; afterwards `ps -eo args | grep '[q]emu-system'` must
-  be empty.
+- **LLVM rebuilds are expensive.** `scripts/build_llvm.sh` skips if
+  `out/runtime/llvm-install` exists; `rm -rf out/runtime/llvm-install` to force
+  one after an LLVM patch lands, or the run will use stale libraries (this bit
+  the last session — `AEGIR-SVV` survived a reverted patch until the rebuild).
+- The diagnostic baseline is **0 `AEGIR-SVV`, 0 trace prints**. Keep it.
+- The user is comfortable carrying out-of-tree patches (LLVM is vendored, pinned
+  at 20.1.8, and updates are rare) — so prefer the honest triple over an in-tree
+  lie, and record each patch in `specs/third_party.md`'s upgrade list.
 
-## Diagnostics in the tree (strip when both bugs are fixed)
+## Read first
 
-These are all "AEGIR PROBE"/"TEMP" instrumentation, deliberately left in:
+- `specs/clang-on-aegir.md` — "The target triple" and "The hosted tier's input
+  triple" (the decision, the measurement, the file list)
+- `specs/development.md` — the `Sys:Development` tree; note `Include` is staged
+  empty today (`run_target.py`'s `development_tree`), and the sysroot's headers
+  are the piece *after* this one
+- `specs/build.md` — the pinned ABI (`rv64imafdc_zicsr_zifencei` / `lp64d`)
+- `specs/third_party.md` — the patch and upgrade rules
+- `AGENTS.md`
 
-- `libs/freestanding/aegir-mem/src/allocator.cc` + `include/aegir/mem/allocator.h`:
-  `cap_live`, `slot_was_freed`, `retype_source_live` guards on the four node-cap
-  retype sites (`refill_inner`, `alloc_object`, `alloc_pages_run`,
-  `alloc_cnode_at_l1`). These cut seL4 errors **5617 → 204**; they *refuse* a
-  retype from a freed node cap instead of invoking the kernel. The root cause
-  (a live piece whose cap was already given back) is **not** fixed.
-- `libs/freestanding/aegir-mem/src/vspace.cc`: `window: init`, `map ok`,
-  `map_at`, `map_large`, `skip occupied`, `map failed` prints.
-- `libs/freestanding/aegir-spawn/src/process.cc`: `spawn: block_at` /
-  `block failed` prints.
-- `libs/hosted/aegir-heap/src/heap.cc`: `cap-record`/`cap-delete` prints.
-- `third_party/patches/projects/llvm-project/0003-smallvector-grow-probe.patch`:
-  the `AEGIR-SVV grow` probe in `SmallVector::grow_pod` (referenced by
-  `specs/mallocng-bug.md`).
-- The `aegir-runtime` link added to `libs/freestanding/aegir-mem/CMakeLists.txt`
-  and `libs/freestanding/aegir-spawn/CMakeLists.txt` is only there so those
-  libraries can `debug_write`; drop it with the prints.
+## Related, not this task
 
-## Orientation
-
-- Build/run: `make build TARGET=aegir-8g-smp4` / `make run TARGET=aegir-8g-smp4`
-  (`BUILD_TIMEOUT=1800`, `RUN_TIMEOUT=900`). Run logs contain NUL bytes — use
-  `grep -a`.
-- The acceptance's link command is generated in `scripts/run_target.py:821`
-  (`SUBSTITUTIONS["link"]`), staged under `out/aegir-8g-smp4/development/Libs/`.
-- Specs: `specs/cxx.md` (the hosted C/C++ runtime and allocator choice),
-  `specs/mallocng-bug.md` (the parked mallocng fault),
-  `specs/userland.md` (why not `libsel4utils`), `specs/memory.md` (heap).
+`Sys:Development/Include` is created but empty — `scripts/sysroot-hello.c`
+declares `write` instead of including `<unistd.h>` for exactly that reason. The
+headers exist in the runtime (`out/runtime/musl-install/include`,
+`out/runtime/cxx-install/include/c++/v1`); staging them and putting them on the
+search path (`-isystem`, `--sysroot`, or the ToolChain default from step 2) is
+the natural follow-on once the triple is real.
