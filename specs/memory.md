@@ -497,6 +497,33 @@ had never used, so a reader that knows only `cnode_bits` is undisturbed.
 `l2 = 12`. A class is released when its open closes, so a viewer's classes give
 their slots back (`specs/datatypes.md`'s phase 2f).
 
+### A piece's cap must outlive the piece (open)
+
+A piece's node cap has to outlive the piece. `free_piece` gives the cap back
+(`CNode_Delete`, then `free_slot`), and a split retypes a child from the
+parent's cap. The invariant is that a cap on the freed-slot list is never
+retyped from -- but the allocator has been seen to violate it: a *live* piece
+whose cap had already been given back, handed out again and retyped from.
+
+The kernel does not catch it. Retyping from a cap whose slot now holds a
+*different* cap is not an error -- the retype succeeds, on the wrong object --
+so the corruption is silent and surfaces later as a wedge. Measured: removing
+the guards below hung the DOS `wait` command with **zero** seL4 errors.
+
+Two guards in `libs/freestanding/aegir-mem` refuse the operation instead of
+asking the kernel, and are load-bearing until the root cause is fixed:
+
+- `cap_live`, a per-node flag: set when a piece gets its cap (`add_untyped`, and
+  both halves of a split), cleared when the cap is given back (`free_piece`).
+- `retype_source_live`/`slot_was_freed`: before a retype (`alloc_object`,
+  `alloc_pages_run`, `alloc_cnode_at_l1`) or a split (`refill_inner`), refuse a
+  piece whose cap is on the freed-slot list.
+
+**Open:** *why* a live piece's cap is on the freed list. `free_slot` is called
+by `free_piece` (the cap really is back), by `slot_failed` (a refused retype),
+and by `sys_munmap` (a frame's slot); the question is which of those returns --
+or collides with -- a slot a live piece still names.
+
 ## The record: what was handed out, and nothing else
 
 Every memory failure this arc had one shape: something was released, or handed out,
