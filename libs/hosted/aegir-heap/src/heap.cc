@@ -120,8 +120,7 @@ namespace aegir::heap {
  * landed in. */
 namespace files = aegir::posix::files;
 
-/* The phase log, to the console stream a run reads (defined beside
- * `trace_syscall` below, where that stream is in scope). It is declared here,
+/* The phase log, to the console stream a run reads. It is declared here,
  * above the anonymous namespace, because the mapping helpers *inside* that
  * namespace (`map_page`, `map_large_page`) are the ones that report which step
  * a stall happened at -- and a declaration placed in there would name a
@@ -959,8 +958,8 @@ long sys_brk(uintptr_t new_break) noexcept
     return static_cast<long>(brk_);
 }
 
-/* A phase of the dispatcher's own work, to the log the run reads (defined beside
- * `trace_syscall` below, where the console stream is in scope). `trace()` writes
+/* A phase of the dispatcher's own work, to the console stream a run reads.
+ * `trace()` writes
  * the debug serial instead, which a run's log never sees, and it marks only the
  * *ends* of a mapping -- so a program stuck inside one leaves nothing at all.
  * That is how a stall in `mmap` stayed invisible. */
@@ -1358,98 +1357,6 @@ aegir::ipc::Consumer &console_stream() noexcept
     return const_cast<aegir::ipc::Consumer &>(stream);
 }
 
-/* The file-surface calls, and only those: what a compiler or a linker is doing
- * shows here -- which file it opened, what it read, what it wrote -- while the
- * memory, synchronisation and socket calls a service spends its idle time in
- * would bury that, and the console is the slowest thing a program writes to.
- * `nullptr` means the trace does not follow that call. The numbers are the
- * dispatcher's own cases below. */
-char const *syscall_name(long number) noexcept
-{
-    switch (number) {
-    case 56: return "openat";
-    case 57: return "close";
-    case 61: return "getdents64";
-    case 62: return "lseek";
-    case 63: return "read";
-    case 64: return "write";
-    case 65: return "readv";
-    case 66: return "writev";
-    case 67: return "pread64";
-    case 68: return "pwrite64";
-    case 71: return "sendfile";
-    case 79: return "newfstatat";
-    case 80: return "fstat";
-    case 291: return "statx";
-    case 48: return "faccessat";
-    case 17: return "getcwd";
-    case 49: return "chdir";
-    case 25: return "fcntl";
-    case 34: return "mkdirat";
-    case 35: return "unlinkat";
-    case 45: return "truncate";
-    case 46: return "ftruncate";
-    case 276: return "renameat2";
-    case 52: return "fchmod";
-    case 53: return "fchmodat";
-    case 5: return "setxattr";
-    case 6: return "lsetxattr";
-    case 7: return "fsetxattr";
-    case 8: return "getxattr";
-    case 9: return "lgetxattr";
-    case 10: return "fgetxattr";
-    case 11: return "listxattr";
-    case 12: return "llistxattr";
-    case 13: return "flistxattr";
-    case 14: return "removexattr";
-    case 15: return "lremovexattr";
-    case 16: return "fremovexattr";
-    /* The memory calls too, and they are here because they are where a linker
-     * was found to stop: after `fstat` of `Sys:Development/Libs/sysroot.a`, lld
-     * makes no further file call at all -- no read, no pread64, no close -- and
-     * the log carries only memory allocations from then on (/tmp/devV.log). So
-     * the call it is inside is one of these, and a trace that skipped them named
-     * everything except the answer. */
-    case 222: return "mmap";
-    case 214: return "brk";
-    case 215: return "munmap";
-    case 216: return "mremap";
-    case 226: return "mprotect";
-    case 233: return "madvise";
-    default: return nullptr;
-    }
-}
-
-void trace_syscall(long number) noexcept
-{
-    char const *name = syscall_name(number);
-    if (name == nullptr) {
-        /* Nothing to say about this call: the memory, synchronisation and socket
-         * calls a service spends its idle time in. Tracing those would bury the
-         * file traffic that says what a compiler or a linker is doing, and the
-         * console is the slowest thing a program writes to. */
-        return;
-    }
-    char line[64];
-    uint32_t length = 0;
-    for (char const *p = "  heap: "; *p != '\0'; ++p) {
-        line[length++] = *p;
-    }
-    for (char const *p = name; *p != '\0' && length + 1 < sizeof(line); ++p) {
-        line[length++] = *p;
-    }
-    line[length++] = '\n';
-
-    aegir::ipc::Consumer &stream = console_stream();
-    if (stream.valid()) {
-        aegir::console::stream_write(stream, line, length);
-        return;
-    }
-    for (uint32_t i = 0; i < length; ++i) {
-        seL4_DebugPutChar(line[i]);
-    }
-}
-
 void trace_phase(char const *phase) noexcept
 {
     char line[64];
@@ -1802,34 +1709,6 @@ long sys_readv(int fd, void const *iov, int count) noexcept
     return total;
 }
 
-/* The syscall number, straight to the serial rather than through the console
- * stream. Every heap trace is an IPC to the console, so the call a wedged run
- * is *in* can be the one whose trace write never returns -- and then the log's
- * silence names nothing. This writes the number before anything that can
- * block, so the last line of a dead run is the call that died in. One line per
- * syscall: the volume is real, and the last line is the only one that matters.
- * Temporary diagnosis, like the `mmap`/`done mmap` pair it backs up. */
-void serial_number(char tag, long number) noexcept
-{
-    char line[24];
-    uint32_t length = 0;
-    line[length++] = tag;
-    uint64_t value = number < 0 ? 0 : static_cast<uint64_t>(number);
-    char digits[20];
-    uint32_t count = 0;
-    do {
-        digits[count++] = static_cast<char>('0' + value % 10);
-        value /= 10;
-    } while (value != 0);
-    while (count > 0) {
-        line[length++] = digits[--count];
-    }
-    line[length++] = '\n';
-    for (uint32_t i = 0; i < length; ++i) {
-        seL4_DebugPutChar(line[i]);
-    }
-}
-
 /* The dispatcher: musl's syscall table, one switch. The va_arg reads are the
  * Linux ABI's argument order for each call (projects/musl/arch/riscv64/bits/
  * syscall.h.in has the numbers). */
@@ -1837,22 +1716,6 @@ long vsyscall(long sysnum, ...) noexcept
 {
     va_list ap;
     va_start(ap, sysnum);
-    serial_number('S', sysnum);
-    trace_syscall(sysnum);
-    /* The name table leaves the synchronisation and sleep calls silent on
-     * purpose -- they are what a service spends its idle time in
-     * (trace_syscall's own comment) -- but a program that *wedges* wedges in one
-     * of them, and then a run cannot say which call it is in: `ld.lld` stops
-     * after an `mmap` with the machine idle and nothing after it. These few
-     * numbers (futex 98, sched_yield 124, nanosleep 101, clone 220, wait4 260)
-     * are named for that, because a wedge is otherwise an absence, and an
-     * absence is not attributable. */
-    if (sysnum == 98 || sysnum == 124 || sysnum == 101 || sysnum == 220 ||
-        sysnum == 260) {
-        aegir::debug_write("      heap: sync ");
-        aegir::debug_write_unsigned(static_cast<uint64_t>(sysnum));
-        aegir::debug_write("\n");
-    }
     long ret = -ENOSYS;
     switch (sysnum) {
     case 214: /* SYS_brk */
@@ -2176,25 +2039,6 @@ long vsyscall(long sysnum, ...) noexcept
         break;
     }
     va_end(ap);
-    /* The exit side of the trace. In one line: a program that stops after
-     * `heap: mmap` cannot be told from one inside that call, because the trace
-     * names every call on its way in and nothing on its way out -- and a wedge
-     * is a call that never returns, which is an absence, and an absence is not
-     * attributable. `trace_syscall` names the call at the entry; this names it at
-     * the exit, and together they say which call the program is *in*. The direct
-     * serial `R` is the same exit mark off the console path, so an `S` with no
-     * `R` is the wedge and an `S`/`R` pair with silence after it is a wedge
-     * *after* the call. */
-    serial_number('R', sysnum);
-    if (char const *const done = syscall_name(sysnum)) {
-        aegir::debug_write("      heap: done ");
-        aegir::debug_write(done);
-        aegir::debug_write("\n");
-    }
-    /* The last mark, after the console write has returned: an `R` with no `X` is
-     * the console IPC the call died in, and an `X` with silence after it is the
-     * process blocked *after* the dispatcher -- in user code or on a fault. */
-    serial_number('X', sysnum);
     return ret;
 }
 
