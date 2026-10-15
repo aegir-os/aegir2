@@ -1,0 +1,53 @@
+From: Aegir <dev@aegir.invalid>
+Subject: [PATCH] llvm: getMainExecutable answers argv[0] on Aegir
+
+clang re-executes itself to run cc1, and takes its own path from
+`getMainExecutable`. On Aegir there is no /proc to read and no dynamic loader
+worth asking -- the cross build defines HAVE_DLOPEN, but dladdr answers a name
+`realpath` then rejects, and there is no getprogpath -- so every path in that
+function ends in "". An empty answer makes the driver fork "" and exit 0
+having written no object, saying nothing (specs/development.md's Phase 3;
+specs/clang-on-aegir.md).
+
+The name the launcher started the program with is the one answer available, so
+return it up front and again where `dladdr` fails. aegir-clang's main seeds
+LLVM's cached answer from its own argv[0] too, but this is the function every
+caller reaches.
+
+diff --git a/llvm/lib/Support/Unix/Path.inc b/llvm/lib/Support/Unix/Path.inc
+index 6004e007c0c7..041c074a07d8 100644
+--- a/llvm/lib/Support/Unix/Path.inc
++++ b/llvm/lib/Support/Unix/Path.inc
+@@ -186,6 +186,14 @@ static char *getprogpath(char ret[PATH_MAX], const char *bin) {
+ /// GetMainExecutable - Return the path to the main executable, given the
+ /// value of argv[0] from program startup.
+ std::string getMainExecutable(const char *argv0, void *MainAddr) {
++  // Aegir: the name the launcher started this program with is the only answer available here.
++  // There is no /proc to read, no dynamic loader worth asking (the cross build defines
++  // HAVE_DLOPEN, but dladdr answers a name that realpath then rejects), and no getprogpath --
++  // so every path below ends in "" and this function is asked for clang's own path whenever the
++  // driver re-executes itself to run cc1. An empty answer makes the driver fork "" and exit 0
++  // having written no object (specs/development.md; specs/clang-on-aegir.md's Phase 3).
++  if (argv0 != nullptr && *argv0 != '\0')
++    return std::string(argv0);
+ #if defined(__APPLE__)
+   // On OS X the executable path is saved to the stack by dyld. Reading it
+   // from there is much faster than calling dladdr, especially for large
+@@ -321,8 +329,16 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
+   // Use dladdr to get executable path if available.
+   Dl_info DLInfo;
+   int err = dladdr(MainAddr, &DLInfo);
+-  if (err == 0)
++  if (err == 0) {
++    // Aegir: the cross build defines HAVE_DLOPEN, but there is no dynamic loader to ask and no
++    // /proc to read, so dladdr answers nothing and the one path available is the name the
++    // launcher started this program with. clang re-executes itself to run cc1 and takes that
++    // path from here: an empty answer makes the driver fork "" -- it exits 0 having written no
++    // object and says nothing (specs/development.md; specs/clang-on-aegir.md's Phase 3).
++    if (argv0 != nullptr && *argv0 != '\0')
++      return std::string(argv0);
+     return "";
++  }
+ 
+   // If the filename is a symlink, we need to resolve and return the location of
+   // the actual executable.

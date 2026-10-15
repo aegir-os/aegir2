@@ -269,10 +269,10 @@ guest's own answer changed:
 one step from working rather than failing at the first hurdle.
 
 Two things follow for anyone picking this up. The patch is in
-`projects/llvm-project/llvm/lib/Support/Unix/Path.inc` **in the extracted tree only** — until it
-travels as a *tracked* patch (which the header says `make deps` applies), a fresh extraction loses
-it. And a build that finds the libraries present will keep the old behaviour, so `libclang.a` is the
-file to remove to make LLVM compile again.
+`projects/llvm-project/llvm/lib/Support/Unix/Path.inc`, now carried as a tracked patch
+(`third_party/patches/projects/llvm-project/0005-getMainExecutable-argv0.patch`, which `make deps`
+applies), so a fresh extraction keeps it. And a build that finds the libraries present will keep the
+old behaviour, so `libclang.a` is the file to remove to make LLVM compile again.
 
 **First piece done: the copy path's frames are mega pages.** The frame loop a `copy` runs
 through (`libs/aegir-posix/src/files.cc`) moved data a 4 KiB page per `read_frame` call;
