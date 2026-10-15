@@ -7,7 +7,6 @@
 
 #include <aegir/mem/vspace.h>
 
-#include <aegir/debug.h>
 #include <aegir/mem/allocator.h>
 
 /* The end of our image, from the linker script the build already uses. It is

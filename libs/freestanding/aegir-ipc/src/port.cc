@@ -103,48 +103,6 @@ WordsReply Consumer::call_transfer(uint32_t method, uint64_t const *out,
     if (out_count > kMaxWords || in_capacity > kMaxWords) {
         return reply;
     }
-    /* The caller's half of the wait pair, printed *before* the payload window
-     * opens. The window is this function's first `seL4_SetMR(kMethodMr, ...)`
-     * through its `seL4_Call`, and a print inside it -- which is what the first
-     * version of this did, right after `set_receive_path()` -- sends the log
-     * message instead of the caller's: 10 583 `vfs: ...: no such volume` lines in
-     * a 29-second run, from a probe. So: before the first `SetMR`, never after it.
-     *
-     * Guarded, because the print is itself a port call that comes back through
-     * here: a console call made by this line would print again, and that print
-     * again. `probing` is the allocator's `growing_` shape -- the caller of a print
-     * is the one that prints. The window key is the (caller, method) pair, so an
-     * idling client is a couple of lines and a new request is news; the last
-     * `ipc: call` with no `ipc: recv` behind it is the request that never came
-     * back, and its badge is the process that stopped. */
-    constexpr uint32_t kWindow = 8;
-    static uint64_t seen_from[kWindow] = {};
-    static uint32_t seen_method[kWindow] = {};
-    static uint32_t seen_next = 0;
-    static bool probing = false;
-    if (!probing) {
-        uint64_t who = 0;
-        static_cast<void>(bootstrap::badge(&who));
-        bool known = false;
-        for (uint32_t i = 0; i < kWindow; ++i) {
-            if (seen_from[i] == who && seen_method[i] == method) {
-                known = true;
-                break;
-            }
-        }
-        if (!known) {
-            seen_from[seen_next] = who;
-            seen_method[seen_next] = method == 0 ? 1 : method;
-            seen_next = (seen_next + 1) % kWindow;
-            probing = true;
-            aegir::debug_write("      ipc: call ");
-            aegir::debug_write_unsigned(method);
-            aegir::debug_write(" from ");
-            aegir::debug_write_unsigned(who);
-            aegir::debug_write("\n");
-            probing = false;
-        }
-    }
     seL4_SetMR(kMethodMr, method);
     for (uint32_t i = 0; i < out_count; ++i) {
         seL4_SetMR(kWordMr + i, out[i]);
@@ -207,34 +165,6 @@ Owner Owner::find(char const *name, uint32_t length) noexcept
 uint32_t Owner::receive(uint64_t *word, seL4_Word *badge) noexcept
 {
     seL4_Word sender = 0;
-    /* A wait *and* its return, because one without the other is the difference
-     * between a service doing its job and a service that has stopped. Measured
-     * both ways: a bare entry print made the logger -- which waits between every
-     * record -- the busiest line in the log and told us nothing about who was
-     * stuck; and the run ends with the console frozen and host CPU at zero, which
-     * a *returning* waiter never causes. So the last line of a dead run has to be
-     * an unmatched `wait`, and the culprit is whoever owns it. Only the first
-     * sight of each (event, owner, method) triple prints, so an idling service is
-     * one line and a new waiter is news -- the same window as the caller probe. */
-    constexpr uint32_t kWindow = 8;
-    static uint64_t seen_owner[kWindow] = {};
-    static uint32_t seen_next = 0;
-    uint64_t owner = 0;
-    static_cast<void>(bootstrap::badge(&owner));
-    bool known = false;
-    for (uint32_t i = 0; i < kWindow; ++i) {
-        if (seen_owner[i] == owner) {
-            known = true;
-            break;
-        }
-    }
-    if (!known) {
-        seen_owner[seen_next] = owner == 0 ? 1 : owner;
-        seen_next = (seen_next + 1) % kWindow;
-        aegir::debug_write("      ipc: wait at ");
-        aegir::debug_write_unsigned(owner);
-        aegir::debug_write("\n");
-    }
     seL4_MessageInfo_t const info = seL4_Recv(capability_, &sender);
     if (badge != nullptr) {
         *badge = sender;
@@ -267,43 +197,6 @@ uint32_t Owner::receive_words(uint64_t *words, uint32_t capacity, uint32_t *coun
         *count = arrived;
     }
     uint32_t const method = length > kMethodMr ? seL4_GetMR(kMethodMr) : 0;
-    /* Which caller-and-method pairs this service has already said out loud -- a
-     * *window*, not one remembered pair and not the whole history. Both of those
-     * failed measurably: a print per call buried the console (2.6 M lines, and
-     * the guest stopped reaching the link), and a single remembered pair hid the
-     * linker entirely -- all 31 of its asks to `mem.main` were consecutive, so
-     * only the first was "a change". The window's size decides only how much
-     * *repetition* is suppressed: the first sight of any pair always prints, so a
-     * caller that repeats after other traffic re-enters it and is seen. Only a
-     * user badge's calls, because a service's own chatter is not what a stuck
-     * acceptance is about. */
-    constexpr uint32_t kWindow = 8;
-    static uint64_t seen_from[kWindow] = {};
-    static uint32_t seen_method[kWindow] = {};
-    static uint32_t seen_next = 0;
-    if (aegir::ipc::is_user_badge(sender)) {
-        bool known = false;
-        for (uint32_t i = 0; i < kWindow; ++i) {
-            if (seen_from[i] == sender && seen_method[i] == method) {
-                known = true;
-                break;
-            }
-        }
-        if (!known) {
-            seen_from[seen_next] = sender;
-            seen_method[seen_next] = method;
-            seen_next = (seen_next + 1) % kWindow;
-            uint64_t owner = 0;
-            static_cast<void>(bootstrap::badge(&owner));
-            aegir::debug_write("      ipc: recv method ");
-            aegir::debug_write_unsigned(method);
-            aegir::debug_write(" at ");
-            aegir::debug_write_unsigned(owner);
-            aegir::debug_write(" from ");
-            aegir::debug_write_unsigned(sender);
-            aegir::debug_write("\n");
-        }
-    }
     return method;
 }
 

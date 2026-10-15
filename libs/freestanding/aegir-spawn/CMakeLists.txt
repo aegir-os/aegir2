@@ -17,5 +17,5 @@ target_include_directories(aegir-spawn PUBLIC include)
 # reimplement, but where it sits and what its flat names mean are (specs/services.md).
 target_link_libraries(
   aegir-spawn PUBLIC aegir-cxx-policy aegir-bootstrap aegir-mem sel4 sel4runtime aegir-c-headers
-  cpio aegir-runtime
+  cpio
 )

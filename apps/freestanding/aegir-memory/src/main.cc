@@ -45,24 +45,6 @@ void write_word(uint64_t value) noexcept
     aegir::debug_write_unsigned(value);
 }
 
-/* A trace of the pool's pieces, for the "0 bytes available" hunt: only the
- * chunks' sizes (>= 20 bits), so a chunk that appears spent stands out. */
-void memory_trace(void *context, char const *event, unsigned size_bits,
-                  uint64_t physical, bool split_child, seL4_CPtr cap) noexcept
-{
-    static_cast<void>(context);
-    static_cast<void>(physical);
-    static_cast<void>(cap);
-    if (size_bits < 20) {
-        return;
-    }
-    write("  memory: mem ");
-    write(event);
-    write(" bits ");
-    write_word(size_bits);
-    write(split_child ? " split\n" : " root\n");
-}
-
 uint32_t field_length(char const *field, uint32_t bound) noexcept
 {
     uint32_t length = 0;
@@ -388,15 +370,6 @@ void answer_alloc(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count
      * chunk and is asked for their address has no invocation to read it from, so
      * the service says (specs/memory.md). */
     uint64_t answer[2] = {wanted_bits, physical};
-    /* The caller's badge rides the line: a transfer that never completes leaves
-     * a run's log with the asker's own name on it, which is how a process
-     * blocked in a call is told from one blocked somewhere else, and two
-     * programs with one image are told apart (specs/memory.md's markers). */
-    write("  memory: replied a chunk of ");
-    write_word(wanted_bits);
-    write(" bits to ");
-    write_word(badge);
-    write("\n");
     port.reply_cap(answer, 2, chunk);
 }
 
@@ -462,10 +435,6 @@ int main(int argc, char *argv[])
         seL4_Signal(aegir::bootstrap::kSlotSupervision);
         aegir::halt();
     }
-    /* Trace the pool's chunks while the "0 bytes available" hunt is on
-     * (specs/memory.md). */
-    g_pool.set_trace(memory_trace, nullptr);
-
     /* The window this service reads its configuration through: the service was
      * given its own VSpace and a window of free addresses (maps), and the
      * arena that holds the parsed database and limits maps pages from there. */

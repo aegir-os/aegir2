@@ -19,5 +19,4 @@ target_include_directories(aegir-mem PUBLIC include)
 # sel4_autoconf PUBLIC), which is where the untyped-capacity constant and the
 # object types come from. muslc supplies <stdint.h> and memcpy/memset: user code
 # is compiled -nostdinc, so C headers have to come from a link (specs/build.md).
-target_link_libraries(aegir-mem PUBLIC aegir-cxx-policy sel4 sel4runtime aegir-c-headers
-                                    aegir-runtime)
+target_link_libraries(aegir-mem PUBLIC aegir-cxx-policy sel4 sel4runtime aegir-c-headers)

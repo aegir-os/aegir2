@@ -1167,11 +1167,9 @@ uint64_t write_bytes(Handle *handle, uint8_t const *data, uint64_t bytes) noexce
 {
     uint64_t written = 0;
     uint32_t const cluster_bytes = g_volume.sectors_per_cluster * kSectorBytes;
-    char const *why = nullptr;
     while (written < bytes) {
         uint32_t const cluster = chain_seek(handle);
         if (cluster == 0) {
-            why = "chain-seek";
             break;
         }
         uint64_t const in_cluster = handle->cursor % cluster_bytes;
@@ -1186,14 +1184,12 @@ uint64_t write_bytes(Handle *handle, uint8_t const *data, uint64_t bytes) noexce
              * cursor is sector-aligned after it, so the next pass batches. */
             uint32_t const head = span < kSectorBytes - at ? span : kSectorBytes - at;
             if (!read(lba, 1)) {
-                why = "read";
                 break;
             }
             for (uint32_t i = 0; i < head; ++i) {
                 g_window[at + i] = data[written + i];
             }
             if (!write_back(lba, 1)) {
-                why = "write-back";
                 break;
             }
             written += head;
@@ -1210,7 +1206,6 @@ uint64_t write_bytes(Handle *handle, uint8_t const *data, uint64_t bytes) noexce
                 g_window[i] = data[written + i];
             }
             if (!write_back(lba, sectors)) {
-                why = "write-back";
                 break;
             }
             written += sectors * kSectorBytes;
@@ -1218,35 +1213,17 @@ uint64_t write_bytes(Handle *handle, uint8_t const *data, uint64_t bytes) noexce
         }
         if (tail != 0) {
             if (!read(lba + sectors, 1)) {
-                why = "read";
                 break;
             }
             for (uint32_t i = 0; i < tail; ++i) {
                 g_window[i] = data[written + i];
             }
             if (!write_back(lba + sectors, 1)) {
-                why = "write-back";
                 break;
             }
             written += tail;
             handle->cursor += tail;
         }
-    }
-    if (why != nullptr) {
-        /* AEGIR PROBE: a short write is the livelock's fuel -- the caller
-         * retries what did not land, so this names which step refused and the
-         * cursor it stopped at. */
-        aegir::debug_write("      fat: wb ");
-        aegir::debug_write(why);
-        aegir::debug_write(" cursor ");
-        aegir::debug_write_unsigned(handle->cursor);
-        aegir::debug_write(" want ");
-        aegir::debug_write_unsigned(bytes);
-        aegir::debug_write(" wrote ");
-        aegir::debug_write_unsigned(written);
-        aegir::debug_write(" first ");
-        aegir::debug_write_unsigned(handle->first_cluster);
-        aegir::debug_write("\n");
     }
     /* The dirent learns the size and the first cluster on every write: a
      * crash then never shows a size the chain does not back. */
@@ -1330,18 +1307,6 @@ void answer_write_frame(aegir::ipc::Owner &port, uint64_t const *words, uint32_t
     written = write_bytes(handle,
                           reinterpret_cast<uint8_t const *>(g_map_base) + frame_offset,
                           wanted);
-    if (written < wanted) {
-        /* AEGIR PROBE: the caller retries a short write, so this pair is the
-         * livelock's fingerprint -- the offset it keeps naming and how much
-         * landed. */
-        aegir::debug_write("      fat: wf off ");
-        aegir::debug_write_unsigned(offset);
-        aegir::debug_write(" want ");
-        aegir::debug_write_unsigned(wanted);
-        aegir::debug_write(" wrote ");
-        aegir::debug_write_unsigned(written);
-        aegir::debug_write("\n");
-    }
     g_map_window.unmap(frame);
     seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, frame, aegir::bootstrap::kCNodeBits);
     port.reply_words(&written, 1);
@@ -2520,36 +2485,6 @@ int main(int argc, char *argv[])
         bool cap_arrived = false;
         uint32_t const method =
             vol.receive_words(words, aegir::ipc::kMaxWords, &count, &badge, &cap_arrived);
-        {
-            /* AEGIR PROBE: the request stream keyed by (method, offset). A
-             * livelock on one write shows one line; an advancing large write
-             * shows many distinct offsets. Bounded to a window, so it cannot
-             * flood the console. */
-            constexpr uint32_t kWindow = 16;
-            static uint32_t seen_method[kWindow] = {};
-            static uint64_t seen_offset[kWindow] = {};
-            static uint32_t seen_next = 0;
-            uint64_t const off = count >= 2 ? words[1] : 0;
-            bool known = false;
-            for (uint32_t i = 0; i < kWindow; ++i) {
-                if (seen_method[i] == method && seen_offset[i] == off) {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) {
-                seen_method[seen_next] = method;
-                seen_offset[seen_next] = off;
-                seen_next = (seen_next + 1) % kWindow;
-                aegir::debug_write("      fat: req ");
-                aegir::debug_write_unsigned(method);
-                aegir::debug_write(" off ");
-                aegir::debug_write_unsigned(off);
-                aegir::debug_write(" badge ");
-                aegir::debug_write_unsigned(badge);
-                aegir::debug_write("\n");
-            }
-        }
         switch (method) {
         case aegir::volume::kMethodRead:
             answer_read(vol, words, count);

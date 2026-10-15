@@ -591,22 +591,6 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word want_bits,
     /* Two words: the chunk's size, then the chunk's physical address. */
     uint64_t answer[2] = {};
     bool cap_arrived = false;
-    /* The ask is bracketed too: the service replies to this process's badge and
-     * the receipt is what prints next, so a log that ends between the two says
-     * the call is where the process is, not the move out of the slot. */
-    uint64_t asker = 0;
-    static_cast<void>(aegir::bootstrap::badge(&asker));
-    aegir::debug_write("      heap: chunk-ask ");
-    aegir::debug_write_unsigned(request);
-    aegir::debug_write(" bits, badge ");
-    aegir::debug_write_unsigned(asker);
-    /* The allocator this source serves, by address: a refusal prints the
-     * allocator it asked, and the two have to be comparable by identity -- a
-     * chunk received here and a slot refused there are only the same budget if
-     * they are the same object (allocator.h's identity). */
-    aegir::debug_write(", src ");
-    aegir::debug_write_hex(reinterpret_cast<uint64_t>(allocator));
-    aegir::debug_write("\n");
     aegir::ipc::WordsReply const reply = service.call_transfer(
         aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
     if (reply.error != 0 || !cap_arrived) {
@@ -687,15 +671,6 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word want_bits,
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
                                                          : aegir::memory::kChunkBits);
-    /* The receiver's badge with the chunk: the ask-and-reply pair has to be
-     * attributable per process when a run wedges (specs/memory.md's markers). */
-    uint64_t who = 0;
-    static_cast<void>(aegir::bootstrap::badge(&who));
-    aegir::debug_write("      heap: chunk-got ");
-    aegir::debug_write_unsigned(*size_bits);
-    aegir::debug_write(" bits, badge ");
-    aegir::debug_write_unsigned(who);
-    aegir::debug_write("\n");
     *paddr = 0;
     return slot;
 }
@@ -1167,20 +1142,6 @@ long sys_munmap(void *addr, size_t length) noexcept
      * heaps apart. They were added because this release was landed three times
      * and each time the guest fell from ~65 000 lines to ~2 150 with the refusal
      * markers at zero and nothing said *which* release did it. */
-    {
-        uint64_t badge = 0;
-        static_cast<void>(aegir::bootstrap::badge(&badge));
-        aegir::debug_write("      heap: munmap-begin base ");
-        aegir::debug_write_hex(base);
-        aegir::debug_write(" bytes ");
-        aegir::debug_write_unsigned(bytes);
-        aegir::debug_write(" pages ");
-        aegir::debug_write_unsigned(bytes / kPageBytes);
-        aegir::debug_write(" badge ");
-        aegir::debug_write_unsigned(badge);
-        aegir::debug_write("\n");
-    }
-    unsigned released = 0;
     /* A 2 MiB frame is recorded once per page it covers (map_large_page), so a
      * run of pages shares one frame slot. The slot is released with the first
      * of those pages; the rest clear their record entry and nothing else.
@@ -1212,22 +1173,6 @@ long sys_munmap(void *addr, size_t length) noexcept
          * hand it out again (specs/userland.md). */
         g_allocator->free_slot(frame);
         released_frame = frame;
-        ++released;
-    }
-    {
-        uint64_t badge = 0;
-        static_cast<void>(aegir::bootstrap::badge(&badge));
-        aegir::debug_write("      heap: munmap-release base ");
-        aegir::debug_write_hex(base);
-        aegir::debug_write(" bytes ");
-        aegir::debug_write_unsigned(bytes);
-        aegir::debug_write(" pages ");
-        aegir::debug_write_unsigned(bytes / kPageBytes);
-        aegir::debug_write(" frames ");
-        aegir::debug_write_unsigned(released);
-        aegir::debug_write(" badge ");
-        aegir::debug_write_unsigned(badge);
-        aegir::debug_write("\n");
     }
     /* And back to the window: `Scratch::release` takes the run when it ends at the
      * reservation cursor and does nothing otherwise -- the space is in the heap's list
@@ -1722,47 +1667,13 @@ long vsyscall(long sysnum, ...) noexcept
         ret = sys_brk(static_cast<uintptr_t>(va_arg(ap, unsigned long)));
         break;
     case 222: /* SYS_mmap */ {
-        /* Thrash, named. A workload that releases a mapping and immediately asks
-         * for the same length again gets the same address back, and a run that
-         * goes quiet has exactly that shape in its last lines: 989 lines of
-         * paired `heap: mmap` / `heap: done mmap` / `munmap` / `done munmap` with
-         * no IPC in any of them, ending mid-pair. So "the guest went idle" is
-         * really "this process is re-making the same region, over and over", and
-         * a bare count of mmaps cannot tell churn from growth -- hence an address
-         * *and* a length, and this process's own badge, the way `chunk-got`
-         * carries it. Printed at 8 repeats and on every doubling after that: the
-         * shape of the churn is the point, not each of its turns. */
         void *const addr = va_arg(ap, void *);
         size_t const length = va_arg(ap, size_t);
         int const prot = va_arg(ap, int);
         int const flags = va_arg(ap, int);
         int const fd = va_arg(ap, int);
         off_t const offset = va_arg(ap, off_t);
-        static uintptr_t last_at = 0;
-        static uint64_t last_length = 0;
-        static uint64_t repeats = 0;
         ret = sys_mmap(addr, length, prot, flags, fd, offset);
-        if (ret > 0 && static_cast<uintptr_t>(ret) == last_at &&
-            static_cast<uint64_t>(length) == last_length) {
-            ++repeats;
-            if (repeats == 8 || (repeats & (repeats - 1)) == 0) {
-                uint64_t owner = 0;
-                static_cast<void>(aegir::bootstrap::badge(&owner));
-                aegir::debug_write("      heap: thrash ");
-                aegir::debug_write_unsigned(static_cast<uint64_t>(length));
-                aegir::debug_write(" bytes at ");
-                aegir::debug_write_unsigned(static_cast<uint64_t>(ret));
-                aegir::debug_write(" x");
-                aegir::debug_write_unsigned(repeats);
-                aegir::debug_write(" from ");
-                aegir::debug_write_unsigned(owner);
-                aegir::debug_write("\n");
-            }
-        } else {
-            last_at = static_cast<uintptr_t>(ret);
-            last_length = static_cast<uint64_t>(length);
-            repeats = 1;
-        }
         break;
     }
     case 226: /* SYS_mprotect */
