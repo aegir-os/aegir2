@@ -585,6 +585,53 @@ Until the sysroot exists the toolchain is deliberately minimal: no default
 libraries, no crt, freestanding by construction. The patch is ours and must be
 re-checked at every LLVM bump (`specs/third_party.md`'s upgrade list).
 
+## The hosted tier's input triple (planned)
+
+The compiler's output triple and the triple the *hosted tier* is built for are
+one question, and they get one answer: **`riscv64-unknown-aegir-musl`**. The
+hosted tier is musl, libc++, compiler-rt's builtins, LLVM's Support library and
+every hosted app; cross-compiling any of them names the platform it *runs* on,
+not the machine doing the building — `riscv64-unknown-linux-gnu` for a
+Linux/glibc target, `riscv64-unknown-freebsd14.0` for FreeBSD. Aegir's hosted
+tier runs on Aegir, so it names Aegir.
+
+Today it does not: the whole Aegir build is `riscv64-unknown-elf`
+(`configs/riscv64-qemu-virt.cmake`'s `TRIPLE`), musl and compiler-rt follow it,
+and `scripts/build_llvm.sh` alone uses `riscv64-unknown-linux-musl` because
+LLVM's Support layer needs a Unix the configure recognizes. Two values for one
+system is the hazard: `__linux__` is on for LLVM's translation units and off for
+the apps', so libc++'s inline header code can differ between them.
+
+**The surface is small, and Fuchsia is the proof.** Adding a non-Unix OS of its
+own to LLVM is a measured quantity here: Fuchsia's whole footprint across LLVM,
+clang and libc++ is **~30 references in ~15 files** — in the Unix system layer
+alone three files (`Memory.inc`, `Path.inc`, `Program.inc`), and
+`Triple::Fuchsia` five (`Triple.h`, `Triple.cpp`, `clang/lib/Basic/Targets.cpp`,
+`clang/lib/Driver/Driver.cpp`, `clang/lib/Lex/InitHeaderSearch.cpp`). Aegir's is
+smaller: musl has **no** `__linux__` reference at all (its port is the three
+tracked patches routing syscalls through `__sysinfo`), `0005` already fixes
+`Unix/Path.inc`'s one `#error`, and `LLVM_ENABLE_THREADS=OFF` keeps
+`Unix/Threading.inc`'s nine branches out of the profile.
+
+The work, in the shape Fuchsia's files name:
+
+1. `OSType::Aegir` in `Triple.h`/`Triple.cpp` (parse and name), beside `Linux`,
+   `Serenity` and `HermitCore`.
+2. A `case Triple::Aegir` in `Driver::getToolChain`, with the TargetInfo and the
+   **default include search** beside it (`Basic/Targets.cpp`,
+   `Lex/InitHeaderSearch.cpp`) — the latter being where `specs/development.md`'s
+   `Sys:Development/Include` default belongs.
+3. The few `Unix/*.inc` branches whose generic path is wrong, plus the one hard
+   `#error` there (`Unix/Process.inc`'s page size — answered by a
+   `HAVE_GETPAGESIZE` configure value, not an OS branch).
+4. libc++: promote `_LIBCPP_AEGIR` from a build flag to the `__aegir__` trigger,
+   so the path grammar and the platform config follow the triple rather than an
+   ad-hoc define.
+
+Until that lands, `build_llvm.sh`'s `riscv64-unknown-linux-musl` is a labelled
+crutch, not a claim that Aegir is Linux: the triple describes the syscall ABI
+musl's port already speaks, and the plan above is how the name stops lying.
+
 ## Cross-cutting
 
 - **Disk.** The compiler is on the order of 100–200 MiB. The acceptance disk is
@@ -620,15 +667,13 @@ sizes; it does not require them to run.
   `musl`. The vendor question this item used to leave open is closed; the OS enum
   and the toolchain are the patch (above). The hosted tier's *input* triple
   (below) is a separate spelling.
-- **The hosted tier's build triple.** LLVM's Support library selects its Unix
-  implementation by macro and has no generic path (`Unix/Process.inc` `#error`s
-  without one). Aegir's hosted C runtime is musl and its syscall ABI is Linux's
-  — the `__sysinfo` dispatcher answers Linux riscv64 numbers — so the hosted
-  tier is built for `riscv64-unknown-linux-musl`, not the freestanding tier's
-  `riscv64-unknown-elf`. Whether to convert the whole hosted tier (musl, libc++,
-  the hosted apps) to that triple, so libc++ inline header code cannot differ
-  between translation units, is open; today only `scripts/build_llvm.sh` uses
-  it. The compiler's *output* triple (above) is a separate thing again.
+- **The hosted tier's input triple, decided.** The same value as the output,
+  `riscv64-unknown-aegir-musl` (above). This item used to lean on
+  `riscv64-unknown-linux-musl` because LLVM's Support layer `#error`s without a
+  Unix the configure recognizes; the measurement above retires that — a new OS
+  is ~Fuchsia-sized, and two values for one system is the `__linux__`-on/off
+  hazard. The Linux-musl triple in `scripts/build_llvm.sh` is the labelled
+  crutch until the patch lands, not a description of Aegir.
 - **Where the compiler lives and how it is reached.** It is a development tool
   on the system volume, run directly from the session as
   `Sys:Development/C/clang` (`specs/development.md`); it is not a `Sys:C`
