@@ -838,10 +838,12 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         if (supervisor != nullptr) {
             PagerRecord pager{};
             pager.root = process.vspace_root;
-            pager.base = static_cast<uintptr_t>(process.stack_base);
-            pager.lo = static_cast<uintptr_t>(process.stack_lo);
-            pager.top = static_cast<uintptr_t>(process.stack_top);
-            pager.max = process.stack_max;
+            pager.region.guard =
+                static_cast<uintptr_t>(process.stack_base) - (1ull << seL4_PageBits);
+            pager.region.base = static_cast<uintptr_t>(process.stack_base);
+            pager.region.top = static_cast<uintptr_t>(process.stack_top);
+            pager.region.lo = static_cast<uintptr_t>(process.stack_lo);
+            pager.region.file_backed = false;
             pager.watched = memory_up;
             supervisor->record(boot.started, request.badge, process.tcb, process.supervision,
                                entry.name.data, entry.name.length, pager);

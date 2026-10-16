@@ -795,10 +795,11 @@ bool ServiceKit::watch_stack(uint64_t badge, Process const &process, uint32_t ow
     }
     StackWatch watch{};
     watch.root = process.vspace_root;
-    watch.base = static_cast<uintptr_t>(process.stack_base);
-    watch.lo = static_cast<uintptr_t>(process.stack_lo);
-    watch.top = static_cast<uintptr_t>(process.stack_top);
-    watch.max = process.stack_max;
+    watch.region.guard = static_cast<uintptr_t>(process.stack_base) - kPage;
+    watch.region.base = static_cast<uintptr_t>(process.stack_base);
+    watch.region.top = static_cast<uintptr_t>(process.stack_top);
+    watch.region.lo = static_cast<uintptr_t>(process.stack_lo);
+    watch.region.file_backed = false;
     if (cnode_l1_ != 0) {
         /* A frame per page of the declared maximum, plus the page tables above
          * them: one per 2 MiB at the lowest level, and a little for the levels
@@ -984,6 +985,19 @@ void ServiceKit::pager_drop_cb(void *context, seL4_CPtr slot) noexcept
     pager->kit->pager_drop(pager->badge, slot);
 }
 
+bool ServiceKit::pager_fill_cb(void *context, spawn::Region const &region, uintptr_t address,
+                               seL4_CPtr frame) noexcept
+{
+    static_cast<void>(context);
+    static_cast<void>(region);
+    static_cast<void>(address);
+    static_cast<void>(frame);
+    /* The launcher's file-backed segments fill here once the image is retained
+     * per command; the stack is anonymous and maps blank pages, so nothing
+     * calls this yet. */
+    return false;
+}
+
 bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault,
                             char const **why) noexcept
 {
@@ -1011,9 +1025,9 @@ bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault
     }
     PagerContext context{this, badge};
     PagerSource const source{&ServiceKit::pager_carve_cb, &ServiceKit::pager_drop_cb,
-                             &context};
-    bool const handled = spawn::page_stack(watch.root, watch.base, &watch.lo, watch.top,
-                                           watch.max, address, source, fault, why);
+                             &ServiceKit::pager_fill_cb, &context};
+    bool const handled =
+        spawn::page_region(watch.root, watch.region, address, source, fault, why);
     if (watch.uses_run) {
         watch.pager_used =
             g_pager_mem.slot_mark() -

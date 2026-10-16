@@ -473,6 +473,18 @@ void Supervisor::pager_drop_cb(void *context, seL4_CPtr slot) noexcept
     pager->self->pager_drop(pager->badge, slot);
 }
 
+bool Supervisor::pager_fill_cb(void *context, spawn::Region const &region, uintptr_t address,
+                               seL4_CPtr frame) noexcept
+{
+    static_cast<void>(context);
+    static_cast<void>(region);
+    static_cast<void>(address);
+    static_cast<void>(frame);
+    /* The boot services' segments fill here once director pages them too; the
+     * stack is anonymous and maps blank pages, so nothing calls this yet. */
+    return false;
+}
+
 bool Supervisor::grow(uint64_t badge, uintptr_t address, StackFault *fault,
                       char const **why) noexcept
 {
@@ -482,10 +494,10 @@ bool Supervisor::grow(uint64_t badge, uintptr_t address, StackFault *fault,
     }
     PagerContext context{this, badge};
     spawn::PagerSource const source{&Supervisor::pager_carve_cb,
-                                    &Supervisor::pager_drop_cb, &context};
-    bool const handled = spawn::page_stack(entry->pager.root, entry->pager.base,
-                                           &entry->pager.lo, entry->pager.top,
-                                           entry->pager.max, address, source, fault, why);
+                                    &Supervisor::pager_drop_cb,
+                                    &Supervisor::pager_fill_cb, &context};
+    bool const handled = spawn::page_region(entry->pager.root, entry->pager.region, address,
+                                            source, fault, why);
     if (handled && fault != nullptr && fault->overflow && entry->tcb != 0) {
         seL4_UserContext registers = {};
         if (seL4_TCB_ReadRegisters(entry->tcb, 0, 0,

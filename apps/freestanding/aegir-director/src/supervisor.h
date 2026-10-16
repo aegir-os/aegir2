@@ -37,10 +37,8 @@ namespace aegir::director {
  *  memory service itself, and its predecessors), which are not paged. */
 struct PagerRecord {
     seL4_CPtr root = 0;
-    uintptr_t base = 0;
-    uintptr_t lo = 0;
-    uintptr_t top = 0;
-    uint64_t max = 0;
+    /* The stack, as the shared pager sees it (specs/pager.md). */
+    spawn::Region region;
     bool watched = false;
 };
 
@@ -103,6 +101,8 @@ private:
     static seL4_CPtr pager_carve_cb(void *context, seL4_Word type, seL4_Word size_bits,
                                     seL4_Error *error) noexcept;
     static void pager_drop_cb(void *context, seL4_CPtr slot) noexcept;
+    static bool pager_fill_cb(void *context, spawn::Region const &region, uintptr_t address,
+                              seL4_CPtr frame) noexcept;
     Supervised *find(uint64_t badge) noexcept;
     mem::Allocator &allocator_;
     mem::Scratch &scratch_;

@@ -353,6 +353,8 @@ private:
     static seL4_CPtr pager_carve_cb(void *context, seL4_Word type, seL4_Word size_bits,
                                     seL4_Error *error) noexcept;
     static void pager_drop_cb(void *context, seL4_CPtr slot) noexcept;
+    static bool pager_fill_cb(void *context, spawn::Region const &region, uintptr_t address,
+                              seL4_CPtr frame) noexcept;
     /* Allocate a command's *pager* run of L2 CNodes: the frames and page tables
      * the pager retypes for its stack live here, not in the launcher's own
      * CSpace, so many growable stacks fit and reap returns the run whole
@@ -496,10 +498,8 @@ private:
      * `release(child)` revokes the chunk (specs/pager.md). */
     struct StackWatch {
         seL4_CPtr root = 0;
-        uintptr_t base = 0;
-        uintptr_t lo = 0;
-        uintptr_t top = 0;
-        uint64_t max = 0;
+        /* The stack, as the shared pager sees it (specs/pager.md). */
+        spawn::Region region;
         seL4_CPtr chunk = 0;
         uint64_t chunk_left = 0;
         /* The command's own L2 CNode run for the pager, and how many of its
