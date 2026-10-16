@@ -487,6 +487,14 @@ public:
      *  that a *caller* could not spend and a node source that could not get in. */
     seL4_CPtr alloc_slot_for_growth() noexcept { return alloc_slot_reserved(); }
 
+    /**
+     * A consecutive run of `count` free slots, reserved for the caller and
+     * returned as the first slot. The pager's slot pool is the reason: a pool
+     * another thread owns has to be a range, or the allocator over it cannot
+     * name it (specs/pager.md). Zero when the range cannot be met.
+     */
+    seL4_CPtr reserve_slot_run(seL4_Word count) noexcept { return alloc_slot_run(count); }
+
 private:
     /* One piece of an untyped: the capability, its size, where it is, and the
      * buddy tree that lets a free merge it back with the piece it was split

@@ -25,10 +25,24 @@
 #include <aegir/mem/allocator.h>
 #include <aegir/mem/arena.h>
 #include <aegir/mem/vspace.h>
+#include <aegir/spawn/pager.h>
 #include <sel4/sel4.h>
 #include <stdint.h>
 
 namespace aegir::director {
+
+/** The pager's per-service record (specs/pager.md): the child's VSpace root and
+ *  its reserved stack range, filled by the boot thread before the child runs.
+ *  `watched` is false for the services spawned before `mem.main` is up (the
+ *  memory service itself, and its predecessors), which are not paged. */
+struct PagerRecord {
+    seL4_CPtr root = 0;
+    uintptr_t base = 0;
+    uintptr_t lo = 0;
+    uintptr_t top = 0;
+    uint64_t max = 0;
+    bool watched = false;
+};
 
 /** One supervised service, as the supervisor thread sees it. */
 struct Supervised {
@@ -41,6 +55,12 @@ struct Supervised {
     seL4_CPtr supervision;
     char const *name;
     uint32_t name_length;
+    PagerRecord pager;
+    /* The pager's live state, the supervisor's alone once the record is
+     * published: the service's child-badged `mem.main` chunk in use, and what
+     *  is left of it (bytes). */
+    seL4_CPtr chunk = 0;
+    uint64_t chunk_left = 0;
 };
 
 class Supervisor {
@@ -55,13 +75,35 @@ public:
     /** The boot thread says who a badge belongs to. The count is published last,
      *  so a lookup never sees half a record. */
     void record(uint32_t index, uint64_t badge, seL4_CPtr tcb, seL4_CPtr supervision,
-                char const *name, uint32_t name_length) noexcept;
+                char const *name, uint32_t name_length, PagerRecord const &pager) noexcept;
+
+    /** The unbadged `mem.main` endpoint director holds for the port its graph
+     *  built, so the pager can mint a copy badged with a child's id
+     *  (specs/pager.md). Zero leaves every service unwatched. */
+    void set_mem_main(seL4_CPtr endpoint) noexcept { mem_main_ = endpoint; }
+
+    /** The pager (specs/pager.md): classify a fault against the service's stack
+     *  and grow it from a child-badged mem.main chunk. The supervisor thread
+     *  calls this; the boot thread never does. */
+    using StackFault = spawn::StackFault;
+    bool grow(uint64_t badge, uintptr_t address, StackFault *fault,
+              char const **why) noexcept;
 
     unsigned faults() const noexcept;
 
     char const *problem() const noexcept { return problem_; }
 
 private:
+    /* The pager's frame source: ensure the service's chunk, retype one object
+     * from it into a slot of the pager pool, and record it; `drop` gives a
+     * redundant table's slot back (specs/pager.md). */
+    seL4_CPtr pager_carve(uint64_t badge, seL4_Word type, seL4_Word size_bits,
+                          seL4_Error *error) noexcept;
+    void pager_drop(uint64_t badge, seL4_CPtr slot) noexcept;
+    static seL4_CPtr pager_carve_cb(void *context, seL4_Word type, seL4_Word size_bits,
+                                    seL4_Error *error) noexcept;
+    static void pager_drop_cb(void *context, seL4_CPtr slot) noexcept;
+    Supervised *find(uint64_t badge) noexcept;
     mem::Allocator &allocator_;
     mem::Scratch &scratch_;
     mem::Arena &arena_;
@@ -69,6 +111,7 @@ private:
     uint32_t capacity_;
     uint32_t *count_;
     unsigned *faults_;
+    seL4_CPtr mem_main_ = 0;
     char const *problem_;
 };
 

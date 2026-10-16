@@ -294,7 +294,19 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         boot.problem = graph_.problem();
         return;
     }
+    /* The pager's source: the unbadged `mem.main` endpoint director holds for
+     * the port just built, so the supervisor can mint a copy badged with a
+     * child's id (specs/pager.md). Set before any service can be watched. */
+    if (supervisor != nullptr) {
+        static char const kMemMain[] = "mem.main";
+        supervisor->set_mem_main(
+            graph_.endpoint(PortGraph::Name{kMemMain, sizeof(kMemMain) - 1}));
+    }
 
+    /* The pager's source is mem.main, so a service can be paged only once the
+     * memory service is up: the memory service itself, and everything the
+     * creation order puts before it, is watched false (specs/pager.md). */
+    bool memory_up = false;
     for (uint32_t step = 0; step < manifest.size(); ++step) {
         uint32_t const i = graph_.order()[step];
         manifest::Entry const &entry = manifest[i];
@@ -824,8 +836,15 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
         started[boot.started].has_core = request.has_core;
         started[boot.started].core = request.core;
         if (supervisor != nullptr) {
+            PagerRecord pager{};
+            pager.root = process.vspace_root;
+            pager.base = static_cast<uintptr_t>(process.stack_base);
+            pager.lo = static_cast<uintptr_t>(process.stack_lo);
+            pager.top = static_cast<uintptr_t>(process.stack_top);
+            pager.max = process.stack_max;
+            pager.watched = memory_up;
             supervisor->record(boot.started, request.badge, process.tcb, process.supervision,
-                               entry.name.data, entry.name.length);
+                               entry.name.data, entry.name.length, pager);
         }
         if (!spawner_.start(process)) {
             boot.problem = spawner_.problem();
@@ -834,6 +853,21 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             return;
         }
         ++boot.started;
+        /* Once the memory service is started, the services after it may be
+         * paged: `mem.main` is the pager's source (specs/pager.md). */
+        if (entry.name.length == 6) {
+            static char const kMemory[] = "memory";
+            bool is_memory = true;
+            for (uint32_t k = 0; k < 6; ++k) {
+                if (entry.name.data[k] != kMemory[k]) {
+                    is_memory = false;
+                    break;
+                }
+            }
+            if (is_memory) {
+                memory_up = true;
+            }
+        }
 
         /* The `log.main` owner is the first entry in the creation order, so its
          * grant is the first chance director has to take a caller copy of the
