@@ -184,7 +184,9 @@ dependency order. "Everything pages" means everything after that, by default.
    start) — its own allocator, so the boot thread and the pager never race. A
    service is watched only once `mem.main` has been started, so the memory
    service and everything before it are not paged. The overflow is reported by
-   name and end status.
+   name and end status, and the acceptance exercises it: `overflow` is a command
+   linked with `-z stack-size=0x20000`, and the run checks the named report and
+   `return code 129`.
 4. **File-backed paging** (the ELF segments), later, through the same interface.
 
 **Not done: the root's two-level CSpace.** Director is the one CSpace whose

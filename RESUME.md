@@ -23,6 +23,7 @@ turned up.
 | `03d0f9de` | the compile's proof: `dir SCRATCH:`, an anchored cue, so a missing object fails the run |
 | `0078115d` | share the stack-growth walk between the spawners (`aegir-spawn`'s `page_stack`) |
 | `7bc5eea4` | director's pager: a reserved pool, child-badged `mem.main` chunks, `watched` gated on `mem.main` |
+| `94a7350f` | an acceptance for the pager's named stack overflow (`overflow`, 128 KiB max) |
 
 The pager grew the compiler's stack on demand (measured: 19 pages, then one
 128 KiB step through the per-command run — `pager run used=32 lo=0x4fde000
@@ -52,23 +53,20 @@ default (16 pages initial, 8 MiB max, 128 KiB step).
 
 ## What is left, in rough order
 
-1. **The overflow path is unexercised.** No run has hit a true overflow, so the
-   named `stack-overflow pc=… sp=… base=… max=…` report and end status 129 have
-   not been observed live.
-2. **File-backed paging** (step 4): the ELF segments through the same
+1. **File-backed paging** (step 4): the ELF segments through the same
    `populate(vspace, addr) -> source` interface, so an 85 MB image is not mapped
    to touch 5 MB of it.
-3. **The used-slot wall** (`specs/userland.md`, "a used slot is still
+2. **The used-slot wall** (`specs/userland.md`, "a used slot is still
    allocation-only"): a process that maps and unmaps still fills its CNode. The
    musl patch sidesteps it for thread stacks; a growable CSpace for boot
    services is the general fix (`specs/memory.md`'s "Growing the CSpace on
    demand").
-4. **The root's two-level CSpace** (optional, for uniformity): director is the
+3. **The root's two-level CSpace** (optional, for uniformity): director is the
    one CSpace with the kernel's initial guard/radix convention. Measured, the
    re-root's `l2` would have to be >= 15 (director holds 22368 caps), so
    per-service CNodes would be ~512 KB each — the pager does not need it (it has
    its own pool), so this wants deciding on its own merits.
-5. **Wire `check-bfs`** (the multi-leaf case from finding 1) as a prerequisite of
+4. **Wire `check-bfs`** (the multi-leaf case from finding 1) as a prerequisite of
    `build`/`run`, the way `check-allocator` is.
 
 ## Read first
