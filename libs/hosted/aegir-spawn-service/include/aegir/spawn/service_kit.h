@@ -29,6 +29,7 @@
 #include <aegir/mem/slot_pool.h>
 #include <aegir/spawn/initrd.h>
 #include <aegir/spawn/kit.h>
+#include <aegir/spawn/pager.h>
 #include <aegir/spawn/process.h>
 #include <sel4/sel4.h>
 
@@ -131,14 +132,7 @@ public:
      * the memory service's `release(child)` has revoked them. All three are
      * called under the caller's service lock, so grow and reap cannot race on
      * the same records. */
-    struct StackFault {
-        bool overflow = false; /* the address is past the reserved base */
-        uintptr_t address = 0;
-        uintptr_t base = 0;
-        uintptr_t top = 0;
-        uint64_t max = 0;
-        uint64_t sp = 0;       /* filled from the child's TCB for a report */
-    };
+    using StackFault = spawn::StackFault;
     bool watch_stack(uint64_t badge, Process const &process, uint32_t owner);
     /* True when `address` is the watched child's stack fault (grown, or one it
      * must end); false when it is some other fault. `fault` always carries the
@@ -349,6 +343,16 @@ private:
      * badged-copy shape command_untyped_source uses, but not tied to the one
      * staging slot (specs/pager.md). Zero when the service could not answer. */
     seL4_CPtr pager_chunk(uint64_t badge, seL4_Word want_bits, seL4_Word *size_bits) noexcept;
+    /* The pager's frame/table source for spawn::page_stack: ensure the child's
+     * chunk, retype one object from it, and record the slot; `drop` gives a
+     * redundant table's slot back (specs/pager.md). The static callbacks adapt
+     * these to `PagerSource`, re-finding the watch by badge. */
+    seL4_CPtr pager_carve(uint64_t badge, seL4_Word type, seL4_Word size_bits,
+                          seL4_Error *error) noexcept;
+    void pager_drop(uint64_t badge, seL4_CPtr slot) noexcept;
+    static seL4_CPtr pager_carve_cb(void *context, seL4_Word type, seL4_Word size_bits,
+                                    seL4_Error *error) noexcept;
+    static void pager_drop_cb(void *context, seL4_CPtr slot) noexcept;
     /* Allocate a command's *pager* run of L2 CNodes: the frames and page tables
      * the pager retypes for its stack live here, not in the launcher's own
      * CSpace, so many growable stacks fit and reap returns the run whole

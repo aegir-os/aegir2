@@ -777,11 +777,14 @@ bool ServiceKit::hold_received_stream()
 
 namespace {
 
-/* FreeBSD's SGROWSIZ: how far down a stack grows on the fault that needs
- * another page. A fault deeper than this maps everything between, so one jump
- * is one call however far it is. */
-constexpr uint64_t kStackGrowBytes = 128ull * 1024;
 constexpr uint64_t kPage = 1ull << seL4_PageBits;
+
+/* What the pager's frame source needs from the service: the watched stack is
+ * looked up by badge, so the source carries the kit and the badge. */
+struct PagerContext {
+    ServiceKit *kit;
+    uint64_t badge;
+};
 
 }  // namespace
 
@@ -913,62 +916,85 @@ seL4_CPtr ServiceKit::pager_chunk(uint64_t badge, seL4_Word want_bits,
     return chunk;
 }
 
+seL4_CPtr ServiceKit::pager_carve(uint64_t badge, seL4_Word type, seL4_Word size_bits,
+                                  seL4_Error *error) noexcept
+{
+    auto const it = stacks_.find(badge);
+    if (it == stacks_.end()) {
+        return 0;
+    }
+    StackWatch &watch = it->second;
+    if (watch.chunk == 0 || watch.chunk_left < kPage) {
+        seL4_Word chunk_bits = 0;
+        seL4_CPtr const chunk = pager_chunk(badge, aegir::memory::kChunkBits, &chunk_bits);
+        if (chunk == 0) {
+            return 0;
+        }
+        watch.chunk = chunk;
+        watch.chunk_left = 1ull << chunk_bits;
+        watch.slots.push_back(chunk);
+    }
+    seL4_Error ignored = seL4_NoError;
+    seL4_CPtr const slot =
+        watch.uses_run
+            ? g_pager_mem.carve_object_from(watch.chunk, type, size_bits, pager_account_,
+                                            &ignored)
+            : allocator_->carve_object_from(watch.chunk, type, size_bits, pager_account_,
+                                            &ignored);
+    if (slot == 0) {
+        if (error != nullptr) {
+            *error = ignored;
+        }
+        return 0;
+    }
+    watch.chunk_left -= kPage;
+    if (!watch.uses_run) {
+        watch.slots.push_back(slot);
+    }
+    if (error != nullptr) {
+        *error = seL4_NoError;
+    }
+    return slot;
+}
+
+void ServiceKit::pager_drop(uint64_t badge, seL4_CPtr slot) noexcept
+{
+    auto const it = stacks_.find(badge);
+    if (it == stacks_.end()) {
+        return;
+    }
+    StackWatch &watch = it->second;
+    if (!watch.uses_run && !watch.slots.empty()) {
+        watch.slots.pop_back();
+        allocator_->free_slot(slot);
+    }
+    /* A run's slot is spent with the chunk; the run is freed at reap. */
+}
+
+seL4_CPtr ServiceKit::pager_carve_cb(void *context, seL4_Word type, seL4_Word size_bits,
+                                     seL4_Error *error) noexcept
+{
+    auto *const pager = static_cast<PagerContext *>(context);
+    return pager->kit->pager_carve(pager->badge, type, size_bits, error);
+}
+
+void ServiceKit::pager_drop_cb(void *context, seL4_CPtr slot) noexcept
+{
+    auto *const pager = static_cast<PagerContext *>(context);
+    pager->kit->pager_drop(pager->badge, slot);
+}
+
 bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault,
                             char const **why) noexcept
 {
-    if (why != nullptr) {
-        *why = "";
-    }
     auto const it = stacks_.find(badge);
     if (it == stacks_.end()) {
         return false;
     }
     StackWatch &watch = it->second;
-    if (fault != nullptr) {
-        fault->address = address;
-        fault->base = watch.base;
-        fault->top = watch.top;
-        fault->max = watch.max;
-    }
-    if (address >= watch.lo) {
-        /* At or above the lowest mapped page: not a growth fault. A fault in
-         * the mapped part is a protection problem, and one above the top is
-         * another mapping altogether. */
-        return false;
-    }
-    if (address < watch.base) {
-        /* The guard page under the reservation, or below it: the stack is
-         * spent. The caller reports and ends the child. */
-        if (fault != nullptr) {
-            fault->overflow = true;
-            Started *const started = find_live(badge);
-            if (started != nullptr && started->process.tcb != 0) {
-                seL4_UserContext context = {};
-                if (seL4_TCB_ReadRegisters(started->process.tcb, 0, 0,
-                                           sizeof(context) / sizeof(seL4_Word),
-                                           &context) == seL4_NoError) {
-                    fault->sp = context.sp;
-                }
-            }
-        }
-        return true;
-    }
-    /* In [base, lo): grow by at least the step, or down to the fault when it
-     * is deeper, so a stack that faults one page below its mapped base maps a
-     * run rather than a page (FreeBSD's SGROWSIZ, specs/pager.md). */
-    uintptr_t target = address & ~(static_cast<uintptr_t>(kPage) - 1u);
-    if (watch.lo > watch.base + kStackGrowBytes) {
-        uintptr_t const step = watch.lo - kStackGrowBytes;
-        if (target > step) {
-            target = step;
-        }
-    } else {
-        target = watch.base;
-    }
     /* A two-level command has its own run: adopt the slots not yet used, so
      * alloc_slot continues where the last grow stopped. A single-level CSpace
-     * has no run and falls back to the launcher's own slots, each recorded to
-     * free by hand. */
+     * has no run and falls back to the launcher's own slots. */
     if (watch.uses_run) {
         seL4_Word const per = static_cast<seL4_Word>(1) << cnode_l2_;
         seL4_Word const total = static_cast<seL4_Word>(watch.pager_cnodes) * per;
@@ -983,98 +1009,30 @@ bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault
         g_pager_mem.adopt_slots_level_two(first, total - watch.pager_used, cnode_l1_,
                                           cnode_l2_, node, false);
     }
-    auto sync_used = [&]() noexcept {
-        if (watch.uses_run) {
-            watch.pager_used =
-                g_pager_mem.slot_mark() -
-                (static_cast<seL4_Word>(watch.pager_base) << cnode_l2_);
-        }
-    };
-    auto carve = [&](seL4_Word type, seL4_Word bits) -> seL4_CPtr {
-        seL4_Error ignored = seL4_NoError;
-        if (watch.uses_run) {
-            return g_pager_mem.carve_object_from(watch.chunk, type, bits, pager_account_,
-                                                 &ignored);
-        }
-        return allocator_->carve_object_from(watch.chunk, type, bits, pager_account_,
-                                             &ignored);
-    };
-    while (watch.lo > target) {
-        if (watch.chunk == 0 || watch.chunk_left < kPage) {
-            seL4_Word chunk_bits = 0;
-            seL4_CPtr const chunk = pager_chunk(badge, aegir::memory::kChunkBits,
-                                                &chunk_bits);
-            if (chunk == 0) {
-                if (why != nullptr) {
-                    *why = "no memory for the stack";
-                }
-                return true;
-            }
-            watch.chunk = chunk;
-            watch.chunk_left = 1ull << chunk_bits;
-            watch.slots.push_back(chunk);
-        }
-        seL4_CPtr const frame = carve(seL4_RISCV_4K_Page, seL4_PageBits);
-        if (frame == 0) {
-            if (why != nullptr) {
-                *why = "no frame for the stack";
-            }
-            return true;
-        }
-        watch.chunk_left -= kPage;
-        if (!watch.uses_run) {
-            watch.slots.push_back(frame);
-        }
-        sync_used();
-        uintptr_t const at = watch.lo - kPage;
-        seL4_Error mapped = seL4_RISCV_Page_Map(frame, watch.root, at, seL4_AllRights,
-                                                seL4_RISCV_Default_VMAttributes);
-        unsigned attempts = 0;
-        while (mapped == seL4_FailedLookup && attempts < 8) {
-            ++attempts;
-            seL4_CPtr const table =
-                carve(seL4_RISCV_PageTableObject, seL4_PageTableBits);
-            if (table == 0) {
-                if (why != nullptr) {
-                    *why = "no page table for the stack";
-                }
-                return true;
-            }
-            watch.chunk_left -= kPage;
-            if (!watch.uses_run) {
-                watch.slots.push_back(table);
-            }
-            sync_used();
-            seL4_Error const table_mapped = seL4_RISCV_PageTable_Map(
-                table, watch.root, at, seL4_RISCV_Default_VMAttributes);
-            if (table_mapped == seL4_DeleteFirst) {
-                /* A table already reaches this address; ours is redundant, so
-                 * its capability goes. A fallback slot is reused; a run counts
-                 * its memory spent. */
-                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, table,
-                                  endpoint_depth());
-                if (!watch.uses_run) {
-                    watch.slots.pop_back();
-                    allocator_->free_slot(table);
-                }
-            } else if (table_mapped != seL4_NoError) {
-                if (why != nullptr) {
-                    *why = "a stack page table could not be mapped";
-                }
-                return true;
-            }
-            mapped = seL4_RISCV_Page_Map(frame, watch.root, at, seL4_AllRights,
-                                         seL4_RISCV_Default_VMAttributes);
-        }
-        if (mapped != seL4_NoError) {
-            if (why != nullptr) {
-                *why = "a stack page could not be mapped";
-            }
-            return true;
-        }
-        watch.lo = at;
+    PagerContext context{this, badge};
+    PagerSource const source{&ServiceKit::pager_carve_cb, &ServiceKit::pager_drop_cb,
+                             &context};
+    bool const handled = spawn::page_stack(watch.root, watch.base, &watch.lo, watch.top,
+                                           watch.max, address, source, fault, why);
+    if (watch.uses_run) {
+        watch.pager_used =
+            g_pager_mem.slot_mark() -
+            (static_cast<seL4_Word>(watch.pager_base) << cnode_l2_);
     }
-    return true;
+    /* An overflow's report carries the faulting stack pointer, and only the
+     * spawner holds the TCB to read it from. */
+    if (handled && fault != nullptr && fault->overflow) {
+        Started *const started = find_live(badge);
+        if (started != nullptr && started->process.tcb != 0) {
+            seL4_UserContext stack_context = {};
+            if (seL4_TCB_ReadRegisters(started->process.tcb, 0, 0,
+                                       sizeof(stack_context) / sizeof(seL4_Word),
+                                       &stack_context) == seL4_NoError) {
+                fault->sp = stack_context.sp;
+            }
+        }
+    }
+    return handled;
 }
 
 void ServiceKit::forget_stack(uint64_t badge) noexcept

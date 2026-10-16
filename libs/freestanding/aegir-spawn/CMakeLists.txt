@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(aegir-spawn CXX)
 
-add_library(aegir-spawn STATIC src/elf.cc src/initrd.cc src/process.cc)
+add_library(aegir-spawn STATIC src/elf.cc src/initrd.cc src/process.cc src/pager.cc)
 
 target_include_directories(aegir-spawn PUBLIC include)
 # cpio is util_libs' reader for the initrd: the archive format is not ours to
