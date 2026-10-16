@@ -312,7 +312,10 @@ def _tree(entries: list[tuple[bytes, int]], values: list[int] | None = None,
     depth = 1
     while len(level) > 1:
         plan = _plan(level)
-        next_offsets = [NODE * (2 + len(nodes) + number)
+        # The next node is appended at list index `len(nodes)` and written at
+        # tree offset NODE * (index + 1): the header owns offset 0, so the
+        # first free node offset is NODE * (1 + len(nodes)).
+        next_offsets = [NODE * (1 + len(nodes) + number)
                         for number in range(len(plan))]
         for number, (first, count, _) in enumerate(plan):
             children = level[first : first + count]
