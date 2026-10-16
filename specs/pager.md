@@ -169,14 +169,30 @@ dependency order. "Everything pages" means everything after that, by default.
 
 ## The plan (each its own commit, green each time)
 
-1. **Layout + guard.** Block/IPC above the stack; an unmapped guard page below.
-   The overflow becomes one clean, named fault.
-2. **`PT_GNU_STACK` read + the link flag.** The spawner reads `p_memsz`; the
-   hosted policy passes `-Wl,-z,stack-size=`; the resolution order.
-3. **The pager.** Reserve the range; retain the child's VSpace root; grow on a
-   fault in the range, with frames from `memory` (child-badged); the distinct
-   overflow end status; report/terminate past the bound.
+1. **Layout + guard.** Landed. Block/IPC above the stack; an unmapped guard page
+   below. The overflow is one clean, named fault.
+2. **`PT_GNU_STACK` read + the link flag.** Landed, with a tracked musl patch:
+   musl reads `p_memsz` for `__default_stacksize`, so raising it there made every
+   `std::thread` ask for the process's whole stack. The flag is now the pager's
+   declaration only.
+3. **The pager.** Landed, both halves. The stateless growth walk
+   (`aegir-spawn`'s `page_stack`, `PagerSource`) is shared; the launcher's
+   `ServiceKit` grows a command from a child-badged `mem.main` chunk retyped into
+   a per-command L2 CNode run; director's supervisor grows a boot service from a
+   child-badged `mem.main` chunk retyped into a **reserved pool** of its own root
+   slots (`Allocator::reserve_slot_run`, half of what is free at supervisor
+   start) — its own allocator, so the boot thread and the pager never race. A
+   service is watched only once `mem.main` has been started, so the memory
+   service and everything before it are not paged. The overflow is reported by
+   name and end status.
 4. **File-backed paging** (the ELF segments), later, through the same interface.
+
+**Not done: the root's two-level CSpace.** Director is the one CSpace whose
+`guard`/`radix` convention differs (the kernel's initial CNode, guard 48 /
+radix 16), and the pager does not need it: the reserved pool gives the pager its
+own slot range without re-rooting. The re-root stays on the table for
+uniformity, with a measured cost — director holds 22368 caps, so `l2` would have
+to be >= 15, making per-service CNodes ~512 KB each.
 
 ## Constraints
 
@@ -195,8 +211,10 @@ dependency order. "Everything pages" means everything after that, by default.
 
 ## Open, for review
 
-- **Per-spawn policy: default-on once the sources are up, or opt-in?** Proposed:
-  default-on (every post-source spawn pages), with a per-spawn `full` request for
-  the pre-source boot and anything that must not fault.
-- **The end-status word** for a stack overflow, beside `kFaultStatus`.
-- **Whether the child's heap routes through the pager** or stays in-process.
+- **Per-spawn policy.** Landed as default-on: the launcher watches every
+  command; director watches a service once `mem.main` has been started. There is
+  no `full` request yet — the pre-source boot is simply not watched.
+- **The end-status word** for a stack overflow: landed as `kStackOverflowStatus`
+  (129) beside `kFaultStatus`, reported with `pc`/`sp`/`base`/`max`.
+- **Whether the child's heap routes through the pager** or stays in-process:
+  unchanged — it stays in-process, through the window.
