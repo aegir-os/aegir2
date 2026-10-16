@@ -409,14 +409,24 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     }
 
     /* Everything else goes above the image, so a bigger program cannot collide
-     * with it: the block, the IPC buffer, then the stack. */
-    uintptr_t const block_at = align_up(static_cast<uintptr_t>(elf.load_end()), kPage);
-    uintptr_t const ipc_at = block_at + kPage;
-    uintptr_t const stack_lo = ipc_at + kPage;
+     * with it: an unmapped guard page, the stack growing down from above it,
+     * and the block and IPC buffer above the stack. The order is the fix for the
+     * overflow this task began with (specs/pager.md): the guard makes an
+     * overflow a fault at the stack's own boundary, and the block and the IPC
+     * buffer -- the two pages the process needs most -- are no longer the growth
+     * region the stack silently walks through. */
+    uintptr_t const guard_at = align_up(static_cast<uintptr_t>(elf.load_end()), kPage);
+    uintptr_t const stack_lo = guard_at + kPage;
     unsigned const stack_pages =
         request.stack_pages != 0 ? request.stack_pages : kDefaultStackPages;
     uintptr_t const stack_top = stack_lo + stack_pages * kPage;
     uint64_t const stack_bytes = stack_pages * kPage;
+    uintptr_t const block_at = stack_top;
+    uintptr_t const ipc_at = block_at + kPage;
+    /* The first address free for the regions above the block and IPC buffer.
+     * The guard page is deliberately not part of this walk: nothing is mapped
+     * there, which is the point. */
+    uintptr_t const layout_end = ipc_at + kPage;
 
     auto *block_storage = static_cast<uint8_t *>(arena_.allocate(kPage));
     if (block_storage == nullptr) {
@@ -451,19 +461,19 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     }
     uint64_t const device_slot_base = bootstrap::kSlotFirstDeclared + port_count;
     /* A blob the caller wants the child to have -- the device tree, for the device
-     * manager. It goes above the stack so a bigger program cannot collide with it,
-     * and the child reads it in place. */
+     * manager. It goes above the block and IPC buffer, so a bigger program cannot
+     * collide with it, and the child reads it in place. */
     uint64_t devices_address = 0;
-    uint64_t devices_end = stack_top;
+    uint64_t devices_end = layout_end;
     if (request.devices != nullptr && request.devices_bytes > 0) {
         uint64_t const pages = (request.devices_bytes + kPage - 1) / kPage;
-        if (!vspace.populate(stack_top, static_cast<unsigned>(pages), request.devices,
+        if (!vspace.populate(layout_end, static_cast<unsigned>(pages), request.devices,
                              request.devices_bytes, 0, false, account, nullptr, &why)) {
             detail_ = why;
             return fail("the blob the child was to be given could not be mapped");
         }
-        devices_address = stack_top;
-        devices_end = stack_top + pages * kPage;
+        devices_address = layout_end;
+        devices_end = layout_end + pages * kPage;
     }
 
     /* A device's registers, if the caller gave one: mapped above everything else, so
