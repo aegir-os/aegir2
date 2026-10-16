@@ -27,6 +27,12 @@ constexpr uint64_t kPage = 1ull << seL4_PageBits;
  * in it (the shell, specs/shell.md). A service that knows it needs more says
  * so with `stack_kib`; this is the floor, not a ceiling. */
 constexpr unsigned kDefaultStackPages = 16;
+/* The stack's default maximum extent: FreeBSD's DFLSSIZ, 8 MiB
+ * (sys/amd64/include/vmparam.h). It is what the pager grows a stack up to when
+ * the program declares nothing; a program that needs more declares it with
+ * `-Wl,-z,stack-size=` or a launch request (specs/pager.md), so this is a
+ * default, not a ceiling. */
+constexpr uint64_t kDefaultStackMaxBytes = 8ull << 20;
 /* The bootstrap block fills the page it is mapped as: what a process is given
  * is part of who it is, and a service with many grants -- the partition
  * manager carries a window's frame per page -- is not a smaller kind of
@@ -421,6 +427,19 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
         request.stack_pages != 0 ? request.stack_pages : kDefaultStackPages;
     uintptr_t const stack_top = stack_lo + stack_pages * kPage;
     uint64_t const stack_bytes = stack_pages * kPage;
+    /* The stack's maximum extent: the caller's declaration first, then the
+     * binary's own PT_GNU_STACK (what `-Wl,-z,stack-size=` writes), then the
+     * FreeBSD default. The pager may grow the stack up to here and no further
+     * (specs/pager.md). A declared maximum below the initial mapping is a
+     * contradiction -- the same number's two ends, out of order -- so it is
+     * refused rather than silently widened. */
+    uint64_t const stack_max =
+        request.stack_max_bytes != 0   ? request.stack_max_bytes
+        : elf.stack_size() != 0        ? elf.stack_size()
+                                       : kDefaultStackMaxBytes;
+    if (stack_max < stack_bytes) {
+        return fail("the stack the program declares is smaller than its first pages");
+    }
     uintptr_t const block_at = stack_top;
     uintptr_t const ipc_at = block_at + kPage;
     /* The first address free for the regions above the block and IPC buffer.
@@ -867,6 +886,7 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     process.entry = elf.entry();
     process.stack_pointer = sp;
     process.stack_top = stack_top;
+    process.stack_max = stack_max;
     process.block = block_at;
     process.vspace_root = vspace.root();
     process.mapped_end = shared_window_at + request.window_bytes;

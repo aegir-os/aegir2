@@ -176,10 +176,16 @@ if(AEGIR_HOSTED_CXX)
   #    libpthread.a sits.
   #  - libunwind's bare-metal frame bounds come from the INSERT script.
   #  - --eh-frame-hdr creates the .eh_frame_hdr section those bounds name.
+  # A fourth is the stack: `-Wl,-z,stack-size=` writes PT_GNU_STACK.p_memsz,
+  # which the loader reads and the pager grows the stack to (specs/pager.md).
+  # The default is FreeBSD's DFLSSIZ, 8 MiB; a target overrides it by setting
+  # its own AEGIR_STACK_SIZE property (in bytes) before linking this policy.
+  set(AEGIR_STACK_SIZE "0x800000" CACHE STRING "declared maximum stack, in bytes")
   target_link_options(aegir-cxx-policy-hosted INTERFACE
                       "-L${AEGIR_MUSL_INSTALL_DIR}/lib"
                       "-Wl,--eh-frame-hdr"
-                      "-Wl,-T,${AEGIR_EH_FRAME_SCRIPT}")
+                      "-Wl,-T,${AEGIR_EH_FRAME_SCRIPT}"
+                      "-Wl,-z,stack-size=$<IF:$<BOOL:$<TARGET_PROPERTY:AEGIR_STACK_SIZE>>,$<TARGET_PROPERTY:AEGIR_STACK_SIZE>,${AEGIR_STACK_SIZE}>")
 endif()
 
 # What a *library* links: C++17 and the warning set, and nothing about

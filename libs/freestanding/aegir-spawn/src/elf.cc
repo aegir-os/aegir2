@@ -67,6 +67,7 @@ bool Elf::parse(void const *image, uint64_t size) noexcept
     size_ = size;
     valid_ = false;
     load_end_ = 0;
+    stack_size_ = 0;
 
     if (image_ == nullptr || size_ < kProgramHeaderEntrySizeOffset + 2 ||
         image_[0] != 0x7f || image_[1] != 'E' || image_[2] != 'L' || image_[3] != 'F') {
@@ -98,6 +99,14 @@ bool Elf::parse(void const *image, uint64_t size) noexcept
 
     for (uint32_t i = 0; i < program_header_count_; ++i) {
         ProgramHeader header = program_header(i);
+        if (header.type == kProgramHeaderGnuStack) {
+            /* The program's declared maximum stack extent (specs/pager.md):
+             * `-Wl,-z,stack-size=` writes it, and zero (the host lld's
+             * default) means the program declared nothing -- the loader takes
+             * the default, not a zero-byte stack. */
+            stack_size_ = header.memsz;
+            continue;
+        }
         if (header.type != kProgramHeaderLoad) {
             continue;
         }

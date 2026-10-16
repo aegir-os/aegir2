@@ -337,7 +337,11 @@ void Services::boot(manifest::Manifest const &manifest, mem::Account &account, S
             request.cwd_length = sizeof(kSystemCwd) - 1;
         }
         request.priority = priority_for(entry);
+        /* The manifest's stack ask is the service's budget: this many pages up
+         * front, and the pager may grow it no further (specs/pager.md). Zero
+         * leaves the binary's own PT_GNU_STACK to decide. */
         request.stack_pages = entry.stack_kib / 4u;
+        request.stack_max_bytes = static_cast<uint64_t>(entry.stack_kib) * 1024u;
         /* Placement (specs/services.md): a declared core travels to the
          * spawner, which sets it before the service is resumed. */
         request.has_core = entry.has_core;

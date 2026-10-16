@@ -254,6 +254,12 @@ struct Request {
      *  8 KiB stack overflows silently into whatever the spawner mapped below it
      *  (specs/userland.md's "a service's stack is what the spawner gives it"). */
     uint32_t stack_pages = 0;
+    /** The stack's maximum extent, in bytes, when the caller declares one: the
+     *  pager may grow the stack up to here and no further (specs/pager.md). Zero
+     *  means no declaration, and then the binary's own `PT_GNU_STACK` -- written
+     *  by `-Wl,-z,stack-size=` -- decides, and failing that the FreeBSD default.
+     *  A maximum smaller than the initial pages is refused. */
+    uint64_t stack_max_bytes = 0;
     PortGrant const *ports;
     uint32_t port_count;
     /** The fault endpoint every service shares, and this service's badge on it.
@@ -275,6 +281,7 @@ struct Process {
     uint64_t entry;
     uint64_t stack_pointer;   /* the sp the startup frame left, for start() */
     uint64_t stack_top;
+    uint64_t stack_max;       /* the stack's declared maximum extent in bytes (specs/pager.md) */
     uint64_t block;           /* the child's bootstrap block */
     uint64_t mapped_end;      /* the first page past everything spawn() mapped: where
                                  a child trusted with its own VSpace root begins its

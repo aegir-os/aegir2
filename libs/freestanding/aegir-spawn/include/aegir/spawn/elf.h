@@ -32,6 +32,11 @@ struct ProgramHeader {
 class Elf {
 public:
     static constexpr uint32_t kProgramHeaderLoad = 1;
+    /** The program's declared stack, from the GNU_STACK program header
+     *  (`-Wl,-z,stack-size=`): its `p_memsz` is the maximum extent the program
+     *  says its stack needs (specs/pager.md). Zero is the host lld's default and
+     *  means the program declared nothing. */
+    static constexpr uint32_t kProgramHeaderGnuStack = 0x6474e551;
 
     /** Parse an image out of the initrd. `valid()` says whether it worked. */
     bool parse(void const *image, uint64_t size) noexcept;
@@ -52,6 +57,9 @@ public:
     /** One past the highest address a loadable segment occupies: where a spawner
      *  may start placing its own regions without landing inside the image. */
     uint64_t load_end() const noexcept { return load_end_; }
+    /** The maximum stack extent the program declares (`PT_GNU_STACK.p_memsz`),
+     *  or zero when it declares none. `-Wl,-z,stack-size=` writes it. */
+    uint64_t stack_size() const noexcept { return stack_size_; }
 
 private:
     uint8_t const *image_;
@@ -61,6 +69,7 @@ private:
     uint32_t program_header_count_;
     uint32_t program_header_size_;
     uint64_t load_end_;
+    uint64_t stack_size_;
     bool valid_;
 };
 
