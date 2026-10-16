@@ -1,153 +1,88 @@
-# Task: give Aegir a pager — demand-grown stacks, the seed of paging
+# Task: the pager landed — the next arc
 
-Repo: `/home/rroland/src/aegir2` (branch `main`). Aegir has no paging, and the
-on-device compiler just died of it: it overflowed a 64 KiB stack that
-`aegir-spawn` had mapped eagerly, with the process's own IPC buffer directly
-below it, so the overflow silently clobbered the IPC buffer and then took a
-VMFault in the bootstrap block (see `specs/pager.md`, "Why, measured"). Build the
-**pager** — the task that serves a thread's fault endpoint and maps the page it
-faulted on — starting with the stack. The decision and its reasoning are
-`specs/pager.md`; **none of it is implemented yet.**
+Repo: `/home/rroland/src/aegir2` (branch `main`). The pager is **in**, and the
+on-device C++ compiler is green: `make run TARGET=aegir-8g-smp4` passes with
+`CXX_SMOKE_OK` and `AEGIR_HELLO_OK` (`PASS aegir-8g-smp4 booted
+(AEGIR_BOOT_OK)`), no `<<seL4>>` line, no fault. This file is the handoff for
+whatever comes next, and the record of the two side-findings the pager arc
+turned up.
 
-## Where the tree is
+## What landed (each its own commit)
 
-```
-make build TARGET=aegir-8g-smp4     # BUILD_TIMEOUT=1800
-make run   TARGET=aegir-8g-smp4     # RUN_TIMEOUT=900
-```
+| commit | what |
+|---|---|
+| `e4f30f98` | step 1 — stack above a guard page; block and IPC above the stack |
+| `1bd5deac` | merge `wip/compiler-sysroot` (the C++ acceptance, the sysroot, stat identity) |
+| `595f8923` | drop the stray `<bits/stdint.h>` probe from the acceptance |
+| `731fcae7` | step 2 — read `PT_GNU_STACK`, hosted link flag, `stack_max_bytes` |
+| `f03be6a7` | step 3a — reserve the whole stack range, map only the first pages |
+| `7060b786` | step 3b — the launcher's pager: grow on a fault, child-badged frames, end status 129 |
+| `cf812895` | the pager retypes into a command's own CNode run |
+| `538d53c2` | `mkfs_bfs` multi-level directory offsets — **this is what finished clang** |
+| `03df3959` | musl: `PT_GNU_STACK` is the process stack, not a thread default |
+| `03d0f9de` | the compile's proof: `dir SCRATCH:`, an anchored cue, so a missing object fails the run |
 
-`make run` is currently red at the compiler's compile step — that is the bug this
-task fixes. It gets as far as `/Sys/Development/C/clang` running, resolving the
-sysroot, and faulting (see below).
+The pager grew the compiler's stack on demand (measured: 19 pages, then one
+128 KiB step through the per-command run — `pager run used=32 lo=0x4fde000
+base=12 cnodes=1`). `specs/pager.md` is the decision; the resolution order is
+launch request > `stack_kib` > `PT_GNU_STACK.p_memsz` > default (16 pages
+initial, 8 MiB max, 128 KiB step).
 
-**The tree is clean, and the compiler-with-headers work is parked on a branch.**
-The investigation probes have been stripped, and the rest of the previous
-session's WIP moved to:
+## The two side-findings worth carrying
 
-```
-wip/compiler-sysroot    the on-device sysroot + real stat identity (below)
-```
+- **`mkfs_bfs._tree`'s internal-node offsets were off by one** (`NODE * (2 +
+  len(nodes) + n)`; a node at list index `i` is written at `NODE * (i + 1)`).
+  A directory that split into two leaves had `root == maximum_size`, so the
+  guest's `dir_find` refused every lookup in it. That is the staged sysroot's
+  `__algorithm`: `<string>` includes `<__algorithm/max.h>` and could not find
+  it, while `c++/v1` (one leaf) resolved `string`. **A host case for a
+  multi-leaf directory is still missing**, and this class of bug is invisible
+  until a directory grows past one 4096-byte node.
+- **musl reads `PT_GNU_STACK.p_memsz` for `__default_stacksize`**
+  (`projects/musl/src/env/__init_tls.c:98`). Aegir's spawner reads the same
+  field as the process's maximum stack, so the link flag made every
+  `std::thread` ask for the whole declared stack; a boot service's single-level
+  CSpace filled (`slots 4084 of 4084`) and the cxx smoke died of `EAGAIN`. Now a
+  tracked musl patch (`third_party/patches/projects/musl/0004-…`) keeps
+  `__default_stacksize` at `DEFAULT_STACK_SIZE`. Thread-stack policy is Aegir's
+  to choose from here.
 
-`main` (where you are) carries this plan — `specs/pager.md` and this file — plus
-the launcher's fault detail (below). **Do not merge `wip/compiler-sysroot` until
-the stack is fixed:** its acceptance is exactly the overflow this task lands.
+## What is left, in rough order
 
-### In the tree: the launcher's fault detail
-
-`apps/hosted/aegir-launcher/src/main.cc` reports the fault's kind and, for a
-VMFault, its IP / address / FSR. It is *not* on the branch, because step 3
-extends it into the stack-overflow report. `fault 5` alone sent the previous
-session down the wrong path for hours; keep it, and make the pager print more.
-
-### Parked: the compiler-with-headers WIP (`wip/compiler-sysroot`)
-
-The other half of "a real clang with headers on Aegir" (`specs/development.md`).
-It builds clean; the guest run is red only because of the stack. When the pager
-is in, merge it and finish the acceptance:
-
-- `scripts/run_target.py` stages the sysroot headers into `Sys:Development/Include`
-  (musl + libc++ + Aegir libs + seL4) and generates `Sys:Development/C/clang.cfg`
-  carrying the include path **and** the library path / crt / archives.
-  `scripts/sysroot-hello.c` → `scripts/sysroot-hello.cc` (a C++ program including
-  `<unistd.h>`, libc++ and a Trinket header). The acceptance types
-  `Sys:Development/C/clang -c /Sys/Development/hello.cc …` and links via the
-  config (no runner-built link command).
-- The triple's stat identity: `aegir-volume/include/aegir/volume.h`
-  (`kStatTailWords` now 4, with the inode), `aegir-vfs-client`'s `Info.ino` and
-  its read, the BFS/FAT/initrd/9p `stat` answers, `libs/freestanding/aegir-9p`'s
-  qid path, and `aegir-posix`'s `fill_kstat` (which used to hardcode
-  `st_ino = 1`, collapsing every include dir to one — clang's directory dedup).
-  `specs/vfs.md`'s stat bullet documents the new word.
-- `apps/hosted/aegir-clang/src/main.cc` presents `argv[0]` in the POSIX view
-  before seeding LLVM (so the driver's install dir is `/Sys/…`, not a native
-  path LLVM's `make_absolute` mangles).
-- `libs/aegir-posix/src/spawn.cc` translates a POSIX program path to the native
-  form before the launcher sees it.
-
-## The decision (settled — do not relitigate)
-
-`specs/pager.md` has it in full. In one breath:
-
-1. **Layout + guard.** Move the bootstrap block and IPC buffer **above** the
-   stack; keep an **unmapped guard page below** it. An overflow then faults at the
-   stack's own boundary instead of corrupting the IPC buffer.
-2. **Grow on demand, bounded.** Reserve the stack range, map the initial pages,
-   grow down on a fault in the range. FreeBSD's numbers: 16 pages initial mapped
-   (the existing `kDefaultStackPages`), 8 MiB max (`DFLSSIZ`), 512 MiB hard
-   (`MAXSSIZ`), 128 KiB step (`SGROWSIZ`), 1 guard page.
-3. **The pager is the spawner** (director for services, launcher for commands). It
-   retains the child's **VSpace root** — its only new authority — and buys frames
-   from **`memory`** through a `mem.main` copy **badged with the child's id**, so
-   `release(child_badge)` reaps the stack with everything else.
-4. **An overflow is a named, deliberate end:** a distinct end status, reported by
-   name with `pc`/`sp`/`base`/`max`, terminated through the supervisor's existing
-   reap — never a silent corruption.
-5. **The declaration is `PT_GNU_STACK.p_memsz`,** set by the standard
-   `-Wl,-z,stack-size=<bytes>` (the prebuilt host `ld.lld` supports it; Aegir's
-   binaries already carry a `GNU_STACK` with `memsz = 0`). Resolution order:
-   launch request > boot manifest (`stack_kib`) > `PT_GNU_STACK` > default. No
-   custom note/object/LLVM patch for the common case.
-
-## The plan — land each step as its own commit, re-run green each time
-
-1. **Layout + guard.** `aegir-spawn/src/process.cc`: put `block_at`/`ipc_at`
-   above the stack, add the guard page below. This alone turns the current
-   "smash surprise" into one clean fault.
-2. **`PT_GNU_STACK` read + the link flag.** The spawner reads `p_memsz` from the
-   ELF's program headers; the hosted policy passes `-Wl,-z,stack-size=`; the
-   resolution order above.
-3. **The pager.** Reserve the range; the supervisor retains the child's VSpace
-   root; grow on a fault in the range with frames from `memory` (child-badged);
-   the distinct overflow end status; report and terminate past the bound.
-4. **File-backed paging** (ELF segments), later, through the same
-   `populate(vspace, addr) -> source` interface.
-
-## Constraints (AGENTS.md, enforced by the user)
-
-- **Never edit vendored trees in place.** Patches under
-  `third_party/patches/<project>/` are the source of truth; `apply_patches.py`
-  and `scripts/check_pins.py` must pass.
-- **No arbitrary or hardcoded limits.** The stack max is declared or the FreeBSD
-  default; nothing hardcodes a small one.
-- **No seL4 errors or warnings** in the log. Every `<<seL4 …>>` line and every
-  `command faulted` is a hard failure — read it, do not wave it off. (This arc's
-  whole confusion began by reading the `'file not found'` text and stepping over
-  the fault.)
-- **No flakes.** A broken run is broken; find out why.
-- `make`/`make run` under `timeout`; afterwards `ps -eo args | grep '[q]emu-system'`
-  must be empty.
-- **STOP and ask for clarification**; never unilaterally change the plan.
-- Run logs contain ANSI colour and NUL bytes — use `grep -a`, and strip escapes
-  before reading.
-
-## Watch out for
-
-- **LLVM rebuilds are expensive.** `scripts/build_llvm.sh` skips if
-  `out/runtime/llvm-install` exists; `rm -rf out/runtime/llvm-install` to force
-  one after a vendored-tree patch lands, or the run uses stale libraries.
-- **The layout addresses are load-time.** `_end`, the block, the IPC and the
-  stack are computed by the spawner, so the measured numbers (`_end 0x480c818`,
-  stack `[0x480f000,0x481f000)`) move; use `llvm-addr2line`/`llvm-readelf` on the
-  built binary, not the transcript's numbers.
-- **The diagnostic baseline is 0 probe lines.** The probes above are temporary;
-  the guest's log should carry none of them when this task lands.
-- **The pager's `alloc` is synchronous in the fault path.** Safe (memory does not
-  depend on the pager) but record it — the boot deadlocked once on "a granter
-  must not wait behind what it is granting" (`specs/memory.md`).
+1. **Director's pager.** Boot services keep reserved-but-ungrown stacks; a boot
+   service that overflows still dies with the clean fault. The launcher half is
+   what the acceptance needed; director's supervisor is the other half of
+   `specs/pager.md`'s split. Sinking the pager into a shared helper (aegir-spawn)
+   rather than `ServiceKit` is the shape that lets both use it.
+2. **The overflow path is unexercised.** No run has hit a true overflow, so the
+   named `stack-overflow pc=… sp=… base=… max=…` report and end status 129 have
+   not been observed live.
+3. **File-backed paging** (step 4): the ELF segments through the same
+   `populate(vspace, addr) -> source` interface, so an 85 MB image is not mapped
+   to touch 5 MB of it.
+4. **The used-slot wall** (`specs/userland.md`, "a used slot is still
+   allocation-only"): a process that maps and unmaps still fills its CNode. The
+   musl patch sidesteps it for thread stacks; a growable CSpace for boot
+   services is the general fix (`specs/memory.md`'s "Growing the CSpace on
+   demand").
+5. **Wire `check-bfs`** (the multi-leaf case from finding 1) as a prerequisite of
+   `build`/`run`, the way `check-allocator` is.
 
 ## Read first
 
-- `specs/pager.md` — the decision, the measurement, the plan (this task).
-- `specs/memory.md` — the memory service: how grants are badged to a child and
-  reaped by `release`, why a pager owns no memory of its own.
-- `specs/launch.md` — the spawn request, the fault supervisor, the stack ask.
-- `specs/userland.md` — "a service's stack is what the spawner gives it".
+- `specs/pager.md` — the decision and what landed.
+- `specs/memory.md` — the memory service, grants badged to a child, `release`.
+- `specs/launch.md` — the spawn request and the fault supervisor.
+- `specs/userland.md` — "a service's stack is what the spawner gives it", and the
+  used-slot wall.
+- `third_party/patches/README.md` — the patch rules (the musl patch is tracked).
 - `AGENTS.md`.
 
-## Related, not this task
+## Constraints (unchanged)
 
-Once the pager is in, the compiler-with-headers WIP above should go green, and
-`Sys:Development/Include` becomes the sysroot the follow-on work (`specs/
-development.md`) stages and searches. The stack's *max* declaration and the
-`Stack`-style launch override are step 2; the note for per-binary initial/grow is
-not needed until something wants it.
+- Builds/runs under `timeout`; check for orphaned `qemu-system` afterward.
+- No `<<seL4 …>>` line, no `command faulted` on a green run.
+- Never edit a vendored tree in place; patches under `third_party/patches/` are
+  the source of truth, and `make deps-check` must pass.
+- A check that cannot fail the command is not a check.
+- STOP and ask rather than changing the plan.
