@@ -633,16 +633,69 @@ def ensure_disk(target: Target, build_dir: Path) -> None:
     subprocess.run(command, check=True)
 
 
+def stage_sysroot_headers(include_root: Path, build_dir: Path, repo: Path,
+                          runtime: Path) -> None:
+    """Populate `Sys:Development/Include` (specs/development.md): what a hosted
+    program's `#include` reaches. musl's C headers and Aegir's own library and
+    seL4 headers sit at the root; libc++'s C++ headers sit under `c++/v1`. The
+    driver is told the root through `Sys:Development/C/clang.cfg`'s `-isystem`,
+    not by the caller, so `#include <vector>`, `#include <sel4/sel4.h>` and
+    `#include <aegir/trinket/unicode.h>` resolve from an ordinary compile.
+
+    seL4's headers are split across the source and generated trees and across
+    one directory each for architecture, mode, platform and interface -- exactly
+    the set a program's `-I` line carries -- so they are gathered by shape
+    (`include`, `*_include/*`, `autoconf`, `gen_config`) rather than named, and
+    merged at the root. The generated tree is laid over the source one."""
+    sources = [
+        runtime / "musl-install" / "include",
+        *repo.glob("libs/*/*/include"),
+    ]
+    libsel4_src = repo / "kernel" / "libsel4"
+    libsel4_build = build_dir / "libsel4"
+    # The target's architecture, mode and platform come from the kernel's own
+    # generated config, so the source tree's other architectures -- whose
+    # headers collide by path (`sel4/arch/...`, `sel4/mode/...`) -- are never
+    # staged.
+    gen_config = build_dir / "kernel" / "gen_config" / "kernel" / "gen_config.h"
+    selected: dict[str, str] = {}
+    if gen_config.is_file():
+        for line in gen_config.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"#define\s+(CONFIG_\w+)\s+(\S+)", line)
+            if match:
+                selected[match.group(1)] = match.group(2)
+    sources.extend([libsel4_src / "include", libsel4_build / "include",
+                    libsel4_build / "autoconf", libsel4_build / "gen_config"])
+    for kind, key in (("arch_include", "CONFIG_ARCH"),
+                      ("sel4_arch_include", "CONFIG_SEL4_ARCH"),
+                      ("mode_include", "CONFIG_WORD_SIZE"),
+                      ("sel4_plat_include", "CONFIG_PLAT")):
+        name = selected.get(key, "")
+        if name:
+            sources.append(libsel4_src / kind / name)
+            sources.append(libsel4_build / kind / name)
+    # seL4's <autoconf.h> includes <kernel/gen_config.h>, generated beside the
+    # kernel build rather than in libsel4's tree.
+    sources.append(build_dir / "kernel" / "gen_config")
+    for source in sources:
+        if source.is_dir():
+            shutil.copytree(source, include_root, dirs_exist_ok=True)
+    cxx = runtime / "cxx-install" / "include" / "c++" / "v1"
+    if cxx.is_dir():
+        shutil.copytree(cxx, include_root / "c++" / "v1", dirs_exist_ok=True)
+
+
 def development_tree(build_dir: Path) -> Path:
     """Lay out `Sys:Development` for make_disk (specs/development.md): the
     compiler and the linker and the scale acceptance's huge command under C, the
     sysroot under Include and Libs. The compiler is this build's `aegir-clang` --
     clang's own driver, linked by Aegir's CMake (apps/hosted/aegir-clang) --
-    deployed as `clang` and as `cc`, the name specs/development.md and the
-    session's startup already use for it, with `aegir-lld` as `lld` beside it
-    because clang's driver reaches for a linker by name. The sysroot is the next
-    increment -- the first compile is freestanding (`specs/clang-on-aegir.md`) --
-    so Include and Libs are the tree's shape and not yet its content."""
+    deployed as `clang`, `cc` and `clang++`, the names specs/development.md and
+    the session's startup use for it, with `aegir-lld` as `ld.lld` beside it
+    because clang's driver reaches for a linker by name. Include and Libs hold the
+    runtime's headers and archives (specs/development.md), so an ordinary
+    `Sys:Development/C/clang++ hello.cc` compiles and links with no flags on the
+    line."""
     root = build_dir / "development"
     shutil.rmtree(root, ignore_errors=True)
     (root / "C").mkdir(parents=True)
@@ -651,6 +704,7 @@ def development_tree(build_dir: Path) -> Path:
     for program, name in (
         ("aegir-clang/aegir-clang", "clang"),
         ("aegir-clang/aegir-clang", "cc"),
+        ("aegir-clang/aegir-clang", "clang++"),
         ("aegir-lld/aegir-lld", "ld.lld"),
     ):
         built = build_dir / "apps/hosted" / program
@@ -737,6 +791,7 @@ def development_tree(build_dir: Path) -> Path:
     # target (scripts/build_compiler_rt.sh) ride beside it. llvm-ar is the tree's own.
     runtime = build_dir.parent / "runtime"
     repo = build_dir.parent.parent
+    stage_sysroot_headers(root / "Include", build_dir, repo, runtime)
     libs = root / "Libs"
     archives = []
     for pattern in ("libs/*/*.a", "libs/*/*/*.a", "libsel4/libsel4.a",
@@ -814,27 +869,55 @@ def development_tree(build_dir: Path) -> Path:
     head = ("crt0.o", "crti.o", "crtbegin.o", "stand-up.o")
     tail = ("crtend.o", "crtn.o")
     bodies = sorted(n for n in staged if n.endswith(".a") and n != "libgcc.a")
-    # The link the acceptance types, generated from what is actually staged instead
-    # of written into a script for the guest to execute: a script hides which
-    # command failed, and the acceptance's commands are each their own step
-    # (specs/development.md). The step that types it names this with `{link}`.
-    SUBSTITUTIONS["link"] = (
-        # No --verbose: the link is no longer the fault under investigation, and
-        # lld's search-path dump floods the terminal (which buffers every line),
-        # growing its heap until its CSpace fills.
-        "Sys:Development/C/ld.lld -o SCRATCH:hello --eh-frame-hdr "
-        f"-T {path_of('aegir-eh-frame.lds')} "
-        + " ".join(path_of(n) for n in head if n in staged)
-        + " SCRATCH:hello.o"
-        + " -L Sys:Development/Libs "
-        + " ".join(f"-l:{n}" for n in bodies)
-        + " "
-        + " ".join(path_of(n) for n in tail if n in staged)
-        + " -l:libgcc.a"
+    # The on-device driver's defaults (specs/development.md): clang reads this
+    # file from beside itself, so `Sys:Development/C/clang++ hello.cc` reaches the
+    # sysroot's headers and links its libraries with no flags on the line. A `$`
+    # puts an argument in clang's link-only tail, which is treated as a *linker
+    # input* -- hence the linker's own `-T` and `-L` are spelled `-Wl,`, while
+    # object files and `-l:` are named directly. The tail is generated from what
+    # is staged, so it cannot name an archive that is not beside it.
+    #
+    # No --ld-path: the driver's own default linker for this target is `ld.lld`
+    # (clang's BareMetal toolchain) and it searches beside itself first, where
+    # aegir-lld is deployed. Naming it would warn on every compile-only call.
+    config = "\n".join(
+        [
+            "--target=riscv64-unknown-elf",
+            # The pinned ABI (specs/build.md): the crt and every archive beside
+            # it are hard-float rv64imafdc/lp64d, and clang's own bare-metal
+            # default is soft-float, so the system's ABI is stated.
+            "-march=rv64imafdc_zicsr_zifencei",
+            "-mabi=lp64d",
+            "-isystem/Sys/Development/Include/c++/v1",
+            "-isystem/Sys/Development/Include",
+            "-D_GNU_SOURCE",
+            "-D_LIBCPP_AEGIR",
+            # The C++ policy the hosted tier is built under (CMakeLists.txt's
+            # aegir-cxx-policy-hosted), so on-device user code matches the
+            # archive's _LIBCPP_ODR_SIGNATURE and libunwind can walk a throw.
+            # -O2 is deliberately absent: optimisation is the user's choice.
+            "-fexceptions",
+            "-frtti",
+            "-fno-threadsafe-statics",
+            "-fasynchronous-unwind-tables",
+            # The crt and libraries are the ones below, not the driver's guesses.
+            "-nostdlib",
+            "",
+            f"$-Wl,-T{path_of('aegir-eh-frame.lds')}",
+            "$-Wl,--eh-frame-hdr",
+            *(f"${path_of(n)}" for n in head if n in staged),
+            "$-Wl,-L/Sys/Development/Libs",
+            *(f"$-l:{n}" for n in bodies),
+            *(f"${path_of(n)}" for n in tail if n in staged),
+            "$-l:libgcc.a",
+            "",
+        ]
     )
+    for name in ("clang.cfg", "clang++.cfg"):
+        (root / "C" / name).write_text(config, encoding="utf-8")
 
     # The source the acceptance compiles, staged beside the sysroot (specs/).
-    shutil.copy2(repo / "scripts" / "sysroot-hello.c", root / "hello.c")
+    shutil.copy2(repo / "scripts" / "sysroot-hello.cc", root / "hello.cc")
     return root
 
 

@@ -714,6 +714,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
     uint64_t kind = 0;
     uint64_t size = 0;
     uint64_t mtime = 0;
+    uint64_t ino = 0;
     bool ok = false;
     uint32_t const fid = walk_path(0, path, path_length, nullptr);
     if (fid != aegir::p9::kNoFid) {
@@ -722,6 +723,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
             kind = attr.is_dir ? aegir::volume::kKindDir : aegir::volume::kKindFile;
             size = attr.is_dir ? 0 : attr.size;
             mtime = attr.mtime;
+            ino = attr.qid; /* the server's own identity for the file */
             ok = true;
         }
         (void)g_client.clunk(fid);
@@ -730,7 +732,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         port.reply_words(nullptr, 0);
         return;
     }
-    uint64_t const answer[aegir::volume::kStatTailWords] = {kind, size, mtime};
+    uint64_t const answer[aegir::volume::kStatTailWords] = {kind, size, mtime, ino};
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 

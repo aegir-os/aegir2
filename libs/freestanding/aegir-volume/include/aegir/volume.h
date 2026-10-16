@@ -83,12 +83,12 @@ constexpr uint32_t kMethodRemove = 7; /* in: path words; answer: 1, or 0 */
  * knows the badge (specs/vfs.md). Answer: how many were dropped. */
 constexpr uint32_t kMethodReap = 8;   /* in: badge; answer: how many */
 /* stat: a path. The walk ends at the thing the path names -- the empty path
- * is the root, always a directory. Answer: the kind and the size
- * (kStatTailWords words), or nothing when the path is not there. A directory
- * has no size, so its size word is zero. Like list, stat needs no handle and
- * no per-client state; it is what `std::filesystem::status` stands on
- * (specs/cxx.md step 5). */
-constexpr uint32_t kMethodStat = 9;   /* in: path words; answer: kind, size */
+ * is the root, always a directory. Answer: the kind, the size, the last-write
+ * time and the inode number (kStatTailWords words), or nothing when the path
+ * is not there. A directory has no size, so its size word is zero. Like list,
+ * stat needs no handle and no per-client state; it is what
+ * `std::filesystem::status` stands on (specs/cxx.md step 5). */
+constexpr uint32_t kMethodStat = 9; /* in: path words; answer: kind, size, mtime, inode */
 
 /* rename: a source path and a destination path. The source entry (its
  * long-name run and its 8.3 slot) is deleted and the destination entry is
@@ -201,10 +201,15 @@ constexpr uint32_t kListTailWords = 3;
 constexpr uint32_t kEntryNameMax =
     aegir::ipc::kMaxWords * 8 - kListTailWords * 8;
 
-/** stat's answer after the path: the entry's kind and its size, then its
- *  last-write time as whole seconds since the Unix epoch (zero when the
- *  filesystem has no time source). */
-constexpr uint32_t kStatTailWords = 3;
+/** stat's answer after the path: the entry's kind, its size, its last-write
+ *  time as whole seconds since the Unix epoch (zero when the filesystem has
+ *  no time source), and the identity the filesystem gives it -- the inode
+ *  number, unique within the volume and stable across a rename, which a
+ *  reader that must tell two entries apart stands on (a POSIX `stat`'s
+ *  `st_ino`, and clang's directory dedup, which collapses every `-isystem`
+ *  directory to one when they all share an identity). Zero where the format
+ *  has none to give. */
+constexpr uint32_t kStatTailWords = 4;
 
 /** space's answer: the volume's total then free bytes. A read-only volume (an
  *  initrd) answers free zero; a filesystem with no size answers both zero, the

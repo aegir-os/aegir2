@@ -549,13 +549,18 @@ int install_root() noexcept
     return fd;
 }
 
-void fill_kstat(Kstat *out, uint64_t kind, uint64_t size, uint64_t mtime) noexcept
+void fill_kstat(Kstat *out, uint64_t kind, uint64_t size, uint64_t mtime,
+                uint64_t ino) noexcept
 {
     *out = Kstat{};
     out->st_mode = static_cast<mode_t>(
         kind == aegir::volume::kKindDir ? S_IFDIR | 0755 : S_IFREG | 0644);
     out->st_nlink = 1;
-    out->st_ino = 1;
+    /* The filesystem's identity for the entry. A reader that must tell two
+     * entries apart keys on (st_dev, st_ino) -- clang's header search does,
+     * and a constant here collapsed every search directory into the first
+     * (specs/posix.md). The root and the volumes with no identity answer 0. */
+    out->st_ino = static_cast<ino_t>(ino);
     out->st_size = size;
     out->st_blksize = 4096;
     out->st_blocks = (size + 511) / 512;
@@ -572,7 +577,7 @@ void fill_kstat(Kstat *out, uint64_t kind, uint64_t size, uint64_t mtime) noexce
 bool stat_target(char const *path, uint32_t length, Kstat *out) noexcept
 {
     if (names_the_root(path, length)) {
-        fill_kstat(out, aegir::volume::kKindDir, 0, 0);
+        fill_kstat(out, aegir::volume::kKindDir, 0, 0, 0);
         return true;
     }
     seL4_CPtr const slot = transient_slot();
@@ -586,7 +591,7 @@ bool stat_target(char const *path, uint32_t length, Kstat *out) noexcept
         ok = aegir::vfs::Volume(target.volume)
                  .stat(target.rest, target.rest_length, info);
         if (ok) {
-            fill_kstat(out, info.kind, info.size, info.mtime);
+            fill_kstat(out, info.kind, info.size, info.mtime, info.ino);
         }
     }
     empty_slot(slot);
@@ -597,14 +602,14 @@ bool stat_entry(Entry const &entry, Kstat *out) noexcept
 {
     /* An fd on the synthetic root fstats as the directory it is. */
     if (entry.root) {
-        fill_kstat(out, aegir::volume::kKindDir, 0, 0);
+        fill_kstat(out, aegir::volume::kKindDir, 0, 0, 0);
         return true;
     }
     aegir::vfs::Volume::Info info{};
     if (!aegir::vfs::Volume(entry.volume).stat(entry.path, entry.path_length, info)) {
         return false;
     }
-    fill_kstat(out, info.kind, info.size, info.mtime);
+    fill_kstat(out, info.kind, info.size, info.mtime, info.ino);
     return true;
 }
 
@@ -824,7 +829,7 @@ long fstat(int fd, void *buffer) noexcept
      * is why every program linking LLVM printed nothing on the guest while its
      * own libc calls printed fine (specs/clang-on-aegir.md's Phase 3). */
     if (fd >= 0 && fd <= 2) {
-        fill_kstat(static_cast<Kstat *>(buffer), S_IFCHR | 0600, 0, 0);
+        fill_kstat(static_cast<Kstat *>(buffer), S_IFCHR | 0600, 0, 0, 0);
         return 0;
     }
     Entry *entry = entry_for(fd);

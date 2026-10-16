@@ -185,11 +185,16 @@ long name first and the 8.3 name second, ASCII-case-folded (specs/fat.md).
   per row is a call per row (`specs/trinket/file_requester.md`); a filesystem
   with no clock answers zero.
 - **stat** — words: a path. The walk ends at the thing the path names — the
-  empty path is the root, always a directory. Reply: the kind and the size
-  (`kStatTailWords` words), or nothing when the path is not there. A
-  directory's size is zero. Like list it needs no handle and no per-client
-  state; it is the call `std::filesystem::status` stands on (`specs/cxx.md`
-  step 5).
+  empty path is the root, always a directory. Reply: the kind, the size, the
+  last-write time and the inode number (`kStatTailWords` words), or nothing
+  when the path is not there. A directory's size is zero. The inode number is
+  the filesystem's own identity for the entry, unique within the volume and
+  stable across a rename — what a reader that must tell two entries apart
+  stands on (a POSIX `stat`'s `st_ino`, and clang's directory dedup, which
+  collapses every `-isystem` directory to one when they all answer the same
+  one) — and zero where the format has none to give. Like list it needs no
+  handle and no per-client state; it is the call `std::filesystem::status`
+  stands on (`specs/cxx.md` step 5).
 - **space** — no words. Reply: the volume's total and free bytes
   (`kSpaceTailWords` words). The capacity is the filesystem's own: a BFS
   volume's blocks, a FAT partition's sectors less the free clusters, a

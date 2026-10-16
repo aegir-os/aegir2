@@ -109,8 +109,12 @@ constexpr uint8_t kQtexcl = 0x20;
 constexpr uint8_t kQtsymlink = 0x02;
 constexpr uint8_t kQtfile = 0x00;
 
-/** A qid on the wire: type[1] version[4] path[8]. */
+/** A qid on the wire: type[1] version[4] path[8]. The path is the server's
+ *  stable identity for the file, which stat answers as its inode. */
 constexpr uint32_t kQidBytes = 13;
+constexpr uint32_t kQidTypeBytes = 1;
+constexpr uint32_t kQidVersionBytes = 4;
+constexpr uint32_t kQidPathOffset = kQidTypeBytes + kQidVersionBytes;
 
 /** The longest version string a handshake reads or writes. */
 constexpr uint32_t kVersionMax = 16;

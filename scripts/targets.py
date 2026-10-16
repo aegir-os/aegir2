@@ -2005,9 +2005,8 @@ TARGETS: dict[str, Target] = {
             # and its report loses the report.
             QmpStep(r"AEGIR-ACCEPTANCE-COMPILING",
                     events=TERMINAL_CLICK,
-                    press="Sys:Development/C/cc -v -ccc-install-dir Sys:Development/C"
-                          " --target=riscv64-unknown-elf"
-                          " -c Sys:Development/hello.c -o SCRATCH:hello.o\n",
+                    press="Sys:Development/C/clang -c /Sys/Development/hello.cc"
+                          " -o SCRATCH:hello.o\n",
                     await_shell=True),
             # The report's cue is the shell's *prompt*, not a line of its output:
             # clang is silent when it succeeds, and the completion line it does print
@@ -2025,15 +2024,22 @@ TARGETS: dict[str, Target] = {
                     events=TERMINAL_CLICK,
                     press="dir SCRATCH:hello.o\n",
                     await_shell=True),
-            # The link, typed (specs/clang-on-aegir.md's Phase 3): the command line
-            # names the sysroot's own crt objects and archives, so the runner builds
-            # it from what it staged and substitutes it here. It used to be written
-            # into a link.sh for the guest to execute -- a script the harness made.
+            # The link, typed (specs/clang-on-aegir.md's Phase 3): no flags on the
+            # line. The driver reads the sysroot's own crt, script and archives from
+            # `/Sys/Development/C/clang.cfg` beside itself, so the runner no longer
+            # builds a link command to substitute here. It used to be written into a
+            # link.sh for the guest to execute -- a script the harness made.
+            # `clang` and not `clang++`: the guest's keymap has no `+`, so a press
+            # carrying one is refused part-way (the runner's `_PRESS_CHORDS`), and
+            # a `.cc` input is C++ whatever the driver's mode. The name is a POSIX
+            # absolute path because the driver finds its config from its own
+            # directory and the volume view reads `Sys:...` as relative to `Home:`.
             # The link, on its own: one press is one line, for the same reason as the
             # compile above.
             QmpStep(r"hello\.o",
                     events=TERMINAL_CLICK,
-                    press="{link}\n",
+                    press="Sys:Development/C/clang SCRATCH:hello.o"
+                          " -o SCRATCH:hello\n",
                     await_shell=True),
             # Its report, cued on the prompt that follows the link, exactly as the
             # compile's is: lld's own output is its business, and the prompt is what

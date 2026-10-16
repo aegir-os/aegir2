@@ -344,6 +344,7 @@ public:
         uint64_t mode;
         uint64_t size;
         uint64_t mtime; /* whole seconds; zero when the server has no clock */
+        uint64_t qid;   /* the server's own file identity (its qid path) */
         bool is_dir;
     };
 
@@ -359,7 +360,11 @@ public:
             return false;
         }
         r.get_u64();          /* valid */
-        r.get_bytes(kQidBytes);
+        uint8_t const *qid = r.get_bytes(kQidBytes);
+        uint64_t qid_path = 0;
+        for (uint32_t i = 0; i < 8; ++i) {
+            qid_path |= static_cast<uint64_t>(qid[kQidPathOffset + i]) << (8 * i);
+        }
         uint64_t const mode = r.get_u32();
         r.get_u32();          /* uid */
         r.get_u32();          /* gid */
@@ -377,6 +382,7 @@ public:
         attr->mode = mode;
         attr->size = size;
         attr->mtime = mtime;
+        attr->qid = qid_path;
         attr->is_dir = (mode & kSIfmt) == kSIfdir;
         return true;
     }

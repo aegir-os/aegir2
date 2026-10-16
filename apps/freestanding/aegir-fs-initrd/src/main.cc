@@ -349,19 +349,24 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     }
     uint64_t kind = 0;
     uint64_t size = 0;
+    uint64_t ino = 0;
     if (path_length == 0) {
         /* The root is the archive itself: a directory with no size. */
         kind = aegir::volume::kKindDir;
     } else {
         uint64_t entry_size = 0;
-        if (find_entry(path, path_length, &entry_size) == nullptr) {
+        void const *entry = find_entry(path, path_length, &entry_size);
+        if (entry == nullptr) {
             port.reply_words(nullptr, 0);
             return;
         }
         kind = aegir::volume::kKindFile;
         size = entry_size;
+        /* The entry's own offset in the archive: unique and stable. */
+        ino = static_cast<uint64_t>(static_cast<uint8_t const *>(entry) -
+                                    static_cast<uint8_t const *>(g_archive));
     }
-    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size};
+    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size, 0, ino};
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 

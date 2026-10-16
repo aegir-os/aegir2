@@ -2035,6 +2035,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
     uint64_t kind = 0;
     uint64_t size = 0;
     uint64_t mtime = 0;
+    uint64_t ino = 0;
     if (path_length == 0) {
         /* The empty path is the root: a directory, no size. */
         kind = aegir::volume::kKindDir;
@@ -2053,8 +2054,9 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count)
         kind = dirent.directory ? aegir::volume::kKindDir : aegir::volume::kKindFile;
         size = dirent.directory ? 0 : dirent.bytes;
         mtime = aegir::fat::dos_to_unix(dirent.date, dirent.time);
+        ino = dirent.first_cluster; /* FAT's identity: the chain's first cluster */
     }
-    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size, mtime};
+    uint64_t answer[aegir::volume::kStatTailWords] = {kind, size, mtime, ino};
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }
 

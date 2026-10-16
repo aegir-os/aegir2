@@ -1152,7 +1152,8 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         return;
     }
     aegir::bfs::Inode inode;
-    if (!walk(badge, path, path_length, &inode)) {
+    uint64_t block = 0;
+    if (!walk(badge, path, path_length, &inode, &block)) {
         port.reply_words(nullptr, 0);
         return;
     }
@@ -1161,6 +1162,7 @@ void answer_stat(aegir::ipc::Owner &port, uint64_t const *words, uint32_t count,
         directory ? aegir::volume::kKindDir : aegir::volume::kKindFile,
         directory ? 0 : static_cast<uint64_t>(inode.size),
         static_cast<uint64_t>(inode.mtime) >> 16,
+        block, /* the inode number: the block the inode itself lives in */
     };
     port.reply_words(answer, aegir::volume::kStatTailWords);
 }

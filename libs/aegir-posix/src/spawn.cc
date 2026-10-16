@@ -24,6 +24,8 @@
 #include <string.h>
 #include <sys/types.h>
 
+#include <aegir/nmspace.h>
+#include <aegir/posix/path.h>
 #include <aegir/posix/spawn.h>
 
 namespace aegir::posix {
@@ -71,6 +73,28 @@ bool take_child_badge(int pid, uint64_t *badge) noexcept
     return false;
 }
 
+/* A POSIX program's own path in the launcher's grammar: `/Sys/...` becomes the
+ * native `Sys:...` before the request is handed over (specs/posix.md's
+ * boundary). False when the name is already native, is a bare name for the
+ * launcher's Path search, or does not fit -- the caller then hands it over as
+ * written. */
+bool native_program_path(char const *name, char *out, uint32_t capacity,
+                         uint32_t &length) noexcept
+{
+    if (name == nullptr) {
+        return false;
+    }
+    aegir::posix::path::Translation where{};
+    if (!aegir::posix::path::translate(name, static_cast<uint32_t>(strlen(name)),
+                                       nullptr, 0, out, capacity - 1, where) ||
+        where.target != aegir::posix::path::Target::Vfs) {
+        return false;
+    }
+    out[where.length] = '\0';
+    length = where.length;
+    return true;
+}
+
 }  // namespace aegir::posix
 
 extern "C" int posix_spawn(pid_t *pid, char const *path,
@@ -94,8 +118,21 @@ extern "C" int posix_spawn(pid_t *pid, char const *path,
         }
         words = single;
     }
-    uint32_t total = 0;
-    for (uint32_t i = 0; words[i] != nullptr; ++i) {
+    /* The launcher resolves and loads the program, and speaks Aegir's grammar
+     * only: translate the POSIX name here, where the two grammars meet
+     * (specs/posix.md's boundary). The child's argv[0] is this same word -- the
+     * launch request carries no separate image path -- so a POSIX child that
+     * cares presents it again itself. */
+    char native[aegir::nmspace::kPathMax];
+    uint32_t native_length = 0;
+    bool const translated =
+        aegir::posix::native_program_path(words[0], native, sizeof(native), native_length);
+    char const *const program = translated ? native : words[0];
+    uint32_t const program_length =
+        translated ? native_length : static_cast<uint32_t>(strlen(words[0]));
+
+    uint32_t total = program_length + 1;
+    for (uint32_t i = 1; words[i] != nullptr; ++i) {
         total += static_cast<uint32_t>(strlen(words[i])) + 1;
     }
     char *const line = static_cast<char *>(malloc(total != 0 ? total : 1));
@@ -103,10 +140,10 @@ extern "C" int posix_spawn(pid_t *pid, char const *path,
         return ENOMEM;
     }
     uint32_t at = 0;
-    for (uint32_t i = 0; words[i] != nullptr; ++i) {
-        if (i != 0) {
-            line[at++] = '\0';
-        }
+    memcpy(line + at, program, program_length);
+    at += program_length;
+    for (uint32_t i = 1; words[i] != nullptr; ++i) {
+        line[at++] = '\0';
         uint32_t const length = static_cast<uint32_t>(strlen(words[i]));
         memcpy(line + at, words[i], length);
         at += length;
