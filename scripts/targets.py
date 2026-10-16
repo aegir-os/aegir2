@@ -2018,11 +2018,15 @@ TARGETS: dict[str, Target] = {
                     events=TERMINAL_CLICK,
                     press="echo AEGIR-ACCEPTANCE-COMPILED\n",
                     await_shell=True),
-            # The compile's own report: the file listing is the proof the object was
-            # written, and a failure here names the compile rather than the link.
+            # The compile's own report: listing the scratch *directory* is the
+            # proof the object was written. `dir` lists a directory, not a file,
+            # so `dir SCRATCH:hello.o` could only ever print its own error --
+            # whose text contains `hello.o` and fired the link step anyway. With
+            # the directory, a missing object leaves the cue unprinted and the
+            # run names the compile rather than the link.
             QmpStep(r"AEGIR-ACCEPTANCE-COMPILED",
                     events=TERMINAL_CLICK,
-                    press="dir SCRATCH:hello.o\n",
+                    press="dir SCRATCH:\n",
                     await_shell=True),
             # The link, typed (specs/clang-on-aegir.md's Phase 3): no flags on the
             # line. The driver reads the sysroot's own crt, script and archives from
@@ -2035,8 +2039,10 @@ TARGETS: dict[str, Target] = {
             # absolute path because the driver finds its config from its own
             # directory and the volume view reads `Sys:...` as relative to `Home:`.
             # The link, on its own: one press is one line, for the same reason as the
-            # compile above.
-            QmpStep(r"hello\.o",
+            # compile above. The cue is anchored: `hello.o` also appears in clang's
+            # own verbose line (`-o SCRATCH:hello.o`), and the listing's own line is
+            # what says the object was written.
+            QmpStep(r"^hello\.o",
                     events=TERMINAL_CLICK,
                     press="Sys:Development/C/clang SCRATCH:hello.o"
                           " -o SCRATCH:hello\n",
