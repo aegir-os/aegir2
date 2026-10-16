@@ -422,10 +422,9 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
      * buffer -- the two pages the process needs most -- are no longer the growth
      * region the stack silently walks through. */
     uintptr_t const guard_at = align_up(static_cast<uintptr_t>(elf.load_end()), kPage);
-    uintptr_t const stack_lo = guard_at + kPage;
+    uintptr_t const stack_base = guard_at + kPage;
     unsigned const stack_pages =
         request.stack_pages != 0 ? request.stack_pages : kDefaultStackPages;
-    uintptr_t const stack_top = stack_lo + stack_pages * kPage;
     uint64_t const stack_bytes = stack_pages * kPage;
     /* The stack's maximum extent: the caller's declaration first, then the
      * binary's own PT_GNU_STACK (what `-Wl,-z,stack-size=` writes), then the
@@ -440,7 +439,15 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     if (stack_max < stack_bytes) {
         return fail("the stack the program declares is smaller than its first pages");
     }
-    uintptr_t const block_at = stack_top;
+    /* Reserve the whole range [stack_base, stack_limit) and map only the initial
+     * pages at its top: the pager maps the rest on a fault below `stack_lo`, and
+     * the guard page under `stack_base` turns an overflow past the reservation
+     * into one named fault (specs/pager.md). The block and IPC buffer sit above
+     * the reservation, so growth never reaches them. */
+    uintptr_t const stack_limit = stack_base + stack_max;
+    uintptr_t const stack_lo = stack_limit - stack_bytes;
+    uintptr_t const stack_top = stack_limit;
+    uintptr_t const block_at = stack_limit;
     uintptr_t const ipc_at = block_at + kPage;
     /* The first address free for the regions above the block and IPC buffer.
      * The guard page is deliberately not part of this walk: nothing is mapped
@@ -887,6 +894,8 @@ bool Spawner::spawn(Request const &request, mem::Account &account, Process &proc
     process.stack_pointer = sp;
     process.stack_top = stack_top;
     process.stack_max = stack_max;
+    process.stack_base = stack_base;
+    process.stack_lo = stack_lo;
     process.block = block_at;
     process.vspace_root = vspace.root();
     process.mapped_end = shared_window_at + request.window_bytes;

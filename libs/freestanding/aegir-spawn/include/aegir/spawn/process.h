@@ -282,6 +282,8 @@ struct Process {
     uint64_t stack_pointer;   /* the sp the startup frame left, for start() */
     uint64_t stack_top;
     uint64_t stack_max;       /* the stack's declared maximum extent in bytes (specs/pager.md) */
+    uint64_t stack_base;      /* the reserved bottom: where the pager stops growing */
+    uint64_t stack_lo;        /* the lowest mapped stack page; growth walks down from here */
     uint64_t block;           /* the child's bootstrap block */
     uint64_t mapped_end;      /* the first page past everything spawn() mapped: where
                                  a child trusted with its own VSpace root begins its
