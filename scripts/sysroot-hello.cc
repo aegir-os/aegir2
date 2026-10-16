@@ -16,7 +16,6 @@
  * a program the device compiled, linked and spawned is what printed it.
  */
 
-#include <bits/stdint.h>
 #include <aegir/trinket/unicode.h>
 
 #include <string>
