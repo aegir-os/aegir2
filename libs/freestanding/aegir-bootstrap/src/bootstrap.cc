@@ -585,6 +585,26 @@ uint32_t endpoint_depth() noexcept
     return l1 != 0 ? l1 + bits : bits;
 }
 
+namespace {
+/* Per thread, not per process: the whole point of receive_slot(). Zero means
+ * "the process default", so a thread that never sets one keeps kSlotReceiveCap
+ * and the variable is zero-initialised (a .tbss section, not .tdata -- an
+ * initialised thread_local in this freestanding library lands its section
+ * between the relro ones and ld.lld refuses the link). A new thread's TLS
+ * starts as a copy of the process image, so it reads zero until a builder
+ * writes its own slot over it. */
+thread_local uint64_t g_receive_slot = 0;
+}  // namespace
+
+uint64_t receive_slot() noexcept
+{
+    return g_receive_slot != 0 ? g_receive_slot : kSlotReceiveCap;
+}
+
+void set_receive_slot(uint64_t slot) noexcept { g_receive_slot = slot; }
+
+uint64_t *receive_slot_address() noexcept { return &g_receive_slot; }
+
 char const *current_dir(uint32_t *length) noexcept
 {
     uint32_t len = 0;

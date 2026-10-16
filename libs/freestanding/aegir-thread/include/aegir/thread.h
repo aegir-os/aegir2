@@ -93,6 +93,9 @@ struct Pending {
     uintptr_t thread_pointer;
     void (*entry)(void *);
     void *argument;
+    /* The thread's own cap-receive slot, written into its TLS by the entry
+     * trampoline resume() starts it at (aegir/bootstrap.h's receive_slot). */
+    uint64_t receive_slot = 0;
 };
 
 class Builder {

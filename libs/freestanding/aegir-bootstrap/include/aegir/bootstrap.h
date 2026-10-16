@@ -346,6 +346,27 @@ uint32_t cnode_l1_bits() noexcept;
  *  (projects/seL4_libs/libsel4allocman/src/bootstrap.c:434-440). */
 uint32_t endpoint_depth() noexcept;
 
+/** The slot a capability received over IPC lands in, for *this thread*.
+ *
+ *  Two threads of one process share a CSpace, so one fixed slot serves only one
+ *  of them: every call and receive empties the receive slot before it fills it
+ *  (aegir-ipc's set_receive_path), so a call on one thread would drop a
+ *  capability the other had just received -- measured in the launcher, whose
+ *  fault supervisor calls a filesystem while the serve loop waits on the spawn
+ *  lock, and the caller's stream capability was deleted out of slot 5. The boot
+ *  thread keeps kSlotReceiveCap; a thread started by aegir-thread::Builder is
+ *  given a slot of its own, and this returns whichever is this thread's. A
+ *  caller must ask for it rather than name kSlotReceiveCap directly. */
+uint64_t receive_slot() noexcept;
+
+/** Give this thread the receive slot `slot`. See receive_slot(). */
+void set_receive_slot(uint64_t slot) noexcept;
+
+/** The address of this thread's receive-slot variable, for a thread builder
+ *  writing a new thread's slot into its TLS by offset
+ *  (sel4runtime's __sel4runtime_write_tls_variable). */
+uint64_t *receive_slot_address() noexcept;
+
 /** The child's current directory, or nullptr when it was given none
  *  (specs/environment.md). The pointer is into the block, valid as long as the
  *  block is. */

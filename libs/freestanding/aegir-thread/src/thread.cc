@@ -26,6 +26,22 @@ namespace {
 
 constexpr uint64_t kPage = 1ull << seL4_PageBits;
 
+/* Where a thread the builder starts actually begins: it sets the thread's own
+ * cap-receive slot, then runs the entry. A process's threads share one CSpace,
+ * so one fixed slot cannot serve them all -- every call and receive empties the
+ * slot before it fills it (aegir-ipc's set_receive_path), and a capability the
+ * other thread had just received would be deleted with it. The slot is set
+ * here, in the new thread's *own* TLS, and not by the builder: the builder's
+ * thread and the new one need not share a TLS layout (a hosted process's boot
+ * thread and a sel4runtime-started thread do not), so a write by offset from
+ * the builder would land on the wrong variable -- which the kernel then either
+ * reads as no slot or, worse, deletes as a real one. */
+void thread_entry(uint64_t receive_slot, void (*entry)(void *), void *argument) noexcept
+{
+    aegir::bootstrap::set_receive_slot(receive_slot);
+    entry(argument);
+}
+
 }  // namespace
 
 Builder::Builder(mem::Allocator &allocator, mem::Scratch &scratch, mem::Account &account) noexcept
@@ -117,6 +133,16 @@ bool Builder::prepare(Placement const &where, void (*entry)(void *), void *argum
         stack_pointer = (stack_top - tls_size) & ~static_cast<uintptr_t>(15);
     }
 
+    /* The thread's own cap-receive slot (aegir/bootstrap.h's receive_slot): one
+     * plain slot per thread, because a process's threads share a CSpace and one
+     * fixed slot cannot serve them all. thread_entry, which resume() starts the
+     * thread at, writes it into the thread's own TLS. */
+    uint64_t const receive_slot = allocator_.alloc_slot();
+    if (receive_slot == 0) {
+        problem_ = "no slot for the thread's receive capability";
+        return false;
+    }
+
     /* The IPC buffer: a page of its own, mapped where this thread can write it
      * and reach it through its own thread pointer. The frame is part of the
      * TCB's configuration, so it stays this thread's. */
@@ -195,6 +221,7 @@ bool Builder::prepare(Placement const &where, void (*entry)(void *), void *argum
     out.thread_pointer = thread_pointer;
     out.entry = entry;
     out.argument = argument;
+    out.receive_slot = receive_slot;
     return true;
 }
 
@@ -212,9 +239,13 @@ bool Builder::resume(Pending const &pending) noexcept
      * would overwrite the base just set and leave the thread with none -- a
      * fault at address zero on its first IPC buffer access. */
     context.tp = pending.thread_pointer;
-    context.pc = reinterpret_cast<seL4_Word>(pending.entry);
-    /* The entry's one argument, in the register the ABI passes it in. */
-    context.a0 = reinterpret_cast<seL4_Word>(pending.argument);
+    /* A thread has no startup frame, so its entry and its arguments start in
+     * registers: thread_entry sets the thread's own receive slot and then runs
+     * the real entry with its one argument (specs/userland.md). */
+    context.pc = reinterpret_cast<seL4_Word>(&thread_entry);
+    context.a0 = static_cast<seL4_Word>(pending.receive_slot);
+    context.a1 = reinterpret_cast<seL4_Word>(pending.entry);
+    context.a2 = reinterpret_cast<seL4_Word>(pending.argument);
     context.sp = pending.stack_pointer;
     seL4_Error const error =
         seL4_TCB_WriteRegisters(pending.thread.tcb, 1 /* resume */, 0,

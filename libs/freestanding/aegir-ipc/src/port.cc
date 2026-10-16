@@ -38,9 +38,10 @@ constexpr seL4_Word kReplyMr = 0;
  * by it. */
 void set_receive_path() noexcept
 {
-    seL4_CNode_Delete(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+    seL4_CPtr const slot = static_cast<seL4_CPtr>(bootstrap::receive_slot());
+    seL4_CNode_Delete(bootstrap::kSlotOwnCNode, slot,
                       bootstrap::endpoint_depth());
-    seL4_SetCapReceivePath(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+    seL4_SetCapReceivePath(bootstrap::kSlotOwnCNode, slot,
                            bootstrap::endpoint_depth());
 }
 }  // namespace
@@ -231,13 +232,15 @@ void Owner::reply_cap(uint64_t const *words, uint32_t count, seL4_CPtr cap) noex
 bool take_received_cap(seL4_CPtr target) noexcept
 {
     return seL4_CNode_Move(bootstrap::kSlotOwnCNode, target, bootstrap::endpoint_depth(),
-                           bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+                           bootstrap::kSlotOwnCNode,
+                           static_cast<seL4_CPtr>(bootstrap::receive_slot()),
                            bootstrap::endpoint_depth()) == seL4_NoError;
 }
 
 void drop_received_cap() noexcept
 {
-    seL4_CNode_Delete(bootstrap::kSlotOwnCNode, bootstrap::kSlotReceiveCap,
+    seL4_CNode_Delete(bootstrap::kSlotOwnCNode,
+                      static_cast<seL4_CPtr>(bootstrap::receive_slot()),
                       bootstrap::endpoint_depth());
 }
 

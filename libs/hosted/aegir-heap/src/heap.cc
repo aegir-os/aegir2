@@ -655,18 +655,14 @@ seL4_CPtr runtime_untyped_source(void *context, seL4_Word want_bits,
         aegir::debug_write(", ");
         aegir::debug_write_hex(reinterpret_cast<uint64_t>(allocator->identity()));
         aegir::debug_write("\n");
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                          aegir::bootstrap::kSlotReceiveCap,
-                          aegir::bootstrap::endpoint_depth());
+        aegir::ipc::drop_received_cap();
         return 0;
     }
     if (!aegir::ipc::take_received_cap(slot)) {
         trace_phase("cap-move-refused");
         /* The chunk is still in the scratch receive slot; drop it, or the next
          * transfer is refused an occupied slot. */
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                          aegir::bootstrap::kSlotReceiveCap,
-                          aegir::bootstrap::endpoint_depth());
+        aegir::ipc::drop_received_cap();
         return 0;
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]

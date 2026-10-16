@@ -388,9 +388,7 @@ seL4_CPtr ServiceKit::alloc_child_mem(uint32_t bits)
     }
     seL4_CPtr const slot = memory().alloc_slot();
     if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                          aegir::bootstrap::kSlotReceiveCap,
-                          endpoint_depth());
+        aegir::ipc::drop_received_cap();
         return 0;
     }
     return slot;

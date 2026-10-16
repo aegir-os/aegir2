@@ -89,9 +89,7 @@ seL4_CPtr command_untyped_source(void *context, seL4_Word want_bits, seL4_Word *
     if (slot == 0 || !aegir::ipc::take_received_cap(slot)) {
         /* The chunk is still in the scratch receive slot; drop it, or the next
          * transfer is refused an occupied slot. */
-        seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode,
-                          aegir::bootstrap::kSlotReceiveCap,
-                          endpoint_depth());
+        aegir::ipc::drop_received_cap();
         return 0;
     }
     *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0]
