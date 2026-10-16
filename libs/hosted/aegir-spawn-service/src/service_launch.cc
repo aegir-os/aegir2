@@ -599,7 +599,11 @@ bool ServiceKit::start_command(Command const &command, Started *out)
         abandon(badge, owner);
         return false;
     }
-    watch_stack(badge, process);
+    if (!watch_stack(badge, process, owner)) {
+        aegir::debug_write("  spawn: FAIL no slots for the command's stack\n");
+        abandon(badge, owner);
+        return false;
+    }
     if (!spawner().start(process)) {
         aegir::debug_write("  spawn: FAIL starting a command: ");
         aegir::debug_write(spawner().problem());
@@ -865,7 +869,11 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
         abandon(own_badge_, owner);
         return false;
     }
-    watch_stack(child_badge, process);
+    if (!watch_stack(child_badge, process, owner)) {
+        aegir::debug_write("  spawn: FAIL no slots for the terminal's stack\n");
+        abandon(own_badge_, owner);
+        return false;
+    }
     if (!spawner().start(process)) {
         aegir::debug_write("  spawn: FAIL starting a nested terminal: ");
         aegir::debug_write(spawner().problem());

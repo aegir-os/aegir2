@@ -139,7 +139,7 @@ public:
         uint64_t max = 0;
         uint64_t sp = 0;       /* filled from the child's TCB for a report */
     };
-    void watch_stack(uint64_t badge, Process const &process);
+    bool watch_stack(uint64_t badge, Process const &process, uint32_t owner);
     /* True when `address` is the watched child's stack fault (grown, or one it
      * must end); false when it is some other fault. `fault` always carries the
      * range for a report. `*why` names a growth that ran out of something. */
@@ -349,6 +349,14 @@ private:
      * badged-copy shape command_untyped_source uses, but not tied to the one
      * staging slot (specs/pager.md). Zero when the service could not answer. */
     seL4_CPtr pager_chunk(uint64_t badge, seL4_Word want_bits, seL4_Word *size_bits) noexcept;
+    /* Allocate a command's *pager* run of L2 CNodes: the frames and page tables
+     * the pager retypes for its stack live here, not in the launcher's own
+     * CSpace, so many growable stacks fit and reap returns the run whole
+     * (specs/pager.md). A run of its own, separate from the staging run, so the
+     * two never share a cursor. On failure only what this call made is given
+     * back -- the staging run stays for the abandon to take. */
+    bool allocate_pager_cnodes(uint32_t owner, seL4_Word slots, seL4_Word *base,
+                               uint32_t *cnodes);
     /* Register a child with the process registry (specs/process.md): the
      * spawner is the one that knows the child's pid, its parent, its name and
      * its path. One call, so every path this kit starts -- a command, a nested
@@ -490,6 +498,14 @@ private:
         uint64_t max = 0;
         seL4_CPtr chunk = 0;
         uint64_t chunk_left = 0;
+        /* The command's own L2 CNode run for the pager, and how many of its
+         * slots have been retyped into (specs/pager.md). `uses_run` false is a
+         * single-level CSpace, where the fallback is the launcher's own slots
+         * and each one is recorded to free by hand. */
+        bool uses_run = false;
+        seL4_Word pager_base = 0;
+        uint32_t pager_cnodes = 0;
+        seL4_Word pager_used = 0;
         std::vector<seL4_CPtr> slots;
     };
     std::unordered_map<uint64_t, StackWatch> stacks_;

@@ -47,6 +47,16 @@ aegir::mem::Allocator g_command_mem(nullptr);
  * accumulates. */
 alignas(64) unsigned char g_command_nodes[256 * 1024];
 
+/* The pager's slot cursor (specs/pager.md): a live command's stack frames and
+ * page tables are retyped into a run of L2 CNodes of its own, so reap returns
+ * the run with the command and many growable stacks do not compete for the
+ * launcher's own L2 CNode. It is re-adopted over the faulting command's
+ * remaining slots on each grow; the fault supervisor is its only user, under
+ * the service lock. It retypes from the child-badged chunk, so it holds no
+ * untyped of its own. */
+aegir::mem::Allocator g_pager_mem(nullptr);
+alignas(64) unsigned char g_pager_nodes[16 * 1024];
+
 /* The current command's badged mem.main copy, which the untyped source calls
  * with. It is set by begin_command and cleared by end_staging. */
 seL4_CPtr g_command_mem_call = 0;
@@ -200,6 +210,7 @@ bool ServiceKit::adopt(aegir::mem::Allocator &allocator, aegir::mem::Scratch &sc
         return false;
     }
     g_command_mem.adopt_nodes(g_command_nodes, sizeof(g_command_nodes));
+    g_pager_mem.adopt_nodes(g_pager_nodes, sizeof(g_pager_nodes));
 
     /* A two-level CSpace gives each command its own L2 CNode; a single-level one
      * shares the reserved pool among commands (specs/memory.md). */
@@ -774,10 +785,10 @@ constexpr uint64_t kPage = 1ull << seL4_PageBits;
 
 }  // namespace
 
-void ServiceKit::watch_stack(uint64_t badge, Process const &process)
+bool ServiceKit::watch_stack(uint64_t badge, Process const &process, uint32_t owner)
 {
     if (process.stack_max == 0 || process.vspace_root == 0) {
-        return;
+        return true;
     }
     StackWatch watch{};
     watch.root = process.vspace_root;
@@ -785,7 +796,80 @@ void ServiceKit::watch_stack(uint64_t badge, Process const &process)
     watch.lo = static_cast<uintptr_t>(process.stack_lo);
     watch.top = static_cast<uintptr_t>(process.stack_top);
     watch.max = process.stack_max;
+    if (cnode_l1_ != 0) {
+        /* A frame per page of the declared maximum, plus the page tables above
+         * them: one per 2 MiB at the lowest level, and a little for the levels
+         * above. The run is the command's own, so reap returns it whole. */
+        seL4_Word const frames = static_cast<seL4_Word>(process.stack_max / kPage);
+        seL4_Word const tables = frames / 512 + 8;
+        seL4_Word base = 0;
+        uint32_t cnodes = 0;
+        if (!allocate_pager_cnodes(owner, frames + tables, &base, &cnodes)) {
+            return false;
+        }
+        watch.uses_run = true;
+        watch.pager_base = base;
+        watch.pager_cnodes = cnodes;
+    }
     stacks_[badge] = std::move(watch);
+    return true;
+}
+
+bool ServiceKit::allocate_pager_cnodes(uint32_t owner, seL4_Word slots, seL4_Word *base,
+                                       uint32_t *cnodes)
+{
+    seL4_Word const limit = static_cast<seL4_Word>(1) << cnode_l1_;
+    seL4_Word const per = static_cast<seL4_Word>(1) << cnode_l2_;
+    seL4_Word const nodes = (slots + per - 1) / per;
+    if (nodes == 0 || nodes > limit) {
+        return false;
+    }
+    /* First fit over root slots no live command holds, staging or pager. */
+    seL4_Word start = 1;
+    while (start + nodes <= limit) {
+        bool free_run = true;
+        for (seL4_Word s = start; s < start + nodes && free_run; ++s) {
+            for (OwnerCnode const &entry : owner_cnodes_) {
+                if (entry.slot == s) {
+                    free_run = false;
+                    break;
+                }
+            }
+        }
+        if (free_run) {
+            break;
+        }
+        ++start;
+    }
+    if (start + nodes > limit) {
+        return false;
+    }
+    std::size_t const mark = owner_cnodes_.size();
+    for (seL4_Word s = start; s < start + nodes; ++s) {
+        seL4_Error error = seL4_NoError;
+        void *cookie = nullptr;
+        seL4_CPtr const created =
+            allocator_->alloc_cnode_at_l1(cnode_l2_, s, account_, &error, &cookie);
+        if (created == 0) {
+            /* Give back only what this call made: the staging run belongs to
+             * the abandon that follows. */
+            while (owner_cnodes_.size() > mark) {
+                OwnerCnode const &entry = owner_cnodes_.back();
+                if (entry.cookie != nullptr) {
+                    (void)allocator_->free_object(
+                        entry.cookie,
+                        static_cast<seL4_Word>(aegir::mem::Allocator::object_bits(
+                            seL4_CapTableObject, cnode_l2_)));
+                }
+                owner_cnodes_.pop_back();
+            }
+            return false;
+        }
+        owner_cnodes_.push_back(OwnerCnode{owner, s, cookie});
+    }
+    *base = start;
+    *cnodes = static_cast<uint32_t>(nodes);
+    return true;
 }
 
 seL4_CPtr ServiceKit::pager_chunk(uint64_t badge, seL4_Word want_bits,
@@ -881,6 +965,40 @@ bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault
     } else {
         target = watch.base;
     }
+    /* A two-level command has its own run: adopt the slots not yet used, so
+     * alloc_slot continues where the last grow stopped. A single-level CSpace
+     * has no run and falls back to the launcher's own slots, each recorded to
+     * free by hand. */
+    if (watch.uses_run) {
+        seL4_Word const per = static_cast<seL4_Word>(1) << cnode_l2_;
+        seL4_Word const total = static_cast<seL4_Word>(watch.pager_cnodes) * per;
+        if (watch.pager_used >= total) {
+            if (why != nullptr) {
+                *why = "the stack's slot run is full";
+            }
+            return true;
+        }
+        seL4_Word const first = watch.pager_used & (per - 1);
+        seL4_Word const node = watch.pager_base + (watch.pager_used / per);
+        g_pager_mem.adopt_slots_level_two(first, total - watch.pager_used, cnode_l1_,
+                                          cnode_l2_, node, false);
+    }
+    auto sync_used = [&]() noexcept {
+        if (watch.uses_run) {
+            watch.pager_used =
+                g_pager_mem.slot_mark() -
+                (static_cast<seL4_Word>(watch.pager_base) << cnode_l2_);
+        }
+    };
+    auto carve = [&](seL4_Word type, seL4_Word bits) -> seL4_CPtr {
+        seL4_Error ignored = seL4_NoError;
+        if (watch.uses_run) {
+            return g_pager_mem.carve_object_from(watch.chunk, type, bits, pager_account_,
+                                                 &ignored);
+        }
+        return allocator_->carve_object_from(watch.chunk, type, bits, pager_account_,
+                                             &ignored);
+    };
     while (watch.lo > target) {
         if (watch.chunk == 0 || watch.chunk_left < kPage) {
             seL4_Word chunk_bits = 0;
@@ -896,9 +1014,7 @@ bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault
             watch.chunk_left = 1ull << chunk_bits;
             watch.slots.push_back(chunk);
         }
-        seL4_Error error = seL4_NoError;
-        seL4_CPtr const frame = allocator_->carve_object_from(
-            watch.chunk, seL4_RISCV_4K_Page, seL4_PageBits, pager_account_, &error);
+        seL4_CPtr const frame = carve(seL4_RISCV_4K_Page, seL4_PageBits);
         if (frame == 0) {
             if (why != nullptr) {
                 *why = "no frame for the stack";
@@ -906,16 +1022,18 @@ bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault
             return true;
         }
         watch.chunk_left -= kPage;
-        watch.slots.push_back(frame);
+        if (!watch.uses_run) {
+            watch.slots.push_back(frame);
+        }
+        sync_used();
         uintptr_t const at = watch.lo - kPage;
         seL4_Error mapped = seL4_RISCV_Page_Map(frame, watch.root, at, seL4_AllRights,
                                                 seL4_RISCV_Default_VMAttributes);
         unsigned attempts = 0;
         while (mapped == seL4_FailedLookup && attempts < 8) {
             ++attempts;
-            seL4_CPtr const table = allocator_->carve_object_from(
-                watch.chunk, seL4_RISCV_PageTableObject, seL4_PageTableBits,
-                pager_account_, &error);
+            seL4_CPtr const table =
+                carve(seL4_RISCV_PageTableObject, seL4_PageTableBits);
             if (table == 0) {
                 if (why != nullptr) {
                     *why = "no page table for the stack";
@@ -923,16 +1041,22 @@ bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault
                 return true;
             }
             watch.chunk_left -= kPage;
-            watch.slots.push_back(table);
+            if (!watch.uses_run) {
+                watch.slots.push_back(table);
+            }
+            sync_used();
             seL4_Error const table_mapped = seL4_RISCV_PageTable_Map(
                 table, watch.root, at, seL4_RISCV_Default_VMAttributes);
             if (table_mapped == seL4_DeleteFirst) {
                 /* A table already reaches this address; ours is redundant, so
-                 * its slot is all that is left to give back. */
+                 * its capability goes. A fallback slot is reused; a run counts
+                 * its memory spent. */
                 seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, table,
                                   endpoint_depth());
-                watch.slots.pop_back();
-                allocator_->free_slot(table);
+                if (!watch.uses_run) {
+                    watch.slots.pop_back();
+                    allocator_->free_slot(table);
+                }
             } else if (table_mapped != seL4_NoError) {
                 if (why != nullptr) {
                     *why = "a stack page table could not be mapped";
