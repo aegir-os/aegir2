@@ -90,6 +90,10 @@ std::mutex g_ends_mutex;
  * reports for it is nonzero, so a command that died rather than returned fails
  * the line it was on. */
 constexpr uint64_t kFaultStatus = 128;
+/* A stack past its reserved base is a distinct end: `wait` and the registry can
+ * say "stack overflow" rather than "fault", and the pager's line carries the
+ * numbers (specs/pager.md). */
+constexpr uint64_t kStackOverflowStatus = 129;
 
 /* The supervisor thread's own objects and stack, charged here. */
 aegir::mem::Account g_supervisor_account{"launcher.faults", 0, 0, 0};
@@ -577,6 +581,35 @@ void fault_supervisor(void *argument) noexcept
     for (;;) {
         seL4_Word badge = 0;
         seL4_MessageInfo_t const info = seL4_Recv(fault, &badge);
+        uint64_t const fault_type = seL4_MessageInfo_get_label(info);
+        /* The fault's own numbers, read before anything else can touch the
+         * message registers: a pager grow below calls mem.main, and a call
+         * replaces them (specs/pager.md). */
+        uint64_t const fault_ip =
+            fault_type == seL4_Fault_VMFault ? seL4_GetMR(seL4_VMFault_IP) : 0;
+        uint64_t const fault_addr =
+            fault_type == seL4_Fault_VMFault ? seL4_GetMR(seL4_VMFault_Addr) : 0;
+        uint64_t const fault_fsr =
+            fault_type == seL4_Fault_VMFault ? seL4_GetMR(seL4_VMFault_FSR) : 0;
+
+        /* The pager (specs/pager.md): a fault in a watched child's reserved
+         * stack is a page to map, not an end. The grow takes the service lock
+         * the spawner and the reaper share, so it cannot race either. */
+        bool handled = false;
+        char const *why = nullptr;
+        aegir::spawn::ServiceKit::StackFault stack_fault{};
+        if (fault_type == seL4_Fault_VMFault) {
+            std::lock_guard<std::mutex> const locked(g_service_mutex);
+            if (g_service != nullptr) {
+                handled = g_service->grow_stack(badge, fault_addr, &stack_fault, &why);
+            }
+        }
+        if (handled && !stack_fault.overflow && why != nullptr && why[0] == '\0') {
+            /* The page is mapped: let the faulting thread run again. */
+            seL4_Reply(seL4_MessageInfo_new(0, 0, 0, 0));
+            continue;
+        }
+
         /* Report the stream exit the command's own `report_exit` would have
          * (specs/launch.md): a command that faults never reaches that call, so
          * its line's stream stays open and the shell's read never returns. The
@@ -603,16 +636,30 @@ void fault_supervisor(void *argument) noexcept
          * address and instruction are what say *where* the command died, and
          * "fault 5" alone sent this arc's investigation down the wrong path
          * once already. */
-        uint64_t const fault_type = seL4_MessageInfo_get_label(info);
         aegir::debug_write("  launcher: command faulted, fault ");
         aegir::debug_write_unsigned(fault_type);
         if (fault_type == seL4_Fault_VMFault) {
             aegir::debug_write(" VMFault ip=");
-            aegir::debug_write_hex(seL4_GetMR(seL4_VMFault_IP));
+            aegir::debug_write_hex(fault_ip);
             aegir::debug_write(" addr=");
-            aegir::debug_write_hex(seL4_GetMR(seL4_VMFault_Addr));
+            aegir::debug_write_hex(fault_addr);
             aegir::debug_write(" fsr=");
-            aegir::debug_write_hex(seL4_GetMR(seL4_VMFault_FSR));
+            aegir::debug_write_hex(fault_fsr);
+            if (handled && stack_fault.overflow) {
+                /* What ran out, with the numbers (AGENTS.md): the fault's
+                 * instruction, the stack pointer at it, and the range. */
+                aegir::debug_write(" stack-overflow pc=");
+                aegir::debug_write_hex(fault_ip);
+                aegir::debug_write(" sp=");
+                aegir::debug_write_hex(stack_fault.sp);
+                aegir::debug_write(" base=");
+                aegir::debug_write_hex(stack_fault.base);
+                aegir::debug_write(" max=");
+                aegir::debug_write_hex(stack_fault.max);
+            } else if (handled && why != nullptr && why[0] != '\0') {
+                aegir::debug_write(" stack-growth-failed ");
+                aegir::debug_write(why);
+            }
         } else if (fault_type == seL4_Fault_CapFault) {
             aegir::debug_write(" CapFault ip=");
             aegir::debug_write_hex(seL4_GetMR(seL4_CapFault_IP));
@@ -629,9 +676,11 @@ void fault_supervisor(void *argument) noexcept
             aegir::debug_write(")");
         }
         aegir::debug_write("\n");
+        uint64_t const status =
+            (handled && stack_fault.overflow) ? kStackOverflowStatus : kFaultStatus;
         if (stream != 0) {
             aegir::ipc::Consumer const port(stream);
-            (void)aegir::console::stream_exit(port, kFaultStatus, badge);
+            (void)aegir::console::stream_exit(port, status, badge);
             std::lock_guard<std::mutex> const locked(g_service_mutex);
             give_stream_slot(stream);
         } else {
@@ -640,7 +689,7 @@ void fault_supervisor(void *argument) noexcept
                 (void)g_service->halt(badge);
             }
         }
-        file_exit(badge, kFaultStatus);
+        file_exit(badge, status);
     }
 }
 

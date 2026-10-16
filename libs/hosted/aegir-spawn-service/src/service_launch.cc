@@ -584,7 +584,9 @@ bool ServiceKit::start_command(Command const &command, Started *out)
                            static_cast<uint32_t>(name.size()));
     }
     aegir::spawn::Process process{};
-    if (!spawner().spawn(request, account, process)) {
+    /* Spawn held and watch the stack before the child runs: the pager must
+     * know the range before the child can fault in it (specs/pager.md). */
+    if (!spawner().spawn(request, account, process, false)) {
         aegir::debug_write("  spawn: FAIL spawning a command: ");
         aegir::debug_write(spawner().problem());
         char const *const detail = spawner().detail();
@@ -593,6 +595,14 @@ bool ServiceKit::start_command(Command const &command, Started *out)
             aegir::debug_write(detail);
             aegir::debug_write(")");
         }
+        aegir::debug_write("\n");
+        abandon(badge, owner);
+        return false;
+    }
+    watch_stack(badge, process);
+    if (!spawner().start(process)) {
+        aegir::debug_write("  spawn: FAIL starting a command: ");
+        aegir::debug_write(spawner().problem());
         aegir::debug_write("\n");
         abandon(badge, owner);
         return false;
@@ -842,7 +852,7 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
     request.untyped_physical = 0;
     request.untyped_bits = kChildUntypedBits;
     aegir::spawn::Process process{};
-    if (!spawner().spawn(request, account, process)) {
+    if (!spawner().spawn(request, account, process, false)) {
         aegir::debug_write("  spawn: FAIL spawning a nested terminal: ");
         aegir::debug_write(spawner().problem());
         char const *const detail = spawner().detail();
@@ -851,6 +861,14 @@ bool ServiceKit::start_launcher(std::string const &program, std::string const &w
             aegir::debug_write(detail);
             aegir::debug_write(")");
         }
+        aegir::debug_write("\n");
+        abandon(own_badge_, owner);
+        return false;
+    }
+    watch_stack(child_badge, process);
+    if (!spawner().start(process)) {
+        aegir::debug_write("  spawn: FAIL starting a nested terminal: ");
+        aegir::debug_write(spawner().problem());
         aegir::debug_write("\n");
         abandon(own_badge_, owner);
         return false;

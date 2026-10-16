@@ -732,6 +732,10 @@ void ServiceKit::reap(seL4_CPtr tcb, uint64_t badge, uint32_t owner)
     } else {
         slot_pool_.free_owner(owner);
     }
+    /* The pager's slots for this child: the release above revoked every chunk
+     * the badge owned, so the frames and page tables the pager retyped from
+     * them are gone and their slots are empty (specs/pager.md). */
+    forget_stack(badge);
 }
 
 bool ServiceKit::hold_received_stream()
@@ -756,6 +760,213 @@ bool ServiceKit::hold_received_stream()
     }
     stream_live_ = true;
     return true;
+}
+
+/* ---- the pager (specs/pager.md) ------------------------------------------- */
+
+namespace {
+
+/* FreeBSD's SGROWSIZ: how far down a stack grows on the fault that needs
+ * another page. A fault deeper than this maps everything between, so one jump
+ * is one call however far it is. */
+constexpr uint64_t kStackGrowBytes = 128ull * 1024;
+constexpr uint64_t kPage = 1ull << seL4_PageBits;
+
+}  // namespace
+
+void ServiceKit::watch_stack(uint64_t badge, Process const &process)
+{
+    if (process.stack_max == 0 || process.vspace_root == 0) {
+        return;
+    }
+    StackWatch watch{};
+    watch.root = process.vspace_root;
+    watch.base = static_cast<uintptr_t>(process.stack_base);
+    watch.lo = static_cast<uintptr_t>(process.stack_lo);
+    watch.top = static_cast<uintptr_t>(process.stack_top);
+    watch.max = process.stack_max;
+    stacks_[badge] = std::move(watch);
+}
+
+seL4_CPtr ServiceKit::pager_chunk(uint64_t badge, seL4_Word want_bits,
+                                  seL4_Word *size_bits) noexcept
+{
+    if (allocator_ == nullptr || mem_port_ == 0) {
+        return 0;
+    }
+    /* The service records ownership by the *call's* badge, so the copy that
+     * asks is minted with the child's id and a fresh chunk is the child's
+     * (specs/memory.md). It is dropped once the chunk is in our own slot. */
+    seL4_CPtr const call = allocator_->alloc_slot();
+    if (call == 0) {
+        return 0;
+    }
+    if (seL4_CNode_Mint(aegir::bootstrap::kSlotOwnCNode, call, endpoint_depth(),
+                        aegir::bootstrap::kSlotOwnCNode, mem_port_, endpoint_depth(),
+                        seL4_CapRights_new(1, 1, 0, 1), badge) != seL4_NoError) {
+        allocator_->free_slot(call);
+        return 0;
+    }
+    aegir::ipc::Consumer const service(call);
+    uint64_t const request = want_bits != 0 ? want_bits : aegir::memory::kChunkBits;
+    uint64_t answer[2] = {};
+    bool cap_arrived = false;
+    aegir::ipc::WordsReply const reply = service.call_transfer(
+        aegir::memory::kMethodAlloc, &request, 1, 0, answer, 2, &cap_arrived);
+    seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, call, endpoint_depth());
+    allocator_->free_slot(call);
+    if (reply.error != 0 || !cap_arrived) {
+        return 0;
+    }
+    seL4_CPtr const chunk = allocator_->alloc_slot();
+    if (chunk == 0 || !aegir::ipc::take_received_cap(chunk)) {
+        if (chunk != 0) {
+            allocator_->free_slot(chunk);
+        }
+        return 0;
+    }
+    *size_bits = static_cast<seL4_Word>(reply.count >= 1 ? answer[0] : request);
+    return chunk;
+}
+
+bool ServiceKit::grow_stack(uint64_t badge, uintptr_t address, StackFault *fault,
+                            char const **why) noexcept
+{
+    if (why != nullptr) {
+        *why = "";
+    }
+    auto const it = stacks_.find(badge);
+    if (it == stacks_.end()) {
+        return false;
+    }
+    StackWatch &watch = it->second;
+    if (fault != nullptr) {
+        fault->address = address;
+        fault->base = watch.base;
+        fault->top = watch.top;
+        fault->max = watch.max;
+    }
+    if (address >= watch.lo) {
+        /* At or above the lowest mapped page: not a growth fault. A fault in
+         * the mapped part is a protection problem, and one above the top is
+         * another mapping altogether. */
+        return false;
+    }
+    if (address < watch.base) {
+        /* The guard page under the reservation, or below it: the stack is
+         * spent. The caller reports and ends the child. */
+        if (fault != nullptr) {
+            fault->overflow = true;
+            Started *const started = find_live(badge);
+            if (started != nullptr && started->process.tcb != 0) {
+                seL4_UserContext context = {};
+                if (seL4_TCB_ReadRegisters(started->process.tcb, 0, 0,
+                                           sizeof(context) / sizeof(seL4_Word),
+                                           &context) == seL4_NoError) {
+                    fault->sp = context.sp;
+                }
+            }
+        }
+        return true;
+    }
+    /* In [base, lo): grow by at least the step, or down to the fault when it
+     * is deeper, so a stack that faults one page below its mapped base maps a
+     * run rather than a page (FreeBSD's SGROWSIZ, specs/pager.md). */
+    uintptr_t target = address & ~(static_cast<uintptr_t>(kPage) - 1u);
+    if (watch.lo > watch.base + kStackGrowBytes) {
+        uintptr_t const step = watch.lo - kStackGrowBytes;
+        if (target > step) {
+            target = step;
+        }
+    } else {
+        target = watch.base;
+    }
+    while (watch.lo > target) {
+        if (watch.chunk == 0 || watch.chunk_left < kPage) {
+            seL4_Word chunk_bits = 0;
+            seL4_CPtr const chunk = pager_chunk(badge, aegir::memory::kChunkBits,
+                                                &chunk_bits);
+            if (chunk == 0) {
+                if (why != nullptr) {
+                    *why = "no memory for the stack";
+                }
+                return true;
+            }
+            watch.chunk = chunk;
+            watch.chunk_left = 1ull << chunk_bits;
+            watch.slots.push_back(chunk);
+        }
+        seL4_Error error = seL4_NoError;
+        seL4_CPtr const frame = allocator_->carve_object_from(
+            watch.chunk, seL4_RISCV_4K_Page, seL4_PageBits, pager_account_, &error);
+        if (frame == 0) {
+            if (why != nullptr) {
+                *why = "no frame for the stack";
+            }
+            return true;
+        }
+        watch.chunk_left -= kPage;
+        watch.slots.push_back(frame);
+        uintptr_t const at = watch.lo - kPage;
+        seL4_Error mapped = seL4_RISCV_Page_Map(frame, watch.root, at, seL4_AllRights,
+                                                seL4_RISCV_Default_VMAttributes);
+        unsigned attempts = 0;
+        while (mapped == seL4_FailedLookup && attempts < 8) {
+            ++attempts;
+            seL4_CPtr const table = allocator_->carve_object_from(
+                watch.chunk, seL4_RISCV_PageTableObject, seL4_PageTableBits,
+                pager_account_, &error);
+            if (table == 0) {
+                if (why != nullptr) {
+                    *why = "no page table for the stack";
+                }
+                return true;
+            }
+            watch.chunk_left -= kPage;
+            watch.slots.push_back(table);
+            seL4_Error const table_mapped = seL4_RISCV_PageTable_Map(
+                table, watch.root, at, seL4_RISCV_Default_VMAttributes);
+            if (table_mapped == seL4_DeleteFirst) {
+                /* A table already reaches this address; ours is redundant, so
+                 * its slot is all that is left to give back. */
+                seL4_CNode_Delete(aegir::bootstrap::kSlotOwnCNode, table,
+                                  endpoint_depth());
+                watch.slots.pop_back();
+                allocator_->free_slot(table);
+            } else if (table_mapped != seL4_NoError) {
+                if (why != nullptr) {
+                    *why = "a stack page table could not be mapped";
+                }
+                return true;
+            }
+            mapped = seL4_RISCV_Page_Map(frame, watch.root, at, seL4_AllRights,
+                                         seL4_RISCV_Default_VMAttributes);
+        }
+        if (mapped != seL4_NoError) {
+            if (why != nullptr) {
+                *why = "a stack page could not be mapped";
+            }
+            return true;
+        }
+        watch.lo = at;
+    }
+    return true;
+}
+
+void ServiceKit::forget_stack(uint64_t badge) noexcept
+{
+    auto const it = stacks_.find(badge);
+    if (it == stacks_.end()) {
+        return;
+    }
+    if (allocator_ != nullptr) {
+        for (seL4_CPtr const slot : it->second.slots) {
+            if (slot != 0) {
+                allocator_->free_slot(slot);
+            }
+        }
+    }
+    stacks_.erase(it);
 }
 
 }  // namespace aegir::spawn

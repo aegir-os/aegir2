@@ -34,6 +34,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace aegir::spawn {
@@ -119,6 +120,32 @@ public:
 
     /* Where a command's faults arrive. Tier 1 does not read it. */
     seL4_CPtr fault_endpoint() const { return fault_endpoint_; }
+
+    /* ---- the pager (specs/pager.md) ----
+     *
+     * The spawner is the pager: it reserved the child's stack range, it holds
+     * the child's VSpace root, and it is the one that hears the child's fault.
+     * watch_stack records a spawned child's range; grow_stack maps the pages a
+     * fault in the reserved part needs, buying frames from mem.main through a
+     * copy badged with the child's own id; forget_stack returns the slots once
+     * the memory service's `release(child)` has revoked them. All three are
+     * called under the caller's service lock, so grow and reap cannot race on
+     * the same records. */
+    struct StackFault {
+        bool overflow = false; /* the address is past the reserved base */
+        uintptr_t address = 0;
+        uintptr_t base = 0;
+        uintptr_t top = 0;
+        uint64_t max = 0;
+        uint64_t sp = 0;       /* filled from the child's TCB for a report */
+    };
+    void watch_stack(uint64_t badge, Process const &process);
+    /* True when `address` is the watched child's stack fault (grown, or one it
+     * must end); false when it is some other fault. `fault` always carries the
+     * range for a report. `*why` names a growth that ran out of something. */
+    bool grow_stack(uint64_t badge, uintptr_t address, StackFault *fault,
+                    char const **why) noexcept;
+    void forget_stack(uint64_t badge) noexcept;
 
     /* Called once per command, after its badge is fixed and before its thread
      * can run -- the only window in which a supervisor can record the stream a
@@ -318,6 +345,10 @@ private:
                                   std::vector<std::string> &storage,
                                   std::vector<char const *> &pointers);
     Started *find_live(uint64_t badge);
+    /* A pristine chunk from mem.main owned by `badge`, for the pager: the same
+     * badged-copy shape command_untyped_source uses, but not tied to the one
+     * staging slot (specs/pager.md). Zero when the service could not answer. */
+    seL4_CPtr pager_chunk(uint64_t badge, seL4_Word want_bits, seL4_Word *size_bits) noexcept;
     /* Register a child with the process registry (specs/process.md): the
      * spawner is the one that knows the child's pid, its parent, its name and
      * its path. One call, so every path this kit starts -- a command, a nested
@@ -447,6 +478,22 @@ private:
     uint32_t shell_pool_bits_ = 0;
     uintptr_t scratch_mark_ = 0;
     bool staged_since_rewind_ = false;
+    /* One watched stack: the child's root and range, the child-badged chunk the
+     * stack's frames and page tables are retyped from, how much of it is left,
+     * and every capability the pager made so reap can give the slots back after
+     * `release(child)` revokes the chunk (specs/pager.md). */
+    struct StackWatch {
+        seL4_CPtr root = 0;
+        uintptr_t base = 0;
+        uintptr_t lo = 0;
+        uintptr_t top = 0;
+        uint64_t max = 0;
+        seL4_CPtr chunk = 0;
+        uint64_t chunk_left = 0;
+        std::vector<seL4_CPtr> slots;
+    };
+    std::unordered_map<uint64_t, StackWatch> stacks_;
+    aegir::mem::Account pager_account_{"spawn.stack", 0, 0, 0};
     bool ready_ = false;
 };
 

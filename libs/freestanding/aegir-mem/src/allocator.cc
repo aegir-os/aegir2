@@ -1235,8 +1235,9 @@ seL4_CPtr Allocator::carve_untyped(seL4_Word size_bits, Account &account, seL4_E
     return cap;
 }
 
-seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
-                                seL4_Error *error, seL4_Word size_bits) noexcept
+seL4_CPtr Allocator::carve_object_from(seL4_CPtr untyped_cap, seL4_Word type,
+                                       seL4_Word size_bits, Account &account,
+                                       seL4_Error *error) noexcept
 {
     *error = seL4_NoError;
     seL4_CPtr const slot = alloc_slot();
@@ -1244,12 +1245,6 @@ seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
         *error = seL4_NotEnoughMemory;
         return 0;
     }
-    /* The object type names the frame's size (kernel/src/arch/riscv/object/
-     * objecttype.c: seL4_RISCV_Mega_Page is a 2 MiB frame); the size_bits the
-     * retype also carries are ignored for a fixed-size type, so they simply
-     * agree. */
-    seL4_Word const type =
-        size_bits == seL4_PageBits ? seL4_RISCV_4K_Page : seL4_RISCV_Mega_Page;
     seL4_Error const retyped =
         seL4_Untyped_Retype(untyped_cap, type, size_bits, seL4_CapInitThreadCNode,
                             retype_node_index(slot), cnode_depth_, slot_offset(slot), 1);
@@ -1260,6 +1255,18 @@ seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
     }
     account.objects += 1;
     return slot;
+}
+
+seL4_CPtr Allocator::carve_page(seL4_CPtr untyped_cap, Account &account,
+                                seL4_Error *error, seL4_Word size_bits) noexcept
+{
+    /* The object type names the frame's size (kernel/src/arch/riscv/object/
+     * objecttype.c: seL4_RISCV_Mega_Page is a 2 MiB frame); the size_bits the
+     * retype also carries are ignored for a fixed-size type, so they simply
+     * agree. */
+    seL4_Word const type =
+        size_bits == seL4_PageBits ? seL4_RISCV_4K_Page : seL4_RISCV_Mega_Page;
+    return carve_object_from(untyped_cap, type, size_bits, account, error);
 }
 
 seL4_CPtr Allocator::alloc_page(Account &account, seL4_Error *error,

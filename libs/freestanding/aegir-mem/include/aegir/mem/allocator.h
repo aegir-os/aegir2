@@ -191,6 +191,19 @@ public:
                          seL4_Word size_bits = seL4_PageBits) noexcept;
 
     /**
+     * An object of any type retyped from an untyped the caller names, into a
+     * slot of ours: `carve_page`'s mechanism, without the frame-size assumption.
+     * A pager holding a pristine chunk from the memory service retypes both the
+     * pages and the page tables above them from it, and the untyped's free index
+     * lives in the capability, so successive carves from one chunk advance
+     * (specs/pager.md). `type`/`size_bits` are the kernel's own pair, as
+     * `alloc_object` takes them.
+     */
+    seL4_CPtr carve_object_from(seL4_CPtr untyped_cap, seL4_Word type,
+                                seL4_Word size_bits, Account &account,
+                                seL4_Error *error) noexcept;
+
+    /**
      * A page frame, retyped from the untyped that has the room -- the caller's
      * seed, or a chunk grown through the untyped source. The frame's size names
      * the kernel's object *type*, and which type that is is the architecture's
