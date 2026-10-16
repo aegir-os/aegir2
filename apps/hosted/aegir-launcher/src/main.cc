@@ -599,8 +599,28 @@ void fault_supervisor(void *argument) noexcept
                 g_command_names.erase(named);
             }
         }
+        /* seL4's own word for the fault, with the numbers: a VMFault's
+         * address and instruction are what say *where* the command died, and
+         * "fault 5" alone sent this arc's investigation down the wrong path
+         * once already. */
+        uint64_t const fault_type = seL4_MessageInfo_get_label(info);
         aegir::debug_write("  launcher: command faulted, fault ");
-        aegir::debug_write_unsigned(seL4_MessageInfo_get_label(info));
+        aegir::debug_write_unsigned(fault_type);
+        if (fault_type == seL4_Fault_VMFault) {
+            aegir::debug_write(" VMFault ip=");
+            aegir::debug_write_hex(seL4_GetMR(seL4_VMFault_IP));
+            aegir::debug_write(" addr=");
+            aegir::debug_write_hex(seL4_GetMR(seL4_VMFault_Addr));
+            aegir::debug_write(" fsr=");
+            aegir::debug_write_hex(seL4_GetMR(seL4_VMFault_FSR));
+        } else if (fault_type == seL4_Fault_CapFault) {
+            aegir::debug_write(" CapFault ip=");
+            aegir::debug_write_hex(seL4_GetMR(seL4_CapFault_IP));
+        } else if (fault_type == seL4_Fault_UnknownSyscall) {
+            aegir::debug_write(" UnknownSyscall");
+        } else if (fault_type == seL4_Fault_UserException) {
+            aegir::debug_write(" UserException");
+        }
         aegir::debug_write(", pid ");
         aegir::debug_write_unsigned(badge);
         if (!name.empty()) {
