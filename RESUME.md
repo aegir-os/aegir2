@@ -53,9 +53,17 @@ default (16 pages initial, 8 MiB max, 128 KiB step).
 
 ## What is left, in rough order
 
-1. **File-backed paging** (step 4): the ELF segments through the same
-   `populate(vspace, addr) -> source` interface, so an 85 MB image is not mapped
-   to touch 5 MB of it.
+1. **File-backed paging** (step 4). The interface is landed (`bad63917`): a
+   `Region` with an anonymous arm (the stack) and a file-backed arm, filled
+   through `PagerSource::fill`. The launcher's half is **parked on
+   `wip/file-backed`**: commands reserve their image's segments and the pager
+   fills each faulted page from the retained image fd, with every fill verified
+   against the file. It hangs the `type Sys:S/Shell-Startup | aegir-read`
+   pipeline -- the guest stays busy and silent, the supervisor idle after the
+   last fill -- and the suspect is that the fault-time `read_frame` is a VFS
+   call a command can be blocked in at the same time, which the eager spawn
+   never risked. Resolve the interaction (or choose a source that cannot block
+   behind a command) before landing it.
 2. **The used-slot wall** (`specs/userland.md`, "a used slot is still
    allocation-only"): a process that maps and unmaps still fills its CNode. The
    musl patch sidesteps it for thread stacks; a growable CSpace for boot
