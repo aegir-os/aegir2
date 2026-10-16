@@ -2061,12 +2061,22 @@ TARGETS: dict[str, Target] = {
                     events=TERMINAL_CLICK,
                     press="SCRATCH:hello\n",
                     await_shell=True),
-            # The marker is only reached if all three commands worked.
-            # Gated like the steps that type: it is the development block's last
-            # step, so the acceptance's next typed step (the nested terminal) is
-            # chained behind it and the run fails where the failure is rather than
-            # typing on past it. It has no press, so the hold has nothing to defer.
-            QmpStep(r"AEGIR_HELLO_OK", await_shell=True),
+            # The marker is only reached if all three commands worked. The next
+            # press is the pager's named end (specs/pager.md): a command whose
+            # stack runs past its reserved base. `overflow` is linked with a
+            # small `-z stack-size`, so the pager grows one step and the next
+            # fault is the overflow. The step is gated like the others, so the
+            # acceptance's next typed step is chained behind it.
+            QmpStep(r"AEGIR_HELLO_OK",
+                    events=TERMINAL_CLICK,
+                    press="overflow\n",
+                    await_shell=True),
+            # The launcher's own report: the fault is named a stack overflow,
+            # with the numbers. A run that never overflows leaves this unprinted
+            # and the runner names the missing check.
+            QmpStep(r"stack-overflow pc=", await_shell=True),
+            # And the distinct end status: 129, not the generic fault's 128.
+            QmpStep(r"return code 129", await_shell=True),
         )),
     ),
     "sel4test": Target(

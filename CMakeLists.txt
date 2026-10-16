@@ -221,6 +221,7 @@ set(aegir_commands
   aegir-print:aegir-print
   aegir-read:aegir-read
   aegir-echo:aegir-echo
+  aegir-stack-overflow:overflow
   aegir-copy:copy
   aegir-delete:delete
   aegir-makedir:makedir
