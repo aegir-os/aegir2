@@ -130,6 +130,16 @@ outside CMake can pass the same flag. `p_filesz` is 0 on the host lld and is not
 used. A custom ELF note is only needed if a binary ever wants to tune the
 *initial/grow* per-binary, which nothing does today.
 
+`PT_GNU_STACK.p_memsz` is the *process's* stack, not a thread's. musl reads it
+for `__default_stacksize` (`projects/musl/src/env/__init_tls.c`), so the link
+flag made every `std::thread` ask for the whole declared stack: a boot
+service's single-level CSpace cannot hold an 8 MiB thread stack's 2048 frame
+caps (`slots 4084 of 4084`), and the cxx smoke's `std::thread` died of `EAGAIN`.
+Aegir's thread stacks are not the process's stack, so a tracked musl patch
+(`third_party/patches/projects/musl/0004-PT_GNU_STACK-is-the-process-stack-not-a-thread-default.patch`)
+leaves `__default_stacksize` at `DEFAULT_STACK_SIZE`; the declaration keeps its
+one meaning.
+
 Resolution order:
 
 ```

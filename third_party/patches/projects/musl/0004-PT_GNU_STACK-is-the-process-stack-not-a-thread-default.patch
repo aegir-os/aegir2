@@ -1,0 +1,21 @@
+diff --git a/src/env/__init_tls.c b/src/env/__init_tls.c
+--- a/src/env/__init_tls.c
++++ b/src/env/__init_tls.c
+@@ -94,10 +94,10 @@
+ 		if (phdr->p_type == PT_DYNAMIC && _DYNAMIC)
+ 			base = (size_t)_DYNAMIC - phdr->p_vaddr;
+ 		if (phdr->p_type == PT_TLS)
+ 			tls_phdr = phdr;
+-		if (phdr->p_type == PT_GNU_STACK &&
+-		    phdr->p_memsz > __default_stacksize)
+-			__default_stacksize =
+-				phdr->p_memsz < DEFAULT_STACK_MAX ?
+-				phdr->p_memsz : DEFAULT_STACK_MAX;
++		/* Aegir: PT_GNU_STACK.p_memsz is the process's maximum stack, which
++		 * the spawner's pager grows to (specs/pager.md); it is not a thread
++		 * default. Raising __default_stacksize from it makes every
++		 * std::thread ask for the process's whole stack, which a service's
++		 * CSpace cannot hold. Aegir's thread stacks stay DEFAULT_STACK_SIZE. */
+ 	}
+ 
+ 	if (tls_phdr) {
