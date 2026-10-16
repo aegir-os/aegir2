@@ -55,6 +55,11 @@ struct PagerContext {
  * a global, filled before it starts. */
 struct World {
     seL4_CPtr endpoint;
+    /* The supervisor thread's own cap-receive slot (aegir/bootstrap.h's
+     * receive_slot): it shares the boot thread's CSpace, so one fixed slot
+     * cannot serve both -- see the launcher's fault supervisor, where exactly
+     * that lost a spawn's stream capability. */
+    uint64_t receive_slot;
     Supervised *table;
     uint32_t capacity;
     uint32_t *count;
@@ -151,6 +156,10 @@ extern "C" [[noreturn]] void aegir_supervisor_entry()
      * literal needs no global pointer, so this line answers "did the thread run"
      * without also depending on "did its data addresses work". */
     aegir::director::write("  supervisor: listening for faults\n");
+
+    /* This thread's own cap-receive slot, before any call or receive can empty
+     * the boot thread's (aegir/bootstrap.h's receive_slot). */
+    aegir::bootstrap::set_receive_slot(aegir::director::g_world.receive_slot);
 
     for (;;) {
         seL4_Word badge = 0;
@@ -319,7 +328,16 @@ bool Supervisor::start(seL4_CPtr fault_endpoint, Supervised *table, uint32_t cap
         return false;
     }
 
-    g_world = World{fault_endpoint, table_, capacity_, count_, faults_, this};
+    /* The supervisor thread's own receive slot, one plain root slot of this
+     * CSpace, set by the thread itself at its entry (aegir_supervisor_entry). */
+    seL4_CPtr const supervisor_receive_slot = allocator_.alloc_slot();
+    if (supervisor_receive_slot == 0) {
+        problem_ = "no slot for the supervisor's receive capability";
+        return false;
+    }
+
+    g_world = World{fault_endpoint, supervisor_receive_slot, table_, capacity_, count_,
+                    faults_, this};
 
     /* The thread's own TLS: the process's image, copied where this thread can
      * reach it, with its own IPC buffer pointer written into it. */
